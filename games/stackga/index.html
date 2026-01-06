@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>쌓기게임</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./css/game.css" />
+</head>
+<body>
+  <div class="wrap">
+    <!-- 상단 타이틀/연결바 제거: 게임 화면만 -->
+
+    <section class="panel gamePanel" id="game">
+      <div class="hud" id="hud">
+        <div class="hudLeft">
+          <div>점수: <b id="score">0</b></div>
+          <div>레벨: <b id="level">1</b></div>
+          <div>모드: <b id="mode">-</b></div>
+        </div>
+        <div class="hudRight">
+          <button class="iconBtn" id="btnSound" aria-label="소리">🔊</button>
+          <button class="iconBtn matchBtn" id="btnMatch" aria-label="매칭">매칭</button>
+          <button class="iconBtn" id="btnFull" aria-label="전체화면">⛶</button>
+        </div>
+      </div>
+
+      <div class="playShell" id="playShell">
+        <!-- 내 게임 화면: 좌측에 딱 붙음 -->
+        <div class="cardBox boardCard" id="boardCol" aria-label="me">
+          <canvas id="cvMe" width="360" height="720"></canvas>
+        </div>
+
+        <!-- 남는 공간: 상단 NEXT, 아래 상대 화면(보드만) -->
+        <div class="sideCol" id="sideCol" aria-label="side">
+          <div class="cardBox nextCard" id="nextCard" aria-label="next">
+            <div class="cardTag">NEXT</div>
+            <canvas id="cvNext" width="120" height="120"></canvas>
+          </div>
+          <div class="cardBox oppCard" id="oppCard" aria-label="opponent">
+            <!-- 요청: 라벨은 카드 내부 좌측 상단 (NEXT와 동일한 스타일) -->
+            <div class="cardTag" id="oppTag">Player</div>
+            <canvas id="cvOpp" width="120" height="240"></canvas>
+          </div>
+          <!-- 콤보: 카드(네모칸) 없이 빈 공간에 텍스트만 표시 -->
+          <div class="comboArea" id="comboArea" aria-label="combo">
+            <div class="comboNum" id="comboNum">0</div>
+            <div class="comboTxt">Combo!</div>
+          </div>
+        </div>
+
+        <!-- 오버레이(대기/결과) -->
+        <div class="overlay hidden" id="overlay">
+          <div class="overlayCard">
+            <div class="big" id="overlayTitle">대기…</div>
+            <div class="small" id="overlayDesc"></div>
+            <div class="row" id="overlayBtns">
+              <button class="btn" id="btnStartCpu">PC와 시작</button>
+              <button class="btn ghost" id="btnRestart">다시 만들기</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div id="log" class="hidden"></div>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+
+<script>
+(function(){
+  const sp=new URLSearchParams(location.search);
+  if(sp.get("embed")==="1"){
+    // Let the parent know what game this is (used by bridge)
+    if(!sp.get("embedGame")){
+      sp.set("embedGame","stackga");
+      const u=location.pathname+"?"+sp.toString();
+      history.replaceState(null,"",u);
+    }
+    // Hide standalone UI bits
+    const mb=document.getElementById("match-btn"); if(mb) mb.style.display="none";
+    const ov=document.getElementById("net-overlay"); if(ov) ov.style.display="none";
+  }
+})();
+</script>
+</body>
+</html>

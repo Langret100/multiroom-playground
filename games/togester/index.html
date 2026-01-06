@@ -1,0 +1,2104 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
+    <title>🐹 투게스터 - 협동 플랫폼 게임</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Jua&family=Black+Han+Sans&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            font-family: 'Jua', sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #lobby {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            padding: 20px;
+        }
+        
+        #lobby.hidden {
+            display: none;
+        }
+        
+        .lobby-title {
+            font-family: 'Black Han Sans', sans-serif;
+            font-size: clamp(2rem, 8vw, 4rem);
+            color: #fff;
+            text-shadow: 4px 4px 0 #e94560, 8px 8px 0 rgba(0,0,0,0.2);
+            margin-bottom: 10px;
+            animation: bounce 1s ease infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .lobby-subtitle {
+            color: rgba(255,255,255,0.9);
+            font-size: clamp(0.9rem, 3vw, 1.2rem);
+            margin-bottom: 30px;
+        }
+        
+        .cat-parade {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+        
+        .cat-preview {
+            width: 50px;
+            height: 55px;
+            animation: parade 0.5s ease infinite alternate;
+        }
+        
+        .cat-preview:nth-child(2) { animation-delay: 0.1s; }
+        .cat-preview:nth-child(3) { animation-delay: 0.2s; }
+        .cat-preview:nth-child(4) { animation-delay: 0.3s; }
+        
+        @keyframes parade {
+            from { transform: translateY(0) rotate(-5deg); }
+            to { transform: translateY(-10px) rotate(5deg); }
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+            width: 100%;
+            max-width: 300px;
+        }
+        
+        .input-group label {
+            display: block;
+            color: rgba(255,255,255,0.9);
+            margin-bottom: 5px;
+            font-size: 0.9rem;
+        }
+        
+        .input-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-family: 'Jua', sans-serif;
+            background: rgba(255,255,255,0.95);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        }
+        
+        .btn {
+            padding: 15px 40px;
+            font-size: 1.1rem;
+            font-family: 'Black Han Sans', sans-serif;
+            border: none;
+            border-radius: 30px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        
+        .btn-create {
+            background: linear-gradient(135deg, #00b894 0%, #00cec9 100%);
+            color: white;
+        }
+        
+        .btn-join {
+            background: linear-gradient(135deg, #e17055 0%, #d63031 100%);
+            color: white;
+        }
+        
+        .btn-guest {
+            background: linear-gradient(135deg, #a29bfe 0%, #6c5ce7 100%);
+            color: white;
+            width: 100%;
+            max-width: 280px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-3px) scale(1.05);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.4);
+        }
+        
+        .btn:active {
+            transform: translateY(0) scale(0.98);
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        #gameHeader {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: 10px 20px;
+            background: rgba(0,0,0,0.5);
+            backdrop-filter: blur(10px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+        
+        .room-code {
+            background: rgba(255,255,255,0.2);
+            padding: 5px 15px;
+            border-radius: 20px;
+            color: #fff;
+            font-size: 0.9rem;
+        }
+        
+        .level-info {
+            color: #ffd700;
+            font-size: 1rem;
+        }
+        
+        .death-count {
+            color: #ff6b6b;
+            font-size: 0.9rem;
+            background: rgba(255,107,107,0.2);
+            padding: 3px 10px;
+            border-radius: 10px;
+        }
+        
+        #gameCanvas {
+            flex: 1;
+            width: 100%;
+        }
+        
+        #playerList {
+            position: absolute;
+            top: 60px;
+            right: 10px;
+            background: rgba(0,0,0,0.6);
+            backdrop-filter: blur(5px);
+            padding: 10px;
+            border-radius: 10px;
+            z-index: 100;
+        }
+        
+        .player-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 5px 0;
+            color: white;
+            font-size: 0.85rem;
+        }
+        
+        .player-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        #controls-hint {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            text-align: center;
+            z-index: 100;
+            opacity: 0.8;
+            max-width: 90%;
+            white-space: nowrap;
+        }
+        
+        #winScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        
+        #winScreen.show {
+            display: flex;
+        }
+        
+        .win-text {
+            font-family: 'Black Han Sans', sans-serif;
+            font-size: clamp(2rem, 10vw, 5rem);
+            color: #ffd700;
+            text-shadow: 0 0 30px rgba(255,215,0,0.5);
+            animation: pulse 0.5s ease infinite alternate;
+        }
+        
+        @keyframes pulse {
+            from { transform: scale(1); }
+            to { transform: scale(1.1); }
+        }
+        
+        .firebase-config {
+            margin-top: 20px;
+            padding: 15px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            max-width: 300px;
+            width: 100%;
+        }
+        
+        .firebase-config summary {
+            color: rgba(255,255,255,0.8);
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+        
+        .firebase-config input {
+            width: 100%;
+            padding: 8px 12px;
+            margin: 5px 0;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            background: rgba(255,255,255,0.9);
+        }
+        
+        .error-msg {
+            color: #ff6b6b;
+            background: rgba(255,107,107,0.2);
+            padding: 10px;
+            border-radius: 10px;
+            margin-top: 10px;
+            font-size: 0.9rem;
+            display: none;
+        }
+        
+        .error-msg.show {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <!-- 로비 화면 -->
+    <div id="lobby">
+        <h1 class="lobby-title">🐹 투게스터</h1>
+        <p class="lobby-subtitle">최대 4명이 함께하는 협동 플랫폼 게임!</p>
+        
+        <div class="cat-parade">
+            <svg class="cat-preview" viewBox="0 0 40 40">
+                <circle cx="20" cy="22" r="16" fill="#ff6b6b"/>
+                <circle cx="8" cy="10" r="6" fill="#ff6b6b"/>
+                <circle cx="32" cy="10" r="6" fill="#ff6b6b"/>
+                <circle cx="8" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="32" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="14" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="26" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="15" cy="19" r="1" fill="white"/>
+                <circle cx="27" cy="19" r="1" fill="white"/>
+                <ellipse cx="9" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+                <ellipse cx="31" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+            </svg>
+            <svg class="cat-preview" viewBox="0 0 40 40">
+                <circle cx="20" cy="22" r="16" fill="#4ecdc4"/>
+                <circle cx="8" cy="10" r="6" fill="#4ecdc4"/>
+                <circle cx="32" cy="10" r="6" fill="#4ecdc4"/>
+                <circle cx="8" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="32" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="14" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="26" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="15" cy="19" r="1" fill="white"/>
+                <circle cx="27" cy="19" r="1" fill="white"/>
+                <ellipse cx="9" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+                <ellipse cx="31" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+            </svg>
+            <svg class="cat-preview" viewBox="0 0 40 40">
+                <circle cx="20" cy="22" r="16" fill="#ffe66d"/>
+                <circle cx="8" cy="10" r="6" fill="#ffe66d"/>
+                <circle cx="32" cy="10" r="6" fill="#ffe66d"/>
+                <circle cx="8" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="32" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="14" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="26" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="15" cy="19" r="1" fill="white"/>
+                <circle cx="27" cy="19" r="1" fill="white"/>
+                <ellipse cx="9" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+                <ellipse cx="31" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+            </svg>
+            <svg class="cat-preview" viewBox="0 0 40 40">
+                <circle cx="20" cy="22" r="16" fill="#a29bfe"/>
+                <circle cx="8" cy="10" r="6" fill="#a29bfe"/>
+                <circle cx="32" cy="10" r="6" fill="#a29bfe"/>
+                <circle cx="8" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="32" cy="10" r="3" fill="#ffb8b8"/>
+                <circle cx="14" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="26" cy="20" r="2.5" fill="#2d3436"/>
+                <circle cx="15" cy="19" r="1" fill="white"/>
+                <circle cx="27" cy="19" r="1" fill="white"/>
+                <ellipse cx="9" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+                <ellipse cx="31" cy="26" rx="5" ry="4" fill="#ffb8b8" opacity="0.7"/>
+            </svg>
+        </div>
+        
+        <div class="input-group">
+            <label>닉네임</label>
+            <input type="text" id="playerName" placeholder="햄스터 이름을 입력하세요" maxlength="10">
+        </div>
+        
+        <div class="input-group">
+            <label>방 코드 (참가시)</label>
+            <input type="text" id="roomCode" placeholder="방 코드 입력" maxlength="6" style="text-transform: uppercase;">
+        </div>
+        
+        <div>
+            <button class="btn btn-create" onclick="createRoom()">🏠 방 만들기</button>
+            <button class="btn btn-join" onclick="joinRoom()">🚪 참가하기</button>
+        </div>
+        
+        <div style="margin-top: 15px;">
+            <button class="btn btn-guest" onclick="startGuestMode()">🎮 혼자 연습하기</button>
+        </div>
+        
+        <div id="errorMsg" class="error-msg"></div>
+    </div>
+    
+    <!-- 게임 화면 -->
+    <div id="gameContainer" style="display:none;">
+        <div id="gameHeader">
+            <span class="room-code" id="displayRoomCode">방: ----</span>
+            <span class="level-info" id="levelInfo">레벨 1</span>
+            <span class="death-count" id="deathCount">💀 0</span>
+        </div>
+        
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="playerList"></div>
+        
+        <div id="controls-hint">
+            좌/우 클릭: 이동 | 양쪽 클릭: 점프 | 박스를 밀어서 버튼을 눌러요!
+        </div>
+    </div>
+    
+    <!-- 승리 화면 -->
+    <div id="winScreen">
+        <div class="win-text">🎉 레벨 클리어! 🎉</div>
+        <div id="autoNextHint" style="color: #aaa; margin-top: 15px; font-size: 0.9rem;">잠시 후 다음 레벨로...</div>
+    </div>
+<script>
+        // ==================== 설정 ====================
+        // Firebase 의존성 제거 (Colyseus/부모 브릿지로 동기화)
+        const EMBED = new URLSearchParams(location.search).get('embed') === '1';
+        function bridgeSend(type, payload){
+            if (!EMBED) return;
+            try { window.parent && window.parent.postMessage({ type, ...payload }, '*'); } catch(e){}
+        }
+
+        // ==================== 게임 상태 ====================
+        let db = null;
+        let roomRef = null;
+        let playerId = null;
+        let roomId = null;
+        let isHost = false;
+        let isGuestMode = false;
+        let currentLevel = 1;
+        
+        const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
+        
+        let localPlayer = {
+            x: 100,
+            y: 300,
+            vx: 0,
+            vy: 0,
+            color: HAMSTER_COLORS[0],
+            name: '햄찌',
+            onGround: false,
+            onButton: false,
+            isDead: false
+        };
+        
+        let players = {};
+        let gameObjects = [];
+        let canvas, ctx;
+        let cameraX = 0;
+        let deathCount = 0; // 현재 레벨 사망 횟수
+        
+        // 터치 상태
+        let touches = {};
+        let moveDirection = 0; // -1: 왼쪽, 0: 정지, 1: 오른쪽
+        
+        // ==================== 사운드 시스템 ====================
+        let audioCtx = null;
+        
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+        
+        function playTone(frequency, duration, type = 'square', volume = 0.3, slide = 0) {
+            if (!audioCtx) return;
+            
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            oscillator.type = type;
+            oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+            
+            if (slide !== 0) {
+                oscillator.frequency.linearRampToValueAtTime(frequency + slide, audioCtx.currentTime + duration);
+            }
+            
+            gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+            
+            oscillator.start(audioCtx.currentTime);
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+        
+        // 점프 소리 - 귀여운 "뿅!"
+        function sfxJump() {
+            initAudio();
+            playTone(400, 0.1, 'sine', 0.2, 400);
+        }
+        
+        // 버튼 누름 - 밝은 "딩!"
+        function sfxButton() {
+            initAudio();
+            playTone(880, 0.1, 'sine', 0.2);
+            setTimeout(() => playTone(1100, 0.15, 'sine', 0.15), 50);
+        }
+        
+        // 문 열림 - 상승 멜로디
+        function sfxDoorOpen() {
+            initAudio();
+            playTone(440, 0.1, 'triangle', 0.15);
+            setTimeout(() => playTone(550, 0.1, 'triangle', 0.15), 80);
+            setTimeout(() => playTone(660, 0.15, 'triangle', 0.15), 160);
+        }
+        
+        // 사망 - 슬픈 하강음
+        function sfxDeath() {
+            initAudio();
+            playTone(400, 0.15, 'square', 0.2, -200);
+            setTimeout(() => playTone(200, 0.3, 'square', 0.15, -100), 150);
+        }
+        
+        // 레벨 클리어 - 축하 멜로디
+        function sfxLevelClear() {
+            initAudio();
+            const notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+            notes.forEach((note, i) => {
+                setTimeout(() => playTone(note, 0.15, 'sine', 0.2), i * 100);
+            });
+        }
+        
+        // 게임 클리어 - 긴 축하 멜로디
+        function sfxGameClear() {
+            initAudio();
+            const notes = [523, 587, 659, 698, 784, 880, 988, 1047]; // C major scale
+            notes.forEach((note, i) => {
+                setTimeout(() => playTone(note, 0.2, 'sine', 0.25), i * 120);
+            });
+            setTimeout(() => {
+                playTone(1047, 0.4, 'sine', 0.3);
+                playTone(1319, 0.4, 'sine', 0.2);
+                playTone(1568, 0.4, 'sine', 0.2);
+            }, notes.length * 120);
+        }
+        
+        // 걷기 소리 (작은 발소리)
+        let lastStepTime = 0;
+        function sfxStep() {
+            const now = Date.now();
+            if (now - lastStepTime < 200) return; // 200ms마다 한 번
+            lastStepTime = now;
+            initAudio();
+            playTone(100 + Math.random() * 50, 0.05, 'sine', 0.05);
+        }
+        
+        // 박스 밀기 소리
+        let lastPushTime = 0;
+        function sfxPush() {
+            const now = Date.now();
+            if (now - lastPushTime < 150) return;
+            lastPushTime = now;
+            initAudio();
+            playTone(150, 0.08, 'square', 0.1);
+        }
+        
+        
+        // ==================== 레벨 데이터 ====================
+        // 점프: 약 150px 높이, 200px 거리
+        const LEVELS = [
+            // ===== 1-5: 튜토리얼 =====
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 600, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 800, height: 50, color: '#2d3436' }],
+                buttons: [], doors: [], spikes: [], boxes: [],
+                message: "이동: 좌우 클릭"
+            },
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 500, y: 250, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 300, height: 50, color: '#2d3436' },
+                    { x: 350, y: 300, width: 250, height: 20, color: '#636e72' },
+                ],
+                buttons: [], doors: [], spikes: [], boxes: [],
+                message: "점프: 양쪽 동시 클릭"
+            },
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 550, y: 250, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 700, height: 50, color: '#2d3436' },
+                    { x: 450, y: 300, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [], doors: [], spikes: [],
+                boxes: [{ x: 300, y: 360, width: 40, height: 40 }],
+                message: "박스를 밀어서 발판으로!"
+            },
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 600, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 800, height: 50, color: '#2d3436' }],
+                buttons: [{ x: 250, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 450, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [{ x: 150, y: 360, width: 40, height: 40 }],
+                message: "박스로 버튼을 눌러 문을 열어!"
+            },
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 600, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 800, height: 50, color: '#2d3436' }],
+                buttons: [], doors: [],
+                spikes: [{ x: 300, y: 380, width: 60, height: 20 }],
+                boxes: [{ x: 180, y: 360, width: 40, height: 40 }],
+                message: "박스 위로 점프해서 스파이크를 넘어!"
+            },
+
+            // ===== 6-10: 기본 퍼즐 (선택과 순서) =====
+            // 6: 박스 위치 선택 - 스파이크를 넘을까 버튼을 누를까
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 800, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 1000, height: 50, color: '#2d3436' }],
+                buttons: [{ x: 600, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 350, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [{ x: 480, y: 380, width: 60, height: 20 }],
+                boxes: [{ x: 200, y: 360, width: 40, height: 40 }],
+                message: "박스로 버튼? 스파이크? 순서가 중요!"
+            },
+            // 7: 두 개의 스파이크 - 박스 하나로 점프점프
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 700, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 900, height: 50, color: '#2d3436' }],
+                buttons: [], doors: [],
+                spikes: [
+                    { x: 280, y: 380, width: 60, height: 20 },
+                    { x: 450, y: 380, width: 60, height: 20 }
+                ],
+                boxes: [{ x: 150, y: 360, width: 40, height: 40 }],
+                message: "박스 하나로 스파이크 두 개를!"
+            },
+            // 8: 박스 2개 역할 분담
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 850, y: 250, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 700, height: 50, color: '#2d3436' },
+                    { x: 750, y: 300, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [{ x: 350, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 600, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [
+                    { x: 150, y: 360, width: 40, height: 40 },
+                    { x: 500, y: 360, width: 40, height: 40 }
+                ],
+                message: "하나는 버튼에, 하나는 발판으로!"
+            },
+            // 9: 되돌아오기
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 100, y: 200, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 400, height: 50, color: '#2d3436' },
+                    { x: 500, y: 400, width: 300, height: 50, color: '#2d3436' },
+                    { x: 0, y: 250, width: 250, height: 20, color: '#636e72' },
+                ],
+                buttons: [{ x: 600, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 430, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [{ x: 200, y: 360, width: 40, height: 40 }],
+                message: "오른쪽 갔다 돌아와야 해!"
+            },
+            // 10: 두 개의 문
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 950, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 1150, height: 50, color: '#2d3436' }],
+                buttons: [
+                    { x: 250, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 550, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                ],
+                doors: [
+                    { x: 400, y: 300, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 700, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
+                ],
+                spikes: [],
+                boxes: [
+                    { x: 150, y: 360, width: 40, height: 40 },
+                    { x: 480, y: 360, width: 40, height: 40 }
+                ],
+                message: "박스 2개로 문 2개!"
+            },
+
+            // ===== 11-15: 중급 (복합 퍼즐) =====
+            // 11: 함정 구멍 - 박스 떨어뜨리면 끝
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 750, y: 350, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 280, height: 50, color: '#2d3436' },
+                    { x: 360, y: 400, width: 550, height: 50, color: '#2d3436' },
+                ],
+                buttons: [{ x: 500, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 630, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [{ x: 150, y: 360, width: 40, height: 40 }],
+                message: "구멍에 박스 빠뜨리지 마!"
+            },
+            // 12: 스파이크 + 문 조합
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 900, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 1100, height: 50, color: '#2d3436' }],
+                buttons: [{ x: 300, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 500, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [
+                    { x: 620, y: 380, width: 60, height: 20 },
+                    { x: 750, y: 380, width: 60, height: 20 }
+                ],
+                boxes: [
+                    { x: 150, y: 360, width: 40, height: 40 },
+                    { x: 550, y: 360, width: 40, height: 40 }
+                ],
+                message: "버튼용 + 스파이크용!"
+            },
+            // 13: 박스 다리
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 650, y: 350, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 250, height: 50, color: '#2d3436' },
+                    { x: 400, y: 400, width: 450, height: 50, color: '#2d3436' },
+                ],
+                buttons: [], doors: [],
+                spikes: [{ x: 270, y: 500, width: 110, height: 20 }],
+                boxes: [
+                    { x: 100, y: 360, width: 40, height: 40 },
+                    { x: 160, y: 360, width: 40, height: 40 }
+                ],
+                message: "박스로 다리를 만들어!"
+            },
+            // 14: 중간 발판
+            {
+                spawn: { x: 100, y: 550 },
+                goal: { x: 700, y: 200, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 600, width: 400, height: 50, color: '#2d3436' },
+                    { x: 250, y: 480, width: 150, height: 20, color: '#636e72' },
+                    { x: 500, y: 360, width: 150, height: 20, color: '#636e72' },
+                    { x: 600, y: 250, width: 250, height: 20, color: '#636e72' },
+                ],
+                buttons: [{ x: 300, y: 460, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 430, y: 260, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [{ x: 150, y: 560, width: 40, height: 40 }],
+                message: "박스를 위층으로 올려!"
+            },
+            // 15: 박스 1개로 문 2개 (순서 퍼즐)
+            {
+                spawn: { x: 450, y: 350 },
+                goal: { x: 450, y: 150, width: 80, height: 50 },
+                platforms: [
+                    { x: 350, y: 400, width: 200, height: 50, color: '#2d3436' },
+                    { x: 50, y: 400, width: 150, height: 50, color: '#2d3436' },
+                    { x: 700, y: 400, width: 150, height: 50, color: '#2d3436' },
+                    { x: 350, y: 200, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [
+                    { x: 80, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 750, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                ],
+                doors: [
+                    { x: 250, y: 300, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 610, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
+                ],
+                spikes: [],
+                boxes: [{ x: 430, y: 360, width: 40, height: 40 }],
+                message: "박스 1개로 문 2개! 어느 쪽 먼저?"
+            },
+
+            // ===== 16-20: 고급 (복잡한 구조) =====
+            // 16: 3단 점프
+            {
+                spawn: { x: 100, y: 550 },
+                goal: { x: 700, y: 150, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 600, width: 350, height: 50, color: '#2d3436' },
+                    { x: 200, y: 480, width: 150, height: 20, color: '#636e72' },
+                    { x: 400, y: 360, width: 150, height: 20, color: '#636e72' },
+                    { x: 600, y: 240, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [{ x: 650, y: 220, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 530, y: 140, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [{ x: 100, y: 560, width: 40, height: 40 }],
+                message: "박스를 끝까지 밀어 올려!"
+            },
+            // 17: 3개의 문
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 1150, y: 350, width: 80, height: 50 },
+                platforms: [{ x: 0, y: 400, width: 1350, height: 50, color: '#2d3436' }],
+                buttons: [
+                    { x: 200, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 500, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false },
+                    { x: 800, y: 380, width: 60, height: 20, color: '#a29bfe', doorId: 2, pressed: false }
+                ],
+                doors: [
+                    { x: 350, y: 300, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 650, y: 300, width: 40, height: 100, color: '#00cec9', open: false },
+                    { x: 950, y: 300, width: 40, height: 100, color: '#a29bfe', open: false }
+                ],
+                spikes: [],
+                boxes: [
+                    { x: 420, y: 360, width: 40, height: 40 },
+                    { x: 720, y: 360, width: 40, height: 40 }
+                ],
+                message: "박스 2개로 문 3개!"
+            },
+            // 18: 복합 지형
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 950, y: 200, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 300, height: 50, color: '#2d3436' },
+                    { x: 380, y: 400, width: 300, height: 50, color: '#2d3436' },
+                    { x: 760, y: 400, width: 350, height: 50, color: '#2d3436' },
+                    { x: 850, y: 250, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [{ x: 500, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 690, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [
+                    { x: 310, y: 500, width: 60, height: 20 },
+                    { x: 850, y: 380, width: 60, height: 20 }
+                ],
+                boxes: [
+                    { x: 150, y: 360, width: 40, height: 40 },
+                    { x: 800, y: 360, width: 40, height: 40 }
+                ],
+                message: "구멍 + 스파이크 + 문!"
+            },
+            // 19: 역방향 진행
+            {
+                spawn: { x: 900, y: 350 },
+                goal: { x: 100, y: 200, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 400, height: 50, color: '#2d3436' },
+                    { x: 500, y: 400, width: 550, height: 50, color: '#2d3436' },
+                    { x: 0, y: 250, width: 250, height: 20, color: '#636e72' },
+                ],
+                buttons: [
+                    { x: 700, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 250, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                ],
+                doors: [
+                    { x: 430, y: 300, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 50, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
+                ],
+                spikes: [],
+                boxes: [
+                    { x: 800, y: 360, width: 40, height: 40 },
+                    { x: 550, y: 360, width: 40, height: 40 }
+                ],
+                message: "오른쪽에서 시작! 왼쪽으로!"
+            },
+            // 20: 타워 쌓기
+            {
+                spawn: { x: 100, y: 550 },
+                goal: { x: 350, y: 100, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 600, width: 600, height: 50, color: '#2d3436' },
+                    { x: 300, y: 150, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [{ x: 100, y: 580, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
+                doors: [{ x: 250, y: 250, width: 40, height: 100, color: '#d63031', open: false }],
+                spikes: [],
+                boxes: [
+                    { x: 200, y: 560, width: 40, height: 40 },
+                    { x: 260, y: 560, width: 40, height: 40 },
+                    { x: 320, y: 560, width: 40, height: 40 }
+                ],
+                message: "박스를 쌓아 탑을 만들어!"
+            },
+
+            // ===== 21-25: 마스터 =====
+            // 21: 양갈래 + 중앙 목표
+            {
+                spawn: { x: 450, y: 550 },
+                goal: { x: 450, y: 100, width: 80, height: 50 },
+                platforms: [
+                    { x: 350, y: 600, width: 200, height: 50, color: '#2d3436' },
+                    { x: 50, y: 450, width: 200, height: 50, color: '#2d3436' },
+                    { x: 650, y: 450, width: 200, height: 50, color: '#2d3436' },
+                    { x: 50, y: 300, width: 150, height: 20, color: '#636e72' },
+                    { x: 700, y: 300, width: 150, height: 20, color: '#636e72' },
+                    { x: 350, y: 150, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [
+                    { x: 80, y: 280, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 750, y: 280, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                ],
+                doors: [
+                    { x: 280, y: 50, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 580, y: 50, width: 40, height: 100, color: '#00cec9', open: false }
+                ],
+                spikes: [],
+                boxes: [
+                    { x: 400, y: 560, width: 40, height: 40 },
+                    { x: 460, y: 560, width: 40, height: 40 }
+                ],
+                message: "양쪽에 박스를 배치!"
+            },
+            // 22: 연쇄 운반
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 1050, y: 350, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 280, height: 50, color: '#2d3436' },
+                    { x: 360, y: 400, width: 200, height: 50, color: '#2d3436' },
+                    { x: 640, y: 400, width: 550, height: 50, color: '#2d3436' },
+                ],
+                buttons: [
+                    { x: 150, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 420, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                ],
+                doors: [
+                    { x: 290, y: 300, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 570, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
+                ],
+                spikes: [{ x: 800, y: 380, width: 100, height: 20 }],
+                boxes: [
+                    { x: 400, y: 360, width: 40, height: 40 },
+                    { x: 700, y: 360, width: 40, height: 40 }
+                ],
+                message: "박스를 순서대로 옮겨!"
+            },
+            // 23: 4층 탑
+            {
+                spawn: { x: 100, y: 700 },
+                goal: { x: 700, y: 150, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 750, width: 350, height: 50, color: '#2d3436' },
+                    { x: 200, y: 620, width: 150, height: 20, color: '#636e72' },
+                    { x: 400, y: 490, width: 150, height: 20, color: '#636e72' },
+                    { x: 550, y: 360, width: 150, height: 20, color: '#636e72' },
+                    { x: 600, y: 230, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [
+                    { x: 100, y: 730, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 580, y: 340, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                ],
+                doors: [
+                    { x: 130, y: 650, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 530, y: 130, width: 40, height: 100, color: '#00cec9', open: false }
+                ],
+                spikes: [],
+                boxes: [
+                    { x: 200, y: 710, width: 40, height: 40 },
+                    { x: 450, y: 450, width: 40, height: 40 }
+                ],
+                message: "층층이 박스를 올려!"
+            },
+            // 24: 최후의 시험
+            {
+                spawn: { x: 100, y: 350 },
+                goal: { x: 1000, y: 150, width: 80, height: 50 },
+                platforms: [
+                    { x: 0, y: 400, width: 280, height: 50, color: '#2d3436' },
+                    { x: 360, y: 400, width: 250, height: 50, color: '#2d3436' },
+                    { x: 690, y: 400, width: 450, height: 50, color: '#2d3436' },
+                    { x: 350, y: 280, width: 150, height: 20, color: '#636e72' },
+                    { x: 650, y: 280, width: 150, height: 20, color: '#636e72' },
+                    { x: 900, y: 200, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [
+                    { x: 150, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
+                    { x: 450, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false },
+                    { x: 400, y: 260, width: 60, height: 20, color: '#a29bfe', doorId: 2, pressed: false }
+                ],
+                doors: [
+                    { x: 290, y: 300, width: 40, height: 100, color: '#d63031', open: false },
+                    { x: 620, y: 300, width: 40, height: 100, color: '#00cec9', open: false },
+                    { x: 830, y: 100, width: 40, height: 100, color: '#a29bfe', open: false }
+                ],
+                spikes: [{ x: 750, y: 380, width: 60, height: 20 }],
+                boxes: [
+                    { x: 400, y: 360, width: 40, height: 40 },
+                    { x: 700, y: 260, width: 40, height: 40 }
+                ],
+                message: "박스 2개로 문 3개! 순서가 핵심!"
+            },
+            // 25: 최종 보스
+            {
+                spawn: { x: 100, y: 550 },
+                goal: { x: 950, y: 100, width: 100, height: 50 },
+                platforms: [
+                    { x: 0, y: 600, width: 350, height: 50, color: '#2d3436' },
+                    { x: 430, y: 600, width: 300, height: 50, color: '#2d3436' },
+                    { x: 810, y: 600, width: 300, height: 50, color: '#2d3436' },
+                    { x: 200, y: 480, width: 150, height: 20, color: '#636e72' },
+                    { x: 500, y: 380, width: 150, height: 20, color: '#636e72' },
+                    { x: 750, y: 280, width: 150, height: 20, color: '#636e72' },
+                    { x: 850, y: 150, width: 200, height: 20, color: '#636e72' },
+                ],
+                buttons: [
+                    { x: 150, y: 580, width: 60, height: 20, color: '#ff6b6b', doorId: 0, pressed: false },
+                    { x: 530, y: 580, width: 60, height: 20, color: '#4ecdc4', doorId: 1, pressed: false },
+                    { x: 900, y: 580, width: 60, height: 20, color: '#ffe66d', doorId: 2, pressed: false },
+                    { x: 550, y: 360, width: 60, height: 20, color: '#a29bfe', doorId: 3, pressed: false }
+                ],
+                doors: [
+                    { x: 360, y: 500, width: 40, height: 100, color: '#ff6b6b', open: false },
+                    { x: 740, y: 500, width: 40, height: 100, color: '#4ecdc4', open: false },
+                    { x: 680, y: 180, width: 40, height: 100, color: '#ffe66d', open: false },
+                    { x: 800, y: 50, width: 40, height: 100, color: '#a29bfe', open: false }
+                ],
+                spikes: [
+                    { x: 250, y: 460, width: 60, height: 20 },
+                    { x: 600, y: 580, width: 60, height: 20 }
+                ],
+                boxes: [
+                    { x: 250, y: 560, width: 40, height: 40 },
+                    { x: 480, y: 560, width: 40, height: 40 },
+                    { x: 800, y: 260, width: 40, height: 40 }
+                ],
+                message: "🎊 최종! 박스 3개로 문 4개! 🎊"
+            }
+        ];
+        // ==================== 에러 표시 ====================
+        function showError(msg, isError = true) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg;
+            el.className = 'error-msg show';
+            el.style.color = isError ? '#ff6b6b' : '#00b894';
+            el.style.background = isError ? 'rgba(255,107,107,0.2)' : 'rgba(0,184,148,0.2)';
+            setTimeout(() => el.classList.remove('show'), 3000);
+        }
+        
+        // ==================== 방 관리 ====================
+        function generateRoomCode() {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+            let code = '';
+            for (let i = 0; i < 5; i++) {
+                code += chars.charAt(Math.floor(Math.random() * chars.length));
+            }
+            return code;
+        }
+
+        // ==================== 임베드 모드(Colyseus 브릿지) ====================
+        function startEmbedded(init){
+            isGuestMode = false;
+            isHost = !!init.isHost;
+            roomId = String(init.roomCode || 'ROOM');
+            playerId = String(init.sessionId || ('p_' + Date.now()));
+            localPlayer.name = String(init.nick || '햄찌').slice(0, 16);
+            const seat = typeof init.seat === 'number' ? init.seat : 0;
+            localPlayer.color = HAMSTER_COLORS[seat % HAMSTER_COLORS.length];
+            currentLevel = 1;
+            try{ tgEnded = false; }catch(e){}
+            startGame();
+            // 첫 상태 전송
+            bridgeSendState(true);
+        }
+
+        // createRoom()/joinRoom()/Firebase 로직 제거: 외부 로비(Colyseus)에서 방/입장을 처리합니다.
+        
+        function startGuestMode() {
+            const name = document.getElementById('playerName').value.trim() || '햄찌';
+            
+            isGuestMode = true;
+            isHost = true;
+            roomId = 'GUEST';
+            playerId = 'guest_player';
+            
+            localPlayer.name = name;
+            localPlayer.color = HAMSTER_COLORS[0];
+            localPlayer.x = LEVELS[0].spawn.x;
+            localPlayer.y = LEVELS[0].spawn.y;
+            
+            startGame();
+        }
+        
+        function updatePlayerList() {
+            const container = document.getElementById('playerList');
+            let html = `<div class="player-item">
+                <div class="player-dot" style="background:${localPlayer.color}"></div>
+                <span>${localPlayer.name} ${isGuestMode ? '(연습중)' : '(나)'}</span>
+            </div>`;
+            
+            if (!isGuestMode) {
+                Object.values(players).forEach(p => {
+                    html += `<div class="player-item">
+                        <div class="player-dot" style="background:${p.color}"></div>
+                        <span>${p.name}</span>
+                    </div>`;
+                });
+            }
+            
+            container.innerHTML = html;
+        }
+        
+        // ==================== 게임 시작 ====================
+        function startGame() {
+            document.getElementById('lobby').classList.add('hidden');
+            document.getElementById('gameContainer').style.display = 'flex';
+            document.getElementById('displayRoomCode').textContent = isGuestMode ? '🎮 연습 모드' : '방: ' + roomId;
+            
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            
+            // 오디오 초기화
+            initAudio();
+            
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
+            loadLevel(currentLevel);
+            setupControls();
+            updatePlayerList();
+            gameLoop();
+        }
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        
+        function loadLevel(levelNum) {
+            const level = LEVELS[levelNum - 1];
+            if (!level) {
+                // 모든 레벨 클리어
+                document.getElementById('winScreen').querySelector('.win-text').textContent = '🎊 게임 클리어! 🎊';
+                document.getElementById('autoNextHint').style.display = 'none';
+                document.getElementById('winScreen').classList.add('show');
+                sfxGameClear();
+                // 멀티 임베드: 성공 -> 부모/서버로 결과 전송 (자동 대기실 복귀)
+                bridgeSendOver(true, "game_clear");
+                return;
+            }
+            
+            document.getElementById('autoNextHint').style.display = 'block';
+            document.getElementById('winScreen').querySelector('.win-text').textContent = '🎉 레벨 클리어! 🎉';
+            let levelMessage = level.message;
+            if (isGuestMode && level.buttons.length > 0) {
+                levelMessage = "박스를 밀어서 버튼을 눌러요!";
+            }
+            document.getElementById('levelInfo').textContent = `레벨 ${levelNum} - ${levelMessage}`;
+            document.getElementById('winScreen').classList.remove('show');
+            
+            // 게임 오브젝트 초기화
+            gameObjects = {
+                platforms: [...level.platforms],
+                buttons: level.buttons.map(b => ({...b, pressed: false})),
+                doors: level.doors.map(d => ({...d, open: false})),
+                spikes: [...level.spikes],
+                goal: {...level.goal},
+                boxes: (level.boxes || []).map(b => ({...b, vx: 0, vy: 0}))
+            };
+            
+            // 플레이어 위치 초기화
+            const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
+            localPlayer.x = level.spawn.x + (colorIndex * 50);
+            localPlayer.y = level.spawn.y;
+            localPlayer.vx = 0;
+            localPlayer.vy = 0;
+            localPlayer.isDead = false;
+            
+            // 네트워크(브릿지)로 초기 위치 전송
+            bridgeSendState(true);
+
+cameraX = 0;
+        }
+        
+        function nextLevel() {
+            if (isGuestMode) {
+                currentLevel++;
+                loadLevel(currentLevel);
+            } else if (isHost) {
+                currentLevel++;
+                bridgeSend("tg_level", { level: currentLevel });
+                loadLevel(currentLevel);
+            }
+        }
+        
+        // ==================== 터치 컨트롤 ====================
+        function setupControls() {
+            // 터치 시작
+            canvas.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                
+                for (let touch of e.changedTouches) {
+                    touches[touch.identifier] = {
+                        x: touch.clientX,
+                        y: touch.clientY,
+                        startX: touch.clientX
+                    };
+                }
+                
+                // 두 개 이상 터치 = 점프
+                if (Object.keys(touches).length >= 2) {
+                    if (localPlayer.onGround) {
+                        localPlayer.vy = -15;
+                        localPlayer.onGround = false;
+                        sfxJump();
+                    }
+                } else {
+                    // 단일 터치 = 이동 방향 결정
+                    updateMoveDirection();
+                }
+            });
+            
+            // 터치 이동
+            canvas.addEventListener('touchmove', (e) => {
+                e.preventDefault();
+                
+                for (let touch of e.changedTouches) {
+                    if (touches[touch.identifier]) {
+                        touches[touch.identifier].x = touch.clientX;
+                        touches[touch.identifier].y = touch.clientY;
+                    }
+                }
+                
+                if (Object.keys(touches).length === 1) {
+                    updateMoveDirection();
+                }
+            });
+            
+            // 터치 종료
+            canvas.addEventListener('touchend', (e) => {
+                e.preventDefault();
+                
+                for (let touch of e.changedTouches) {
+                    delete touches[touch.identifier];
+                }
+                
+                if (Object.keys(touches).length === 0) {
+                    moveDirection = 0;
+                } else if (Object.keys(touches).length === 1) {
+                    updateMoveDirection();
+                }
+            });
+            
+            canvas.addEventListener('touchcancel', (e) => {
+                e.preventDefault();
+                for (let touch of e.changedTouches) {
+                    delete touches[touch.identifier];
+                }
+                if (Object.keys(touches).length === 0) {
+                    moveDirection = 0;
+                }
+            });
+            
+            // 마우스 컨트롤 (데스크톱) - 터치와 완전히 동일한 방식
+            // 좌클릭 = 손가락1, 우클릭 = 손가락2
+            canvas.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                initAudio();
+                
+                if (e.button === 0) { // 왼쪽 클릭 = 손가락 1
+                    touches['mouseLeft'] = { x: e.clientX, y: e.clientY };
+                } else if (e.button === 2) { // 오른쪽 클릭 = 손가락 2
+                    touches['mouseRight'] = { x: e.clientX, y: e.clientY };
+                }
+                
+                // 두 개 이상 = 점프 (터치와 동일)
+                if (Object.keys(touches).length >= 2) {
+                    if (localPlayer.onGround) {
+                        localPlayer.vy = -15;
+                        localPlayer.onGround = false;
+                        sfxJump();
+                    }
+                } else {
+                    updateMoveDirection();
+                }
+            });
+            
+            canvas.addEventListener('mousemove', (e) => {
+                if (touches['mouseLeft']) {
+                    touches['mouseLeft'] = { x: e.clientX, y: e.clientY };
+                }
+                if (touches['mouseRight']) {
+                    touches['mouseRight'] = { x: e.clientX, y: e.clientY };
+                }
+                
+                if (Object.keys(touches).length === 1) {
+                    updateMoveDirection();
+                }
+            });
+            
+            canvas.addEventListener('mouseup', (e) => {
+                if (e.button === 0) {
+                    delete touches['mouseLeft'];
+                } else if (e.button === 2) {
+                    delete touches['mouseRight'];
+                }
+                
+                if (Object.keys(touches).length === 0) {
+                    moveDirection = 0;
+                } else if (Object.keys(touches).length === 1) {
+                    updateMoveDirection();
+                }
+            });
+            
+            canvas.addEventListener('mouseleave', () => {
+                delete touches['mouseLeft'];
+                delete touches['mouseRight'];
+                moveDirection = 0;
+            });
+            
+            // 우클릭 메뉴 비활성화
+            canvas.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+            });
+            
+            // 키보드 컨트롤도 유지 (선택적 사용)
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowLeft' || e.key === 'a') moveDirection = -1;
+                if (e.key === 'ArrowRight' || e.key === 'd') moveDirection = 1;
+                if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') && localPlayer.onGround) {
+                    localPlayer.vy = -15;
+                    localPlayer.onGround = false;
+                    sfxJump();
+                }
+            });
+            
+            document.addEventListener('keyup', (e) => {
+                if ((e.key === 'ArrowLeft' || e.key === 'a') && moveDirection === -1) moveDirection = 0;
+                if ((e.key === 'ArrowRight' || e.key === 'd') && moveDirection === 1) moveDirection = 0;
+            });
+        }
+        
+        function updateMoveDirection() {
+            const touchList = Object.values(touches);
+            if (touchList.length === 0) {
+                moveDirection = 0;
+                return;
+            }
+            
+            const touch = touchList[0];
+            const screenCenter = window.innerWidth / 2;
+            
+            // 화면 중앙 기준으로 방향 결정
+            if (touch.x < screenCenter) {
+                moveDirection = -1;
+            } else {
+                moveDirection = 1;
+            }
+        }
+        
+        // ==================== 게임 물리 ====================
+        function updatePhysics() {
+            // 이동
+            const speed = 5;
+            localPlayer.vx = moveDirection * speed;
+            
+            // 걷기 효과음 (땅에서 이동 중일 때만)
+            if (moveDirection !== 0 && localPlayer.onGround) {
+                sfxStep();
+            }
+            
+            // 중력
+            localPlayer.vy += 0.6;
+            if (localPlayer.vy > 15) localPlayer.vy = 15;
+            
+            // 위치 업데이트
+            localPlayer.x += localPlayer.vx;
+            localPlayer.y += localPlayer.vy;
+            
+            // 플랫폼 충돌
+            localPlayer.onGround = false;
+            
+            for (let platform of gameObjects.platforms) {
+                if (checkCollision(localPlayer, platform)) {
+                    resolveCollision(localPlayer, platform);
+                }
+            }
+            
+            // 닫힌 문과 충돌
+            for (let door of gameObjects.doors) {
+                if (!door.open && checkCollision(localPlayer, door)) {
+                    resolveCollision(localPlayer, door);
+                }
+            }
+            
+            // 박스 물리
+            for (let box of gameObjects.boxes) {
+                // 박스 중력
+                box.vy += 0.6;
+                if (box.vy > 15) box.vy = 15;
+                
+                // 박스 위치 업데이트
+                box.x += box.vx;
+                box.y += box.vy;
+                box.vx *= 0.8; // 마찰
+                
+                // 박스-플랫폼 충돌
+                for (let platform of gameObjects.platforms) {
+                    if (checkBoxCollision(box, platform)) {
+                        resolveBoxCollision(box, platform);
+                    }
+                }
+                
+                // 박스-문 충돌
+                for (let door of gameObjects.doors) {
+                    if (!door.open && checkBoxCollision(box, door)) {
+                        resolveBoxCollision(box, door);
+                    }
+                }
+            }
+            
+            // 플레이어-박스 충돌 (밀기)
+            for (let box of gameObjects.boxes) {
+                if (checkPlayerBoxCollision(localPlayer, box)) {
+                    pushBox(localPlayer, box);
+                }
+            }
+            
+            // 버튼 체크 (플레이어 또는 박스)
+            gameObjects.buttons.forEach((button, idx) => {
+                let somethingOnButton = false;
+                
+                // 플레이어가 버튼 위에 있는지
+                const playerOnButton = localPlayer.x + 20 > button.x && 
+                                localPlayer.x < button.x + button.width &&
+                                localPlayer.y + 40 > button.y &&
+                                localPlayer.y + 40 < button.y + button.height + 10;
+                if (playerOnButton) somethingOnButton = true;
+                
+                // 박스가 버튼 위에 있는지
+                for (let box of gameObjects.boxes) {
+                    const boxOnButton = box.x + box.width/2 > button.x && 
+                                       box.x < button.x + button.width &&
+                                       box.y + box.height > button.y &&
+                                       box.y + box.height < button.y + button.height + 10;
+                    if (boxOnButton) somethingOnButton = true;
+                }
+                
+                // 다른 플레이어가 버튼 위에 있는지 (멀티플레이)
+                if (!isGuestMode) {
+                    Object.values(players).forEach(p => {
+                        if (p.x + 20 > button.x && p.x < button.x + button.width &&
+                            p.y + 40 > button.y && p.y + 40 < button.y + button.height + 10) {
+                            somethingOnButton = true;
+                        }
+                    });
+                }
+                
+                // 버튼 상태 업데이트
+                if (somethingOnButton && !button.pressed) {
+                    button.pressed = true;
+                    sfxButton();
+                    bridgeSend("tg_button", { idx, pressed: true });
+                } else if (!somethingOnButton && button.pressed && !isGuestMode) {
+                    // 멀티 모드에서만 버튼 해제 (게스트 모드는 박스로 영구 고정)
+                    button.pressed = false;
+                    bridgeSend("tg_button", { idx, pressed: false });
+                }
+            });
+            
+            localPlayer.onButton = gameObjects.buttons.some(btn => btn.pressed);
+            
+            updateDoors();
+            
+            // 이미 죽은 상태면 사망 처리 스킵
+            if (!localPlayer.isDead) {
+                // 스파이크 충돌 (사망)
+                for (let spike of gameObjects.spikes) {
+                    if (checkCollision(localPlayer, {...spike, height: 20})) {
+                        onDeath();
+                        return;
+                    }
+                }
+                
+                // 낙사
+                if (localPlayer.y > 1000) {
+                    onDeath();
+                    return;
+                }
+            }
+            
+            // 골 체크
+            const goal = gameObjects.goal;
+            if (localPlayer.x + 20 > goal.x && localPlayer.x < goal.x + goal.width &&
+                localPlayer.y + 40 > goal.y && localPlayer.y < goal.y + goal.height) {
+                // 1명만 도착해도 클리어
+                if (!document.getElementById('winScreen').classList.contains('show')) {
+                    sfxLevelClear();
+                    document.getElementById('winScreen').classList.add('show');
+                    setTimeout(() => nextLevel(), 1500);
+                }
+            }
+            
+            // 네트워크(브릿지)로 상태 전송
+            bridgeSendState();
+}
+        
+        function updateDoors() {
+            gameObjects.doors.forEach((door, idx) => {
+                const button = gameObjects.buttons.find(b => b.doorId === idx);
+                const wasOpen = door.open;
+                door.open = button ? button.pressed : false;
+                if (!wasOpen && door.open) {
+                    sfxDoorOpen();
+                }
+            });
+        }
+        
+        function onDeath() {
+            localPlayer.isDead = true;
+            deathCount++;
+            updateDeathCountUI();
+            sfxDeath();
+            
+            if (isGuestMode) {
+                // 게스트 모드: 바로 맵 초기화
+                showDeathEffect(() => {
+                    resetMap();
+                });
+            } else {
+                // 멀티 플레이: 브릿지로 사망 상태 전송
+                bridgeSendState(true);
+
+                // 모든 플레이어 사망 체크
+                checkAllDead();
+            }
+        }
+        
+        function updateDeathCountUI() {
+            document.getElementById('deathCount').textContent = '💀 ' + deathCount;
+        }
+        
+        function showDeathEffect(callback) {
+            // 간단한 사망 이펙트 (화면 깜빡임)
+            const overlay = document.createElement('div');
+            overlay.style.cssText = `
+                position: fixed;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                background: rgba(255,0,0,0.3);
+                z-index: 500;
+                pointer-events: none;
+            `;
+            document.body.appendChild(overlay);
+            
+            setTimeout(() => {
+                overlay.remove();
+                if (callback) callback();
+            }, 300);
+        }
+        
+        function checkAllDead() {
+            // 모든 플레이어가 사망했는지 확인
+            let allDead = localPlayer.isDead;
+            
+            Object.values(players).forEach(p => {
+                if (!p.isDead) {
+                    allDead = false;
+                }
+            });
+            
+            if (allDead && Object.keys(players).length > 0) {
+                // 임베드 멀티: 전원 사망 = 실패 -> 부모/서버로 결과 전송
+                if (EMBED && !isGuestMode) {
+                    bridgeSendOver(false, "all_dead");
+                    return;
+                }
+                // 그 외(로컬/게스트): 호스트만 맵 리셋 트리거
+                if (isHost) { bridgeSend("tg_reset", { t: Date.now() }); }
+            } else if (allDead && Object.keys(players).length === 0) {
+                // 혼자 플레이 중인 경우(임베드면 실패로 처리)
+                if (EMBED && !isGuestMode) {
+                    bridgeSendOver(false, "all_dead");
+                    return;
+                }
+                showDeathEffect(() => { resetMap(); });
+            }
+        }
+        
+        function resetMap() {
+            // 맵 초기화 (버튼, 문 상태 리셋)
+            loadLevel(currentLevel);
+            localPlayer.isDead = false;
+            
+            // 브릿지: 리셋 전파(호스트만)
+            if (!isGuestMode && isHost) {
+                bridgeSend("tg_reset", { t: Date.now() });
+                gameObjects.buttons.forEach((btn, idx) => bridgeSend("tg_button", { idx, pressed: false }));
+                bridgeSendState(true);
+            }
+        }
+        
+        function respawn() {
+            // 기존 respawn은 위치만 리셋 (사망 없이 위치 조정 필요시 사용)
+            const level = LEVELS[currentLevel - 1];
+            const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
+            localPlayer.x = level.spawn.x + (colorIndex * 50);
+            localPlayer.y = level.spawn.y;
+            localPlayer.vx = 0;
+            localPlayer.vy = 0;
+        }
+        
+        function checkCollision(player, rect) {
+            return player.x + 40 > rect.x &&
+                   player.x < rect.x + rect.width &&
+                   player.y + 40 > rect.y &&
+                   player.y < rect.y + rect.height;
+        }
+        
+        function resolveCollision(player, rect) {
+            const overlapX = Math.min(player.x + 40 - rect.x, rect.x + rect.width - player.x);
+            const overlapY = Math.min(player.y + 40 - rect.y, rect.y + rect.height - player.y);
+            
+            if (overlapX < overlapY) {
+                if (player.x < rect.x) {
+                    player.x = rect.x - 40;
+                } else {
+                    player.x = rect.x + rect.width;
+                }
+                player.vx = 0;
+            } else {
+                if (player.y < rect.y) {
+                    player.y = rect.y - 40;
+                    player.onGround = true;
+                    player.vy = 0;
+                } else {
+                    player.y = rect.y + rect.height;
+                    player.vy = 0;
+                }
+            }
+        }
+        
+        // 박스 충돌 체크
+        function checkBoxCollision(box, rect) {
+            return box.x + box.width > rect.x &&
+                   box.x < rect.x + rect.width &&
+                   box.y + box.height > rect.y &&
+                   box.y < rect.y + rect.height;
+        }
+        
+        // 박스 충돌 해결
+        function resolveBoxCollision(box, rect) {
+            const overlapX = Math.min(box.x + box.width - rect.x, rect.x + rect.width - box.x);
+            const overlapY = Math.min(box.y + box.height - rect.y, rect.y + rect.height - box.y);
+            
+            if (overlapX < overlapY) {
+                if (box.x < rect.x) {
+                    box.x = rect.x - box.width;
+                } else {
+                    box.x = rect.x + rect.width;
+                }
+                box.vx = 0;
+            } else {
+                if (box.y < rect.y) {
+                    box.y = rect.y - box.height;
+                    box.vy = 0;
+                } else {
+                    box.y = rect.y + rect.height;
+                    box.vy = 0;
+                }
+            }
+        }
+        
+        // 플레이어-박스 충돌 체크
+        function checkPlayerBoxCollision(player, box) {
+            return player.x + 40 > box.x &&
+                   player.x < box.x + box.width &&
+                   player.y + 40 > box.y &&
+                   player.y < box.y + box.height;
+        }
+        
+        // 박스 밀기
+        function pushBox(player, box) {
+            const overlapX = Math.min(player.x + 40 - box.x, box.x + box.width - player.x);
+            const overlapY = Math.min(player.y + 40 - box.y, box.y + box.height - player.y);
+            
+            if (overlapX < overlapY) {
+                // 옆에서 충돌 - 박스 밀기
+                sfxPush();
+                if (player.x < box.x) {
+                    box.vx = 3;
+                    player.x = box.x - 40;
+                } else {
+                    box.vx = -3;
+                    player.x = box.x + box.width;
+                }
+            } else {
+                // 위아래 충돌
+                if (player.y < box.y) {
+                    // 플레이어가 박스 위에 착지
+                    player.y = box.y - 40;
+                    player.onGround = true;
+                    player.vy = 0;
+                } else {
+                    // 플레이어가 박스 아래에서 부딪힘
+                    player.y = box.y + box.height;
+                    player.vy = 0;
+                }
+            }
+        }
+        
+        // ==================== 렌더링 ====================
+        function render() {
+            // 배경
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, '#1a1a2e');
+            gradient.addColorStop(0.5, '#16213e');
+            gradient.addColorStop(1, '#0f3460');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 카메라 따라가기
+            const targetCameraX = localPlayer.x - canvas.width / 2;
+            cameraX += (targetCameraX - cameraX) * 0.1;
+            cameraX = Math.max(0, cameraX);
+            
+            ctx.save();
+            ctx.translate(-cameraX, 0);
+            
+            // 배경 별
+            for (let i = 0; i < 50; i++) {
+                const x = (i * 73 + cameraX * 0.1) % 2500;
+                const y = (i * 47) % canvas.height;
+                ctx.fillStyle = `rgba(255,255,255,${0.3 + Math.sin(Date.now() / 1000 + i) * 0.2})`;
+                ctx.beginPath();
+                ctx.arc(x, y, 1 + Math.random(), 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // 플랫폼
+            gameObjects.platforms.forEach(p => {
+                ctx.fillStyle = p.color;
+                ctx.fillRect(p.x, p.y, p.width, p.height);
+                
+                // 하이라이트
+                ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                ctx.fillRect(p.x, p.y, p.width, 3);
+            });
+            
+            // 버튼
+            gameObjects.buttons.forEach(b => {
+                ctx.fillStyle = b.pressed ? '#2d3436' : b.color;
+                ctx.fillRect(b.x, b.y + (b.pressed ? 10 : 0), b.width, b.height - (b.pressed ? 5 : 0));
+                
+                if (!b.pressed) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+                    ctx.fillRect(b.x, b.y, b.width, 3);
+                }
+            });
+            
+            // 문
+            gameObjects.doors.forEach(d => {
+                if (!d.open) {
+                    ctx.fillStyle = d.color;
+                    ctx.fillRect(d.x, d.y, d.width, d.height);
+                    
+                    // 패턴
+                    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                    for (let i = 0; i < 3; i++) {
+                        ctx.fillRect(d.x + 5, d.y + 10 + i * 30, d.width - 10, 20);
+                    }
+                } else {
+                    // 열린 문
+                    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                    ctx.fillRect(d.x, d.y, d.width, d.height);
+                }
+            });
+            
+            // 스파이크
+            gameObjects.spikes.forEach(s => {
+                ctx.fillStyle = '#e74c3c';
+                const spikeCount = Math.floor(s.width / 15);
+                for (let i = 0; i < spikeCount; i++) {
+                    ctx.beginPath();
+                    ctx.moveTo(s.x + i * 15, s.y + s.height);
+                    ctx.lineTo(s.x + i * 15 + 7.5, s.y);
+                    ctx.lineTo(s.x + i * 15 + 15, s.y + s.height);
+                    ctx.fill();
+                }
+            });
+            
+            // 박스
+            gameObjects.boxes.forEach(box => {
+                // 그림자
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.fillRect(box.x + 4, box.y + 4, box.width, box.height);
+                
+                // 박스 본체
+                ctx.fillStyle = '#8b4513';
+                ctx.fillRect(box.x, box.y, box.width, box.height);
+                
+                // 나무 무늬
+                ctx.fillStyle = '#a0522d';
+                ctx.fillRect(box.x + 3, box.y + 3, box.width - 6, 8);
+                ctx.fillRect(box.x + 3, box.y + box.height - 11, box.width - 6, 8);
+                
+                // 하이라이트
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                ctx.fillRect(box.x, box.y, box.width, 3);
+                ctx.fillRect(box.x, box.y, 3, box.height);
+                
+                // 테두리
+                ctx.strokeStyle = '#5c3317';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(box.x, box.y, box.width, box.height);
+            });
+            
+            // 골 - 깃발만 표시
+            const goal = gameObjects.goal;
+            const flagX = goal.x + goal.width / 2;
+            const flagY = goal.y - 30; // 더 높게
+            const flagHeight = goal.height + 30;
+            
+            // 깃발 기둥
+            ctx.fillStyle = '#ffd700';
+            ctx.fillRect(flagX - 3, flagY, 6, flagHeight);
+            
+            // 깃발 천
+            ctx.beginPath();
+            ctx.moveTo(flagX + 3, flagY);
+            ctx.lineTo(flagX + 45, flagY + 22);
+            ctx.lineTo(flagX + 3, flagY + 44);
+            ctx.closePath();
+            ctx.fillStyle = '#ff6b6b';
+            ctx.fill();
+            
+            // 반짝이 파티클 2~3개 (자연스럽게 떠다니는 느낌)
+            const time = Date.now() / 1000;
+            for (let i = 0; i < 3; i++) {
+                const px = flagX + 20 + Math.sin(time * 0.8 + i * 2.5) * 25;
+                const py = flagY + 20 + Math.cos(time * 0.6 + i * 2) * 20 + i * 10;
+                const alpha = 0.6 + Math.sin(time * 2 + i) * 0.4;
+                ctx.fillStyle = `rgba(255, 255, 150, ${alpha})`;
+                ctx.beginPath();
+                ctx.arc(px, py, 3, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            // 다른 플레이어들
+            Object.values(players).forEach(p => {
+                drawHamster(p.x, p.y, p.color, p.name, false, p.isDead);
+            });
+            
+            // 로컬 플레이어
+            drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead);
+            
+            ctx.restore();
+        }
+        
+        function drawHamster(x, y, color, name, isLocal = false, isDead = false) {
+            // 사망 시 반투명 처리
+            if (isDead) {
+                ctx.globalAlpha = 0.4;
+            }
+            
+            // 그림자
+            ctx.fillStyle = 'rgba(0,0,0,0.2)';
+            ctx.beginPath();
+            ctx.ellipse(x + 20, y + 38, 14, 4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 몸통 (둥글둥글한 원형)
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.ellipse(x + 20, y + 22, 18, 16, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 귀 (둥근 귀)
+            ctx.beginPath();
+            ctx.arc(x + 6, y + 8, 7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x + 34, y + 8, 7, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 귀 안쪽 (분홍색)
+            ctx.fillStyle = '#ffb8b8';
+            ctx.beginPath();
+            ctx.arc(x + 6, y + 8, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x + 34, y + 8, 4, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 볼 (통통한 볼살)
+            ctx.fillStyle = 'rgba(255,184,184,0.6)';
+            ctx.beginPath();
+            ctx.ellipse(x + 6, y + 26, 6, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(x + 34, y + 26, 6, 5, 0, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 눈 (작고 동그란 눈)
+            ctx.fillStyle = '#2d3436';
+            ctx.beginPath();
+            ctx.arc(x + 14, y + 20, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x + 26, y + 20, 3, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 눈 하이라이트
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(x + 15, y + 19, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(x + 27, y + 19, 1.2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 코 (작은 분홍 코)
+            ctx.fillStyle = '#ff9999';
+            ctx.beginPath();
+            ctx.arc(x + 20, y + 26, 2, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // 이름표
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.beginPath();
+            ctx.roundRect(x - 5, y - 15, 50, 14, 7);
+            ctx.fill();
+            
+            ctx.fillStyle = '#fff';
+            ctx.font = '9px Jua';
+            ctx.textAlign = 'center';
+            ctx.fillText(name, x + 20, y - 4);
+            
+            // 로컬 플레이어 표시 (작은 화살표)
+            if (isLocal && !isDead) {
+                ctx.fillStyle = '#ffd700';
+                ctx.beginPath();
+                ctx.moveTo(x + 20, y - 23);
+                ctx.lineTo(x + 15, y - 30);
+                ctx.lineTo(x + 25, y - 30);
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            // 사망 시 X 표시
+            if (isDead) {
+                ctx.globalAlpha = 1;
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(x + 10, y + 12);
+                ctx.lineTo(x + 30, y + 32);
+                ctx.moveTo(x + 30, y + 12);
+                ctx.lineTo(x + 10, y + 32);
+                ctx.stroke();
+            }
+            
+            // globalAlpha 복원
+            ctx.globalAlpha = 1;
+        }
+        
+        // ==================== 게임 루프 ====================
+        function gameLoop() {
+            updatePhysics();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        
+        // ==================== Colyseus 브릿지 (Firebase 제거) ====================
+        let mySessionId = null;
+        let mySeat = 0;
+        let tgEnded = false; // embed 멀티에서 결과 전송 중복 방지
+
+        function bridgeSendOver(success, reason){
+            if (!EMBED || isGuestMode) return;
+            if (!isHost) return;
+            if (tgEnded) return;
+            tgEnded = true;
+            bridgeSend("tg_over", { success: !!success, reason: reason || (success ? "clear" : "fail") });
+        }
+
+        function applyRemotePlayers(map){
+            players = {};
+            if (!map) return;
+            for (const [sid, p] of Object.entries(map)){
+                if (sid === mySessionId) continue;
+                players[sid] = p;
+            }
+            updatePlayerList();
+        }
+
+        function applyButtons(btnMap){
+            if (!btnMap || !gameObjects?.buttons) return;
+            for (const [idxStr, pressed] of Object.entries(btnMap)){
+                const idx = parseInt(idxStr, 10);
+                if (gameObjects.buttons[idx]) gameObjects.buttons[idx].pressed = !!pressed;
+            }
+            updateDoors();
+        }
+
+        function bridgeSendState(force=false){
+            if (!EMBED || isGuestMode) return;
+            const now = performance.now();
+            if (!force && bridgeSendState._t && (now - bridgeSendState._t) < 50) return; // ~20Hz
+            bridgeSendState._t = now;
+            bridgeSend("tg_state", {
+                state: {
+                    x: localPlayer.x, y: localPlayer.y,
+                    vx: localPlayer.vx, vy: localPlayer.vy,
+                    onGround: !!localPlayer.onGround,
+                    onButton: !!localPlayer.onButton,
+                    isDead: !!localPlayer.isDead,
+                    color: localPlayer.color,
+                    name: localPlayer.name,
+                    level: currentLevel,
+                    deathCount
+                }
+            });
+        }
+
+        // Embed 모드 진입: 내부 로비/설정 UI 제거, 부모에게 준비 신호
+        if (EMBED){
+            try{
+                const lobby = document.getElementById('lobby');
+                if (lobby){
+                    // 로비 UI는 부모 로비를 사용하므로 최소화
+                    const hide = lobby.querySelectorAll('button, details, .input-group');
+                    hide.forEach(el => el.style.display = 'none');
+                    const subtitle = lobby.querySelector('.lobby-subtitle');
+                    if (subtitle) subtitle.textContent = '연결 중...';
+                }
+                bridgeSend("bridge_ready", {});
+            }catch(e){}
+        }
+
+        window.addEventListener("message", (e)=>{
+            const d = e.data || {};
+            if (!d || typeof d !== "object") return;
+
+            if (d.type === "bridge_init"){
+                mySessionId = String(d.sessionId || "");
+                mySeat = typeof d.seat === "number" ? d.seat : 0;
+                startEmbedded({
+                    nick: d.nick || "햄찌",
+                    seat: mySeat,
+                    isHost: !!d.isHost,
+                    sessionId: mySessionId,
+                    roomCode: d.roomCode || "ROOM"
+                });
+                if (d.players) applyRemotePlayers(d.players);
+                if (d.level) {
+                    const lv = parseInt(d.level, 10);
+                    if (lv) { currentLevel = lv; }
+                }
+                return;
+            }
+
+            if (d.type === "tg_players"){
+                applyRemotePlayers(d.players || {});
+                return;
+            }
+
+            if (d.type === "tg_level"){
+                const lv = parseInt(d.level, 10);
+                if (lv && lv !== currentLevel){
+                    currentLevel = lv;
+                    loadLevel(currentLevel);
+                }
+                return;
+            }
+
+            if (d.type === "tg_buttons"){
+                applyButtons(d.buttons || {});
+                return;
+            }
+
+            if (d.type === "tg_button"){
+                if (gameObjects?.buttons && gameObjects.buttons[d.idx]){
+                    gameObjects.buttons[d.idx].pressed = !!d.pressed;
+                    updateDoors();
+                }
+                return;
+            }
+
+            if (d.type === "tg_reset"){
+                showDeathEffect(()=> resetMap());
+                return;
+            }
+        });
+
+// 페이지 로드시 저장된 이름 복원
+        const savedName = localStorage.getItem('playerName');
+        if (savedName) {
+            document.getElementById('playerName').value = savedName;
+        }
+        
+        document.getElementById('playerName').addEventListener('change', (e) => {
+            localStorage.setItem('playerName', e.target.value);
+        });
+    </script>
+</body>
+</html>

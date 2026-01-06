@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
+<title>방</title>
+<link href="./css/styles.css" rel="stylesheet"/>
+</head>
+<body>
+<div class="app">
+<div class="topbar">
+<div class="brand">
+<div class="logo"></div>
+<div class="title">
+<b id="roomTitle">방</b>
+<div class="muted"><span id="roomMode">-</span> · <span id="roomStatus">대기중</span></div>
+</div>
+</div>
+<div class="actions">
+<button class="btn" id="logoutBtn">로그아웃</button>
+<button class="btn" id="leaveBtn">로비로</button>
+</div>
+</div>
+<div class="status" id="statusBanner" style="display:none"></div>
+<div class="roomGrid">
+<div class="roomTop">
+<div class="panel canvasWrap">
+<div class="panelHeader">
+<div>
+<h2>게임 화면</h2>
+<div class="sub muted">모바일: 아래 터치 버튼 사용</div>
+</div>
+<span class="badge"><span class="dot ok"></span>SYNC</span>
+</div>
+
+<div class="duel-ui hidden" id="duelUI">
+  <div class="duel-info">
+    <div class="duel-line" id="duelLine">대기…</div>
+    <div class="duel-sub muted" id="duelSub"></div>
+    <div class="duel-bracket" id="duelBracket"></div>
+  </div>
+  <div class="duel-frameWrap hidden" id="duelFrameWrap">
+    <iframe id="duelFrame" class="duel-frame" title="game"></iframe>
+  </div>
+  <div class="duel-spectate hidden" id="duelSpectate">
+    <div class="spectateTop">
+      <div class="muted">관전</div>
+      <div class="spectateBtns">
+        <button class="btn" id="spectateSplitBtn" title="2분할">▦</button>
+        <button class="btn" id="spectateSingleBtn" title="단일">▢</button>
+        <button class="btn" id="spectateSwapBtn" title="전환" style="display:none">⇄</button>
+      </div>
+    </div>
+    <div class="spectateGrid" id="spectateGrid">
+      <div class="spectatePane" data-side="A">
+        <div class="spectateName" id="specNameA">A</div>
+        <canvas id="specCanvasA" width="240" height="480"></canvas>
+      </div>
+      <div class="spectatePane" data-side="B">
+        <div class="spectateName" id="specNameB">B</div>
+        <canvas id="specCanvasB" width="240" height="480"></canvas>
+      </div>
+    </div>
+    <div id="duelSpectateScore" class="mono"></div>
+  </div>
+</div>
+<div class="stackga-ui hidden" id="stackgaUI">
+<div class="sg-grid">
+<div class="sg-col">
+<div class="sg-card">
+<div class="sg-tag" id="meTag">나</div>
+<canvas height="360" id="cvMe" width="180"></canvas>
+</div>
+</div>
+<div class="sg-col sg-side">
+<div class="sg-card">
+<div class="sg-tag" id="oppTag">상대</div>
+<canvas height="240" id="cvOpp" width="120"></canvas>
+</div>
+<div class="sg-card sg-next">
+<div class="sg-tag">NEXT</div>
+<canvas height="90" id="cvNext" width="90"></canvas>
+</div>
+</div>
+</div>
+</div><canvas id="gameCanvas"></canvas>
+<div class="controls" style="flex-wrap:wrap; justify-content:space-between;">
+<div style="display:flex; gap:8px;">
+<button class="btn" data-key="ArrowLeft">◀</button>
+<button class="btn" data-key="ArrowRight">▶</button>
+</div>
+<div style="display:flex; gap:8px;">
+<button class="btn" data-key="ArrowDown">▼</button>
+<button class="btn" data-key="ArrowUp">▲</button>
+</div>
+<div style="display:flex; gap:8px;">
+<button class="btn primary" data-key=" ">A</button>
+<button class="btn" data-key="Shift">B</button>
+</div>
+</div>
+</div>
+<div class="panel playersPanel">
+<div class="panelHeader">
+<div>
+<h2>입장 인원</h2>
+<div class="sub muted">레디 후 방장이 시작</div>
+</div>
+<span class="badge"><span class="dot ok"></span>최대 4인</span>
+</div>
+<div class="pList" id="playersList"></div>
+<div class="controls">
+<button class="btn primary" id="readyBtn">레디</button>
+<button class="btn" disabled="" id="startBtn">시작(방장)</button>
+</div>
+</div>
+</div>
+<div class="roomBottom">
+<div class="panel chat">
+<div class="panelHeader">
+<div>
+<h2>방 채팅</h2>
+<div class="sub muted">방을 나가면 채팅은 저장되지 않습니다</div>
+</div>
+<span class="badge"><span class="dot ok"></span>ROOM</span>
+</div>
+<div class="chatLog" id="roomChatLog"></div>
+<div class="chatInputRow">
+<input class="input" id="roomChatInput" maxlength="200" placeholder="메시지 입력..."/>
+<button class="btn" id="roomChatSend">전송</button>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- 로그인(필수) -->
+<div aria-hidden="true" class="modalBackdrop" id="loginModal">
+<div class="modal">
+<div class="modalHeader">
+<b>로그인</b>
+<span class="badge">최근 닉: <b id="lastNick">(없음)</b></span>
+</div>
+<div class="modalBody">
+<form id="loginForm" class="authForm">
+<div class="field">
+<label>아이디</label>
+<input id="loginUsername" autocomplete="username" placeholder="아이디"/>
+</div>
+<div class="field">
+<label>비밀번호</label>
+<input id="loginPassword" type="password" autocomplete="current-password" placeholder="비밀번호"/>
+</div>
+<div class="authRow">
+<button class="btn primary" type="submit">로그인</button>
+<button class="btn" id="guestBtn" type="button">게스트(랜덤숫자)</button>
+</div>
+<div class="authRow" style="justify-content:flex-end; margin-top:6px;">
+<button class="btn" id="signupToggleBtn" type="button">회원가입</button>
+</div>
+<div class="muted" id="loginStatus" style="margin-top:8px;"></div>
+<small>※ 비밀번호는 서버(시트) 검증에만 사용되고 게임 서버에는 저장/전송하지 않습니다.</small>
+</form>
+
+<div id="signupArea" class="signupArea hidden">
+<hr style="border:none;border-top:1px solid rgba(43,91,134,.55); margin:10px 0;">
+<form id="signupForm" class="authForm">
+<div class="field">
+<label>회원가입 아이디</label>
+<input id="signupUsername" autocomplete="username" placeholder="아이디"/>
+</div>
+<div class="field">
+<label>회원가입 비밀번호</label>
+<input id="signupPassword" type="password" autocomplete="new-password" placeholder="비밀번호"/>
+</div>
+<div class="field">
+<label>닉네임(선택)</label>
+<input id="signupNickname" placeholder="채팅/게임 닉네임"/>
+</div>
+<div class="authRow">
+<button class="btn primary" type="submit">회원가입 완료</button>
+</div>
+</form>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<!-- 결과 오버레이 (저장/기록 없음) -->
+<div class="resultOverlay hidden" id="resultOverlay" aria-hidden="true">
+  <div class="resultCard">
+    <div class="resultTitle" id="resultTitle">...</div>
+    <div class="resultDesc muted" id="resultDesc"></div>
+  </div>
+</div>
+
+<script defer="" src="./js/core/config.js"></script>
+<script defer="" src="./js/auth/sheet-config.js"></script>
+<script defer="" src="./js/auth/auth.js"></script>
+<script defer="" src="./js/core/net.js"></script>
+<script defer="" src="./js/core/audio.js"></script>
+<script defer="" src="./js/games/registry.js"></script><script defer="defer" src="./js/stackga/engine.js"></script><script defer="defer" src="./js/stackga/touch.js"></script><script defer="defer" src="./js/sim/stackga_tournament.js"></script>
+<script defer="" src="./js/sim/tetris4.js"></script>
+<script defer="" src="./js/sim/coop4.js"></script>
+<script defer="" src="./js/pages/room.js"></script>
+<audio id="bgmBattle" loop="" preload="auto" src="assets/audio/lobby_battle.mp3"></audio>
+</body>
+</html>

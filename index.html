@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>로비</title>
+  <link rel="stylesheet" href="./css/styles.css"/>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar slim">
+      <span class="badge nickChip"><span class="dot ok"></span><span>닉네임:</span> <b id="myId">-</b></span>
+      <div class="actions">
+        <button class="iconbtn" id="openCreate" title="방 만들기" aria-label="방 만들기">➕</button>
+        <button class="iconbtn" id="refreshRooms" title="새로고침" aria-label="새로고침">🔄</button>
+        <button class="iconbtn" id="logoutBtn" title="로그아웃" aria-label="로그아웃">🚪</button>
+      </div>
+    </div>
+    <div id="statusBanner" class="status" style="display:none"></div>
+
+    <div class="main">
+      <div class="panel rooms">
+        <div class="tableWrap">
+          <table>
+            <colgroup>
+              <col style="width:52px">
+              <col style="width:64px">
+              <col>
+              <col style="width:44px">
+              <col style="width:56px">
+            </colgroup>
+            <thead>
+              <tr>
+                <th class="col-status">상태</th>
+                <th class="col-game">게임</th>
+                <th class="col-title">방 제목</th>
+                <th class="col-count">인원</th>
+                <th class="col-join"></th>
+              </tr>
+            </thead>
+            <tbody id="roomsBody"></tbody>
+          </table>
+        </div>
+
+        <div class="legendRow">
+          <span class="badge"><span class="dot ok"></span>대기</span>
+          <span class="badge"><span class="dot danger"></span>게임중</span>
+          <span class="badge"><span class="dot warn"></span>만석</span>
+        </div>
+</div>
+
+      <div class="panel splitRight">
+        <div class="panelHeader">
+          <div>
+            <h2>채팅</h2>
+</div>
+          <span class="badge"><span class="dot ok"></span>LIVE</span>
+        </div>
+        <div class="chatLog" id="chatLog"></div>
+        <div class="chatInput">
+          <input id="chatInput" placeholder="메시지 입력…" autocomplete="off"/>
+          <button class="btn primary" id="chatSend">전송</button>
+        </div>
+
+        <div class="panelHeader" style="border-top:1px solid rgba(43,91,134,.55);">
+          <div>
+            <h2>접속자</h2>
+</div>
+          <div class="kpi" id="onlineKpi">접속 인원: <b>0</b>명</div>
+        </div>
+        <div class="userList" id="usersWrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 방 만들기 -->
+  <div class="modalBackdrop" id="createModal" aria-hidden="true">
+    <div class="modal">
+      <div class="modalHeader">
+        <b>방 만들기</b>
+        <button class="btn" id="modalClose">닫기</button>
+      </div>
+      <div class="modalBody">
+        <div class="field">
+          <label>방 제목</label>
+          <input id="roomTitle" placeholder="예) SUPER NO SPEED" maxlength="30"/>
+        </div>
+        <div class="field">
+          <label>게임 모드</label>
+          <select id="gameMode"></select>
+        </div>
+        <div class="field">
+          <label>최대 인원 (2~4)</label>
+          <select id="maxClients">
+            <option value="4" selected>4</option>
+            <option value="3">3</option>
+            <option value="2">2</option>
+          </select>
+        </div>
+        <small>방 생성 후 자동으로 입장합니다. (게임/채팅 기록 저장 없음)</small>
+      </div>
+      <div class="modalFooter">
+        <button class="btn" id="createCancel">취소</button>
+        <button class="btn primary" id="createConfirm">생성</button>
+      </div>
+    </div>
+  </div>
+
+    <!-- 로그인(필수) -->
+  <div class="modalBackdrop" id="loginModal" aria-hidden="true">
+    <div class="modal">
+      <div class="modalHeader">
+        <b>로그인</b>
+        <span class="badge">최근 닉: <b id="lastNick">(없음)</b></span>
+      </div>
+      <div class="modalBody">
+        <form id="loginForm" class="authForm">
+          <div class="field">
+            <label>아이디</label>
+            <input id="loginUsername" autocomplete="username" placeholder="아이디"/>
+          </div>
+          <div class="field">
+            <label>비밀번호</label>
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="비밀번호"/>
+          </div>
+          <div class="authRow">
+            <button class="btn primary" type="submit">로그인</button>
+            <button class="btn" type="button" id="guestBtn">게스트(랜덤숫자)</button>
+          </div>
+          <div class="authRow" style="justify-content:flex-end; margin-top:6px;">
+            <button class="btn" type="button" id="signupToggleBtn">회원가입</button>
+          </div>
+          <div id="loginStatus" class="muted" style="margin-top:8px;"></div>
+          <small>※ 비밀번호는 서버(시트) 검증에만 사용되고 게임 서버에는 저장/전송하지 않습니다.</small>
+        </form>
+
+        <div id="signupArea" class="signupArea hidden">
+          <hr style="border:none;border-top:1px solid rgba(43,91,134,.55); margin:10px 0;">
+          <form id="signupForm" class="authForm">
+            <div class="field">
+              <label>회원가입 아이디</label>
+              <input id="signupUsername" autocomplete="username" placeholder="아이디"/>
+            </div>
+            <div class="field">
+              <label>회원가입 비밀번호</label>
+              <input id="signupPassword" type="password" autocomplete="new-password" placeholder="비밀번호"/>
+            </div>
+            <div class="field">
+              <label>닉네임(선택)</label>
+              <input id="signupNickname" placeholder="채팅/게임 닉네임"/>
+            </div>
+            <div class="authRow">
+              <button class="btn primary" type="submit">회원가입 완료</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/core/config.js" defer></script>
+  <script src="./js/auth/sheet-config.js" defer></script>
+  <script src="./js/auth/auth.js" defer></script>
+  <script src="./js/core/net.js" defer></script>
+  <script src="./js/core/audio.js" defer></script>
+  <script src="./js/games/registry.js" defer></script>
+  <script src="./js/pages/lobby.js" defer></script>
+
+  <audio id="bgmLobby" src="assets/audio/lobby_music.mp3" preload="auto" loop></audio>
+
+</body>
+</html>
