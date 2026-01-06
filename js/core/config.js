@@ -1,10 +1,30 @@
 // 서버 주소를 여기에 설정하세요.
 // 로컬 테스트(Worker dev): ws://127.0.0.1:8787  (wrangler dev)
 // 배포(Cloudflare Workers): wss://<your-worker-subdomain>.workers.dev
+//
+// ✅ Pages(HTTPS) 배포용 기본값을 Worker로 자동 설정합니다.
+// - 로컬(localhost/127.0.0.1)에서는 기존처럼 로컬 ws://127.0.0.1:8787 사용
+// - 그 외(배포 환경)에서는 아래 Worker로 연결
 (function(){
-  const wsEndpoint = (window.__SERVER_ENDPOINT__ || "ws://127.0.0.1:8787");
-  // HTTP base is derived from WS endpoint unless provided explicitly.
-  const httpBase = (window.__SERVER_HTTP__ || wsEndpoint.replace(/^ws(s?):\/\//, "http$1://"));
+  const DEFAULT_WORKER_HOST = "multiroom-playground.tmdrb445-f03.workers.dev";
+
+  const host = (window.location && window.location.hostname) || "";
+  const isLocal = (host === "localhost" || host === "127.0.0.1");
+
+  // 1) 사용자가 window.__SERVER_ENDPOINT__ / __SERVER_HTTP__ 로 강제 지정하면 그 값을 우선 사용
+  let wsEndpoint = window.__SERVER_ENDPOINT__;
+  let httpBase = window.__SERVER_HTTP__;
+
+  // 2) 지정이 없으면 환경에 따라 자동 선택
+  if(!wsEndpoint){
+    wsEndpoint = isLocal ? "ws://127.0.0.1:8787" : `wss://${DEFAULT_WORKER_HOST}`;
+  }
+
+  // 3) HTTP base는 WS endpoint에서 파생(필요시 override 가능)
+  if(!httpBase){
+    httpBase = wsEndpoint.replace(/^ws(s?):\/\//, "http$1://");
+  }
+
   window.APP_CONFIG = Object.assign(window.APP_CONFIG || {}, {
     SERVER_ENDPOINT: wsEndpoint,
     SERVER_HTTP: httpBase
