@@ -597,7 +597,7 @@ export class RoomDO{
         this._applyHostFlags();
 
         // If we are in lobby, ensure no stale CPU player remains from a prior solo game
-        if (this.meta.phase === \"lobby\"){
+        if (this.meta.phase === "lobby"){
           this._stopCpu();
           this._removeCpuUser();
         }
@@ -649,6 +649,10 @@ export class RoomDO{
           humanCount++;
         }
 
+        // NOTE: In solo duel (only 1 human in a duel mode), the host should be able to start
+        // immediately without any ready-gating. CPU will be attached to make it 1:1.
+        const soloDuel = (duel && humanCount === 1);
+
         if (!duel){
           // Co-op (togester) requires 2+ humans
           if (humanCount < 2){
@@ -671,7 +675,7 @@ export class RoomDO{
           }
         }
 
-        if (!this._allReady()){
+        if (!soloDuel && !this._allReady()){
           this._send(ws, "system", { text:"모두 레디해야 시작됩니다.", ts: now() });
           return;
         }
