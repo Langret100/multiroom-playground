@@ -476,6 +476,14 @@ tbody tr:hover{
   /* Mobile: while a game is in progress, hide the separate player list panel
      so the play area doesn't get squashed. */
   body.is-playing .playersPanel{ display:none !important; }
+
+  /* Mobile lobby: keep the room list tall; make online users scroll instead of expanding */
+  .splitRight .userList{
+    flex: 0 0 auto;
+    height: clamp(140px, 22vh, 240px);
+    overflow: auto;
+  }
+
 }
 
 

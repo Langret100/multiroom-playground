@@ -1108,6 +1108,38 @@ this.view.scale = scale;
 
                 const xPx = ox + this.dropX * s;
                 el.style.transform = `translate3d(${xPx}px,0,0) translateX(-50%)`;
+
+                // Fix: 사각형 프리뷰가 위험선(점선)에 걸쳐 보이는 현상 방지
+                // - 사각형 프리뷰의 바닥이 위험선보다 최소 15px 위로 오도록 top을 보정
+                // - 프리뷰 '계산' 단계(여기)에서 보정하여 스케일/레이아웃에 의해 상쇄되지 않게 함
+                try {
+                    const sh = SHAPES[this.currentShapeIndex];
+                    let topPx = 5;
+                    if (sh && sh.type === 'square') {
+                        const margin = 15;
+                        const line = this.gameArea ? this.gameArea.querySelector('.danger-line') : null;
+                        const wr = this.wrapper ? this.wrapper.getBoundingClientRect() : null;
+                        const lr = line ? line.getBoundingClientRect() : null;
+                        if (wr && lr) {
+                            const dangerYpx = lr.top - wr.top;
+                            // square SVG bbox bottom(=cy + 0.8r) where cy=vs/2 and vs=2.4r => bottom = 2.0r
+                            const r = (Number.isFinite(sh.size) ? sh.size : 0);
+                            const bottomOffset = (r * 2.0) + 2; // +stroke/antialias safe
+                            topPx = Math.round(dangerYpx - margin - bottomOffset);
+                        } else {
+                            // fallback: 최소한 15px 위로
+                            topPx = 5 - 15;
+                        }
+                    }
+                    // Drop preview vertical tweaks (relative to current height):
+                    // - isoceles(이등변삼각형): 7px up
+                    // - circle/bigcircle(원): 3px down
+                    if (sh) {
+                        if (sh.type === 'isoceles') topPx -= 7;
+                        if (sh.type === 'circle' || sh.type === 'bigcircle') topPx += 3;
+                    }
+                    el.style.top = `${topPx}px`;
+                } catch (e) {}
             }
 
             createShapeProgression() {
@@ -1174,7 +1206,7 @@ this.view.scale = scale;
                     try { Matter.Events.off(prevEngine, 'collisionStart', this._onCollisionStart); } catch(e) {}
                 }
 
-                this.engine = Matter.Engine.create({ positionIterations: 10, velocityIterations: 10 });
+                this.engine = Matter.Engine.create({ positionIterations: 16, velocityIterations: 16, constraintIterations: 4 });
                 this.world = this.engine.world;
                 this.engine.world.gravity.y = 1.0;
                 Matter.Events.on(this.engine, 'collisionStart', this._onCollisionStart);
@@ -1204,13 +1236,15 @@ this.view.scale = scale;
                 const centerX = w / 2;
                 const radiusX = w / 2 - inset;
                 const curveTopY = h * 0.6;
-                const bottomY = h; // 월드의 바닥(캔버스 하단)과 일치
+                const borderAdjust = 6;
+                const bottomY = h - borderAdjust; // 시각적 곡선(클리핑)과 바닥 판정 정렬
                 const radiusY = bottomY - curveTopY;
 
                 // 바닥 세그먼트는 두께의 절반만큼 "바깥쪽"으로 밀어
                 // 내부(게임 영역)에서 보이는 곡선 경계와 물리 충돌면이 맞도록 보정
-                const floorT = 14;
-                const segments = 28;
+                const floorT = 16;
+                const innerBias = 2; // curve보다 살짝 안쪽(위)으로 당겨 시각적 곡선과 오차 보정
+                const segments = 64;
                 for (let i = 0; i < segments; i++) {
                     const a1 = Math.PI - (i / segments) * Math.PI;
                     const a2 = Math.PI - ((i + 1) / segments) * Math.PI;
@@ -1225,7 +1259,7 @@ this.view.scale = scale;
 
                     const dx = x2 - x1;
                     const dy = y2 - y1;
-                    const segLen = Math.hypot(dx, dy) + 4;
+                    const segLen = Math.hypot(dx, dy) + 8;
                     const ang = Math.atan2(dy, dx);
 
                     // outward normal 결정(컵 바깥쪽)
@@ -1237,8 +1271,10 @@ this.view.scale = scale;
                     const vy = midY - curveTopY;
                     if (nx * vx + ny * vy < 0) { nx = -nx; ny = -ny; }
 
-                    const offX = midX + nx * (floorT / 2);
-                    const offY = midY + ny * (floorT / 2);
+                    const pushOut = Math.max(0, (floorT / 2) - innerBias);
+
+                    const offX = midX + nx * pushOut;
+                    const offY = midY + ny * pushOut;
 
                     Matter.Composite.add(this.world, Matter.Bodies.rectangle(
                         offX, offY, segLen, floorT,
@@ -1500,7 +1536,17 @@ this.view.scale = scale;
                 const fallback = (shape && Number.isFinite(shape.size)) ? shape.size : 14;
                 const s = Number(size);
                 size = Number.isFinite(s) && s > 0 ? s : fallback;
-                const vs = size*2.4, cx = vs/2, cy = vs/2, r = size;
+                const vs = size*2.4;
+                const cx = vs/2;
+                let cy = vs/2;
+                const r = size;
+                // isoceles(이등변) 삼각형은 꼭짓점이 위로 더 튀어나와(top = cy - 1.3r)
+                // viewBox 상단을 살짝 넘을 수 있으므로, topSafe 기준으로만 클램프(계산 단계)합니다.
+                if (shape.type === 'isoceles') {
+                    const topSafe = 2; // px (SVG 좌표)
+                    const top = cy - r * 1.3;
+                    if (top < topSafe) cy += (topSafe - top);
+                }
                 const es = Math.max(1.5, size*0.1), eg = size*0.28, ey = cy - size*0.05;
                 const my = cy + size*0.25, mw = size*0.25;
                 const uid = Math.random().toString(36).substr(2,6);
@@ -1540,7 +1586,14 @@ this.view.scale = scale;
                 this.resetAutoDropTimer();
                 this.canDrop = false;
                 this.sound.playDrop();
-                const body = this.createPhysicsBody(this.dropX, 50, this.currentShapeIndex);
+	                // Spawn Y adjustments (relative to current spawn height):
+	                // - isoceles(이등변삼각형): 7px up
+	                // - circle/bigcircle(원): 3px down
+	                const curShape = SHAPES[this.currentShapeIndex] || { type: 'circle' };
+	                let spawnY = 50;
+	                if (curShape.type === 'isoceles') spawnY -= 7;
+	                if (curShape.type === 'circle' || curShape.type === 'bigcircle') spawnY += 3;
+	                const body = this.createPhysicsBody(this.dropX, spawnY, this.currentShapeIndex);
                 this.bodies.push({ body, shapeIndex: this.currentShapeIndex, id: body.id, hasLanded: false });
                 Matter.Composite.add(this.world, body);
                 this.triggerNearbyReactions(this.dropX, 150, body.id);
@@ -1551,18 +1604,42 @@ this.view.scale = scale;
             createPhysicsBody(x, y, shapeIndex) {
                 const shape = SHAPES[shapeIndex];
                 const size = shape.size;
-                const opts = { friction: 0.6, frictionStatic: 0.8, restitution: 0.12, density: 0.0012, label: `shape_${shapeIndex}`, slop: 0.01 };
+                const opts = { friction: 0.6, frictionStatic: 0.8, restitution: 0.12, density: 0.0012, label: `shape_${shapeIndex}`, slop: 0.001 };
 
                 let body;
                 switch(shape.type) {
                     case 'circle': case 'bigcircle': body = Matter.Bodies.circle(x, y, size, opts); break;
-                    case 'triangle': body = Matter.Bodies.polygon(x, y, 3, size, opts); break;
+                    case 'triangle': {
+                        const verts = [];
+                        for (let i = 0; i < 3; i++) {
+                            const a = (i * 120 - 90) * Math.PI / 180;
+                            verts.push({ x: Math.cos(a) * size, y: Math.sin(a) * size });
+                        }
+                        body = Matter.Bodies.fromVertices(x, y, [verts], opts, true);
+                        break;
+                    }
                     case 'isoceles': body = Matter.Bodies.fromVertices(x, y, [[{x:0,y:-size*1.3},{x:size*0.7,y:size*0.7},{x:-size*0.7,y:size*0.7}]], opts); break;
                     case 'square': body = Matter.Bodies.rectangle(x, y, size*1.6, size*1.6, opts); break;
                     case 'rectangle': body = Matter.Bodies.rectangle(x, y, size*2.2, size*1.2, opts); break;
                     case 'diamond': body = Matter.Bodies.fromVertices(x, y, [[{x:0,y:-size},{x:size*0.75,y:0},{x:0,y:size},{x:-size*0.75,y:0}]], opts); break;
-                    case 'pentagon': body = Matter.Bodies.polygon(x, y, 5, size, opts); break;
-                    case 'hexagon': body = Matter.Bodies.polygon(x, y, 6, size, opts); break;
+                    case 'pentagon': {
+                        const verts = [];
+                        for (let i = 0; i < 5; i++) {
+                            const a = (i * 72 - 90) * Math.PI / 180;
+                            verts.push({ x: Math.cos(a) * size, y: Math.sin(a) * size });
+                        }
+                        body = Matter.Bodies.fromVertices(x, y, [verts], opts, true);
+                        break;
+                    }
+                    case 'hexagon': {
+                        const verts = [];
+                        for (let i = 0; i < 6; i++) {
+                            const a = (i * 60 - 90) * Math.PI / 180;
+                            verts.push({ x: Math.cos(a) * size, y: Math.sin(a) * size });
+                        }
+                        body = Matter.Bodies.fromVertices(x, y, [verts], opts, true);
+                        break;
+                    }
                     default: body = Matter.Bodies.circle(x, y, size, opts);
                 }
                 return body || Matter.Bodies.circle(x, y, size, opts);
@@ -1570,7 +1647,7 @@ this.view.scale = scale;
 
             createRockBody(x, y) {
                 const size = SHAPES[0].size; // 1단계 원 크기
-                const opts = { friction: 0.9, frictionStatic: 1.0, restitution: 0.05, density: 0.002, label: 'rock', slop: 0.02 };
+                const opts = { friction: 0.9, frictionStatic: 1.0, restitution: 0.05, density: 0.002, label: 'rock', slop: 0.005 };
                 // 각진 짱돌(불규칙 다각형)
                 const verts = [];
                 const sides = 6;
@@ -2022,7 +2099,9 @@ this.view.scale = scale;
 
             gameLoop() {
                 if (!this.isGameOver) {
-                    Matter.Engine.update(this.engine, 1000/60);
+                    const dt = 1000/120;
+                    Matter.Engine.update(this.engine, dt);
+                    Matter.Engine.update(this.engine, dt);
                     this.checkGameOver();
                     this.tickAutoDrop();
                 }

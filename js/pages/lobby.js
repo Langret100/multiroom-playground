@@ -74,6 +74,14 @@ function setupBgm(audioElId, btnId){
   let lobbyRoom = null;
   let myNick = null;
 
+  // Cache latest rooms/users so we can render user meta (room title/game) reliably.
+  let roomsById = new Map();
+  let lastUsers = [];
+
+  // Throttled presence refresh (avoid redundant requests)
+  let _presenceTimer = null;
+  let _lastPresenceReq = 0;
+
   function appendChat(m){
     const line = document.createElement("div");
     line.className = "chatLine";
@@ -103,18 +111,40 @@ function setupBgm(audioElId, btnId){
   }
 
   function renderUsers(users){
+    lastUsers = Array.isArray(users) ? users : [];
     els.usersWrap.innerHTML = "";
-    for (const u of users){
+    for (const u of lastUsers){
       const d = document.createElement("div");
       d.className = "userItem";
       const nick = u.nick || u.id?.slice(0,6) || "Player";
       const roomId = u.roomId || "";
-      d.textContent = roomId ? `${nick} (방: ${roomId})` : nick;
+      if (roomId && roomsById.has(roomId)){
+        const r = roomsById.get(roomId);
+        const title = safeText(r.title || "방", 18);
+        const mode = safeText(modeLabel(r.mode), 10);
+        d.textContent = `${nick} (${title} · ${mode})`;
+      } else {
+        d.textContent = roomId ? `${nick} (방: ${roomId})` : nick;
+      }
       els.usersWrap.appendChild(d);
     }
   }
 
-  function statusDot(room){
+  
+  function requestPresenceThrottled(reason){
+    if (!lobbyRoom) return;
+    const now = Date.now();
+    // min interval 800ms
+    if (now - _lastPresenceReq < 800){
+      if (_presenceTimer) return;
+      _presenceTimer = setTimeout(()=>{ _presenceTimer=null; requestPresenceThrottled('debounced'); }, 850);
+      return;
+    }
+    _lastPresenceReq = now;
+    try{ lobbyRoom.send("presence", { reason: reason || "ui" }); }catch(_){}
+  }
+
+function statusDot(room){
     const status = room?.metadata?.status || "waiting";
     const full = (room.clients >= room.maxClients);
     if (status === "playing") return "danger";
@@ -141,6 +171,12 @@ function setupBgm(audioElId, btnId){
 
   function renderRooms(list){
     const rooms = (list || []).map(normalizeRoom).filter(r=>!!r.roomId);
+
+    // Update room map for presence rendering (nick -> room title/game)
+    roomsById.clear();
+    for (const r of rooms) roomsById.set(r.roomId, r);
+    // Re-render users so their room meta stays fresh even if presence payload only has roomId.
+    if (lastUsers && lastUsers.length) renderUsers(lastUsers);
 
     if (!rooms.length){
       els.roomsBody.innerHTML = `<tr><td colspan="5" class="muted">열린 방이 없습니다. 아래 '방 만들기'를 눌러 생성하세요.</td></tr>`;
@@ -288,8 +324,13 @@ function setupBgm(audioElId, btnId){
       client = makeClient();
       lobbyRoom = await client.joinOrCreate("lobby_room", { nick: myNick });
 
-      lobbyRoom.onMessage("chat", appendChat);
-      lobbyRoom.onMessage("system", appendChat);
+      lobbyRoom.onMessage("chat", (m)=>{ appendChat(m); });
+      lobbyRoom.onMessage("system", (m)=>{ 
+        appendChat(m);
+        // If a join/leave system notice arrived, refresh presence promptly (throttled).
+        const t = (m && (m.text||m.message||"")).toString();
+        if (/접속|입장|퇴장|나감|종료/.test(t)) requestPresenceThrottled("system");
+      });
       lobbyRoom.onMessage("rooms", (m)=>{
         // Primary room list updates come from LobbyDO push (reduces server usage).
         renderRooms((m && m.list) ? m.list : []);
@@ -299,7 +340,7 @@ function setupBgm(audioElId, btnId){
         renderUsers(m.users || []);
       });
 
-      lobbyRoom.send("presence", {});
+      requestPresenceThrottled("init");
       // Optional one-shot fetch as a fallback (manual refresh is also available)
       await refreshRooms();
       // Fallback polling (low frequency): room list is primarily pushed from the server.

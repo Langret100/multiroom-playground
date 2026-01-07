@@ -417,6 +417,9 @@
         <div class="win-text">🎉 레벨 클리어! 🎉</div>
         <div id="autoNextHint" style="color: #aaa; margin-top: 15px; font-size: 0.9rem;">잠시 후 다음 레벨로...</div>
     </div>
+
+    <!-- 배경음악 (게임 진행 중 반복 재생) -->
+    <audio id="bgm" src="togestermusic.mp3" loop preload="auto"></audio>
 <script>
         // ==================== 설정 ====================
         // Firebase 의존성 제거 (Colyseus/부모 브릿지로 동기화)
@@ -451,6 +454,10 @@
         
         let players = {};
         let smoothedPlayers = {};
+        // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
+        let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
+        const NET_INTERP_DELAY_MS = 120; // 약간의 지연을 두고 보간 (지터/끊김 완화)
+        const NET_MAX_HISTORY_MS = 2000;
         let gameObjects = [];
         let canvas, ctx;
         let cameraX = 0;
@@ -462,6 +469,55 @@
         
         // ==================== 사운드 시스템 ====================
         let audioCtx = null;
+
+        // 배경음악 (첨부 mp3) - 게임 진행 중 반복 재생
+        let bgmEl = null;
+        let bgmWanted = false;
+
+        function initBGM() {
+            if (!bgmEl) bgmEl = document.getElementById('bgm');
+            if (bgmEl) {
+                bgmEl.loop = true;
+                bgmEl.preload = 'auto';
+                // 기본 볼륨 (너무 크지 않게)
+                if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.5;
+            }
+        }
+
+        async function startBGM() {
+            initBGM();
+            if (!bgmEl) return;
+            bgmWanted = true;
+            try {
+                await bgmEl.play();
+            } catch (e) {
+                // 자동재생 제한: 첫 입력 시 재시도
+            }
+        }
+
+        function stopBGM() {
+            bgmWanted = false;
+            if (!bgmEl) return;
+            try {
+                bgmEl.pause();
+                bgmEl.currentTime = 0;
+            } catch (e) {}
+        }
+
+        // 사용자 입력이 발생하면 오디오 컨텍스트/배경음악 재시도 (자동재생 제한 대응)
+        (function attachBGMGestureRetry(){
+            const tryStart = async () => {
+                initAudio();
+                initBGM();
+                if (!bgmEl) return;
+                if (!bgmWanted) return;
+                if (!bgmEl.paused) return;
+                try { await bgmEl.play(); } catch (e) { return; }
+            };
+            document.addEventListener('pointerdown', tryStart, { passive: true });
+            document.addEventListener('touchstart', tryStart, { passive: true });
+            document.addEventListener('keydown', tryStart);
+        })();
         
         function initAudio() {
             if (!audioCtx) {
@@ -1116,6 +1172,8 @@
             
             // 오디오 초기화
             initAudio();
+            // 배경음악 시작 (자동재생 제한 시 첫 입력에서 재시도)
+            startBGM();
             
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
@@ -1443,9 +1501,12 @@ cameraX = 0;
                 
                 // 다른 플레이어가 버튼 위에 있는지 (멀티플레이)
                 if (!isGuestMode) {
-                    Object.values(players).forEach(p => {
-                        if (p.x + 20 > button.x && p.x < button.x + button.width &&
-                            p.y + 40 > button.y && p.y + 40 < button.y + button.height + 10) {
+                    Object.entries(players).forEach(([sid, p]) => {
+                        const rp = getInterpolatedRemote(sid, p || {});
+                        const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
+                        const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
+                        if (px + 20 > button.x && px < button.x + button.width &&
+                            py + 40 > button.y && py + 40 < button.y + button.height + 10) {
                             somethingOnButton = true;
                         }
                     });
@@ -1843,17 +1904,33 @@ cameraX = 0;
                 ctx.fill();
             }
             
-            // 다른 플레이어들 (부드러운 보간)
-            Object.entries(players).forEach(([sid, tp]) => {
-                const sp = smoothedPlayers[sid] || (smoothedPlayers[sid] = { x: tp.x||0, y: tp.y||0 });
-                // 목표 위치로 부드럽게 이동 (네트워크 끊김 느낌 완화)
-                const k = 0.22; // lerp factor
-                sp.x += ((tp.x||0) - sp.x) * k;
-                sp.y += ((tp.y||0) - sp.y) * k;
-                // 기타 속성은 즉시 반영
-                sp.color = tp.color;
-                sp.name = tp.name;
+            // 다른 플레이어들 (히스토리 기반 보간/예측 + 스무딩)
+            Object.entries(players).forEach(([sid, p]) => {
+                const tp = getInterpolatedRemote(sid, p || {});
+                const initX = (typeof tp.x === 'number') ? tp.x : 0;
+                const initY = (typeof tp.y === 'number') ? tp.y : 0;
+                const sp = smoothedPlayers[sid] || (smoothedPlayers[sid] = { x: initX, y: initY });
+
+                const tx = (typeof tp.x === 'number') ? tp.x : 0;
+                const ty = (typeof tp.y === 'number') ? tp.y : 0;
+                const dx = tx - sp.x;
+                const dy = ty - sp.y;
+                const dist = Math.hypot(dx, dy);
+
+                // 순간이동급 차이는 바로 스냅 (심한 끊김/튀는 느낌 방지)
+                if (dist > 220) {
+                    sp.x = tx;
+                    sp.y = ty;
+                } else {
+                    const k = 0.35;
+                    sp.x += dx * k;
+                    sp.y += dy * k;
+                }
+
+                sp.color = tp.color || p.color;
+                sp.name = tp.name || p.name;
                 sp.isDead = !!tp.isDead;
+
                 drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead);
             });
 // 로컬 플레이어
@@ -1990,12 +2067,83 @@ cameraX = 0;
             bridgeSend("tg_over", { success: !!success, reason: reason || (success ? "clear" : "fail") });
         }
 
+        // ==================== 원격 플레이어 보간/예측 ====================
+        function recordRemoteSnapshot(sid, p){
+            const now = performance.now();
+            const arr = remoteHistory[sid] || (remoteHistory[sid] = []);
+            arr.push({
+                t: now,
+                x: (p && typeof p.x === 'number') ? p.x : (p?.x || 0),
+                y: (p && typeof p.y === 'number') ? p.y : (p?.y || 0),
+                vx: (p && typeof p.vx === 'number') ? p.vx : (p?.vx || 0),
+                vy: (p && typeof p.vy === 'number') ? p.vy : (p?.vy || 0),
+                isDead: !!p?.isDead,
+                color: p?.color,
+                name: p?.name
+            });
+
+            // 히스토리 정리
+            const cutoff = now - NET_MAX_HISTORY_MS;
+            while (arr.length > 2 && arr[1].t < cutoff) arr.shift();
+            if (arr.length > 80) arr.splice(0, arr.length - 80);
+        }
+
+        function getInterpolatedRemote(sid, fallback){
+            const hist = remoteHistory[sid];
+            const now = performance.now();
+            const renderT = now - NET_INTERP_DELAY_MS;
+            if (!hist || hist.length === 0) return fallback || { x: 0, y: 0 };
+
+            // 너무 오래된 히스토리 정리
+            const cutoff = now - NET_MAX_HISTORY_MS;
+            while (hist.length > 2 && hist[1].t < cutoff) hist.shift();
+
+            // renderT 이전의 마지막 스냅샷 찾기
+            let i = 0;
+            while (i < hist.length - 1 && hist[i + 1].t <= renderT) i++;
+
+            const a = hist[i];
+            const b = hist[i + 1];
+
+            // 구간 보간
+            if (b && a.t <= renderT && renderT <= b.t) {
+                const span = (b.t - a.t) || 1;
+                const alpha = (renderT - a.t) / span;
+                return {
+                    x: a.x + (b.x - a.x) * alpha,
+                    y: a.y + (b.y - a.y) * alpha,
+                    vx: b.vx,
+                    vy: b.vy,
+                    isDead: !!b.isDead,
+                    color: b.color,
+                    name: b.name
+                };
+            }
+
+            // 최신 스냅샷 이후면 짧게 예측 (끊김 완화)
+            const last = hist[hist.length - 1];
+            const dtMs = Math.max(0, Math.min(200, renderT - last.t));
+            const frames = dtMs / 16.6667;
+            const g = 0.6;
+            return {
+                x: last.x + (last.vx || 0) * frames,
+                y: last.y + (last.vy || 0) * frames + 0.5 * g * frames * frames,
+                vx: last.vx,
+                vy: last.vy,
+                isDead: !!last.isDead,
+                color: last.color,
+                name: last.name
+            };
+        }
+
         function applyRemotePlayers(map){
             const next = {};
             if (!map) map = {};
             for (const [sid, p] of Object.entries(map)){
                 if (sid === mySessionId) continue;
                 next[sid] = p;
+                // 스냅샷 기록 (보간/예측)
+                recordRemoteSnapshot(sid, p);
                 // init smoothing slot
                 if (!smoothedPlayers[sid]){
                     smoothedPlayers[sid] = { x: p.x||0, y: p.y||0, vx: p.vx||0, vy: p.vy||0, isDead: !!p.isDead };
@@ -2008,6 +2156,9 @@ cameraX = 0;
             // prune removed
             for (const sid of Object.keys(smoothedPlayers)){
                 if (!players[sid]) delete smoothedPlayers[sid];
+            }
+            for (const sid of Object.keys(remoteHistory)){
+                if (!players[sid]) delete remoteHistory[sid];
             }
             updatePlayerList();
         }

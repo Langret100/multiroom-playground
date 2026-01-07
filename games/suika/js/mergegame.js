@@ -170,7 +170,15 @@ export class MergeGame {
     if(this.dead || !this.canDrop) return false;
     this.canDrop = false;
     const idx = this.currentShapeIndex;
-    const body = this._createBody(this.dropX, this._dangerY + 6, idx, false);
+    // Spawn Y adjustments (relative to current spawn height):
+    // - isoceles(이등변삼각형): 7px up
+    // - circle(원): 3px down
+    const shape = SHAPES[idx] || { type: "circle" };
+    let spawnY = this._dangerY + 6;
+    if(shape.type === "isoceles") spawnY -= 7;
+    if(shape.type === "circle") spawnY += 3;
+
+    const body = this._createBody(this.dropX, spawnY, idx, false);
     this._bodies.push({ body, shapeIndex: idx, id: body.id, hasLanded: false, isRock: false });
     this.M.Composite.add(this.world, body);
 
@@ -497,18 +505,22 @@ export class MergeGame {
     const size = shape.size;
     ctx.save();
     ctx.globalAlpha = this.canDrop ? 0.35 : 0.15;
-    // 프리뷰가 위험선(점선)에 "걸려" 보이지 않도록,
-    // 도형의 실제 높이에 맞춰 위험선 위로 충분히 올려서 표시합니다.
-    // (프리뷰만 이동. 게임 오버 위험선/월드 바운드는 그대로)
-    const halfH = (()=>{
-      if (shape.type === "circle") return size;
-      if (shape.type === "square") return (size * 1.55) / 2;
-      if (shape.type === "rectangle") return (size * 1.35) / 2;
-      // triangle/isoceles/pentagon/hexagon/octagon…
-      return size;
-    })();
-    const gap = 6; // line-to-shape gap
-    ctx.translate(this.dropX, this._dangerY - gap - halfH);
+    // (롤백) 프리뷰 위치 조정은 최소화합니다.
+    // 사용자가 요청한 대로 "사각형"만 15px 위로 올려서,
+    // 위험선(점선)에 살짝 걸쳐 보이는 현상만 해결합니다.
+    // 프리뷰 위치는 "그리는 단계"가 아니라, 여기서 최종 좌표를 계산해 보정합니다.
+    // 사각형 프리뷰의 바닥이 위험선보다 최소 15px 위로 오도록 보정.
+    let py = this._dangerY - size;
+    if(shape.type === "square"){
+      const margin = 15;
+      const halfH = (size*1.55) / 2;
+      const bottom = py + halfH;
+      const targetBottom = this._dangerY - margin;
+      if(bottom > targetBottom){
+        py -= (bottom - targetBottom);
+      }
+    }
+    ctx.translate(this.dropX, py);
     ctx.fillStyle = shape.color;
     ctx.strokeStyle = "rgba(255,255,255,0.65)";
     ctx.lineWidth = 2;
