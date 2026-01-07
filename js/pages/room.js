@@ -1345,5 +1345,6 @@ renderPlayers();
   const el = document.getElementById('bgmBattle');
   if (!el || !window.AudioManager) return;
   // keep handle so we can stop/resume on fullscreen game transitions
-  window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.55 });
+  // Slightly lower room BGM (was a bit loud)
+  window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.42 });
 })();

@@ -384,7 +384,33 @@ export class RoomDO{
     this._wired = new WeakSet();
     this._lobbyUpdateTimer = null;
     this._relayLimiter = new Map(); // uid -> {duelTs, tgTs}
+
+    // CPU player is virtual (no websocket). Only used to allow solo duel 1:1.
+    this._cpu = { active:false };
   }
+
+  _cpuUid(){ return "__cpu__"; }
+  _hasCpu(){ return this.users.has(this._cpuUid()); }
+
+  _ensureCpuUser(){
+    const cpu = this._cpuUid();
+    if (this.users.has(cpu)) return;
+    // Put CPU into an available seat (typically 2P)
+    const seat = this._assignSeat();
+    this.users.set(cpu, { nick:"CPU", ready:true, seat, isHost:false });
+  }
+
+  _removeCpuUser(){
+    const cpu = this._cpuUid();
+    if (!this.users.has(cpu)) return;
+    this.users.delete(cpu);
+    if (this.meta.ownerUserId === cpu) this.meta.ownerUserId = "";
+    this._recalcHost();
+    this._applyHostFlags();
+  }
+
+  _startCpu(){ this._cpu.active = true; }
+  _stopCpu(){ this._cpu.active = false; }
 
   _snapshot(){
     const players = Array.from(this.users.entries()).map(([uid, u])=>({
@@ -442,9 +468,21 @@ export class RoomDO{
   }
 
   _allReady(){
-    if (this.users.size < 2) return false;
-    // Host does not need to ready; only non-host players must be ready
-    for (const u of this.users.values()){
+    const cpu = this._cpuUid();
+    const duel = isDuelMode(this.meta.mode);
+    let humanCount = 0;
+    for (const [uid] of this.users.entries()){
+      if (uid === cpu) continue;
+      humanCount++;
+    }
+
+    // Solo duel: host can start immediately (server will attach CPU)
+    if (duel && humanCount === 1) return true;
+    if (humanCount < 2) return false;
+
+    // Host does not need to ready; only non-host HUMAN players must be ready
+    for (const [uid, u] of this.users.entries()){
+      if (uid === cpu) continue;
       if (u.isHost) continue;
       if (!u.ready) return false;
     }
@@ -601,10 +639,38 @@ export class RoomDO{
           this._send(ws, "system", { text:"방장만 시작할 수 있습니다.", ts: now() });
           return;
         }
-        if (this.users.size < 2){
-          this._send(ws, "system", { text:"2명 이상 있어야 시작할 수 있습니다.", ts: now() });
-          return;
+
+        // Validate start conditions
+        const cpu = this._cpuUid();
+        const duel = isDuelMode(this.meta.mode);
+        let humanCount = 0;
+        for (const [pid] of this.users.entries()){
+          if (pid === cpu) continue;
+          humanCount++;
         }
+
+        if (!duel){
+          // Co-op (togester) requires 2+ humans
+          if (humanCount < 2){
+            this._send(ws, "system", { text:"2명 이상 있어야 시작할 수 있습니다.", ts: now() });
+            return;
+          }
+        } else {
+          // Duel: allow solo start (CPU will be attached for 1:1)
+          if (humanCount < 1){
+            this._send(ws, "system", { text:"참가자가 없습니다.", ts: now() });
+            return;
+          }
+          if (humanCount === 1){
+            this._ensureCpuUser();
+            this._startCpu();
+          } else {
+            // If a stray CPU exists, remove it for real PvP games
+            this._stopCpu();
+            this._removeCpuUser();
+          }
+        }
+
         if (!this._allReady()){
           this._send(ws, "system", { text:"모두 레디해야 시작됩니다.", ts: now() });
           return;
@@ -723,6 +789,20 @@ export class RoomDO{
 
       this._recalcHost();
       this._applyHostFlags();
+
+      // If only CPU remains, clean it up so the room can be removed.
+      try{
+        const cpu = this._cpuUid();
+        let humanCount = 0;
+        for (const [pid] of this.users.entries()){
+          if (pid === cpu) continue;
+          humanCount++;
+        }
+        if (humanCount === 0){
+          this._stopCpu();
+          this._removeCpuUser();
+        }
+      }catch(_){ }
 
       if (this.users.size === 0){
         // No persistence: delete room immediately from lobby.

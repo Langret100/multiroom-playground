@@ -318,5 +318,6 @@ function setupBgm(audioElId, btnId){
 (function(){
   const el = document.getElementById('bgmLobby');
   if (!el || !window.AudioManager) return;
-  window.AudioManager.attachAudioManager(el, { label: '로비 음악 켜기', storageKey: 'audio_enabled', volume: 0.55 });
+  // Slightly lower lobby BGM (was a bit loud)
+  window.AudioManager.attachAudioManager(el, { label: '로비 음악 켜기', storageKey: 'audio_enabled', volume: 0.42 });
 })();
