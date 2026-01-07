@@ -107,7 +107,9 @@ function setupBgm(audioElId, btnId){
     for (const u of users){
       const d = document.createElement("div");
       d.className = "userItem";
-      d.textContent = u.nick || u.id?.slice(0,6) || "Player";
+      const nick = u.nick || u.id?.slice(0,6) || "Player";
+      const roomId = u.roomId || "";
+      d.textContent = roomId ? `${nick} (방: ${roomId})` : nick;
       els.usersWrap.appendChild(d);
     }
   }
@@ -300,8 +302,9 @@ function setupBgm(audioElId, btnId){
       lobbyRoom.send("presence", {});
       // Optional one-shot fetch as a fallback (manual refresh is also available)
       await refreshRooms();
-      // Fallback polling: ensures 인원/상태가 누락되더라도 로비가 결국 동기화됩니다.
-      setInterval(()=>{ try{ refreshRooms(); }catch(_){} }, 5000);
+      // Fallback polling (low frequency): room list is primarily pushed from the server.
+      // Keep this light to avoid redundant requests.
+      setInterval(()=>{ try{ if (document.visibilityState === "visible") refreshRooms(); }catch(_){} }, 15000);
       setStatus("", "info");
     }catch(err){
       setStatus("서버에 연결할 수 없습니다. 로컬 테스트는 http 서버로 열고, 서버를 먼저 실행하세요.", "error");

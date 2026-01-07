@@ -106,6 +106,12 @@ export class LobbyDO{
     this.userSockets = new Map();  // uid -> ws
     this.nicks = new Map();        // uid -> nick
 
+    // Global presence across lobby + rooms.
+    // uid -> { nick, roomId, lastSeen }
+    // - roomId: "" means in lobby (or not in any room)
+    // - Users inside a room are registered by RoomDO via /internal/presenceSet
+    this.presence = new Map();
+
     this.rooms = null;            // room map persisted while rooms exist
     this._saveTimer = null;
     this._wired = new WeakSet();  // sockets already wired (rehydration)
@@ -130,6 +136,25 @@ export class LobbyDO{
     for (const ws of this.sockets.keys()){
       try{ ws.send(msg); }catch(_){}
     }
+  }
+
+  _broadcastPresence(){
+    // Push presence updates so the lobby UI updates immediately without polling.
+    this._broadcast("presence", this._presencePayload());
+  }
+
+  _presencePayload(){
+    const users = [];
+    for (const [uid, p] of this.presence.entries()){
+      if (!p || !p.nick) continue;
+      users.push({ userId: uid, nick: p.nick, roomId: p.roomId || "" });
+    }
+    users.sort((a,b)=> (a.nick||"").localeCompare(b.nick||"", "ko"));
+    return { online: users.length, users };
+  }
+
+  _broadcastPresence(){
+    this._broadcast("presence", this._presencePayload());
   }
   _send(ws, t, d){
     try{ ws.send(JSON.stringify({ t, d })); }catch(_){}
@@ -176,9 +201,13 @@ export class LobbyDO{
         this.nicks.set(wantUid, nick);
         wsSetAttachment(ws, { uid: wantUid, nick });
 
+        // Register as online in lobby (roomId=""). RoomDO can override roomId later.
+        this.presence.set(wantUid, { nick, roomId:"", lastSeen: now() });
+
         this._send(ws, "hello_ok", { userId: wantUid, nick });
         this._send(ws, "rooms", { list: this._roomsList() });
         this._broadcast("system", { text: `${nick} 접속`, ts: now() });
+        this._broadcastPresence();
         return;
       }
 
@@ -191,11 +220,7 @@ export class LobbyDO{
       }
 
       if (t === "presence"){
-        const users = [];
-        for (const [u, n] of this.nicks.entries()){
-          if (n) users.push({ userId: u, nick: n });
-        }
-        this._send(ws, "presence", { online: users.length, users });
+        this._send(ws, "presence", this._presencePayload());
         return;
       }
 
@@ -225,6 +250,16 @@ export class LobbyDO{
         this.userSockets.delete(uid);
         const nick = this.nicks.get(uid);
         this.nicks.delete(uid);
+        // Remove from presence only if not known to be inside a room.
+        // (RoomDO will set roomId when the user joins a room.)
+        const p = this.presence.get(uid);
+        if (p && !p.roomId){
+          this.presence.delete(uid);
+        } else if (p){
+          p.lastSeen = now();
+          this.presence.set(uid, p);
+        }
+        this._broadcastPresence();
         if (nick) this._broadcast("system", { text: `${nick} 퇴장`, ts: now() });
       }
     });
@@ -309,6 +344,34 @@ export class LobbyDO{
       }
       this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
+      return json({ ok:true });
+    }
+
+    // ---- global presence updates (called by RoomDO) ----
+    if (path === "/internal/presenceSet" && request.method === "POST"){
+      let body = {};
+      try{ body = await request.json(); }catch(_){ }
+      const uid = safeId(body.uid);
+      if (!uid) return json({ ok:false }, { status:400 });
+      const nick = safeNick(body.nick || "Player");
+      const roomId = safeId(body.roomId || "");
+      this.presence.set(uid, { nick, roomId, lastSeen: now() });
+      this._broadcastPresence();
+      return json({ ok:true });
+    }
+
+    if (path === "/internal/presenceClear" && request.method === "POST"){
+      let body = {};
+      try{ body = await request.json(); }catch(_){ }
+      const uid = safeId(body.uid);
+      if (!uid) return json({ ok:false }, { status:400 });
+      const roomId = safeId(body.roomId || "");
+      const cur = this.presence.get(uid);
+      // Only clear if matches (avoids racing with a new room join).
+      if (cur && (!roomId || cur.roomId === roomId)){
+        this.presence.delete(uid);
+        this._broadcastPresence();
+      }
       return json({ ok:true });
     }
 
@@ -547,6 +610,28 @@ export class RoomDO{
     }catch(_){}
   }
 
+  async _presenceSet(uid, nick, roomId){
+    try{
+      const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName("lobby"));
+      await lobby.fetch("https://lobby/internal/presenceSet", {
+        method:"POST",
+        headers:{ "content-type":"application/json" },
+        body: JSON.stringify({ uid, nick, roomId })
+      });
+    }catch(_){ }
+  }
+
+  async _presenceClear(uid, roomId){
+    try{
+      const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName("lobby"));
+      await lobby.fetch("https://lobby/internal/presenceClear", {
+        method:"POST",
+        headers:{ "content-type":"application/json" },
+        body: JSON.stringify({ uid, roomId })
+      });
+    }catch(_){ }
+  }
+
   _wireSocket(ws){
     if (this._wired.has(ws)) return;
     this._wired.add(ws);
@@ -610,6 +695,9 @@ export class RoomDO{
         this.meta.status = (this.meta.phase === "playing") ? "playing" : "waiting";
         this._scheduleLobbyUpdate();
         this._broadcast("room_state", this._snapshot());
+        // Inform lobby presence list that this user is currently inside a room.
+        // This allows the lobby's online list to include room occupants and show their room.
+        await this._presenceSet(wantUid, nick, this.meta.roomId);
         return;
       }
 
@@ -767,6 +855,10 @@ export class RoomDO{
       const uid = this.sockets.get(ws);
       this.sockets.delete(ws);
       if (!uid) return;
+
+      // Update global presence: user left this room.
+      // Lobby page will later set roomId="" when the user reconnects there.
+      this._presenceClear(uid, this.meta.roomId);
 
       // remove user + seat
       const u = this.users.get(uid);

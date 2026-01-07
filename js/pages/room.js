@@ -158,7 +158,8 @@ function setupBgm(audioElId, btnId){
   const previewEls = {
     wrap: document.getElementById("gamePreview"),
     thumb: document.querySelector("#gamePreview .gpThumb"),
-    title: document.getElementById("previewTitle"),
+    // NOTE: room.html에서 제목/기본설명 대신 게임별 2줄 설명만 표시
+    desc: document.getElementById("previewDesc"),
   };
 
   // ---- Game BGM (per-game music during play) ----
@@ -226,7 +227,22 @@ function setupBgm(audioElId, btnId){
   function updatePreview(modeId){
     const meta = window.gameById ? window.gameById(modeId) : null;
     const label = meta?.name || modeLabel(modeId) || "-";
-    try{ if (previewEls.title) previewEls.title.textContent = label; }catch(_){}
+    // 요청사항: 방 화면에서 제목/기본설명 대신 게임별 2줄 설명만 표시
+    try{
+      if (previewEls.desc){
+        const lines = Array.isArray(meta?.descLines) ? meta.descLines : [];
+        const cleaned = lines
+          .map(s => (s ?? "").toString().trim())
+          .filter(Boolean)
+          .slice(0, 2);
+
+        // 2줄이 없으면 최소 1줄은 보여주기
+        const fallback = cleaned.length ? cleaned : ["게임 시작 시 전체 화면으로 전환됩니다."];
+        previewEls.desc.innerHTML = fallback
+          .map(line => `<div>${safeText(line, 80)}</div>`)
+          .join("");
+      }
+    }catch(_){}
     try{
       if (previewEls.thumb){
         previewEls.thumb.dataset.game = meta?.id || modeId || "";
@@ -849,6 +865,10 @@ function setupBgm(audioElId, btnId){
     els.readyBtn.textContent = isReady ? "레디 해제" : "레디";
     // Host only needs Start
     els.readyBtn.classList.toggle("hidden", isHost);
+
+    // 요청: 방장 외에는 시작 버튼이 보이지 않게
+    // (비방장에게는 애초에 시작 UI를 노출하지 않습니다.)
+    els.startBtn.classList.toggle("hidden", !isHost);
 
     // Start 조건:
 // - 규칙은 "모두 레디" 유지

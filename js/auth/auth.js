@@ -189,10 +189,10 @@
     wireLogoutButton();
 
     const existing = alreadyLoggedInInThisTab();
-    // If the tab already has a non-guest authenticated user, reuse it.
-    // But if it's a guest session (or missing identifiers), force showing the login modal
-    // so the user can identify who is chatting / matched.
-    if (existing && !existing.isGuest && (existing.user_id || existing.username)){
+    // If this tab already has a session (including guest), reuse it.
+    // NOTE: Guests previously saw the login modal on every navigation (lobby -> room -> lobby).
+    // This causes repeated popups and is unnecessary once a nickname is already established.
+    if (existing && existing.nickname){
       hideModal();
       return Promise.resolve(existing);
     }

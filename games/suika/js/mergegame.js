@@ -497,7 +497,18 @@ export class MergeGame {
     const size = shape.size;
     ctx.save();
     ctx.globalAlpha = this.canDrop ? 0.35 : 0.15;
-    ctx.translate(this.dropX, this._dangerY + 6);
+    // 프리뷰가 위험선(점선)에 "걸려" 보이지 않도록,
+    // 도형의 실제 높이에 맞춰 위험선 위로 충분히 올려서 표시합니다.
+    // (프리뷰만 이동. 게임 오버 위험선/월드 바운드는 그대로)
+    const halfH = (()=>{
+      if (shape.type === "circle") return size;
+      if (shape.type === "square") return (size * 1.55) / 2;
+      if (shape.type === "rectangle") return (size * 1.35) / 2;
+      // triangle/isoceles/pentagon/hexagon/octagon…
+      return size;
+    })();
+    const gap = 6; // line-to-shape gap
+    ctx.translate(this.dropX, this._dangerY - gap - halfH);
     ctx.fillStyle = shape.color;
     ctx.strokeStyle = "rgba(255,255,255,0.65)";
     ctx.lineWidth = 2;
