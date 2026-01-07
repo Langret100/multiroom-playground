@@ -10,4 +10,8 @@ bindings = [
 
 [[migrations]]
 tag = "v1"
+new_sqlite_classes = ["LobbyDO", "RoomDO"]
+
+[[migrations]]
+tag = "v2"
 new_classes = ["LobbyDO", "RoomDO"]
