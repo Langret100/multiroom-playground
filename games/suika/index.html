@@ -162,6 +162,8 @@
             padding: 6px 6px;
             background: rgba(255,255,255,0.85);
             border-radius: 14px;
+            /* 요청: '그릇/도형/진행바' 전체를 아래로 20px 이동 */
+            margin-top: 20px;
             margin-bottom: 4px;
             flex-shrink: 0;
             gap: 2px;
@@ -190,8 +192,10 @@
             overflow: visible;
             display: flex;
             flex-direction: column;
-            flex: 1 1 auto;
+            flex: 0 0 auto;
             min-height: 0;
+            /* 요청: 진행바(20px 아래) 기준으로, 그릇/경계선은 30px 더 아래로 */
+            margin-top: 30px;
         }
         
         .drop-area {
@@ -249,7 +253,7 @@
             border-top: none;
             /* Use remaining space (prevents bottom from being cut off on mobile) */
             height: auto;
-            flex: 1 1 auto;
+            flex: 0 0 auto;
             min-height: 275px;
             overflow: hidden;
             box-shadow: 
@@ -464,7 +468,7 @@
         .game-container:fullscreen .game-area,
         .game-container:-webkit-full-screen .game-area {
             /* Keep the bowl fully visible in fullscreen (avoid top/bottom clipping) */
-            height: clamp(320px, calc(var(--app-h) - 320px), 480px);
+            height: auto; /* height is controlled by JS (fixed to width ratio) */
         }
 
         /* Online overlay (matching / result) */
@@ -548,7 +552,7 @@
 
 /* ===== Custom layout: match the provided screenshot (top-left stack + right opponent panel) ===== */
 .header.header-layout{
-    align-items: flex-start;
+    align-items: stretch;
     gap: 14px;
 }
 .header-left{
@@ -561,6 +565,10 @@
 }
 .header-right{
     flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-end;
 }
 
 .controls-row{
@@ -576,6 +584,13 @@
     min-width: 70px;
     padding: 0 14px;
     height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    /* Prevent Korean text from wrapping into two lines ("나가\n기") */
+    white-space: nowrap;
+    word-break: keep-all;
+    line-height: 1;
     border-radius: 14px;
     font-size: 16px;
     font-weight: 800;
@@ -641,6 +656,9 @@
     top: auto !important;
     /* Slightly smaller so it aligns with the end of the left-side button block */
     width: 150px;
+    margin-top: auto;
+    /* Keep it aligned to the header so it won't overlap the bottom shape strip */
+    transform: translateY(0);
 }
 
 .header-right #opp-canvas{
@@ -652,12 +670,12 @@
     .header.header-layout{ flex-wrap: nowrap; }
     .header-right .opp-panel{ width: 145px; }
     .control-panel{ max-width: 210px; }
-    .match-btn{ min-width: 62px; padding: 0 12px; }
+    .match-btn{ min-width: 74px; padding: 0 12px; font-size: 14px; }
 }
 
 @media (max-width: 360px){
     .header.header-layout{ flex-wrap: wrap; }
-    .header-right{ width: 100%; }
+    .header-right{ width: 100%; justify-content: flex-start; }
 }
 
     </style>
@@ -742,16 +760,19 @@
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
     <script>
+        // 요청: 도형이 그릇에 쌓이는 크기를 1.2배 키움
+        // (물리 바디/렌더/프리뷰가 모두 동일한 size 값을 공유하므로 여기서 일괄 스케일)
+        const SHAPE_SCALE = 1.2;
         const SHAPES = [
-            { name: '작은원', type: 'circle', color: '#FF6B6B', size: 14 },
-            { name: '삼각형', type: 'triangle', color: '#FECA57', size: 22 },
-            { name: '이등변삼각형', type: 'isoceles', color: '#48DBFB', size: 31 },
-            { name: '사각형', type: 'square', color: '#1DD1A1', size: 41 },
-            { name: '직사각형', type: 'rectangle', color: '#5F27CD', size: 53 },
-            { name: '마름모', type: 'diamond', color: '#FF9FF3', size: 67 },
-            { name: '오각형', type: 'pentagon', color: '#54A0FF', size: 84 },
-            { name: '육각형', type: 'hexagon', color: '#00D2D3', size: 103 },
-            { name: '큰원', type: 'bigcircle', color: '#FF9F43', size: 105 }
+            { name: '작은원', type: 'circle', color: '#FF6B6B', size: 14 * SHAPE_SCALE },
+            { name: '삼각형', type: 'triangle', color: '#FECA57', size: 22 * SHAPE_SCALE },
+            { name: '이등변삼각형', type: 'isoceles', color: '#48DBFB', size: 31 * SHAPE_SCALE },
+            { name: '사각형', type: 'square', color: '#1DD1A1', size: 41 * SHAPE_SCALE },
+            { name: '직사각형', type: 'rectangle', color: '#5F27CD', size: 53 * SHAPE_SCALE },
+            { name: '마름모', type: 'diamond', color: '#FF9FF3', size: 67 * SHAPE_SCALE },
+            { name: '오각형', type: 'pentagon', color: '#54A0FF', size: 84 * SHAPE_SCALE },
+            { name: '육각형', type: 'hexagon', color: '#00D2D3', size: 103 * SHAPE_SCALE },
+            { name: '큰원', type: 'bigcircle', color: '#FF9F43', size: 105 * SHAPE_SCALE }
         ];
 
         const EXPRESSIONS = {
@@ -782,6 +803,8 @@
         }
         document.addEventListener('fullscreenchange', __setAppHeight);
         document.addEventListener('webkitfullscreenchange', __setAppHeight);
+
+        const __EMBED__ = new URLSearchParams(location.search).get("embed") === "1";
 
         class SoundSystem {
             constructor() {
@@ -826,7 +849,8 @@
                 } catch(e) {}
             }
 
-            startMusic() {
+             startMusic() {
+                if (__EMBED__) return;
                 if (!this.initialized || this.musicPlaying) return;
                 this.resume();
                 this.musicPlaying = true;
@@ -933,7 +957,12 @@
 
                 // --- Fixed logical world size (기기/전체화면이 달라도 같은 화면/물리) ---
                 this.worldW = 360;
-                this.worldHDesign = 560;
+                // NOTE: 도형 담는 "그릇"(월드) 기본 높이.
+                // 요청사항: 기존 560px -> 50px 축소하여 510px로 고정.
+                // (레이아웃/스케일은 아래 setupCanvas에서 일관되게 적용)
+                // 요청: 도형 담는 그릇(게임 영역) 높이를 더 50px 줄임
+                // (디자인 월드 높이 기준: 510 -> 460)
+                this.worldHDesign = 460;
                 this.worldH = this.worldHDesign;
                 // physics 기준 크기
                 this.width = this.worldW;
@@ -959,7 +988,7 @@
                 this.lastMergeTime = 0;
                 this.shakeRemaining = 2;
                 this.soundInitialized = false;
-                this.musicEnabled = true; // 기본: 음악 ON (음악 버튼을 누르지 않아도 자동 재생)
+                this.musicEnabled = !__EMBED__; // embed에서는 내장 BGM OFF (room에서 mp3 재생)
                 this.mergingPairs = new Set();
                 // Online hooks
                 this.onComboEnd = null;
@@ -1009,20 +1038,15 @@
             }
 
             setupCanvas() {
-                // game-area 높이를 "고정 비율"로 맞춰, 기기/전체화면에서도 그릇 깊이가 달라지지 않게 함
+                // 그릇(게임 영역) 높이는 화면 높이에 맞춰 늘어나지 않도록 "고정"합니다.
+                // (짧은 화면에서도 보이도록 줄이는 clamp 로직을 제거)
                 try {
-                    const dropArea = document.getElementById('drop-area');
-                    const wrapRect = this.wrapper ? this.wrapper.getBoundingClientRect() : null;
-                    const dropH = dropArea ? dropArea.getBoundingClientRect().height : 0;
-                    const maxH = wrapRect ? Math.max(260, wrapRect.height - dropH - 10) : null;
-
-                    // IMPORTANT: use *content box* width (clientWidth) so physics/world matches
-                    // the actual drawable area inside the bowl border.
                     const w = this.gameArea?.clientWidth || this.gameArea.getBoundingClientRect().width;
-                    const desiredH = w * (this.worldHDesign / this.worldW);
-                    const finalH = maxH ? Math.min(desiredH, maxH) : desiredH;
-
-                    this.gameArea.style.height = Math.round(finalH) + 'px';
+                    const fixedH = w * (this.worldHDesign / this.worldW);
+                    if (this._lastSetupW == null || Math.abs(w - this._lastSetupW) >= 2) {
+                        this._lastSetupW = w;
+                        this.gameArea.style.height = Math.round(fixedH) + 'px';
+                    }
                 } catch(e) {}
 
                 // Use content box size (clientWidth/Height) to avoid border-box drift on short screens.
@@ -1045,9 +1069,8 @@
 
                 // Scale is locked to width so the CSS bowl outline and the physics world stay aligned.
                 const scale = cssW / this.worldW;
-                // If the available height is shorter than the design ratio, shrink the logical world height
-                // (no letterboxing). This prevents the bowl border and physics bounds from drifting.
-                const newWorldH = Math.max(240, Math.round(cssH / scale));
+                // Keep logical world height fixed to design (do not stretch with viewport height).
+                const newWorldH = this.worldHDesign;
                 if (newWorldH !== this.worldH) {
                     this.worldH = newWorldH;
                     this.height = newWorldH;
@@ -1055,7 +1078,7 @@
                     if (this.world) this.rebuildBounds();
                 }
 
-                this.view.scale = scale;
+this.view.scale = scale;
                 this.view.ox = 0;
                 this.view.oy = 0;
 
@@ -1588,18 +1611,32 @@
             }
 
             getNetState() {
+                // Netplay snapshot
+                // - bodies: 실제 물리 월드 좌표(상대 미리보기/리플레이에 사용)
+                // - objects: 0~1 정규화 좌표(로비/관전 미니맵 렌더러(room.js)에서 사용)
+                const w = this.worldW;
+                const h = this.worldH;
+                const clamp01 = (v)=> Math.max(0, Math.min(1, v));
+                const bodies = this.bodies.map(s => ({
+                    x: Math.round(s.body.position.x * 10) / 10,
+                    y: Math.round(s.body.position.y * 10) / 10,
+                    a: Math.round(s.body.angle * 1000) / 1000,
+                    i: s.shapeIndex,
+                    r: s.isRock ? 1 : 0
+                }));
+                const objects = this.bodies.map(s => ({
+                    x: clamp01((s.body.position.x || 0) / (w || 1)),
+                    y: clamp01((s.body.position.y || 0) / (h || 1)),
+                    i: s.shapeIndex,
+                    r: s.isRock ? 1 : 0
+                }));
                 return {
-                    w: this.worldW,
-                    h: this.worldH,
+                    w,
+                    h,
                     score: this.score,
                     over: this.isGameOver ? 1 : 0,
-                    bodies: this.bodies.map(s => ({
-                        x: Math.round(s.body.position.x * 10) / 10,
-                        y: Math.round(s.body.position.y * 10) / 10,
-                        a: Math.round(s.body.angle * 1000) / 1000,
-                        i: s.shapeIndex,
-                        r: s.isRock ? 1 : 0
-                    }))
+                    bodies,
+                    objects
                 };
             }
 
@@ -2007,15 +2044,16 @@
 (function(){
   const sp=new URLSearchParams(location.search);
   if(sp.get("embed")==="1"){
-    // Let the parent know what game this is (used by bridge)
-    if(!sp.get("embedGame")){
-      sp.set("embedGame","suika");
-      const u=location.pathname+"?"+sp.toString();
-      history.replaceState(null,"",u);
+    // In embedded mode (lobby/room), repurpose the match button as an exit button.
+    const mb=document.getElementById("match-btn");
+    if(mb){
+      mb.style.display = "";
+      mb.textContent = "나가기";
+      mb.onclick = ()=>{ try{ window.parent?.postMessage({ type:"duel_quit" }, "*"); }catch(_){} };
     }
-    // Hide standalone UI bits
-    const mb=document.getElementById("match-btn"); if(mb) mb.style.display="none";
-    const ov=document.getElementById("net-overlay"); if(ov) ov.style.display="none";
+    // Hide the internal netplay overlay; the parent room controls the flow.
+    const ov=document.getElementById("net-overlay");
+    if(ov) ov.style.display = "none";
   }
 })();
 </script>

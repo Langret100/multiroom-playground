@@ -1,5 +1,7 @@
-// Colyseus Bridge Netplay Stub (no persistence)
-// This file replaces Firebase netplay for embedded play inside the main lobby/room app.
+// Parent Bridge Netplay Stub (no persistence)
+// - iframe(게임) <-> parent(room.html) 간 postMessage 브리지
+// - 매칭/상태 릴레이는 parent가 Cloudflare Worker(WebSocket)와 통신하며 처리합니다.
+// - Firebase 의존성은 제거되었습니다.
 //
 // Protocol with parent window (room.html):
 // - iframe -> parent: {type:"bridge_ready", gameId}
@@ -21,6 +23,16 @@ let _roomCb = null;
 let _oppCb = null;
 let _evCb = null;
 
+// Robust sid guessing
+// - 일부 환경에서 bridge_init(oppSid 포함)가 늦거나 누락될 수 있어
+//   첫 duel_state 수신을 기준으로 my/opp sid 를 추정합니다.
+let _mySidGuess = null;
+let _oppSidGuess = null;
+
+// Parent->iframe init can be missed if the first postMessage happens
+// before the iframe finishes attaching listeners. Ping until we receive init.
+let _readyPingTimer = null;
+
 function _post(msg){
   try{ window.parent?.postMessage(msg, "*"); }catch{}
 }
@@ -32,6 +44,9 @@ function _ensureInit(){
 
 function _setInit(v){
   _init = v;
+  if (v?.mySid) _mySidGuess = v.mySid;
+  if (v?.oppSid) _oppSidGuess = v.oppSid;
+  try{ if (_readyPingTimer){ clearInterval(_readyPingTimer); _readyPingTimer=null; } }catch{}
   for (const w of _initWaiters) w(v);
   _initWaiters = [];
   // Update opponent label if present
@@ -50,10 +65,30 @@ function _setInit(v){
 }
 
 if (EMBED){
+  // Forward the first user gesture to the parent so the parent page can
+  // unlock autoplay-restricted audio (e.g., bgmGame in room.html).
+  // NOTE: gestures inside an iframe do NOT trigger parent's window listeners.
+  // Send gesture pings with throttling (not just once).
+  // Reason: the first gesture can happen before the parent enters in-game phase,
+  // so sending only once can leave game BGM locked for the whole first round.
+  let _lastGestureAt = 0;
+  const _sendGesture = ()=>{
+    const now = Date.now();
+    if (now - _lastGestureAt < 500) return;
+    _lastGestureAt = now;
+    _post({ type: "gesture", gameId });
+  };
+  window.addEventListener("pointerdown", _sendGesture, true);
+  window.addEventListener("touchstart", _sendGesture, true);
+  window.addEventListener("keydown", _sendGesture, true);
+
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (d.type === "bridge_init"){
       _setInit(d);
+      // stop pinging once initialized
+      try{ if (_readyPingTimer) clearInterval(_readyPingTimer); }catch{}
+      _readyPingTimer = null;
       // push initial room info
       if (_roomCb){
         const players = {};
@@ -64,12 +99,23 @@ if (EMBED){
       return;
     }
     if (d.type === "duel_state"){
+      const sid = d.sid;
+      if (!sid) return;
+
+      // If bridge_init is missing, assume first broadcast is mine.
+      if (!_init && !_mySidGuess){
+        _mySidGuess = sid;
+        return;
+      }
+
+      const mySid = (_init?.mySid) || _mySidGuess;
+      if (mySid && sid === mySid) return;
+
+      // If oppSid is missing in init, learn it from the first non-me sid.
+      if (!_oppSidGuess) _oppSidGuess = sid;
+
       if (_oppCb){
-        _ensureInit().then((init)=>{
-          if (d.sid && init.oppSid && d.sid === init.oppSid){
-            _oppCb({ pid: d.sid, state: d.state });
-          }
-        });
+        _oppCb({ pid: sid, state: d.state });
       }
       return;
     }
@@ -85,8 +131,13 @@ if (EMBED){
     }
   });
 
-  // handshake
-  _post({ type:"bridge_ready", gameId });
+  // handshake (reliable): send immediately, and retry until init arrives.
+  const ping = ()=> _post({ type:"bridge_ready", gameId });
+  ping();
+  _readyPingTimer = setInterval(()=>{
+    if (_init){ try{ clearInterval(_readyPingTimer); }catch{}; _readyPingTimer=null; return; }
+    ping();
+  }, 400);
 }
 
 // --- API compatible surface (subset used by game main.js)

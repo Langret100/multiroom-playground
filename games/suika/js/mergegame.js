@@ -2,15 +2,17 @@
 // - 제거 시 같이 지울 요소: index.html의 Matter.js CDN 스크립트, cvNext(다음 도형) 사용, 상대 렌더링(mergegame.drawOpponent)
 /* eslint-disable no-unused-vars */
 
+const SHAPE_SIZE_SCALE = 1.10;
+
 export const SHAPES = [
-  { name: "작은원", type: "circle",    color: "#FF6B6B", size: 14 },
-  { name: "삼각형", type: "triangle",  color: "#FECA57", size: 22 },
-  { name: "이등변삼각형", type: "isoceles", color: "#48DBFB", size: 31 },
-  { name: "사각형", type: "square",    color: "#1DD1A1", size: 41 },
-  { name: "직사각형", type: "rectangle", color: "#5F27CD", size: 52 },
-  { name: "오각형", type: "pentagon",  color: "#FF9FF3", size: 64 },
-  { name: "육각형", type: "hexagon",   color: "#54A0FF", size: 78 },
-  { name: "팔각형", type: "octagon",   color: "#00D2D3", size: 94 },
+  { name: "작은원", type: "circle",    color: "#FF6B6B", size: 14 * SHAPE_SIZE_SCALE },
+  { name: "삼각형", type: "triangle",  color: "#FECA57", size: 22 * SHAPE_SIZE_SCALE },
+  { name: "이등변삼각형", type: "isoceles", color: "#48DBFB", size: 31 * SHAPE_SIZE_SCALE },
+  { name: "사각형", type: "square",    color: "#1DD1A1", size: 41 * SHAPE_SIZE_SCALE },
+  { name: "직사각형", type: "rectangle", color: "#5F27CD", size: 52 * SHAPE_SIZE_SCALE },
+  { name: "오각형", type: "pentagon",  color: "#FF9FF3", size: 64 * SHAPE_SIZE_SCALE },
+  { name: "육각형", type: "hexagon",   color: "#54A0FF", size: 78 * SHAPE_SIZE_SCALE },
+  { name: "팔각형", type: "octagon",   color: "#00D2D3", size: 94 * SHAPE_SIZE_SCALE },
 ];
 
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }

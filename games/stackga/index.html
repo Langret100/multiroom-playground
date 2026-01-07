@@ -19,7 +19,6 @@
           <div>모드: <b id="mode">-</b></div>
         </div>
         <div class="hudRight">
-          <button class="iconBtn" id="btnSound" aria-label="소리">🔊</button>
           <button class="iconBtn matchBtn" id="btnMatch" aria-label="매칭">매칭</button>
           <button class="iconBtn" id="btnFull" aria-label="전체화면">⛶</button>
         </div>
@@ -72,15 +71,37 @@
 (function(){
   const sp=new URLSearchParams(location.search);
   if(sp.get("embed")==="1"){
+    // Embedded mode: show exit label immediately (even before module loads)
+    try{
+      const b = document.getElementById("btnMatch");
+      if(b){
+        b.textContent = "나가기";
+        b.setAttribute("aria-label", "나가기");
+        // Fallback click handler so "나가기" works even if the module script fails to load.
+        b.addEventListener("click", ()=>{
+          try{ window.parent?.postMessage({ type: "duel_quit" }, "*"); }catch{}
+        });
+      }
+    }catch(_){ }
+
+    // Fallback bridge handshake buffering (prevents rare race where init arrives
+    // before the module listener is ready).
+    try{ window.parent?.postMessage({ type:"bridge_ready", gameId:(sp.get("embedGame")||"stackga") }, "*"); }catch(_){ }
+    try{
+      window.addEventListener("message", (e)=>{
+        const d = e.data || {};
+        if (d && typeof d === "object" && d.type === "bridge_init"){
+          window.__PENDING_BRIDGE_INIT__ = d;
+        }
+      });
+    }catch(_){ }
+
     // Let the parent know what game this is (used by bridge)
     if(!sp.get("embedGame")){
       sp.set("embedGame","stackga");
       const u=location.pathname+"?"+sp.toString();
       history.replaceState(null,"",u);
     }
-    // Hide standalone UI bits
-    const mb=document.getElementById("match-btn"); if(mb) mb.style.display="none";
-    const ov=document.getElementById("net-overlay"); if(ov) ov.style.display="none";
   }
 })();
 </script>

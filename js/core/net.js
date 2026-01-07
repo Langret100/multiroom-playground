@@ -216,17 +216,75 @@ if (isDuel && humans.length === 1){
 
   class CFClient{
     constructor(){
-      const wsBase = (window.APP_CONFIG && window.APP_CONFIG.SERVER_ENDPOINT) || "ws://127.0.0.1:8787";
-      const httpBase = (window.APP_CONFIG && window.APP_CONFIG.SERVER_HTTP) || wsBase.replace(/^ws(s?):\/\//,"http$1://");
-      this.wsBase = wsBase.replace(/\/+$/,'');
-      this.httpBase = httpBase.replace(/\/+$/,'');
+      const cfgWs = (window.APP_CONFIG && window.APP_CONFIG.SERVER_ENDPOINT) || "";
+      const cfgHttp = (window.APP_CONFIG && window.APP_CONFIG.SERVER_HTTP) || "";
+
+      // Persisted override (useful for QA / different deployments)
+      const savedWs = (()=>{ try{ return localStorage.getItem("server_endpoint") || ""; }catch(_){ return ""; } })();
+
+      const host = (window.location && window.location.hostname) || "";
+      const isLocal = (host === "localhost" || host === "127.0.0.1");
+
+      // Candidate endpoints to probe (first successful WS wins)
+      const candidates = [];
+      const push = (x)=>{ if(!x) return; const v = String(x).replace(/\/+$/,''); if(v && !candidates.includes(v)) candidates.push(v); };
+
+      push(cfgWs);
+      push(savedWs);
+      if(isLocal){
+        // Colyseus default
+        push("ws://localhost:2567");
+        push("ws://127.0.0.1:2567");
+        // Worker dev (wrangler)
+        push("ws://127.0.0.1:8787");
+      } else {
+        // Same-origin guess (for custom reverse proxy deployments)
+        try{
+          const proto = (window.location && window.location.protocol === "https:") ? "wss://" : "ws://";
+          push(proto + window.location.host);
+        }catch(_){ }
+      }
+
+      // Default fallback (kept for backward-compat)
+      if(!candidates.length) push("ws://127.0.0.1:2567");
+
+      this._candidates = candidates;
+
+      // Initialize to config value (may be replaced by probing)
+      const wsBase = candidates[0];
+      const httpBase = (cfgHttp || wsBase.replace(/^ws(s?):\/\//,"http$1://"));
+      this.wsBase = wsBase;
+      this.httpBase = String(httpBase).replace(/\/+$/,'');
+    }
+
+    async _openWithProbe(path){
+      let lastErr = null;
+      for(const base of (this._candidates || [])){
+        const url = base.replace(/\/+$/,'') + path;
+        try{
+          const ws = new WebSocket(url);
+          await waitOpen(ws);
+          // Success: pin endpoint for subsequent connections + persist
+          this.wsBase = base.replace(/\/+$/,'');
+          this.httpBase = this.wsBase.replace(/^ws(s?):\/\//,"http$1://");
+          try{ localStorage.setItem("server_endpoint", this.wsBase); }catch(_){ }
+          return ws;
+        }catch(e){
+          lastErr = e;
+          try{ /* best effort close */
+            // In some browsers ws may be OPEN even if waitOpen threw; closing is safe.
+            // eslint-disable-next-line no-undef
+          }catch(_){ }
+        }
+      }
+      throw (lastErr || new Error("ws error"));
     }
     async joinOrCreate(roomName, opts){
       if(roomName !== "lobby_room") throw new Error("Only lobby_room supported in CF mode");
-      const ws = new WebSocket(this.wsBase + "/ws/lobby");
+      const ws = await this._openWithProbe("/ws/lobby");
       const conn = new RoomConnection(ws, "lobby", {});
       const nick = opts?.nick || localStorage.getItem("nick") || "Player";
-      await waitOpen(ws);
+      // waitOpen done in probe
       const user_id = (sessionStorage.getItem("user_id") || localStorage.getItem("user_id") || "");
       ws.send(JSON.stringify({ t:"hello", d:{ nick, user_id } }));
       await conn._helloOk;
@@ -236,10 +294,10 @@ if (isDuel && humans.length === 1){
       return conn;
     }
     async joinById(roomId, opts){
-      const ws = new WebSocket(this.wsBase + "/ws/room/" + encodeURIComponent(roomId));
+      const ws = await this._openWithProbe("/ws/room/" + encodeURIComponent(roomId));
       const conn = new RoomConnection(ws, "room", { roomId });
       const nick = opts?.nick || localStorage.getItem("nick") || "Player";
-      await waitOpen(ws);
+      // waitOpen done in probe
 
       // IMPORTANT: Room requires hello_room first; then it replies with hello_ok.
       const user_id = (sessionStorage.getItem("user_id") || localStorage.getItem("user_id") || "");

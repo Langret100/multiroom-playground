@@ -472,6 +472,10 @@ tbody tr:hover{
   .splitRight{ width:auto; max-width:none; min-width:0; }
   .roomTop{ flex-direction:column; }
   .playersPanel{ width:auto; max-width:none; }
+
+  /* Mobile: while a game is in progress, hide the separate player list panel
+     so the play area doesn't get squashed. */
+  body.is-playing .playersPanel{ display:none !important; }
 }
 
 

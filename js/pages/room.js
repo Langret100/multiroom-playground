@@ -16,6 +16,8 @@
 
   function exitGameFullscreen(){
     try{ document.body.classList.remove("in-game"); }catch(_){ }
+    // Stop game-specific BGM when leaving the embedded gameplay
+    try{ window.__stopGameBgm?.(); }catch(_){ }
     // Resume room BGM only if the user previously enabled it
     try{
       const el = document.getElementById('bgmBattle');
@@ -107,11 +109,113 @@ function setupBgm(audioElId, btnId){
     roomChatSend: document.querySelector("#roomChatSend"),
   };
 
+  // CPU difficulty (solo duel: 1 human + CPU)
+  // Stored locally so the choice persists.
+  let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "mid").toLowerCase();
+  let cpuDiffWrap = null;
+  let cpuDiffSelect = null;
+
+  function mountCpuDifficultyUi(){
+    try{
+      const controls = document.querySelector('.playersPanel .controls');
+      if (!controls) return;
+      // Avoid duplicates
+      if (document.getElementById('cpuDiffWrap')){
+        cpuDiffWrap = document.getElementById('cpuDiffWrap');
+        cpuDiffSelect = document.getElementById('cpuDiffSel');
+        return;
+      }
+
+      const wrap = document.createElement('div');
+      wrap.id = 'cpuDiffWrap';
+      wrap.style.display = 'none';
+      wrap.style.alignItems = 'center';
+      wrap.style.gap = '8px';
+      wrap.style.marginBottom = '8px';
+      wrap.innerHTML = `
+        <span class="muted" style="font-size:13px;">CPU 난이도</span>
+        <select id="cpuDiffSel" class="input" style="max-width:120px; padding:8px 10px;">
+          <option value="low">하</option>
+          <option value="mid">중</option>
+          <option value="high">상</option>
+        </select>
+      `;
+      // Place above the buttons
+      controls.parentElement?.insertBefore(wrap, controls);
+
+      cpuDiffWrap = wrap;
+      cpuDiffSelect = wrap.querySelector('#cpuDiffSel');
+      if (cpuDiffSelect){
+        cpuDiffSelect.value = cpuDifficulty;
+        cpuDiffSelect.addEventListener('change', ()=>{
+          cpuDifficulty = (cpuDiffSelect.value || 'mid').toLowerCase();
+          try{ localStorage.setItem('cpu_difficulty', cpuDifficulty); }catch(_){ }
+        });
+      }
+    }catch(_){ }
+  }
+
   const previewEls = {
     wrap: document.getElementById("gamePreview"),
     thumb: document.querySelector("#gamePreview .gpThumb"),
     title: document.getElementById("previewTitle"),
   };
+
+  // ---- Game BGM (per-game music during play) ----
+  const GAME_BGM_MAP = {
+    suika: "assets/audio/suikamusic.mp3",
+    stackga: "assets/audio/stackmusic.mp3",
+  };
+  const _gameBgm = { el: null, handle: null, lastMode: null, primed: false };
+
+  function _ensureGameBgm(){
+    if (_gameBgm.el) return;
+    _gameBgm.el = document.getElementById("bgmGame");
+    if (_gameBgm.el && window.AudioManager){
+      // Slightly lower than room BGM; music should sit behind gameplay.
+      _gameBgm.handle = window.AudioManager.attachAudioManager(_gameBgm.el, { label: "게임 음악", storageKey: "audio_enabled", volume: 0.55 });
+    }
+  }
+
+  function playGameBgm(modeId){
+    _ensureGameBgm();
+    const el = _gameBgm.el;
+    if (!el) return;
+    const src = GAME_BGM_MAP[modeId];
+    if (!src){
+      stopGameBgm();
+      return;
+    }
+    if (_gameBgm.lastMode !== modeId || el.getAttribute("src") !== src){
+      try{ el.src = src; }catch(_){ }
+      _gameBgm.lastMode = modeId;
+    }
+    try{ el.currentTime = 0; }catch(_){ }
+
+    // Prime muted playback once (autoplay is usually allowed only when muted).
+    // After that, keep the current mute state so we don't accidentally re-mute on later calls.
+    if (!_gameBgm.primed){
+      try{ el.muted = true; }catch(_){ }
+      try{ el.play().catch(()=>{}); }catch(_){ }
+      _gameBgm.primed = true;
+      return;
+    }
+
+    try{ el.play().catch(()=>{}); }catch(_){ }
+  }
+
+  function stopGameBgm(){
+    const el = _gameBgm.el;
+    if (!el) return;
+    try{ el.pause(); }catch(_){ }
+    try{ el.currentTime = 0; }catch(_){ }
+    try{ el.muted = true; }catch(_){ }
+    _gameBgm.primed = false;
+  }
+
+  // Expose for fullscreen helpers outside this closure
+  try{ window.__playGameBgm = playGameBgm; }catch(_){ }
+  try{ window.__stopGameBgm = stopGameBgm; }catch(_){ }
 
   function defaultModeId(){
     return (window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id)
@@ -466,6 +570,23 @@ function setupBgm(audioElId, btnId){
     const fromMain = !!(duel.iframeEl && srcWin === duel.iframeEl.contentWindow);
     const fromCpu  = !!(cpuFrame.iframeEl && srcWin === cpuFrame.iframeEl.contentWindow);
 
+    // Gestures inside an iframe do not propagate to the parent window.
+    // Use this ping to unlock autoplay-restricted audio so game BGM can start
+    // as soon as the player interacts with the game.
+    if (d.type === "gesture"){
+      try{ _ensureGameBgm(); }catch(_){ }
+      try{
+        const inGame = document.body.classList.contains("in-game") || !(duel.ui?.duelFrameWrap?.classList?.contains("hidden"));
+        if (inGame){
+          const modeId = (room && room.state && (room.state.mode || room.state.gameId)) || duel.active?.gameId || duel.meta?.id;
+          playGameBgm(modeId);
+        }
+      }catch(_){ }
+      try{ _gameBgm.handle?.enable?.(); }catch(_){ }
+      try{ if(_gameBgm.el){ _gameBgm.el.muted = false; _gameBgm.el.play().catch(()=>{}); } }catch(_){ }
+      return;
+    }
+
     if (d.type === "bridge_ready"){
       if (fromMain){
         duel.iframeReady = true;
@@ -488,6 +609,14 @@ function setupBgm(audioElId, btnId){
       return;
     }
     if (!room) return;
+
+    // In-game "나가기" from embedded duel iframe (forfeit & return to room UI)
+    if (d.type === "duel_quit"){
+      if (!fromMain) return;
+      try{ room.send("duel_over", {}); }catch(_){ }
+      try{ exitGameFullscreen(); }catch(_){ }
+      return;
+    }
     // Togester (coop) iframe -> server relay
     if (d.type === "tg_state"){
       if (!fromMain) return;
@@ -679,6 +808,12 @@ function setupBgm(audioElId, btnId){
   function renderPlayers(){
     if (!room) return;
     const state = room.state;
+
+    // Layout hint for CSS (mobile: hide player list during play).
+    try{
+      document.body.classList.toggle("is-playing", state.phase !== "lobby");
+      document.body.classList.toggle("is-lobby", state.phase === "lobby");
+    }catch(_){ }
     els.players.innerHTML = "";
 
     // MapSchema iteration
@@ -766,6 +901,15 @@ else if (isCoop){
 
 els.startBtn.disabled = !canStart;
 els.startBtn.title = canStart ? "게임 시작" : reason;
+
+  // Show CPU difficulty only when host starts a solo duel in lobby.
+  try{
+    if (cpuDiffWrap){
+      const showCpuDiff = !!(isHost && state.phase === "lobby" && isDuel && humanCount === 1);
+      cpuDiffWrap.style.display = showCpuDiff ? "flex" : "none";
+      if (cpuDiffSelect) cpuDiffSelect.value = cpuDifficulty;
+    }
+  }catch(_){ }
   }
 
   function showResultOverlay(r){
@@ -915,7 +1059,8 @@ function sendCpuBridgeInit(){
     oppSid: mySessionId,
     oppNick: myNick || "Player",
     role: "cpu",
-    matchId: duel.matchId
+    matchId: duel.matchId,
+    cpuDifficulty
   });
 }
 
@@ -1137,6 +1282,9 @@ function startSim(){
 
     myNick = sessionStorage.getItem("nick") || myNick;
 
+    // CPU difficulty selector (visible only for solo duel in lobby)
+    try{ mountCpuDifficultyUi(); }catch(_){ }
+
     if (!roomId){
       setStatus("방 ID가 없습니다. 로비로 돌아갑니다.", "error");
       setTimeout(()=> location.href="./index.html", 500);
@@ -1185,6 +1333,8 @@ renderPlayers();
         try{ enterGameFullscreen(); }catch(_){ }
         try{ window.SFX?.start?.(); }catch(_){ }
         try{ shakeOnce(); }catch(_){ }
+        // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
+        try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
         setStatus("", "info");
         // reset per-game transient UI/state
@@ -1264,14 +1414,24 @@ renderPlayers();
           sim.onMatch(m);
         }
       });
-      room.onMessage("result", (r)=> { showResultOverlay(r); });
+      room.onMessage("result", (r)=> {
+        try{ stopGameBgm(); }catch(_){ }
+        showResultOverlay(r);
+        // Let embedded games show their own win/lose overlay too.
+        postToAllIframes({ type: "duel_result", payload: r });
+      });
       room.onMessage("backToRoom", ()=> {
+        try{ stopGameBgm(); }catch(_){ }
         hideResultOverlay();
         showDuelUI(false);
         duel.active=null; duel.meta=null;
         coop.active=false; coop.meta=null; coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
+        // Notify iframes (best-effort) before clearing.
+        postToAllIframes({ type: "duel_back" });
+        // Notify iframes (best-effort) before clearing.
+        postToAllIframes({ type: "duel_back" });
         if(duel.iframeEl) duel.iframeEl.src="about:blank";
         /* stay in room lobby UI */
       });
@@ -1295,7 +1455,7 @@ renderPlayers();
         if (els.startBtn.disabled) return;
         // light click sfx (start sfx + shake happens on server "started" for everyone)
         try{ window.SFX?.click?.(); }catch(_){ }
-        room.send("start", {});
+        room.send("start", { cpuDifficulty });
       });
 
       // Leave
@@ -1328,6 +1488,7 @@ renderPlayers();
   }
 
   function leaveToLobby(){
+    try{ stopGameBgm(); }catch(_){}
     try{
       if (room) room.leave();
     }catch(_){}

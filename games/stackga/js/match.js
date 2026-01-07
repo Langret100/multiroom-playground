@@ -12,12 +12,27 @@
 export function initMatchButton({ buttonEl, audio } = {}){
   if(!buttonEl) return;
 
-  buttonEl.addEventListener("click", ()=>{
-    // iOS 등에서 사운드가 사용자 제스처로만 허용되는 경우가 있어
-    // 클릭 순간 gestureStart를 시도합니다(실패해도 무시).
-    try{ audio?.gestureStart?.(); }catch{}
+  const EMBED = new URLSearchParams(location.search).get("embed") === "1";
 
-    // 새로고침 -> 재부팅/재매칭 루프가 다시 시작됨
-    location.reload();
+  // Embedded (room.html iframe): repurpose as "Exit / Forfeit".
+  if (EMBED){
+    try{ buttonEl.textContent = "나가기"; }catch{}
+    try{ buttonEl.title = "나가기"; }catch{}
+    buttonEl.addEventListener("click", ()=>{
+      // Try to unlock audio on the gesture (safe no-op if blocked)
+      try{ audio?.gestureStart?.(); }catch{}
+      try{ window.parent?.postMessage({ type: "duel_quit" }, "*"); }catch{}
+    });
+    return;
+  }
+
+  // Firebase 매칭 제거: 온라인 플레이는 로비(Cloudflare 서버)에서 진행합니다.
+  // 단독 실행에서는 오프라인으로 바로 플레이할 수 있고,
+  // 버튼은 로비로 이동합니다.
+  try{ buttonEl.textContent = "로비"; }catch{}
+  try{ buttonEl.title = "로비로 이동"; }catch{}
+  buttonEl.addEventListener("click", ()=>{
+    try{ audio?.gestureStart?.(); }catch{}
+    location.href = "../../index.html";
   });
 }

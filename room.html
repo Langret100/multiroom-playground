@@ -50,7 +50,7 @@
     <div class="duel-bracket" id="duelBracket"></div>
   </div>
   <div class="duel-frameWrap hidden" id="duelFrameWrap">
-    <iframe id="duelFrame" class="duel-frame" title="game"></iframe>
+    <iframe id="duelFrame" class="duel-frame" title="game" allow="autoplay; fullscreen" allowfullscreen></iframe>
   </div>
   <div class="duel-spectate hidden" id="duelSpectate">
     <div class="spectateTop">
@@ -209,6 +209,8 @@
 <script defer="" src="./js/core/audio.js"></script>
 <script defer="" src="./js/games/registry.js"></script><script defer="defer" src="./js/stackga/engine.js"></script><script defer="defer" src="./js/stackga/touch.js"></script><script defer="defer" src="./js/sim/stackga_tournament.js"></script>
 <script defer="" src="./js/pages/room.js"></script>
-<audio id="bgmBattle" loop="" preload="auto" src="assets/audio/lobby_battle.mp3"></audio>
+    <audio id="bgmBattle" loop="" preload="auto" src="assets/audio/lobby_battle.mp3"></audio>
+    <!-- Game-specific BGM (started/stopped by room.js) -->
+    <audio id="bgmGame" loop="" preload="auto"></audio>
 </body>
 </html>

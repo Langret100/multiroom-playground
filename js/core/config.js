@@ -6,6 +6,12 @@
 // - 로컬(localhost/127.0.0.1)에서는 기존처럼 로컬 ws://127.0.0.1:8787 사용
 // - 그 외(배포 환경)에서는 아래 Worker로 연결
 (function(){
+  // NOTE (중요): 로그인/닉네임 검증 로직은 별도(sheet-config.js)이며,
+  // 여기서는 "실시간 룸/매칭"(WebSocket/HTTP) 서버 주소만 설정합니다.
+  //
+  // Endpoint 우선순위
+  // 1) 페이지에서 window.__SERVER_ENDPOINT__ / window.__SERVER_HTTP__를 지정한 경우
+  // 2) 지정이 없으면 아래 DEFAULT_WORKER_HOST로 자동 연결
   const DEFAULT_WORKER_HOST = "multiroom-playground.tmdrb445-f03.workers.dev";
 
   const host = (window.location && window.location.hostname) || "";

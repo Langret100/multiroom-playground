@@ -1,5 +1,4 @@
-const EMBED = new URLSearchParams(location.search).get("embed") === "1";
-import { initFirebase } from "./firebase.js";
+// Firebase dependency removed.
 import {
   joinLobby, watchRoom, roomRefs,
   setRoomState,
@@ -7,6 +6,8 @@ import {
   pushEvent, subscribeEvents,
   tryCleanupRoom, releaseSlot, sweepLobbySlots
 } from "./netplay.js";
+
+const EMBED = new URLSearchParams(location.search).get("embed") === "1";
 
 // --- UI
 const ui = {
@@ -21,6 +22,54 @@ const ui = {
   overlayRetry: document.getElementById("net-overlay-retry"),
   overlayClose: document.getElementById("net-overlay-close"),
 };
+
+// --- Background music (mp3)
+// - Standalone(게임 단독 실행)에서는 mp3를 직접 재생합니다.
+// - embed(룸/로비 iframe)에서는 상위 페이지(room.js)가 bgmGame으로 재생하므로, 여기서는 중복 재생하지 않습니다.
+const __BGM_URL__ = "../../assets/audio/suikamusic.mp3";
+let __bgmEl = null;
+
+function __stopLocalBgm(){
+  if(!__bgmEl) return;
+  try{ __bgmEl.pause(); }catch(_){ }
+  try{ __bgmEl.currentTime = 0; }catch(_){ }
+}
+
+(function setupBgm(){
+  if(EMBED) return; // parent page handles game BGM
+  try{
+    __bgmEl = new Audio(__BGM_URL__);
+    __bgmEl.loop = true;
+    __bgmEl.preload = "auto";
+    __bgmEl.playsInline = true;
+    __bgmEl.volume = 0.35;
+
+    const tryPlay = ()=>{ try{ __bgmEl.play().catch(()=>{}); }catch(_){} };
+    const onGesture = ()=>{
+      tryPlay();
+      window.removeEventListener("pointerdown", onGesture, true);
+      window.removeEventListener("touchstart", onGesture, true);
+      window.removeEventListener("keydown", onGesture, true);
+    };
+    window.addEventListener("pointerdown", onGesture, true);
+    window.addEventListener("touchstart", onGesture, true);
+    window.addEventListener("keydown", onGesture, true);
+
+    // Ensure BGM stops immediately when leaving/hiding the page (prevents lingering overlap with lobby/room music)
+    window.addEventListener("pagehide", __stopLocalBgm);
+    window.addEventListener("beforeunload", __stopLocalBgm);
+    document.addEventListener("visibilitychange", ()=>{ if(document.hidden) __stopLocalBgm(); });
+  }catch(_){ }
+})();
+
+// Best-effort: if parent tells us to go back, stop any local BGM (even if it was started in older builds).
+window.addEventListener("message", (ev)=>{
+  const d = ev && ev.data;
+  const t = d && d.type;
+  if(t === "duel_back" || t === "room_leave" || t === "duel_result"){
+    __stopLocalBgm();
+  }
+});
 
 let _overlayKind = null;
 
@@ -114,22 +163,14 @@ function beginCountdown(seconds){
 }
 
 function startMatching(){
-  // 온라인/매칭 중 상태에서도 "다시 매칭"을 누르면
-  // 새로고침 없이 현재 세션을 정리하고 재매칭을 시작합니다.
-  if(mode !== "offline"){
-    try{ cancelMatching("restart", { silent:true }); }catch{}
-  }
-  if(!game){
-    showNetOverlay({ title: "로딩 중…", desc: "게임 준비가 끝난 뒤 다시 눌러주세요.", canClose: true, canRetry: false });
-    return;
-  }
-  _exitCleanedKey = null;
-  _resultCleanupOnce = false;
-  resolved = false;
-  mode = "matching";
-  setStatus("연결 중…");
-  beginCountdown(20);
-  bootOnline();
+  // Firebase 매칭 제거: 온라인 플레이는 로비(Cloudflare 서버)에서 진행합니다.
+  // 단독 실행에서는 오프라인으로 바로 플레이할 수 있고,
+  // "매칭" 버튼은 로비로 이동합니다.
+  try{ bestEffortExitCleanup({ force:true }); }catch{}
+  try{ hideNetOverlay(); }catch{}
+  try{ setStatus("오프라인"); }catch{}
+  mode = "offline";
+  location.href = "../../index.html";
 }
 
 let _savedGameHooks = null;
@@ -168,7 +209,7 @@ function cancelMatching(reason="user", { silent=false } = {}){
   startTimeout = null;
   startArmed = false;
 
-  // cleanup firebase signals even if we are switching to offline
+  // cleanup any online signals even if we are switching to offline
   bestEffortExitCleanup({ force:true });
   restoreGameHooks();
 
@@ -180,7 +221,15 @@ function cancelMatching(reason="user", { silent=false } = {}){
 
 
 if(ui.matchBtn){
-  ui.matchBtn.addEventListener("click", startMatching);
+  if (EMBED){
+    try{ ui.matchBtn.textContent = "나가기"; }catch{}
+    try{ ui.matchBtn.title = "나가기"; }catch{}
+    ui.matchBtn.addEventListener("click", ()=>{
+      try{ window.parent?.postMessage({ type: "duel_quit" }, "*"); }catch{}
+    });
+  } else {
+    ui.matchBtn.addEventListener("click", startMatching);
+  }
 }
 
 // --- Online flow
@@ -204,6 +253,9 @@ let publishTimer=null;
 let sweepTimer=null;
 let mode="offline";
 
+// Embedded(룸) 모드: Firebase 없이 parent bridge(netplay.js stub)로만 동작
+let _embeddedBooted = false;
+
 // game instance
 let game=null;
 let cpuAutoTimer=null;
@@ -211,6 +263,10 @@ let cpuAutoTimer=null;
 function startCpuAutoplay(){
   if (cpuAutoTimer || !game) return;
   if (window.__EMBED_INIT__?.role !== "cpu") return;
+
+  const diffRaw = (window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || "mid");
+  const d = String(diffRaw).toLowerCase();
+  const intervalMs = (d === "high" || d === "hard" || d === "h") ? 380 : (d === "low" || d === "easy" || d === "l") ? 700 : 520;
 
   const dropZone = document.getElementById("drop-zone");
   cpuAutoTimer = setInterval(()=>{
@@ -221,11 +277,20 @@ function startCpuAutoplay(){
       if (rect && rect.width > 20){
         const x = rect.left + rect.width * (0.15 + Math.random() * 0.7);
         game.updateDropPosition(x);
+      } else {
+        // CPU iframe can be 1x1px (hidden) so DOM-based coords don't work.
+        // Use world coordinates directly so drops spread horizontally.
+        const ww = (typeof game.worldW === "number" && game.worldW > 0) ? game.worldW : 360;
+        const idx = (typeof game.currentShapeIndex === "number") ? game.currentShapeIndex : 0;
+        const size = (window.SHAPES && window.SHAPES[idx] && Number.isFinite(window.SHAPES[idx].size)) ? window.SHAPES[idx].size : 14;
+        const pad = Math.max(10, size + 10);
+        game.dropX = pad + Math.random() * Math.max(1, (ww - pad * 2));
+        try{ game.updateCurrentShapeUI && game.updateCurrentShapeUI(); }catch(_){ }
       }
       // Drop periodically; ShapeGame internally rate-limits while frozen
       game.dropShape();
     }catch(_){ }
-  }, 520);
+  }, intervalMs);
 }
 
 function stopCpuAutoplay(){
@@ -646,7 +711,11 @@ function onRoomUpdate(room){
   startArmed = false;
 }
 
-function onEventRecv({key, ev}){
+function onEventRecv(payload){
+  // Firebase: {key, ev}
+  // Embedded stub: {event} or the event object directly
+  const ev = payload?.ev ?? payload?.event ?? payload;
+  const key = payload?.key;
   if(!ev) return;
   // ignore stale events from previous occupants
   if(joinedAt && ev.t && ev.t < joinedAt - 5000){
@@ -667,8 +736,93 @@ function onEventRecv({key, ev}){
     }
   }
 
-  // consume immediately to avoid leaving logs
-  try{ api.remove(api.child(refs.eventsRef, key)).catch(()=>{}); }catch{}
+  // consume immediately to avoid leaving logs (Firebase only)
+  if(!EMBED){
+    try{ api.remove(api.child(refs.eventsRef, key)).catch(()=>{}); }catch{}
+  }
+}
+
+function fnv1a32(str){
+  let h = 0x811c9dc5;
+  const s = String(str||"");
+  for(let i=0;i<s.length;i++){
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h>>>0) || 1;
+}
+
+async function bootEmbeddedBridge(){
+  if(_embeddedBooted) return;
+  if(!game) return;
+  _embeddedBooted = true;
+
+  // Ensure the in-game synthesized BGM never starts; room page will handle game BGM.
+  try{ game.musicEnabled = false; }catch{}
+  try{ game.sound?.stopMusic?.(); }catch{}
+
+  try{ hideNetOverlay(); }catch{}
+  try{ if(game) game.canDrop = true; }catch{}
+  mode = "online";
+  setStatus("연결 중…");
+
+  // Wait for parent init (joinLobby stub awaits bridge_init)
+  const joined = await joinLobby({ name: "Player" });
+  pid = joined?.pid || pid;
+  joinedAt = Date.now();
+
+  // Minimal HUD update
+  try{
+    const nick = window.__EMBED_INIT__?.oppNick || "상대";
+    if(ui.oppTitle) ui.oppTitle.textContent = `${nick} (점수 0)`;
+    setStatus("연결됨");
+  }catch{}
+
+  // Opponent state
+  oppUnsub?.();
+  oppUnsub = subscribeOppState({ pid, onOpp: ({state})=>{
+    if(ui.oppTitle){
+      const score = state?.score ?? 0;
+      const _oppNick = (window.__EMBED_INIT__?.oppNick || "상대");
+      ui.oppTitle.textContent = `${_oppNick} (점수 ${score})`;
+    }
+    if(state?.over && !resolved){
+      resolved = true;
+      try{ if(game) game.canDrop = false; }catch{}
+      showNetOverlay({ title: "승리!", desc: "상대가 게임오버 되었습니다.", seconds: undefined, canClose: true, canRetry: true });
+      scheduleResultCleanup();
+    }
+    drawOpp(state);
+  }});
+
+  // Events
+  evUnsub?.();
+  evUnsub = subscribeEvents({ pid, onEvent: onEventRecv });
+
+  // Publish loop
+  if(publishTimer) clearInterval(publishTimer);
+  publishTimer = setInterval(()=>{
+    if(!game) return;
+    publishMyState({ pid, state: game.getNetState() }).catch(()=>{});
+  }, 120);
+
+  // Hook attacks/gameover
+  if(game){
+    saveGameHooks();
+    game.onComboEnd = (cnt)=>{
+      const n = comboToRocks(cnt);
+      if(n <= 0) return;
+      pushEvent({ pid, event: { from: pid, kind: "rocks", payload: { n } } }).catch(()=>{});
+    };
+    game.onGameOver = ()=>{
+      if(!resolved){
+        resolved = true;
+        showNetOverlay({ title: "패배", desc: "내 게임오버!", seconds: undefined, canClose: true, canRetry: true });
+      }
+      pushEvent({ pid, event: { from: pid, kind: "over", payload: { score: game?.score ?? 0 } } }).catch(()=>{});
+      scheduleResultCleanup();
+    };
+  }
 }
 
 async function bootOnline(){
@@ -760,10 +914,13 @@ document.addEventListener("visibilitychange", ()=>{
 // If game over and user closes overlay/reloads, cleanup will run via unload.
 window.addEventListener('shapeGameReady', (e)=>{
   game = e?.detail?.game || window.__shapeGame || null;
-  // 온라인은 "매칭" 버튼을 눌렀을 때만 시작
+  // Embedded(룸)에서는 Firebase 매칭이 아니라 parent bridge로 자동 시작
   if(EMBED){
-    // Embedded: auto-start online match
-    setTimeout(()=>{ try{ ui.matchBtn?.click?.(); }catch{} }, 50);
+    // Disable any in-page synthesized music immediately
+    try{ game.musicEnabled = false; }catch{}
+    try{ game.sound?.stopMusic?.(); }catch{}
+    bootEmbeddedBridge().catch(()=>{});
+    return;
   }
   // Embedded CPU bot role: start autoplay after bridge_init is received.
   setTimeout(()=>{ try{ startCpuAutoplay(); }catch{} }, 200);
@@ -780,6 +937,9 @@ window.addEventListener("message", (e)=>{
       if (window.__EMBED_INIT__?.role === "cpu") startCpuAutoplay();
       else stopCpuAutoplay();
     }, 50);
+
+    // If the game booted before init arrived, ensure embedded bridge is up.
+    if(EMBED) bootEmbeddedBridge().catch(()=>{});
   }
 });
 
@@ -787,5 +947,5 @@ window.addEventListener("message", (e)=>{
 if(window.__shapeGame){
   game = window.__shapeGame;
   setTimeout(()=>{ try{ startCpuAutoplay(); }catch{} }, 200);
-  setStatus("오프라인");
+  if(!EMBED) setStatus("오프라인");
 }

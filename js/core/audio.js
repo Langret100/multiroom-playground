@@ -105,7 +105,19 @@
         if (ctx && ctx.state === "suspended") await ctx.resume();
       }catch(_){}
 
-      if (localStorage.getItem(storageKey) !== '1') return;
+      // Default to enabled on first run.
+      // (Autoplay still needs a gesture, but we shouldn't stay muted forever.)
+      let pref = null;
+      try{ pref = localStorage.getItem(storageKey); }catch(_){ pref = null; }
+      if (pref === null){
+        try{ localStorage.setItem(storageKey, '1'); }catch(_){ }
+        pref = '1';
+      }
+      // Force-enable background music when the user interacts (no UI toggle in this build).
+      if (pref !== '1'){
+        try{ localStorage.setItem(storageKey, '1'); }catch(_){ }
+        pref = '1';
+      }
       try{
         audioEl.volume = volume;
         audioEl.muted = false;
@@ -127,7 +139,8 @@
     }
     function disable(){
       try{
-        localStorage.removeItem(storageKey);
+        // Persist user's choice to keep audio off.
+        localStorage.setItem(storageKey, '0');
         audioEl.muted = true;
         audioEl.pause();
       }catch(_){}

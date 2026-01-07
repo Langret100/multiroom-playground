@@ -83,14 +83,17 @@ function evalBoard(board, cleared){
 }
 
 export class CpuController {
-  constructor(game, seed){
+  constructor(game, seed, difficulty = "mid"){
     this.game = game;
     this.rnd = mulberry32((seed>>>0) || 1);
     this.lastPieceKey = "";
     this.targetX = 3;
     this.targetRot = 0;
     this.actionAcc = 0;
-    this.actionMs = 38; // faster decisions
+    const d = (String(difficulty||"mid").toLowerCase());
+    this.diff = (d === "high" || d === "hard" || d === "h") ? "high" : (d === "low" || d === "easy" || d === "l") ? "low" : "mid";
+    this.actionMs = (this.diff === "high") ? 38 : (this.diff === "low") ? 78 : 52;
+    this.jitterScale = (this.diff === "high") ? 3 : (this.diff === "low") ? 24 : 10;
   }
 
   _plan(){
@@ -118,8 +121,8 @@ export class CpuController {
         const cleared = clearLines(b2);
         const sc = evalBoard(b2, cleared);
 
-        // small randomness to avoid identical play
-        const jitter = (this.rnd()-0.5) * 3;
+        // small randomness to avoid identical play (difficulty-dependent)
+        const jitter = (this.rnd()-0.5) * (this.jitterScale || 3);
         const sc2 = sc + jitter;
 
         if(sc2 > best.score){

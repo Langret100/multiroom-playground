@@ -51,20 +51,31 @@ export function createAudio({ musicUrl } = {}) {
     try { bgm.crossOrigin = "anonymous"; } catch {}
   }
 
+  // BGM control helpers (for pagehide/exit cleanup)
+  function startMusic() {
+    ensureBgm();
+    if (!bgm || muted) return;
+    try {
+      const p = bgm.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } catch {}
+  }
+
+  function stopMusic() {
+    if (!bgm) return;
+    try { bgm.pause(); } catch {}
+    try { bgm.currentTime = 0; } catch {}
+  }
+
   function gestureStart() {
     // Always try to (re)start audio on any user gesture.
     // Some mobile browsers may reject the first play() even on a gesture; retrying fixes "music only after restart".
     ensureGraph();
     resumeCtx();
     ensureBgm();
+    // If it was blocked earlier, bgm may still be paused. Retry on every gesture.
     if (bgm && !muted) {
-      try {
-        // If it was blocked earlier, bgm may still be paused.
-        if (bgm.paused) {
-          const p = bgm.play();
-          if (p && typeof p.catch === "function") p.catch(() => {});
-        }
-      } catch {}
+      try { if (bgm.paused) startMusic(); } catch {}
     }
     started = true;
   }
@@ -154,6 +165,8 @@ export function createAudio({ musicUrl } = {}) {
     sfx,
     setMuted,
     toggleMuted,
+    startMusic,
+    stopMusic,
     get muted() { return muted; },
   };
 }

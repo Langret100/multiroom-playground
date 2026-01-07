@@ -12,6 +12,19 @@
 export function initMatchButton({ buttonEl, audio } = {}){
   if(!buttonEl) return;
 
+  const EMBED = new URLSearchParams(location.search).get("embed") === "1";
+
+  // Embedded (room.html iframe): repurpose as "Exit / Forfeit".
+  if (EMBED){
+    try{ buttonEl.textContent = "나가기"; }catch{}
+    try{ buttonEl.title = "나가기"; }catch{}
+    buttonEl.addEventListener("click", ()=>{
+      try{ audio?.gestureStart?.(); }catch{}
+      try{ window.parent?.postMessage({ type: "duel_quit" }, "*"); }catch{}
+    });
+    return;
+  }
+
   buttonEl.addEventListener("click", ()=>{
     // iOS 등에서 사운드가 사용자 제스처로만 허용되는 경우가 있어
     // 클릭 순간 gestureStart를 시도합니다(실패해도 무시).

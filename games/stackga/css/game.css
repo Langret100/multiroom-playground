@@ -26,6 +26,12 @@ body{
   flex-direction:column;
 }
 
+/* Embedded iframe on some mobile browsers may mis-handle dvh/svh; fall back to vh. */
+body.embed .wrap{
+  height:100vh;
+  min-height:100vh;
+}
+
 /* (상단 타이틀/연결바 제거됨) */
 
 .panel{padding:0;margin:0}
@@ -132,7 +138,8 @@ body{
 canvas{
   display:block;
   background:#ffffff;
-  border:1px solid rgba(15,23,42,.12);
+  /* 카드 박스가 이미 테두리를 가지므로 캔버스 내측 테두리는 제거(이중테두리 방지) */
+  border:0;
   border-radius:14px;
 }
 

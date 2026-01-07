@@ -1,4 +1,4 @@
-import { initFirebase } from "./firebase.js";
+// Firebase dependency removed.
 import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
 import { StackGame, drawBoard, drawNext, COLS } from "./game.js";
@@ -32,29 +32,58 @@ const ui = {
   overlayDesc: $("overlayDesc"),
   btnStartCpu: $("btnStartCpu"),
   btnRestart: $("btnRestart"),
-  btnSound: $("btnSound"),
   btnMatch: $("btnMatch"),
   btnFull: $("btnFull"),
 };
 
-// --- Audio (BGM + SFX)
-const audio = createAudio({ musicUrl: "./assets/arcade-music.mp3" });
-function syncSoundIcon(){
-  if(!ui.btnSound) return;
-  ui.btnSound.textContent = audio.muted ? "🔇" : "🔊";
-}
-syncSoundIcon();
-ui.btnSound?.addEventListener("click", ()=>{
-  audio.gestureStart();
-  audio.toggleMuted();
-  syncSoundIcon();
-});
+const EMBED = new URLSearchParams(location.search).get("embed") === "1";
 
-// "매칭" 버튼: 언제든 새로고침 -> 대기자 있으면 다시 연결 시도
-initMatchButton({ buttonEl: ui.btnMatch, audio });
+// --- Focus helper (keyboard input in iframe)
+// 일부 브라우저/환경에서 iframe 내부가 자동으로 포커스를 얻지 못해
+// 키 입력이 무시되는 경우가 있어, 첫 탭/클릭 시 캔버스로 포커스를 유도합니다.
+try{
+  if (ui.cvMe){
+    ui.cvMe.tabIndex = 0;
+    ui.cvMe.style.outline = "none";
+    const focusMe = ()=>{ try{ ui.cvMe.focus({ preventScroll:true }); }catch(_){ try{ ui.cvMe.focus(); }catch(__){} } };
+    window.addEventListener("load", focusMe);
+    ui.cvMe.addEventListener("pointerdown", focusMe, { passive:true });
+    document.body?.addEventListener?.("pointerdown", ()=>{ try{ window.focus(); }catch(_){} }, true);
+  }
+}catch(_){ }
+
+// --- Audio (BGM + SFX)
+// NOTE:
+// - iframe 내부 제스처는 부모(window)로 전파되지 않아서, "첫 판만 음악 안 나옴" 이슈가 자주 발생했습니다.
+// - 그래서 게임 자체가 mp3 BGM을 직접 재생하도록 하고, 종료 시에는 반드시 정지합니다.
+const audio = createAudio({ musicUrl: "./assets/arcade-music.mp3" });
+// 소리 버튼은 제거됨. (필요 시 내부에서 음소거 토글만 유지)
+
+// "매칭" 버튼(단독) / "나가기" 버튼(로비-임베드)
+if (!EMBED){
+  initMatchButton({ buttonEl: ui.btnMatch, audio });
+}else{
+  if(ui.btnMatch){
+    ui.btnMatch.textContent = "나가기";
+    // embedded(룸)에서는 매칭 UI가 아닌 "나가기" 동작만 필요
+    try{ ui.btnMatch.classList.add("exitBtn"); }catch(_){ }
+    ui.btnMatch.addEventListener("click", ()=>{
+      try{ audio.gestureStart(); }catch{}
+      try{ window.parent?.postMessage({ type: "duel_quit" }, "*"); }catch{}
+    });
+  }
+}
 // start/retry audio on user gestures (mobile: 첫 play()가 실패할 수 있어 재시도 필요)
 window.addEventListener("pointerdown", ()=>audio.gestureStart(), { passive:true });
 window.addEventListener("keydown", ()=>audio.gestureStart());
+
+// Ensure BGM stops immediately when leaving the game to prevent room BGM overlap.
+const _stopBgmNow = ()=>{ try{ audio.stopMusic?.(); }catch{} };
+window.addEventListener("pagehide", _stopBgmNow);
+window.addEventListener("beforeunload", _stopBgmNow);
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "hidden") _stopBgmNow();
+});
 
 const boardColEl = document.getElementById("boardCol");
 const playShellEl = document.getElementById("playShell");
@@ -112,6 +141,7 @@ function toggleFullscreen(){
 ui.btnFull?.addEventListener("click", toggleFullscreen);
 
 function showOverlay(title, desc, {showCpuBtn=false}={}){
+  if (EMBED) showCpuBtn = false;
   safeSetText(ui.overlayTitle, title);
   safeSetText(ui.overlayDesc, desc || "");
   ui.overlay.classList.remove("hidden");
@@ -229,6 +259,7 @@ let roomUnsub=null, oppUnsub=null, evUnsub=null;
 let metaRef=null, playersRef=null, statesRef=null, eventsRef=null;
 
 let started=false;
+let finished=false;
 let raf=0;
 let meGame=null;
 let cpuGame=null;
@@ -238,6 +269,12 @@ let oppLastBoard=null;
 let seenEvents=new Set();
 let waitTimer=null, waitRemain=0;
 let cleanupTimer=null;
+
+function stopLoop(){
+  try{ if (raf) cancelAnimationFrame(raf); }catch(_){ }
+  raf = 0;
+  started = false;
+}
 
 function updateHud(){
   if(!meGame) return;
@@ -289,46 +326,82 @@ function startLoop(){
   hideOverlay();
   safeSetText(ui.mode, mode==="online"?"온라인":"PC");
 
+  // 첫 프레임이 렌더되지 않으면(iframe/브라우저 이슈) 화면이 멈춘 것처럼 보일 수 있어
+  // 즉시 1회 렌더를 시도합니다.
+  try{ render(); }catch(_){ }
+
+  // Some environments may drop the first rAF callback or stop the loop on an exception.
+  // Make the loop resilient so "블록이 안 내려옴"이 재현돼도 자동 복구가 가능하게 합니다.
+  let rafHealthy = false;
+  let fallbackTimer = null;
+  let fallbackInterval = null;
+  const ensureFallback = ()=>{
+    if (rafHealthy || fallbackInterval) return;
+    let last = performance.now();
+    fallbackInterval = setInterval(()=>{
+      const now = performance.now();
+      const dt = now - last; last = now;
+      try{
+        // mirror frame() logic
+        if(mode==="online" && meGame) autoCtl?.update(dt);
+        if(meGame) meGame.tick(dt);
+      if(mode==="cpu" && cpuGame){
+        cpuCtl?.update(dt);
+        cpuGame.tick(dt);
+        oppLastBoard = cpuGame.snapshot();
+      }
+        updateHud();
+        render();
+      }catch(e){
+        // keep trying
+      }
+    }, 33);
+  };
+  fallbackTimer = setTimeout(ensureFallback, 650);
+
   let lastTs = performance.now();
   const sendEvery = 120;
   let sendAcc = 0;
 
   const frame = (ts)=>{
+    rafHealthy = true;
+    if (fallbackTimer){ try{ clearTimeout(fallbackTimer); }catch{}; fallbackTimer=null; }
+    if (fallbackInterval){ try{ clearInterval(fallbackInterval); }catch{}; fallbackInterval=null; }
+
     const dt = ts - lastTs; lastTs = ts;
 
-    // Embedded CPU role: drive local controls automatically.
-    if(mode==="online" && meGame){
-      autoCtl?.update(dt);
-    }
+    try {
+      // Embedded CPU role: drive local controls automatically.
+      if(mode==="online" && meGame){
+        autoCtl?.update(dt);
+      }
 
-    if(meGame) meGame.tick(dt);
+      if(meGame) meGame.tick(dt);
 
-    if(mode==="cpu" && cpuGame){
-      cpuCtl?.update(dt);
-      cpuGame.tick(dt);
-      oppLastBoard = cpuGame.snapshot();
-  comboLines = 0;
-  bumpCombo(0);
+      if(mode==="cpu" && cpuGame){
+        cpuCtl?.update(dt);
+        cpuGame.tick(dt);
+        oppLastBoard = cpuGame.snapshot();
 
-      const c2 = cpuGame.lastCleared || 0;
-      if(c2>0){
-        cpuGame.lastCleared = 0;
-        const atk = linesToGarbage(c2);
-        if(atk){
-          applyGarbageTo(meGame, atk);
-          // 받는 쪽 이펙트
-          shake("strong");
-          flash("bad");
-          audio.sfx("attackHit");
+        const c2 = cpuGame.lastCleared || 0;
+        if(c2>0){
+          cpuGame.lastCleared = 0;
+          const atk = linesToGarbage(c2);
+          if(atk){
+            applyGarbageTo(meGame, atk);
+            // 받는 쪽 이펙트
+            shake("strong");
+            flash("bad");
+            audio.sfx("attackHit");
+          }
         }
       }
-    }
 
-    updateHud();
+      updateHud();
 
     // my attacks
-    const c = meGame?.lastCleared || 0;
-    if(c>0){
+      const c = meGame?.lastCleared || 0;
+      if(c>0){
       meGame.lastCleared = 0;
       const atk = linesToGarbage(c);
       bumpCombo(c);
@@ -347,7 +420,7 @@ function startLoop(){
     }
 
     // online publish
-    if(mode==="online"){
+      if(mode==="online"){
       sendAcc += dt;
       if(sendAcc >= sendEvery && meGame && pid){
         sendAcc = 0;
@@ -359,11 +432,15 @@ function startLoop(){
     }
 
     // end conditions
-    if(meGame?.dead){ endGame(false); return; }
-    if(mode==="cpu" && cpuGame?.dead){ endGame(true); return; }
+      if(meGame?.dead){ endGame(false); return; }
+      if(mode==="cpu" && cpuGame?.dead){ endGame(true); return; }
 
-    render();
-    raf = requestAnimationFrame(frame);
+      render();
+      raf = requestAnimationFrame(frame);
+    } catch (e) {
+      // If a render/tick error happens, keep the loop alive instead of freezing on a blank frame.
+      try { raf = requestAnimationFrame(frame); } catch {}
+    }
   };
 
   raf = requestAnimationFrame(frame);
@@ -391,6 +468,7 @@ function startWaitCountdown(seconds){
 }
 
 function startCpuMode(reason){
+  finished = false;
   try{ audio.gestureStart(); }catch{}
   // online에서 PC로 전환 시: 방 점유를 풀어 다음 사용자 매칭이 막히지 않도록 best-effort 정리
   if(mode==="online" && api && db && roomId && pid && playersRef && metaRef){
@@ -430,6 +508,7 @@ function startCpuMode(reason){
 
 async function endGame(won){
   if(!started) return;
+  finished = true;
   started = false;
   cancelAnimationFrame(raf);
 
@@ -508,13 +587,29 @@ function onRoomUpdate(room){
   // show connection
   setStatus(ids.length>=2 ? "연결됨" : "연결 대기…");
 
-  if(ids.length===1 && !started) startWaitCountdown(20);
+  if(meta.state === "back"){
+    clearWait();
+    stopLoop();
+    showOverlay("로비로 돌아갑니다", "", {showCpuBtn:false});
+    return;
+  }
+
+  if(ids.length===1 && !started && !finished){
+    if (!EMBED){
+      startWaitCountdown(20);
+    } else {
+      // In embedded play the parent handles matchmaking; just show a passive wait state.
+      showOverlay("상대 연결 대기…", "", {showCpuBtn:false});
+    }
+  }
 
   if(ids.length===2 && meta.state === "open"){
     setRoomState({ api, metaRef }, "playing").catch(()=>{});
   }
 
-  if(ids.length===2 && meta.state === "playing" && !started){
+  if(meta.state === "playing" && !started && (EMBED || ids.length===2)){
+    finished = false;
+    try{ audio.gestureStart(); }catch{}
     clearWait();
     mode = "online";
     safeSetText(ui.mode, "온라인");
@@ -524,7 +619,8 @@ function onRoomUpdate(room){
     meGame = new StackGame(((meta.seed>>>0) || 1), playRows);
     // If this iframe is a hidden CPU bot (embedded solo mode), drive inputs automatically.
     if (window.__EMBED_INIT__?.role === "cpu"){
-      autoCtl = new CpuController(meGame, (((meta.seed>>>0) || 1) ^ 0x9e3779b9) >>> 0);
+      const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "mid");
+      autoCtl = new CpuController(meGame, (((meta.seed>>>0) || 1) ^ 0x9e3779b9) >>> 0, cpuDiff);
     } else {
       autoCtl = null;
     }
@@ -541,14 +637,15 @@ function onRoomUpdate(room){
   }
 
   if(meta.state === "ended"){
+    finished = true;
     clearWait();
-    if(started){
-      const won = meta?.result?.winner === pid;
-      showOverlay(won?"승리!":"패배…", "", {showCpuBtn:false});
-      started = false;
-      cancelAnimationFrame(raf);
-      autoCtl = null;
-    }
+    // Always show result (embedded mode may end from parent even if local
+    // end detection missed a tick).
+    const winner = meta?.winner ?? meta?.result?.winner ?? meta?.payload?.winnerSid ?? meta?.payload?.winner;
+    const won = winner === pid;
+    showOverlay(won?"승리!":"패배…", "", {showCpuBtn:false});
+    started = false;
+    cancelAnimationFrame(raf);
     autoCtl = null;
     // cleanup soon
     if(cleanupTimer) clearTimeout(cleanupTimer);
@@ -565,7 +662,12 @@ function onOppState(res){
   }
 }
 
-function onEventRecv({key, ev}){
+function onEventRecv(payload){
+  // Firebase: {key, ev}
+  // Embedded stub: {key, ev} or {event} or the event object directly
+  const ev = payload?.ev ?? payload?.event ?? payload;
+  const key = payload?.key || (ev?.t ? `ev_${ev.t}` : `ev_${Date.now()}_${Math.random()}`);
+  if(!ev) return;
   if(seenEvents.has(key)) return;
   seenEvents.add(key);
   if(ev.kind === "garbage"){
@@ -576,43 +678,80 @@ function onEventRecv({key, ev}){
     audio.sfx("attackHit");
   }
   // consume/delete immediately to avoid logs
-  try{
-    api.remove(api.child(eventsRef, key)).catch(()=>{});
-  }catch{}
+  if(!EMBED){
+    try{ api.remove(api.child(eventsRef, key)).catch(()=>{}); }catch{}
+  }
 }
 
 async function boot(){
-  // Firebase init (실패해도 게임은 돌아가야 함)
-  try{
-    fb = initFirebase();
-    db = fb.db;
-    api = fb.api;
-  }catch(e){
-    setStatus("오프라인: Firebase 설정 확인");
-    startCpuMode("오프라인: PC 대전");
+  // Embedded(룸) 모드에서는 Firebase/로비 매칭 없이 parent bridge로만 동작합니다.
+  // (bridge_ready/bridge_init 레이스나 초기 room snapshot 누락이 있어도 게임이 즉시 시작되도록 보강)
+  if (EMBED){
+    // In embedded mode we do not rely on Firebase room meta; start immediately and
+    // sync opponent via parent bridge (netplay.js stub).
+    mode = "online";
+    safeSetText(ui.mode, "온라인");
+    setStatus("연결 중…");
+
+    // Wait briefly for bridge_init so pid/role/matchId are known.
+    const waitInit = ()=>new Promise((resolve)=>{
+      if(window.__EMBED_INIT__?.mySid) return resolve();
+      const t0 = Date.now();
+      const tick = ()=>{
+        if(window.__EMBED_INIT__?.mySid) return resolve();
+        if(Date.now()-t0 > 800) return resolve();
+        setTimeout(tick, 30);
+      };
+      tick();
+    });
+
+    await waitInit();
+
+    pid = window.__EMBED_INIT__?.mySid || "me";
+    roomId = window.__EMBED_INIT__?.matchId || "embedded";
+    if(ui.oppTag) ui.oppTag.textContent = (window.__EMBED_INIT__?.oppNick || "CPU");
+    setStatus("연결됨");
+
+    const fnv1a32 = (str)=>{
+      let h = 0x811c9dc5;
+      const s = String(str||"");
+      for(let i=0;i<s.length;i++){
+        h ^= s.charCodeAt(i);
+        h = Math.imul(h, 0x01000193);
+      }
+      return (h>>>0) || 1;
+    };
+    const seed = fnv1a32(window.__EMBED_INIT__?.matchId || `${Date.now()}_${pid}`);
+
+    // Subscribe opponent & events before starting the loop.
+    oppUnsub?.();
+    oppUnsub = subscribeOppState({ pid, onOpp: onOppState });
+    evUnsub?.();
+    evUnsub = subscribeEvents({ pid, onEvent: onEventRecv });
+
+    // Start local game immediately.
+    meGame = new StackGame(seed, playRows);
+    if (window.__EMBED_INIT__?.role === "cpu"){
+      const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "mid");
+      autoCtl = new CpuController(meGame, (seed ^ 0x9e3779b9) >>> 0, cpuDiff);
+    } else {
+      autoCtl = null;
+    }
+    oppLastBoard = null;
+    comboLines = 0;
+    bumpCombo(0);
+    seenEvents.clear();
+    fit();
+    startLoop();
     return;
   }
 
-  try{
-    lobbyId = stableLobbyId();
-    // sweep stale rooms/slots (best-effort)
-    try{ await sweepLobbySlots({db, api, lobbyId, maxTeams: 10}); }catch{}
-
-    setStatus("연결 중…");
-    mode = "online";
-    safeSetText(ui.mode, "온라인");
-    if(ui.oppTag) ui.oppTag.textContent = (window.__EMBED_INIT__?.oppNick || "Player");
-
-    const joined = await joinLobby({db, api, lobbyId, name: "Player", maxTeams: 10});
-    mySlot = joined.slot;
-    await enterRoom(joined.roomId, joined);
-    // periodic sweep so crashed sessions do not leave data behind
-    setInterval(()=>{ try{ sweepLobbySlots({db, api, lobbyId, maxTeams:10}).catch(()=>{}); }catch{} }, 20000);
-
-  }catch(e){
-    // rules/설정 오류거나 10팀 가득이면 PC로
-    startCpuMode("연결 실패: PC 대전");
-  }
+  // Standalone에서는 Firebase 매칭을 제거했습니다.
+  // 온라인 대전은 로비(Cloudflare 서버)에서 방을 생성/입장하여 진행합니다.
+  mode = "offline";
+  safeSetText(ui.mode, "오프라인");
+  setStatus("오프라인");
+  startCpuMode("오프라인: 혼자하기");
 }
 
 // best-effort cleanup on exit
@@ -620,6 +759,8 @@ let _exitCleaned = false;
 function bestEffortExitCleanup(){
   if(_exitCleaned) return;
   _exitCleaned = true;
+  // Prevent BGM leaking into lobby / other game pages.
+  try{ audio?.stopMusic?.(); }catch(_){ }
   try{ if(hbTimer) clearInterval(hbTimer); }catch{}
   try{ clearWait(); }catch{}
   if(mode==="online" && db && api && roomId){
