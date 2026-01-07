@@ -206,6 +206,33 @@ let mode="offline";
 
 // game instance
 let game=null;
+let cpuAutoTimer=null;
+
+function startCpuAutoplay(){
+  if (cpuAutoTimer || !game) return;
+  if (window.__EMBED_INIT__?.role !== "cpu") return;
+
+  const dropZone = document.getElementById("drop-zone");
+  cpuAutoTimer = setInterval(()=>{
+    try{
+      if (!game || game.isGameOver) return;
+      // Move drop point to a random location inside the playable area
+      const rect = dropZone?.getBoundingClientRect?.();
+      if (rect && rect.width > 20){
+        const x = rect.left + rect.width * (0.15 + Math.random() * 0.7);
+        game.updateDropPosition(x);
+      }
+      // Drop periodically; ShapeGame internally rate-limits while frozen
+      game.dropShape();
+    }catch(_){ }
+  }, 520);
+}
+
+function stopCpuAutoplay(){
+  if (!cpuAutoTimer) return;
+  try{ clearInterval(cpuAutoTimer); }catch(_){ }
+  cpuAutoTimer = null;
+}
 
 // Opp render
 const oppCtx = ui.oppCanvas ? ui.oppCanvas.getContext("2d") : null;
@@ -738,11 +765,27 @@ window.addEventListener('shapeGameReady', (e)=>{
     // Embedded: auto-start online match
     setTimeout(()=>{ try{ ui.matchBtn?.click?.(); }catch{} }, 50);
   }
+  // Embedded CPU bot role: start autoplay after bridge_init is received.
+  setTimeout(()=>{ try{ startCpuAutoplay(); }catch{} }, 200);
   setStatus("오프라인");
+});
+
+// When bridge_init arrives, role info becomes available.
+window.addEventListener("message", (e)=>{
+  const d = e.data || {};
+  if (!d || typeof d !== "object") return;
+  if (d.type === "bridge_init"){
+    // Start/stop depending on role
+    setTimeout(()=>{
+      if (window.__EMBED_INIT__?.role === "cpu") startCpuAutoplay();
+      else stopCpuAutoplay();
+    }, 50);
+  }
 });
 
 // In case event was dispatched before this module loaded
 if(window.__shapeGame){
   game = window.__shapeGame;
+  setTimeout(()=>{ try{ startCpuAutoplay(); }catch{} }, 200);
   setStatus("오프라인");
 }

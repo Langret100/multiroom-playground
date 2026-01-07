@@ -4,7 +4,7 @@
   //  - "duel": 1v1 matches; if 3~4 players in room, server runs a tournament.
   //  - "coop": cooperative real-time game.
   const GAME_REGISTRY = [
-    { id: "stackga", name: "스택가", type:"duel", badgeClass: "tetris", maxClients: 4, embedPath: "games/stackga/index.html" },
+    { id: "stackga", name: "블록쌓기", type:"duel", badgeClass: "tetris", maxClients: 4, embedPath: "games/stackga/index.html" },
     { id: "suika",   name: "수박",   type:"duel", badgeClass: "suika",  maxClients: 4, embedPath: "games/suika/index.html" },
     // Togester (co-op) is embedded as an iframe and synced via Colyseus messages.
     // Firebase dependencies have been removed.

@@ -48,6 +48,16 @@ const SHAPES = {
   ],
 };
 
+const COLORS = [
+  "rgba(90,200,250,0.95)",   // cyan
+  "rgba(255,110,170,0.95)",  // pink
+  "rgba(255,215,110,0.95)",  // yellow
+  "rgba(179,142,255,0.95)",  // purple
+  "rgba(124,255,178,0.95)",  // green
+  "rgba(255,140,110,0.95)",  // orange
+  "rgba(180,255,110,0.95)"   // lime
+];
+
 const TYPES = ["I","O","T","S","Z","J","L"];
 
 function mulberry32(seed){

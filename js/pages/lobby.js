@@ -55,6 +55,8 @@ function setupBgm(audioElId, btnId){
     myId: document.querySelector("#myId"),
     refreshBtn: document.querySelector("#refreshRooms"),
     createBtn: document.querySelector("#openCreate"),
+    createBtn2: document.querySelector("#openCreate2"),
+    fullBtn: document.querySelector("#toggleFullscreen"),
     modal: document.querySelector("#createModal"),
     modalClose: document.querySelector("#modalClose"),
     createConfirm: document.querySelector("#createConfirm"),
@@ -76,9 +78,26 @@ function setupBgm(audioElId, btnId){
     const line = document.createElement("div");
     line.className = "chatLine";
     const time = m.time || nowHHMM();
-    const nick = safeText(m.nick || "?", 24);
-    const text = safeText(m.text || "", 200);
-    line.innerHTML = `<span class="t">[${time}]</span> <b class="n">${nick}</b>: <span class="m">${text}</span>`;
+
+    // System messages (join/leave etc.)
+    const rawNick = (m.nick ?? "").toString().trim();
+    const rawText = (m.text ?? "").toString().trim();
+    const isSystem = (!rawNick || rawNick === "SYSTEM" || rawNick === "?" || m.system === true || m.type === "system");
+
+    if (isSystem){
+      let msg = rawText || "";
+      const join = msg.match(/^(.+?)\s*(접속|입장)$/);
+      const leave = msg.match(/^(.+?)\s*(퇴장|나감|종료)$/);
+      if (join) msg = `${join[1]}님이 접속하셨습니다.`;
+      else if (leave) msg = `${leave[1]}님이 퇴장하셨습니다.`;
+      line.classList.add("sys");
+      line.innerHTML = `<span class="t">[${time}]</span> <span class="sysMsg">${safeText(msg, 200)}</span>`;
+    } else {
+      const nick = safeText(rawNick, 24);
+      const text = safeText(rawText, 200);
+      line.innerHTML = `<span class="t">[${time}]</span> <b class="n">${nick}</b>: <span class="m">${text}</span>`;
+    }
+
     els.chatLog.appendChild(line);
     els.chatLog.scrollTop = els.chatLog.scrollHeight;
   }
@@ -185,7 +204,7 @@ function setupBgm(audioElId, btnId){
   async function createRoom(){
     if (!client) return;
     const title = safeText(els.roomTitle.value || "새 방", 30);
-    const mode = els.gameMode.value || "tetris4";
+    const mode = els.gameMode.value || ((window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id) ? window.GAME_REGISTRY[0].id : "stackga");
     const meta = (window.gameById ? window.gameById(mode) : null);
     const modeType = meta?.type || "coop";
     const maxClients = Math.max(2, Math.min(4, parseInt(els.maxClients.value||"4",10)||4));
@@ -209,7 +228,32 @@ function setupBgm(audioElId, btnId){
     }
 
     els.refreshBtn.addEventListener("click", ()=> refreshRooms());
-    els.createBtn.addEventListener("click", openModal);
+
+    // Fullscreen toggle (Pages/desktop friendly)
+    if (els.fullBtn) {
+      const sync = () => {
+        els.fullBtn.textContent = document.fullscreenElement ? "🗗" : "⛶";
+        els.fullBtn.title = document.fullscreenElement ? "전체화면 해제" : "전체화면";
+        els.fullBtn.setAttribute("aria-label", els.fullBtn.title);
+      };
+      els.fullBtn.addEventListener("click", async () => {
+        try {
+          if (!document.fullscreenElement) {
+            await document.documentElement.requestFullscreen();
+          } else {
+            await document.exitFullscreen();
+          }
+        } catch (e) {
+          // ignore (some browsers block)
+        }
+        sync();
+      });
+      document.addEventListener("fullscreenchange", sync);
+      sync();
+    }
+
+    els.createBtn && els.createBtn.addEventListener("click", openModal);
+    els.createBtn2 && els.createBtn2.addEventListener("click", openModal);
     els.modalClose.addEventListener("click", closeModal);
     els.createCancel.addEventListener("click", closeModal);
     els.createConfirm.addEventListener("click", async ()=>{ closeModal(); await createRoom(); });
@@ -256,6 +300,8 @@ function setupBgm(audioElId, btnId){
       lobbyRoom.send("presence", {});
       // Optional one-shot fetch as a fallback (manual refresh is also available)
       await refreshRooms();
+      // Fallback polling: ensures 인원/상태가 누락되더라도 로비가 결국 동기화됩니다.
+      setInterval(()=>{ try{ refreshRooms(); }catch(_){} }, 5000);
       setStatus("", "info");
     }catch(err){
       setStatus("서버에 연결할 수 없습니다. 로컬 테스트는 http 서버로 열고, 서버를 먼저 실행하세요.", "error");
@@ -272,5 +318,5 @@ function setupBgm(audioElId, btnId){
 (function(){
   const el = document.getElementById('bgmLobby');
   if (!el || !window.AudioManager) return;
-  window.AudioManager.attachAudioManager(el, { label: '로비 음악 켜기', storageKey: 'audio_enabled' });
+  window.AudioManager.attachAudioManager(el, { label: '로비 음악 켜기', storageKey: 'audio_enabled', volume: 0.55 });
 })();

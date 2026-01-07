@@ -34,6 +34,15 @@
 <span class="badge"><span class="dot ok"></span>SYNC</span>
 </div>
 
+<!-- Pre-game preview (shown in lobby; hidden while playing) -->
+<div class="gamePreview" id="gamePreview">
+  <div class="gpThumb" aria-hidden="true"></div>
+  <div class="gpMeta">
+    <div class="gpTitle" id="previewTitle">-</div>
+    <div class="gpSub muted">게임 시작 시 전체 화면으로 전환됩니다.</div>
+  </div>
+</div>
+
 <div class="duel-ui hidden" id="duelUI">
   <div class="duel-info">
     <div class="duel-line" id="duelLine">대기…</div>
@@ -104,14 +113,14 @@
 <div class="panelHeader">
 <div>
 <h2>입장 인원</h2>
-<div class="sub muted">레디 후 방장이 시작</div>
+<div class="sub muted">참가자는 레디 후 방장이 시작</div>
 </div>
 <span class="badge"><span class="dot ok"></span>최대 4인</span>
 </div>
 <div class="pList" id="playersList"></div>
 <div class="controls">
 <button class="btn primary" id="readyBtn">레디</button>
-<button class="btn" disabled="" id="startBtn">시작(방장)</button>
+<button class="btn start" disabled="" id="startBtn">시작</button>
 </div>
 </div>
 </div>
@@ -119,8 +128,7 @@
 <div class="panel chat">
 <div class="panelHeader">
 <div>
-<h2>방 채팅</h2>
-<div class="sub muted">방을 나가면 채팅은 저장되지 않습니다</div>
+<h2>채팅</h2>
 </div>
 <span class="badge"><span class="dot ok"></span>ROOM</span>
 </div>
@@ -200,8 +208,6 @@
 <script defer="" src="./js/core/net.js"></script>
 <script defer="" src="./js/core/audio.js"></script>
 <script defer="" src="./js/games/registry.js"></script><script defer="defer" src="./js/stackga/engine.js"></script><script defer="defer" src="./js/stackga/touch.js"></script><script defer="defer" src="./js/sim/stackga_tournament.js"></script>
-<script defer="" src="./js/sim/tetris4.js"></script>
-<script defer="" src="./js/sim/coop4.js"></script>
 <script defer="" src="./js/pages/room.js"></script>
 <audio id="bgmBattle" loop="" preload="auto" src="assets/audio/lobby_battle.mp3"></audio>
 </body>

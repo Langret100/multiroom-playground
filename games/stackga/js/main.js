@@ -233,6 +233,7 @@ let raf=0;
 let meGame=null;
 let cpuGame=null;
 let cpuCtl=null;
+let autoCtl=null; // embedded bot controller (role: "cpu")
 let oppLastBoard=null;
 let seenEvents=new Set();
 let waitTimer=null, waitRemain=0;
@@ -294,6 +295,11 @@ function startLoop(){
 
   const frame = (ts)=>{
     const dt = ts - lastTs; lastTs = ts;
+
+    // Embedded CPU role: drive local controls automatically.
+    if(mode==="online" && meGame){
+      autoCtl?.update(dt);
+    }
 
     if(meGame) meGame.tick(dt);
 
@@ -516,6 +522,12 @@ function onRoomUpdate(room){
 
     // rows는 고정(23행). seed만 동일하게 맞춤.
     meGame = new StackGame(((meta.seed>>>0) || 1), playRows);
+    // If this iframe is a hidden CPU bot (embedded solo mode), drive inputs automatically.
+    if (window.__EMBED_INIT__?.role === "cpu"){
+      autoCtl = new CpuController(meGame, (((meta.seed>>>0) || 1) ^ 0x9e3779b9) >>> 0);
+    } else {
+      autoCtl = null;
+    }
     fit();
     oppLastBoard = null;
     comboLines = 0;
@@ -535,7 +547,9 @@ function onRoomUpdate(room){
       showOverlay(won?"승리!":"패배…", "", {showCpuBtn:false});
       started = false;
       cancelAnimationFrame(raf);
+      autoCtl = null;
     }
+    autoCtl = null;
     // cleanup soon
     if(cleanupTimer) clearTimeout(cleanupTimer);
     cleanupTimer = setTimeout(()=>{ hardDeleteRoom({db, api, roomId}).catch(()=>{}); }, 350);

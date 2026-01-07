@@ -443,7 +443,9 @@ export class RoomDO{
 
   _allReady(){
     if (this.users.size < 2) return false;
+    // Host does not need to ready; only non-host players must be ready
     for (const u of this.users.values()){
+      if (u.isHost) continue;
       if (!u.ready) return false;
     }
     return true;
@@ -556,6 +558,12 @@ export class RoomDO{
         this._recalcHost();
         this._applyHostFlags();
 
+        // If we are in lobby, ensure no stale CPU player remains from a prior solo game
+        if (this.meta.phase === \"lobby\"){
+          this._stopCpu();
+          this._removeCpuUser();
+        }
+
         wsSetAttachment(ws, { uid: wantUid, nick, ready: !!this.users.get(wantUid).ready, seat: this.users.get(wantUid).seat });
 
         this._send(ws, "hello_ok", { userId: wantUid });
@@ -591,6 +599,10 @@ export class RoomDO{
         if (!u) return;
         if (uid !== this.meta.ownerUserId){
           this._send(ws, "system", { text:"방장만 시작할 수 있습니다.", ts: now() });
+          return;
+        }
+        if (this.users.size < 2){
+          this._send(ws, "system", { text:"2명 이상 있어야 시작할 수 있습니다.", ts: now() });
           return;
         }
         if (!this._allReady()){
@@ -876,6 +888,11 @@ export class RoomDO{
       this.meta.phase = "lobby";
       this.meta.status = "waiting";
       this.tour = null;
+
+
+      // stop CPU + remove CPU user when returning to lobby
+      this._stopCpu();
+      this._removeCpuUser();
 
       // reset ready
       for (const u of this.users.values()){

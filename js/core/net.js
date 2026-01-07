@@ -124,9 +124,21 @@
       }
 
       // derived
-      this.state.playerCount = playersArr.length;
-      this.state.allReady = playersArr.length >= 2 && playersArr.every(p=> !!p.ready);
+const CPU_SID = "__cpu__";
+const humans = playersArr.filter(p => String(p.sessionId) !== CPU_SID);
+this.state.playerCount = humans.length;
 
+// Host does not need to be ready; only non-host human players must be ready.
+const nonHost = humans.filter(p => !p.isHost);
+const isCoop = (this.state.mode === "togester");
+const isDuel = !isCoop;
+
+if (isDuel && humans.length === 1){
+  // 1인 듀얼은 서버가 CPU를 붙여 시작하므로 ready 조건을 true로 봄(프론트 UX용)
+  this.state.allReady = true;
+} else {
+  this.state.allReady = humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready);
+}
       if(typeof this.state.onChange === "function") {
         try{ this.state.onChange(); }catch(e){}
       }
@@ -228,10 +240,12 @@
       const conn = new RoomConnection(ws, "room", { roomId });
       const nick = opts?.nick || localStorage.getItem("nick") || "Player";
       await waitOpen(ws);
-      // server may send hello_ok immediately upon upgrade
-      await conn._helloOk;
+
+      // IMPORTANT: Room requires hello_room first; then it replies with hello_ok.
       const user_id = (sessionStorage.getItem("user_id") || localStorage.getItem("user_id") || "");
       ws.send(JSON.stringify({ t:"hello_room", d:{ nick, user_id } }));
+
+      await conn._helloOk;
       return conn;
     }
     async create(roomName, opts){
@@ -271,6 +285,10 @@
   function makeClient(){
     return new CFClient();
   }
+
+  // Build marker for debugging deployments
+  window.__BUILD_ID = "2026-01-07-fix-ready-bgm";
+  try{ console.log("[build]", window.__BUILD_ID); }catch(_){ }
 
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();

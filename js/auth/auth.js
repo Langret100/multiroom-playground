@@ -84,6 +84,7 @@
     if (els.signupArea) els.signupArea.classList.add("hidden");
     setStatus("");
     els.modal.classList.add("show");
+    try{ document.body.classList.add("logged-out"); }catch(_){ }
     // reset scroll for mobile
     try { const b = els.modal.querySelector('.modalBody'); if(b) b.scrollTop = 0; } catch(e){}
     els.modal.setAttribute("aria-hidden", "false");
@@ -93,6 +94,7 @@
     if (!els.modal) return;
     if (els.signupArea) els.signupArea.classList.add("hidden");
     els.modal.classList.remove("show");
+    try{ document.body.classList.remove("logged-out"); }catch(_){ }
     els.modal.setAttribute("aria-hidden", "true");
   }
   function setStatus(msg){

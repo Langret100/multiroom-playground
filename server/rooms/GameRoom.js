@@ -1,6 +1,8 @@
 import { Room } from "@colyseus/core";
 import { GameState, PlayerState } from "../state/GameState.js";
 
+const CPU_SID = "__cpu__";
+
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
 function shuffle(arr){
@@ -18,7 +20,7 @@ export class GameRoom extends Room {
     this.maxClients = clamp(parseInt(options?.maxClients || "4", 10) || 4, 2, 4);
 
     this.state.title = String(options?.title || "새 방").slice(0, 30);
-    this.state.mode  = String(options?.mode || "tetris4").slice(0, 20);
+    this.state.mode  = String(options?.mode || "stackga").slice(0, 20);
     // "duel" games are 1v1 games. If 3~4 players are in the room, we run a small tournament.
     // "coop" games are real-time cooperative games.
     const inferred = ["stackga","suika"].includes(this.state.mode) ? "duel" : "coop";
@@ -63,8 +65,41 @@ export class GameRoom extends Room {
       const p = this.state.players.get(client.sessionId);
       if (!p?.isHost) return;
       if (this.state.phase !== "lobby") return;
-      if (this.state.playerCount < 2) return;
-      if (!this.state.allReady) return;
+
+      // Host is considered "ready" implicitly.
+      // Duel games allow 1 human + CPU (1:1) when alone.
+      const humanSids = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
+      const humanCount = humanSids.length;
+
+      if (this.state.modeType === "duel"){
+        if (humanCount < 1) return;
+        // Solo start -> inject CPU seat as a pseudo player.
+        if (humanCount === 1 && !this.state.players.has(CPU_SID)){
+          const cpu = new PlayerState();
+          cpu.nick = "CPU";
+          cpu.ready = true;
+          cpu.isHost = false;
+          this.state.players.set(CPU_SID, cpu);
+
+          // Reserve a seat for UI/layout. CPU does NOT consume a real client slot.
+          const used = new Set(Array.from(this.state.order.values()));
+          let seat = 0;
+          while (used.has(seat) && seat < 4) seat++;
+          this.state.order.set(CPU_SID, seat);
+
+          // Pre-fill input so lockstep frame payload remains stable.
+          this.inputs.set(CPU_SID, 0);
+        }
+
+        // recomputeReady() also updates playerCount (humans) and allReady.
+        this.recomputeReady();
+        if (!this.state.allReady) return;
+      } else {
+        // Coop requires at least 2 humans.
+        if (humanCount < 2) return;
+        this.recomputeReady();
+        if (!this.state.allReady) return;
+      }
 
       this.state.phase = "playing";
       this.setMetadata({ ...this.metadata, status: "playing" });
@@ -187,28 +222,49 @@ export class GameRoom extends Room {
 
     
     // Duel relay: no persistence. Only active match players can send.
-    this.onMessage("duel_state", (client, { state }) => {
+    this.onMessage("duel_state", (client, payload) => {
       if (this.state.modeType !== "duel") return;
       if (this.state.phase !== "playing") return;
+
+      const state = payload?.state;
+      const requestedSid = payload?.sid;
+
+      // Allow the active human to proxy CPU snapshots for spectators.
+      let sid = client.sessionId;
+      if (requestedSid === CPU_SID) sid = CPU_SID;
+
       if (this.tour?.active){
         const { a, b } = this.tour.active;
+        // only active match human clients can send
         if (client.sessionId !== a && client.sessionId !== b) return;
+        // proxy allowed only if CPU is one of active players
+        if (sid === CPU_SID && a !== CPU_SID && b !== CPU_SID) return;
       }
+
       // broadcast to everyone in the room (including spectators)
-      this.broadcast("duel_state", { sid: client.sessionId, state });
+      this.broadcast("duel_state", { sid, state });
     });
 
-    this.onMessage("duel_event", (client, { event }) => {
+    this.onMessage("duel_event", (client, payload) => {
       if (this.state.modeType !== "duel") return;
       if (this.state.phase !== "playing") return;
+
+      const event = payload?.event;
+      const requestedSid = payload?.sid;
+
+      let sid = client.sessionId;
+      if (requestedSid === CPU_SID) sid = CPU_SID;
+
       if (this.tour?.active){
         const { a, b } = this.tour.active;
         if (client.sessionId !== a && client.sessionId !== b) return;
+        if (sid === CPU_SID && a !== CPU_SID && b !== CPU_SID) return;
       }
-      this.broadcast("duel_event", { sid: client.sessionId, event });
+
+      this.broadcast("duel_event", { sid, event });
     });
 
-this.onMessage("input", (client, { mask }) => {
+    this.onMessage("input", (client, { mask }) => {
       // no per-input logging / storage
       if (this.state.phase !== "playing") return;
       const m = clamp(parseInt(mask ?? 0, 10) || 0, 0, 63);
@@ -216,14 +272,24 @@ this.onMessage("input", (client, { mask }) => {
     });
 
     // Stackga: client notifies when they died (only active match players)
-    this.onMessage("duel_over", (client) => {
+    this.onMessage("duel_over", (client, payload) => {
       if (this.state.modeType !== "duel") return;
       if (this.state.phase !== "playing") return;
       if (!this.tour?.active) return;
       const { a, b } = this.tour.active;
+
+      // Only active match human clients can submit the result.
       if (client.sessionId !== a && client.sessionId !== b) return;
 
-      const loserSid = client.sessionId;
+      // Allow host to proxy CPU defeat.
+      const requestedLoser = payload?.loserSid;
+      let loserSid = client.sessionId;
+      if (requestedLoser === CPU_SID && (a === CPU_SID || b === CPU_SID)){
+        loserSid = CPU_SID;
+      } else if (requestedLoser === client.sessionId){
+        loserSid = client.sessionId;
+      }
+
       const winnerSid = (loserSid === a) ? b : a;
 
       const loser = this.state.players.get(loserSid);
@@ -285,7 +351,7 @@ this.onMessage("input", (client, { mask }) => {
       this.setMetadata({ ...this.metadata, hostNick: nick });
     }
 
-    this.state.playerCount = this.state.players.size;
+    // playerCount/allReady are derived in recomputeReady()
     // seat order
     if (!this.state.order.has(client.sessionId)){
       const used = new Set(Array.from(this.state.order.values()));
@@ -314,7 +380,7 @@ this.onMessage("input", (client, { mask }) => {
         this.broadcast("tg_players", { players: out });
       }
     }catch(_){ }
-    this.state.playerCount = this.state.players.size;
+    // playerCount/allReady are derived in recomputeReady()
 
     // if host left, promote the smallest seat to host
     if (this.state.playerCount > 0){
@@ -342,14 +408,23 @@ this.onMessage("input", (client, { mask }) => {
   }
 
   recomputeReady(){
-    let all = true;
-    let count = 0;
-    for (const p of this.state.players.values()){
-      count++;
-      if (!p.ready) all = false;
+    // NOTE: host is implicitly ready.
+    // CPU is a pseudo-player used only for solo-duel and does not count as a human.
+    let humans = 0;
+    let nonHostHumansReady = true;
+
+    for (const [sid, p] of this.state.players.entries()){
+      if (sid === CPU_SID) continue;
+      humans++;
+      if (!p.isHost && !p.ready) nonHostHumansReady = false;
     }
-    this.state.playerCount = count;
-    this.state.allReady = (count >= 2) && all;
+
+    this.state.playerCount = humans;
+    if (this.state.modeType === "duel"){
+      this.state.allReady = (humans >= 1) && nonHostHumansReady;
+    } else {
+      this.state.allReady = (humans >= 2) && nonHostHumansReady;
+    }
   }
 
   syncMetadata(){
@@ -474,6 +549,14 @@ this.onMessage("input", (client, { mask }) => {
     setTimeout(()=>{
       this.state.phase = "lobby";
       this.started = false;
+
+      // Solo-duel cleanup: remove CPU pseudo player on return to lobby.
+      if (this.state.players.has(CPU_SID)){
+        try{ this.state.players.delete(CPU_SID); }catch(_){ }
+        try{ this.state.order.delete(CPU_SID); }catch(_){ }
+        try{ this.inputs.delete(CPU_SID); }catch(_){ }
+      }
+
       for (const ps of this.state.players.values()) ps.ready = false;
       this.recomputeReady();
       this.setMetadata({ ...this.metadata, status: "waiting" });

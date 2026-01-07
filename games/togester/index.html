@@ -450,6 +450,7 @@
         };
         
         let players = {};
+        let smoothedPlayers = {};
         let gameObjects = [];
         let canvas, ctx;
         let cameraX = 0;
@@ -1842,12 +1843,20 @@ cameraX = 0;
                 ctx.fill();
             }
             
-            // 다른 플레이어들
-            Object.values(players).forEach(p => {
-                drawHamster(p.x, p.y, p.color, p.name, false, p.isDead);
+            // 다른 플레이어들 (부드러운 보간)
+            Object.entries(players).forEach(([sid, tp]) => {
+                const sp = smoothedPlayers[sid] || (smoothedPlayers[sid] = { x: tp.x||0, y: tp.y||0 });
+                // 목표 위치로 부드럽게 이동 (네트워크 끊김 느낌 완화)
+                const k = 0.22; // lerp factor
+                sp.x += ((tp.x||0) - sp.x) * k;
+                sp.y += ((tp.y||0) - sp.y) * k;
+                // 기타 속성은 즉시 반영
+                sp.color = tp.color;
+                sp.name = tp.name;
+                sp.isDead = !!tp.isDead;
+                drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead);
             });
-            
-            // 로컬 플레이어
+// 로컬 플레이어
             drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead);
             
             ctx.restore();
@@ -1982,11 +1991,23 @@ cameraX = 0;
         }
 
         function applyRemotePlayers(map){
-            players = {};
-            if (!map) return;
+            const next = {};
+            if (!map) map = {};
             for (const [sid, p] of Object.entries(map)){
                 if (sid === mySessionId) continue;
-                players[sid] = p;
+                next[sid] = p;
+                // init smoothing slot
+                if (!smoothedPlayers[sid]){
+                    smoothedPlayers[sid] = { x: p.x||0, y: p.y||0, vx: p.vx||0, vy: p.vy||0, isDead: !!p.isDead };
+                }
+                // keep name/color immediately (no alpha)
+                smoothedPlayers[sid].name = p.name;
+                smoothedPlayers[sid].color = p.color;
+            }
+            players = next;
+            // prune removed
+            for (const sid of Object.keys(smoothedPlayers)){
+                if (!players[sid]) delete smoothedPlayers[sid];
             }
             updatePlayerList();
         }
@@ -2003,7 +2024,7 @@ cameraX = 0;
         function bridgeSendState(force=false){
             if (!EMBED || isGuestMode) return;
             const now = performance.now();
-            if (!force && bridgeSendState._t && (now - bridgeSendState._t) < 50) return; // ~20Hz
+            if (!force && bridgeSendState._t && (now - bridgeSendState._t) < 33) return; // ~20Hz
             bridgeSendState._t = now;
             bridgeSend("tg_state", {
                 state: {

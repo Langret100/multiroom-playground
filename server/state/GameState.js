@@ -18,8 +18,8 @@ export class GameState extends Schema {
   constructor(){
     super();
     this.title = "방";
-    this.mode = "tetris4";
-    this.modeType = "coop"; // duel | coop
+    this.mode = "stackga";
+    this.modeType = "duel"; // duel | coop
     this.phase = "lobby"; // lobby | playing
     this.players = new MapSchema();
     this.allReady = false;
