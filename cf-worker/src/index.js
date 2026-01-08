@@ -303,7 +303,8 @@ export class LobbyDO{
       const roomId = randRoomId();
       const title = String(opts.title || "방").slice(0, 30);
       const mode = String(opts.mode || "stackga").slice(0, 24);
-      const maxPlayers = Math.max(2, Math.min(4, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
+      // Allow larger rooms for some coop modes (e.g., snaketail). UI still limits per-game.
+      const maxPlayers = Math.max(2, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
       this.rooms[roomId] = {
         roomId, title, mode,
         maxPlayers,
@@ -398,8 +399,9 @@ export class LobbyDO{
 // -------------------- Room Durable Object --------------------
 
 function isDuelMode(mode){
-  // In this template: "togester" is co-op; others are duel.
-  return String(mode || "") !== "togester";
+  // Co-op/real-time shared iframe modes (not tournament/duel)
+  const m = String(mode || "");
+  return !(m === "togester" || m === "snaketail");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -443,6 +445,7 @@ export class RoomDO{
 
     this.tour = null;              // tournament state for duel mode
     this.tg = { players:{}, lastBroadcast:0, timer:null }; // coop state aggregation
+    this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
 
     this._wired = new WeakSet();
     this._lobbyUpdateTimer = null;
@@ -775,10 +778,32 @@ export class RoomDO{
           this.tg.timer = null;
         }
 
+        // SnakeTail transient state (clients simulate; server relays + keeps score)
+        this.st.players = {};
+        this.st.foods = [];
+        this.st.scores = {};
+        this.st.startedAt = 0;
+        if (this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ }
+          this.st.timer = null;
+        }
+
         this.meta.phase = "playing";
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
         this._broadcast("started", { mode: this.meta.mode });
+
+        // SnakeTail: start 3-minute round timer (server is source of truth)
+        if (this.meta.mode === "snaketail"){
+          this.st.startedAt = now();
+          this.st.durationMs = 180000;
+          try{ this._spawnInitialSnakeTailFoods(45); }catch(_){ }
+          this._broadcast("st_timer", { startTs: this.st.startedAt, durationMs: this.st.durationMs });
+
+          if (this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
+          this.st.timer = setTimeout(()=>{
+            try{ this._endSnakeTail("timeout"); }catch(_){ }
+          }, this.st.durationMs + 200);
+        }
 
         // Duel tournament is server-authoritative.
         if (isDuelMode(this.meta.mode)){
@@ -825,6 +850,80 @@ export class RoomDO{
         const success = !!d.success;
         this._broadcast("result", { mode:"togester", done:true, success, reason: d.reason || "" });
         this._endAndBackToLobby(2500);
+        return;
+      }
+
+      // ----- SnakeTail relay (snaketail) -----
+      if (t === "st_state"){
+        const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0 };
+        const n = now();
+        if (n - (lim.stTs||0) < 80) return;
+        lim.stTs = n;
+        this._relayLimiter.set(uid, lim);
+
+        const state = d.state || {};
+        this.st.players[uid] = state;
+
+        // Keep a lightweight score snapshot on the server (mass, alive)
+        const mass = Number(state.mass || state.score || 0) || 0;
+        const alive = state.alive !== false;
+        const nick = this.users.get(uid)?.nick || safeNick(state.nick || "");
+        this.st.scores[uid] = { mass, alive, nick };
+
+        this._scheduleStBroadcast();
+        return;
+      }
+
+      if (t === "st_eat"){
+        // Any client can request an eat. Server validates by existence only (best-effort).
+        const id = String(d.id || "");
+        if (!id) return;
+        const idx = (this.st.foods || []).findIndex(f => String(f.id) === id);
+        if (idx < 0) return;
+        const [food] = this.st.foods.splice(idx, 1);
+        // Broadcast consumed + growth info
+        this._broadcast("st_eaten", { id, eaterSid: uid, value: Number(food?.value||2)||2 });
+        // Update server score immediately
+        const cur = this.st.scores[uid] || { mass:0, alive:true, nick: this.users.get(uid)?.nick || "" };
+        cur.mass = (Number(cur.mass)||0) + (Number(food?.value||2)||2);
+        cur.alive = cur.alive !== false;
+        this.st.scores[uid] = cur;
+        // Keep food count roughly constant
+        const newFood = this._randFood();
+        this.st.foods.push(newFood);
+        this._broadcast("st_spawn", { foods: [newFood] });
+        return;
+      }
+
+      if (t === "st_spawn"){
+        // Only host can spawn extra food (e.g., from a kill)
+        if (uid !== this.meta.ownerUserId) return;
+        const foods = Array.isArray(d.foods) ? d.foods : [];
+        if (!foods.length) return;
+        for (const f of foods){
+          if (!f || typeof f !== "object") continue;
+          const id = String(f.id || crypto.randomUUID());
+          const x = Number(f.x||0) || 0;
+          const y = Number(f.y||0) || 0;
+          const value = Number(f.value||2) || 2;
+          this.st.foods.push({ id, x, y, value });
+        }
+        this._broadcast("st_spawn", { foods });
+        return;
+      }
+
+      if (t === "st_event"){
+        // Only host can broadcast authoritative events (kills, roundStart, etc.)
+        if (uid !== this.meta.ownerUserId) return;
+        this._broadcast("st_event", { event: d.event || {} });
+        return;
+      }
+
+      if (t === "st_over"){
+        if (this.meta.phase !== "playing") return;
+        const reason = String(d.reason || "client_over");
+        const winnerSid = String(d.winnerSid || "");
+        this._endSnakeTail(reason, winnerSid);
         return;
       }
 
@@ -957,6 +1056,83 @@ export class RoomDO{
       this.tg.timer = null;
       this._broadcast("tg_players", { players: this.tg.players });
     }, 120);
+  }
+
+  // -------- SnakeTail helpers --------
+  _scheduleStBroadcast(){
+    if (this.st._timer) return;
+    this.st._timer = setTimeout(()=>{
+      this.st._timer = null;
+      this._broadcast("st_players", { players: this.st.players });
+      // Also push scores snapshot occasionally (cheap)
+      this._broadcast("st_scores", { scores: this.st.scores || {} });
+      try{ this._maybeEndSnakeTail(); }catch(_){ }
+    }, 110);
+  }
+
+  _randFood(id){
+    // World coordinates are client-defined; keep a sane default arena.
+    const W = 1600, H = 900;
+    const x = 80 + Math.random() * (W - 160);
+    const y = 80 + Math.random() * (H - 160);
+    const value = 2 + (Math.random() < 0.12 ? 3 : 0); // mostly small, sometimes bigger
+    return { id: id || crypto.randomUUID(), x, y, value };
+  }
+
+  _spawnInitialSnakeTailFoods(count=45){
+    this.st.foods = [];
+    for (let i=0; i<count; i++) this.st.foods.push(this._randFood());
+    this._broadcast("st_foods", { foods: this.st.foods });
+  }
+
+  _maybeEndSnakeTail(){
+    if (this.meta.phase !== "playing") return;
+    if (this.meta.mode !== "snaketail") return;
+    const entries = Object.entries(this.st.scores || {});
+    if (!entries.length) return;
+    let alive = entries.filter(([,s])=> s && s.alive);
+    // If only one alive and at least 2 participants, finish early.
+    const humans = Array.from(this.users.keys()).filter(u => u !== this._cpuUid());
+    if (humans.length >= 2 && alive.length === 1){
+      const [winnerSid] = alive[0];
+      this._endSnakeTail("last_alive", winnerSid);
+    }
+  }
+
+  _endSnakeTail(reason="timeout", forceWinnerSid=""){
+    if (this.meta.phase !== "playing") return;
+    if (this.meta.mode !== "snaketail") return;
+
+    // pick winner: forceWinnerSid > last alive > highest mass
+    const scores = this.st.scores || {};
+    let winnerSid = forceWinnerSid || "";
+    if (!winnerSid){
+      const alive = Object.entries(scores).filter(([,s])=> s && s.alive);
+      if (alive.length === 1) winnerSid = alive[0][0];
+    }
+    if (!winnerSid){
+      let best = null;
+      for (const [sid, s] of Object.entries(scores)){
+        const mass = Number(s?.mass || 0) || 0;
+        if (!best || mass > best.mass){ best = { sid, mass }; }
+      }
+      winnerSid = best?.sid || "";
+    }
+
+    const winnerNick = (winnerSid && this.users.get(winnerSid)?.nick) || (scores[winnerSid]?.nick) || "";
+
+    // Broadcast a generic result payload so the room UI overlay can show.
+    this._broadcast("result", {
+      mode: "snaketail",
+      done: true,
+      winnerSid,
+      winnerNick,
+      reason,
+      scores
+    });
+
+    // Return to room lobby shortly after.
+    this._endAndBackToLobby(2600);
   }
 
   _startTournament(){

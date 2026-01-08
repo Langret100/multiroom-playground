@@ -12,6 +12,10 @@
   --shadow: 0 10px 30px rgba(0,0,0,.12);
   --radius:14px;
   --font: system-ui, -apple-system, Segoe UI, Roboto, Apple SD Gothic Neo, "Noto Sans KR", sans-serif;
+  /* visualViewport-aware sizing (mobile keyboard) */
+  --vvh: 1vh;
+  --kb: 0px;
+  --tgDockH: 0px;
 }
 
 *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
@@ -394,6 +398,73 @@ tbody tr:hover{
 }
 
 
+/* Togester in-game docked chat (shown only during gameplay/practice) */
+.canvasWrap{ position: relative; }
+
+.tgDock, .tgDock *{ touch-action: auto; }
+
+.tgDock{
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--kb, 0px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: rgba(255,255,255,0.86);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(0,0,0,.10);
+  z-index: 50;
+}
+
+.tgDockLog{
+  height: 96px; /* ~4 lines */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(255,255,255,.55);
+}
+
+.tgDockLog .chatLine{
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.tgDockInputRow{
+  display: flex;
+  gap: 8px;
+}
+
+.tgDockInputRow .input{
+  flex: 1;
+}
+
+/* Togester: in-game docked chat should stick to viewport bottom and avoid mobile keyboard gaps */
+body.tg-mode #tgDock{
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--kb);
+}
+
+/* When Togester is running fullscreen, keep the iframe/game area above the dock (and keyboard) */
+body.tg-mode.in-game #duelFrameWrap{
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--kb) + var(--tgDockH));
+  border-radius: 0 !important;
+}
+body.tg-mode.in-game #duelFrame{
+  height: 100% !important;
+}
+
+
+
 /* Utility */
 .hidden{ display:none !important; }
 
@@ -475,14 +546,28 @@ tbody tr:hover{
 
   /* Mobile: while a game is in progress, hide the separate player list panel
      so the play area doesn't get squashed. */
-  body.is-playing .playersPanel{ display:none !important; }
+  body.is-playing:not(.mode-togester) .playersPanel{ display:none !important; }
 
-  /* Mobile lobby: keep the room list tall; make online users scroll instead of expanding */
-  .splitRight .userList{
+  /* Mobile lobby: show only ~4 users at once; scroll for the rest */
+  body.page-lobby .splitRight .userList{
     flex: 0 0 auto;
-    height: clamp(140px, 22vh, 240px);
+    height: 140px;
+    max-height: 140px;
     overflow: auto;
   }
+
+  /* Mobile lobby: slightly shorter chat log so the room list can be taller */
+  body.page-lobby .splitRight .chatLog{
+    height: clamp(120px, 20vh, 240px);
+  }
+
+  /* Mobile lobby: compact user rows so 4 fit comfortably */
+  body.page-lobby .userList .userItem{
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,.10);
+    line-height: 1.25;
+  }
+  body.page-lobby .userList .userItem:last-child{ border-bottom: 0; }
 
 }
 
@@ -526,6 +611,7 @@ tbody td{ padding: 10px 8px; }
 .modeTag.tetris{ border-color: rgba(53,208,255,.55); }
 .modeTag.suika{ border-color: rgba(255,146,84,.55); }
 .modeTag.coop{ border-color: rgba(48,224,123,.55); }
+.modeTag.snake{ border-color: rgba(188, 109, 255, .60); }
 .btn.small{ padding: 7px 9px; font-size: 0.82rem; }
 
 /* Lobby table spacing tweaks */
@@ -583,6 +669,13 @@ tbody td{ padding: 10px 8px; }
   .tdCount{ width: 44px; }
   .users{ display:none; } /* 로비 유저목록 패널 숨김(채팅/방목록 우선) */
   .chatLog{ min-height: 160px; }
+
+  /* Lobby (mobile): make the chat log ~2 lines shorter so rooms list grows */
+  body.page-lobby .chatLog{ min-height: 120px; }
+  body.page-lobby .splitRight .chatLog{ height: clamp(110px, 18vh, 220px); }
+
+  /* Lobby (mobile): show 4 users; the rest scroll */
+  body.page-lobby .splitRight .userList{ height: 132px; max-height: 132px; padding: 6px 8px; }
   .controls .btn{
   border:1px solid rgba(0,0,0,.12);
   background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
@@ -957,6 +1050,9 @@ body.in-game .panel.players,
 body.in-game .panel.chat{
   display:none !important;
 }
+body.in-game .playersPanel{
+  display:none !important;
+}
 body.in-game .roomTop{
   padding:0 !important;
 }
@@ -980,6 +1076,15 @@ body.in-game .duel-frameWrap{
 }
 body.in-game .duel-frame{
   height: 100vh !important;
+}
+
+/* When the mobile keyboard is open while typing in the Togester dock,
+   use visualViewport height so the game area shrinks accordingly. */
+body.kb-open.in-game .duel-ui{
+  height: calc(var(--vvh, 1vh) * 100);
+}
+body.kb-open.in-game .duel-frame{
+  height: calc(var(--vvh, 1vh) * 100) !important;
 }
 
 

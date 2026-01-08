@@ -28,10 +28,9 @@
 <div class="panel canvasWrap">
 <div class="panelHeader">
 <div>
-<h2>게임 화면</h2>
-<div class="sub muted">모바일: 아래 터치 버튼 사용</div>
+<h2>게임 설명</h2>
+<div class="sub muted" id="gamePanelSub"></div>
 </div>
-<span class="badge"><span class="dot ok"></span>SYNC</span>
 </div>
 
 <!-- Pre-game preview (shown in lobby; hidden while playing) -->
@@ -108,6 +107,13 @@
 <button class="btn" data-key="Shift">B</button>
 </div>
 </div>
+<div class="tgDock hidden" id="tgDock">
+  <div class="tgDockLog" id="tgDockLog"></div>
+  <div class="tgDockInputRow">
+    <input class="input" id="tgDockInput" maxlength="200" placeholder="채팅 입력..."/>
+    <button class="btn" id="tgDockSend">전송</button>
+  </div>
+</div>
 </div>
 <div class="panel playersPanel">
 <div class="panelHeader">
@@ -119,7 +125,7 @@
 </div>
 <div class="pList" id="playersList"></div>
 <div class="controls">
-<button class="btn primary" id="readyBtn">레디</button>
+<button class="btn primary" id="readyBtn">준비</button>
 <button class="btn start" disabled="" id="startBtn">시작</button>
 </div>
 </div>

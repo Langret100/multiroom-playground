@@ -6,7 +6,7 @@
   <title>로비</title>
   <link rel="stylesheet" href="./css/styles.css"/>
 </head>
-<body>
+<body class="page-lobby">
   <div class="app">
     <div class="topbar slim">
       <span class="badge nickChip"><span class="dot ok"></span><span>닉네임:</span> <b id="myId">-</b></span>
@@ -94,7 +94,7 @@
           <select id="gameMode"></select>
         </div>
         <div class="field">
-          <label>최대 인원 (2~4)</label>
+          <label id="maxClientsLabel">최대 인원</label>
           <select id="maxClients">
             <option value="4" selected>4</option>
             <option value="3">3</option>

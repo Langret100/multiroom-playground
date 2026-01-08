@@ -17,7 +17,7 @@ function shuffle(arr){
 export class GameRoom extends Room {
   onCreate(options){
     this.setState(new GameState());
-    this.maxClients = clamp(parseInt(options?.maxClients || "4", 10) || 4, 2, 4);
+    // maxClients computed after mode/modeType
 
     this.state.title = String(options?.title || "새 방").slice(0, 30);
     this.state.mode  = String(options?.mode || "stackga").slice(0, 20);
@@ -25,6 +25,11 @@ export class GameRoom extends Room {
     // "coop" games are real-time cooperative games.
     const inferred = ["stackga","suika"].includes(this.state.mode) ? "duel" : "coop";
     this.state.modeType = String(options?.modeType || inferred).slice(0, 10);
+
+// maxClients: duel games are capped at 4; snaketail supports up to 8; others default to 4
+const requestedMax = parseInt(options?.maxClients || "4", 10) || 4;
+const cap = (this.state.mode === "snaketail") ? 8 : 4;
+this.maxClients = clamp(requestedMax, 2, (this.state.modeType === "duel" ? 4 : cap));
 
     // Metadata used by getAvailableRooms()
     this.setMetadata({
@@ -53,6 +58,17 @@ export class GameRoom extends Room {
       lastBroadcastAt: 0,
       over: false,
     };
+
+// ---- SnakeTail (shape snake) transient sync state (no persistence) ----
+this.st = {
+  players: {},   // sessionId -> last snapshot
+  foods: [],     // authoritative food list
+  scores: {},    // sessionId -> { mass, alive, nick }
+  startedAt: 0,
+  durationMs: 180000,
+  timer: null,
+  interval: null,
+};
 
     this.onMessage("ready", (client, { ready }) => {
       const p = this.state.players.get(client.sessionId);
@@ -84,7 +100,7 @@ export class GameRoom extends Room {
           // Reserve a seat for UI/layout. CPU does NOT consume a real client slot.
           const used = new Set(Array.from(this.state.order.values()));
           let seat = 0;
-          while (used.has(seat) && seat < 4) seat++;
+          while (used.has(seat) && seat < this.maxClients) seat++;
           this.state.order.set(CPU_SID, seat);
 
           // Pre-fill input so lockstep frame payload remains stable.
@@ -114,6 +130,11 @@ export class GameRoom extends Room {
         this.tg.over = false;
         this.broadcast("tg_level", { level: this.tg.level });
         this.broadcast("tg_buttons", { buttons: this.tg.buttons });
+      }
+
+      // SnakeTail init (3-minute round) for coop-competitive mode
+      if (this.state.mode === "snaketail"){
+        this.initSnakeTail();
       }
 
       if (this.state.modeType === "duel"){
@@ -181,13 +202,37 @@ export class GameRoom extends Room {
       this.broadcast("tg_button", { idx: i, pressed: v });
     });
 
+    // Player push impulse (side collision): forwarded to target client
+    this.onMessage("tg_push", (client, { to, dx, from }) => {
+      if (this.state.mode !== "togester") return;
+      if (this.state.phase !== "playing") return;
+      if (this.tg.over) return;
+      const targetSid = String(to || "");
+      if (!targetSid) return;
+      // Only allow pushing real players in the room
+      const tp = this.state.players.get(targetSid);
+      if (!tp) return;
+      const impulse = clamp(Number(dx) || 0, -16, 16);
+      if (!impulse) return;
+      this.broadcast("tg_push", {
+        to: targetSid,
+        dx: impulse,
+        from: String(from || client.sessionId || "").slice(0, 64),
+      });
+    });
+
     this.onMessage("tg_level", (client, { level }) => {
       if (this.state.mode !== "togester") return;
       if (this.state.phase !== "playing") return;
       if (this.tg.over) return;
       const p = this.state.players.get(client.sessionId);
-      if (!p?.isHost) return; // host-only
-      const lv = clamp(parseInt(level ?? 1, 10) || 1, 1, 999);
+      if (!p) return;
+
+      // Allow ANY player to advance levels, but only step-by-1 to prevent skipping.
+      const lv = clamp(parseInt(level ?? (this.tg.level + 1), 10) || (this.tg.level + 1), 1, 999);
+      if (lv === this.tg.level) return; // duplicate
+      if (lv !== this.tg.level + 1) return; // do not allow skipping or rewinding
+
       this.tg.level = lv;
       this.broadcast("tg_level", { level: lv });
     });
@@ -208,9 +253,8 @@ export class GameRoom extends Room {
     this.onMessage("tg_over", (client, payload) => {
       if (this.state.mode !== "togester") return;
       if (this.state.phase !== "playing") return;
-      // host-only to avoid duplicates
       const p = this.state.players.get(client.sessionId);
-      if (!p?.isHost) return;
+      if (!p) return;
       if (this.tg.over) return;
       this.tg.over = true;
 
@@ -218,6 +262,121 @@ export class GameRoom extends Room {
       const reason = String(payload?.reason || (success ? "clear" : "fail")).slice(0, 64);
       this.finishTogester(success, reason, client.sessionId);
     });
+
+// ---- SnakeTail relay (co-op competitive) ----
+this.onMessage("st_state", (client, { state }) => {
+  if (this.state.mode !== "snaketail") return;
+  if (this.state.phase !== "playing") return;
+  const p = this.state.players.get(client.sessionId);
+  if (!p) return;
+
+  const s = state || {};
+  const sid = client.sessionId;
+
+  const body = Array.isArray(s.body) ? s.body.slice(0, 180).map(pt => ({
+    x: clamp(Number(pt?.x) || 0, -4000, 8000),
+    y: clamp(Number(pt?.y) || 0, -4000, 8000),
+  })) : [];
+
+  const snap = {
+    x: clamp(Number(s.x) || 0, -4000, 8000),
+    y: clamp(Number(s.y) || 0, -4000, 8000),
+    dir: clamp(Number(s.dir) || 0, -1000, 1000),
+    mass: clamp(Number(s.mass || 0) || 0, 0, 99999),
+    alive: (s.alive !== false),
+    stageIdx: clamp(parseInt(s.stageIdx ?? 0, 10) || 0, 0, 99),
+    nick: String(p.nick || s.nick || "Player").slice(0, 16),
+    body,
+  };
+
+  this.st.players[sid] = snap;
+
+  const prev = this.st.scores[sid] || { mass: 0, alive: true, nick: snap.nick };
+  // If server already marked dead (e.g., via kill event), keep it dead.
+  const alive = (prev.alive === false) ? false : snap.alive;
+  this.st.scores[sid] = { mass: snap.mass, alive, nick: snap.nick };
+});
+
+this.onMessage("st_eat", (client, { id }) => {
+  if (this.state.mode !== "snaketail") return;
+  if (this.state.phase !== "playing") return;
+  const sid = client.sessionId;
+  const foodId = String(id || "");
+  if (!foodId) return;
+
+  const idx = (this.st.foods || []).findIndex(f => String(f?.id) === foodId);
+  if (idx < 0) return;
+
+  const [food] = this.st.foods.splice(idx, 1);
+  const value = clamp(Number(food?.value || 2) || 2, 1, 12);
+
+  this.broadcast("st_eaten", { id: foodId, eaterSid: sid, value });
+
+  const cur = this.st.scores[sid] || { mass: 0, alive: true, nick: this.state.players.get(sid)?.nick || "Player" };
+  cur.mass = (Number(cur.mass) || 0) + value;
+  // keep alive flag if already dead
+  cur.alive = cur.alive !== false;
+  this.st.scores[sid] = cur;
+
+  // keep food count roughly constant
+  const nf = this.randFood();
+  this.st.foods.push(nf);
+  this.broadcast("st_spawn", { foods: [nf] });
+});
+
+this.onMessage("st_spawn", (client, { foods }) => {
+  if (this.state.mode !== "snaketail") return;
+  if (this.state.phase !== "playing") return;
+  const p = this.state.players.get(client.sessionId);
+  if (!p?.isHost) return;
+
+  const arr = Array.isArray(foods) ? foods : [];
+  if (!arr.length) return;
+
+  const out = [];
+  for (const f of arr){
+    if (!f || typeof f !== "object") continue;
+    const id = String(f.id || `${Date.now()}-${Math.floor(Math.random()*1e9)}`);
+    const x = clamp(Number(f.x) || 0, 0, 1600);
+    const y = clamp(Number(f.y) || 0, 0, 900);
+    const value = clamp(Number(f.value || 2) || 2, 1, 12);
+    const item = { id, x, y, value };
+    this.st.foods.push(item);
+    out.push(item);
+    if (out.length >= 80) break;
+  }
+  if (out.length) this.broadcast("st_spawn", { foods: out });
+});
+
+this.onMessage("st_event", (client, { event }) => {
+  if (this.state.mode !== "snaketail") return;
+  if (this.state.phase !== "playing") return;
+  const p = this.state.players.get(client.sessionId);
+  if (!p?.isHost) return;
+
+  const ev = event || {};
+  this.broadcast("st_event", { event: ev });
+
+  // If host reports a kill, reflect it in server score so last-alive detection works.
+  if (ev && ev.kind === "kill"){
+    const victimSid = String(ev.victimSid || "");
+    if (victimSid){
+      const cur = this.st.scores[victimSid] || { mass: 0, alive: true, nick: this.state.players.get(victimSid)?.nick || "Player" };
+      cur.alive = false;
+      this.st.scores[victimSid] = cur;
+      this.maybeAutoEndSnakeTail();
+    }
+  }
+});
+
+this.onMessage("st_over", (client, { reason, winnerSid }) => {
+  if (this.state.mode !== "snaketail") return;
+  if (this.state.phase !== "playing") return;
+  const p = this.state.players.get(client.sessionId);
+  if (!p?.isHost) return;
+  this.finishSnakeTail(String(reason || "client_over").slice(0, 64), String(winnerSid || ""));
+});
+
 
 
     
@@ -356,13 +515,23 @@ export class GameRoom extends Room {
     if (!this.state.order.has(client.sessionId)){
       const used = new Set(Array.from(this.state.order.values()));
       let seat=0;
-      while (used.has(seat) && seat < 4) seat++;
+      while (used.has(seat) && seat < this.maxClients) seat++;
       this.state.order.set(client.sessionId, seat);
     }
 
     this.recomputeReady();
     this.syncMetadata();
     this.broadcast("system", { nick: "SYSTEM", text: `${nick} 입장`, time: new Date().toTimeString().slice(0,5) });
+
+    // Late-join sync for SnakeTail (spectators can still see foods/timer)
+    try{
+      if (this.state.mode === "snaketail" && this.state.phase === "playing" && this.st){
+        client.send("st_timer", { startTs: this.st.startedAt || Date.now(), durationMs: this.st.durationMs || 180000 });
+        client.send("st_foods", { foods: this.st.foods || [] });
+        client.send("st_players", { players: this.st.players || {} });
+        client.send("st_scores", { scores: this.st.scores || {} });
+      }
+    }catch(_){ }
   }
 
   onLeave(client){
@@ -380,6 +549,20 @@ export class GameRoom extends Room {
         this.broadcast("tg_players", { players: out });
       }
     }catch(_){ }
+// SnakeTail transient state cleanup (no persistence)
+try{
+  if (this.st && this.state.mode === "snaketail"){
+    delete this.st.players[client.sessionId];
+    delete this.st.scores[client.sessionId];
+    // Keep snapshots consistent for spectators
+    if (this.state.phase === "playing"){
+      this.broadcast("st_players", { players: this.st.players });
+      this.broadcast("st_scores", { scores: this.st.scores });
+      this.maybeAutoEndSnakeTail();
+    }
+  }
+}catch(_){ }
+
     // playerCount/allReady are derived in recomputeReady()
 
     // if host left, promote the smallest seat to host
@@ -590,6 +773,131 @@ export class GameRoom extends Room {
       this.tg.over = false;
 
       this.broadcast("backToRoom", { mode: "togester" });
+    }, 2500);
+  }
+
+  // --- SnakeTail helpers ---
+  randFood(){
+    const id = `${Date.now()}-${Math.floor(Math.random()*1e9)}`;
+    const x = 80 + Math.random() * (1600 - 160);
+    const y = 80 + Math.random() * (900 - 160);
+    const r = Math.random();
+    const value = (r < 0.80) ? 2 : ((r < 0.95) ? 4 : 6);
+    return { id, x, y, value };
+  }
+
+  initSnakeTail(){
+    if (!this.st) return;
+    // Clear previous round timers
+    try{ this.st.timer && this.st.timer.clear && this.st.timer.clear(); }catch(_){ }
+    try{ this.st.interval && this.st.interval.clear && this.st.interval.clear(); }catch(_){ }
+
+    this.st.players = {};
+    this.st.scores = {};
+    this.st.foods = [];
+    this.st.startedAt = Date.now();
+    this.st.durationMs = 180000;
+
+    // Seed foods
+    const seedCount = 70;
+    for (let i=0; i<seedCount; i++) this.st.foods.push(this.randFood());
+
+    // Seed scores from current room players
+    try{
+      for (const [sid, ps] of this.state.players.entries()){
+        if (sid === CPU_SID) continue;
+        this.st.scores[sid] = { mass: 14, alive: true, nick: ps?.nick || "Player" };
+      }
+    }catch(_){ }
+
+    // Broadcast initial state
+    this.broadcast("st_timer", { startTs: this.st.startedAt, durationMs: this.st.durationMs });
+    this.broadcast("st_foods", { foods: this.st.foods });
+    this.broadcast("st_scores", { scores: this.st.scores });
+    this.broadcast("st_players", { players: this.st.players });
+
+    // Periodic sync + gentle food respawn
+    this.st.interval = this.clock.setInterval(()=>{
+      if (this.state.mode !== "snaketail" || this.state.phase !== "playing") return;
+      // keep foods topped up
+      const maxFoods = 90;
+      if (this.st.foods.length < maxFoods){
+        const k = Math.min(3, maxFoods - this.st.foods.length);
+        const out = [];
+        for (let i=0; i<k; i++){
+          const f = this.randFood();
+          this.st.foods.push(f);
+          out.push(f);
+        }
+        if (out.length) this.broadcast("st_spawn", { foods: out });
+      }
+      // broadcast snapshots for spectators/late joins
+      this.broadcast("st_players", { players: this.st.players });
+      this.broadcast("st_scores", { scores: this.st.scores });
+      this.maybeAutoEndSnakeTail();
+    }, 250);
+
+    this.st.timer = this.clock.setTimeout(()=>{
+      // Time over -> winner by mass (alive preferred)
+      let bestSid = "";
+      let bestMass = -1;
+      const entries = Object.entries(this.st.scores || {});
+      const alive = entries.filter(([,s])=> s && s.alive !== false);
+      const arr = alive.length ? alive : entries;
+      for (const [sid, s] of arr){
+        const m = Number(s?.mass||0)||0;
+        if (m > bestMass){ bestMass = m; bestSid = sid; }
+      }
+      this.finishSnakeTail("time", bestSid);
+    }, this.st.durationMs);
+  }
+
+  maybeAutoEndSnakeTail(){
+    if (!this.st || this.state.mode !== "snaketail" || this.state.phase !== "playing") return;
+    const entries = Object.entries(this.st.scores || {});
+    const alive = entries.filter(([,s])=> s && s.alive !== false);
+    if (alive.length === 1){
+      const winnerSid = alive[0][0];
+      this.finishSnakeTail("last_alive", winnerSid);
+    }
+  }
+
+  finishSnakeTail(reason, winnerSid){
+    if (!this.st || this.state.mode !== "snaketail") return;
+    if (this.state.phase !== "playing") return;
+
+    // prevent duplicate finishes
+    this.state.phase = "finishing";
+
+    const winner = this.state.players.get(winnerSid);
+    const winnerNick = winner?.nick || this.st.scores?.[winnerSid]?.nick || "우승자";
+
+    this.broadcast("result", {
+      mode: "snaketail",
+      done: true,
+      reason: String(reason || "end").slice(0, 64),
+      winnerSid: String(winnerSid || ""),
+      winnerNick: String(winnerNick || "우승자").slice(0, 24),
+    });
+
+    // return to room lobby after a short delay
+    setTimeout(()=>{
+      // stop timers
+      try{ this.st.timer && this.st.timer.clear && this.st.timer.clear(); }catch(_){ }
+      try{ this.st.interval && this.st.interval.clear && this.st.interval.clear(); }catch(_){ }
+
+      this.state.phase = "lobby";
+      this.started = false;
+      for (const ps of this.state.players.values()) ps.ready = false;
+      this.recomputeReady();
+      this.setMetadata({ ...this.metadata, status: "waiting" });
+
+      // reset transient snaketail state
+      try{ this.st.players = {}; }catch(_){ }
+      try{ this.st.foods = []; }catch(_){ }
+      try{ this.st.scores = {}; }catch(_){ }
+
+      this.broadcast("backToRoom", { mode: "snaketail" });
     }, 2500);
   }
 

@@ -7,6 +7,7 @@
     {
       id: "stackga",
       name: "블록쌓기",
+      mobileHint: "모바일: 하단 버튼으로 이동/회전/드롭",
       // 요청사항: 방 화면(게임 시작 전 카드)에 표시할 2줄 설명
       descLines: [
         "블록으로 줄을 맞추면 사라집니다.",
@@ -21,6 +22,7 @@
     {
       id: "suika",
       name: "도형게임",
+      mobileHint: "모바일: 좌우 이동 후 탭으로 떨어뜨리기",
       // 요청사항: 방 화면(게임 시작 전 카드)에 표시할 2줄 설명
       descLines: [
         "같은 도형 두 개를 합쳐 다음 도형이 됩니다.",
@@ -33,7 +35,34 @@
     },
     // Togester (co-op) is embedded as an iframe and synced via Colyseus messages.
     // Firebase dependencies have been removed.
-    { id: "togester",name: "협동",   type:"coop", badgeClass: "coop",   maxClients: 4, embedPath: "games/togester/index.html" }
+    {
+      id: "togester",
+      name: "투게스터",
+      mobileHint: "모바일: 좌/우 터치 이동 · 양쪽 터치 점프",
+      descLines: [
+        "둘이 힘을 합쳐 퍼즐을 풀고 탈출하세요.",
+        "버튼을 밟고 박스를 밀어 문을 여는 협동 플랫폼!",
+      ],
+      type:"coop",
+      badgeClass: "coop",
+      maxClients: 4,
+      embedPath: "games/togester/index.html"
+    },
+
+    // SnakeTail (shape snake) - free-for-all up to 8 players
+    {
+      id: "snaketail",
+      name: "꼬리잡기",
+      mobileHint: "모바일: 화면을 누른 방향으로 단계 각도만큼 회전 이동",
+      descLines: [
+        "먹이를 먹어 커지고, 작은 뱀을 먹을 수 있습니다.",
+        "3분 동안 가장 크게(또는 최후 1인) 되면 승리!",
+      ],
+      type: "coop",
+      badgeClass: "snake",
+      maxClients: 8,
+      embedPath: "games/snaketail/index.html"
+    }
   ];
 
   function gameById(id){

@@ -1,0 +1,971 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>꼬리잡기</title>
+  <style>
+    :root{
+      --bg:#070a16;
+      --panel:rgba(255,255,255,.07);
+      --line:rgba(255,255,255,.14);
+      --txt:#e9efff;
+      --muted:rgba(233,239,255,.72);
+      --accent:#ffd04d;
+      --danger:#ff5c74;
+    }
+    html,body{ height:100%; margin:0; background:var(--bg); color:var(--txt); font-family:system-ui,-apple-system,Segoe UI,Roboto,Apple SD Gothic Neo,Noto Sans KR,sans-serif; }
+    body{ overflow:hidden; }
+
+    #wrap{ position:fixed; inset:0; display:flex; flex-direction:column; }
+    #topbar{
+      height:52px; display:flex; align-items:center; justify-content:space-between;
+      padding: 10px 12px;
+      background: linear-gradient(180deg, rgba(0,0,0,.55), rgba(0,0,0,.0));
+      pointer-events:none;
+      z-index:10;
+    }
+    .pill{ pointer-events:auto; display:inline-flex; gap:8px; align-items:center; padding:7px 10px; border-radius:999px; background:var(--panel); border:1px solid var(--line); backdrop-filter: blur(10px); }
+    .pill b{ font-size:13px; }
+    .pill .muted{ font-size:12px; color:var(--muted); }
+
+#pillRoom{ gap:6px; }
+#rankTop{
+  display:inline-block;
+  max-width: 46vw;
+  overflow:hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#toast{
+  position:absolute;
+  left:50%;
+  top: 62px;
+  transform: translateX(-50%) translateY(-6px);
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(20,24,40,.85);
+  border: 1px solid var(--line);
+  color: var(--txt);
+  font-weight: 800;
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+  z-index: 15;
+  backdrop-filter: blur(10px);
+}
+#toast.show{
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+    #btnQuit{ pointer-events:auto; border:none; background:var(--panel); border:1px solid var(--line); color:var(--txt);
+      padding:8px 12px; border-radius:999px; font-weight:700; cursor:pointer;
+    }
+
+    #canvasWrap{ flex:1; position:relative; touch-action:none; }
+    canvas{ position:absolute; inset:0; width:100%; height:100%; }
+
+    #hud{
+      position:absolute; left:12px; top:62px; z-index:10; display:flex; flex-direction:column; gap:8px;
+      pointer-events:none;
+    }
+    .card{ pointer-events:auto; padding:10px 12px; border-radius:14px; background:var(--panel); border:1px solid var(--line); backdrop-filter: blur(10px); min-width: 220px; max-width: 280px; }
+    .row{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+    .row .k{ color:var(--muted); font-size:12px; }
+    .row .v{ font-weight:800; }
+    .small{ font-size:12px; color:var(--muted); line-height:1.25; }
+
+    #controls{
+      position:absolute; left:0; right:0; bottom:0;
+      padding: max(12px, env(safe-area-inset-bottom)) 12px 12px;
+      display:flex; justify-content:space-between; gap:12px;
+      z-index:10;
+      pointer-events:none;
+    }
+    .btnCtl{
+      pointer-events:auto;
+      width: 76px; height: 76px;
+      border-radius: 22px;
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.07);
+      color:var(--txt);
+      font-size:22px; font-weight:900;
+      display:flex; align-items:center; justify-content:center;
+      user-select:none;
+      touch-action:none;
+    }
+    .btnCtl:active{ transform: translateY(1px) scale(0.99); }
+
+    #overlay{
+      position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+      background: rgba(0,0,0,.55);
+      z-index:20;
+    }
+    #overlay .panel{
+      width:min(92vw, 420px);
+      background: rgba(20,24,40,.9);
+      border:1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      text-align:center;
+      backdrop-filter: blur(12px);
+    }
+    #overlay h2{ margin:8px 0 6px; font-size:22px; }
+    #overlay p{ margin:0 0 12px; color:var(--muted); }
+    #overlay .btnRow{ display:flex; gap:10px; justify-content:center; }
+    #overlay button{ border:none; padding:10px 14px; border-radius: 12px; font-weight:800; cursor:pointer; }
+    #overlay .primary{ background: var(--accent); color:#1b1d27; }
+    #overlay .ghost{ background: transparent; border: 1px solid var(--line); color: var(--txt); }
+
+    .tag{ display:inline-flex; gap:6px; align-items:center; padding:4px 8px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:12px; }
+    .dot{ width:8px; height:8px; border-radius:50%; background:var(--accent); }
+
+    @media (pointer:fine){
+      #controls{ display:none; }
+    }
+  </style>
+</head>
+<body>
+    <div id="wrap">
+    <div id="topbar">
+      <div class="pill" id="pillRoom">
+        <span class="muted">⏱</span><b id="timeLeft">--:--</b>
+        <span class="muted" style="margin-left:10px;">단계</span><b id="myStage">-</b>
+        <span class="muted" style="margin-left:10px;">TOP2</span><span id="rankTop" class="muted">-</span>
+      </div>
+      <button id="btnQuit" type="button">나가기</button>
+    </div>
+
+    <div id="canvasWrap">
+      <canvas id="cv"></canvas>
+      <div id="toast"></div>
+    </div>
+  </div>
+
+<script>
+(()=>{
+  const qs = new URLSearchParams(location.search);
+  const EMBED = qs.get('embed') === '1' || qs.get('embed') === 'true';
+  const PRACTICE = qs.get('practice') === '1' || qs.get('practice') === 'true';
+
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+
+  const ui = {
+  canvasWrap: document.getElementById('canvasWrap'),
+  btnQuit: document.getElementById('btnQuit'),
+  timeLeft: document.getElementById('timeLeft'),
+  myStage: document.getElementById('myStage'),
+  rankTop: document.getElementById('rankTop'),
+  toast: document.getElementById('toast'),
+};
+
+  // --- Cute SFX (WebAudio) ---
+  const SFX = (()=>{
+    let ac = null;
+    const ensure = ()=>{
+      if (ac) return ac;
+      try{ ac = new (window.AudioContext || window.webkitAudioContext)(); }catch(_){ ac=null; }
+      return ac;
+    };
+    const beep = (freq=440, dur=0.08, type='sine', gain=0.12, detune=0)=>{
+      const a = ensure(); if (!a) return;
+      const t0 = a.currentTime;
+      const o = a.createOscillator();
+      const g = a.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, t0);
+      o.detune.setValueAtTime(detune, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g).connect(a.destination);
+      o.start(t0);
+      o.stop(t0 + dur + 0.01);
+    };
+    const chord = (base=440)=>{
+      beep(base, 0.06, 'triangle', 0.10);
+      beep(base*1.25, 0.06, 'triangle', 0.08);
+      beep(base*1.5, 0.06, 'triangle', 0.06);
+    };
+    return {
+      prime(){ const a = ensure(); if (!a) return; if (a.state==='suspended') a.resume().catch(()=>{}); },
+      eat(){ beep(740, 0.06, 'square', 0.08); beep(980, 0.07, 'triangle', 0.06); },
+      level(){ chord(660); setTimeout(()=> chord(880), 70); },
+      kill(){ beep(220, 0.08, 'sawtooth', 0.10); setTimeout(()=>beep(330, 0.06, 'square', 0.07), 70); },
+      die(){ beep(260, 0.14, 'sine', 0.09); setTimeout(()=>beep(190, 0.18, 'sine', 0.06), 110); },
+      tick(){ beep(980, 0.03, 'triangle', 0.03); }
+    };
+  })();
+
+  // --- Embed bridge ---
+  const bridgeSend = (type, payload={})=>{
+    if (!EMBED) return;
+    try{ parent.postMessage({ type, ...payload }, '*'); }catch(_){ }
+  };
+
+  // --- World settings ---
+  const WORLD = { W:1600, H:900, pad:24 };
+
+  const STAGES = [
+    // 외각 기준 회전. 정삼각형(내각 60°)을 닫으려면 120°씩 회전합니다.
+    { key:'tri', name:'삼각형', quantumDeg:120, sides:3, targetMass:22, hint:'120도씩만 회전할 수 있어요.' },
+    { key:'sq',  name:'정사각형', quantumDeg:90, sides:4, targetMass:38, hint:'90도씩 회전해 네모를 완성!' },
+    { key:'p5',  name:'오각형', quantumDeg:72, sides:5, targetMass:58, hint:'72도씩 회전해 오각형!' },
+    { key:'p6',  name:'육각형', quantumDeg:60, sides:6, targetMass:85, hint:'60도 회전으로 육각형!' },
+    { key:'p12', name:'12각형', quantumDeg:30, sides:12, targetMass:125, hint:'30도씩 회전해 원에 가까워져요.' },
+    { key:'circle', name:'원', quantumDeg:0, sides:0, targetMass:160, hint:'이제 자유롭게 움직일 수 있어요!' },
+  ];
+
+  // --- Game state ---
+  let mySid = '';
+  let myNick = 'Player';
+  let mySeat = 0;
+  let isHost = false;
+  let roomCode = 'ROOM';
+  let connected = false;
+  let playing = true;
+
+  let startTs = 0;
+  let durationMs = 180000;
+
+  const net = {
+    players: {},     // latest snapshot from server {sid:state}
+    scores: {},
+    foods: [],       // authoritative food list
+    lastEventTs: 0,
+  };
+
+  const me = {
+    x: 220 + Math.random()*120,
+    y: 240 + Math.random()*120,
+    dir: Math.random()*Math.PI*2,
+    speed: 160,
+    mass: 14,
+    alive: true,
+    stageIdx: 0,
+    turnCount: 0,
+    loopStart: null,
+    body: [],
+    lastTurnAt: 0,
+    lastStateSentAt: 0,
+    killerSid: '',
+    respawnCooldown: 0,
+  };
+
+  // camera
+  const cam = { x: me.x, y: me.y, z: 1 };
+
+  // input
+  const input = { left:false, right:false };
+
+  // pointer steering (tap/drag toward a direction; snaps to stage angle)
+  const steer = { active:false, targetA:0, pointerId:null };
+
+  function angleDiff(a,b){
+    let d = a - b;
+    while (d > Math.PI) d -= Math.PI*2;
+    while (d < -Math.PI) d += Math.PI*2;
+    return d;
+  }
+
+  function now(){ return Date.now(); }
+
+  function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+  function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+
+  function thicknessFor(mass){
+    return clamp(7 + Math.sqrt(Math.max(0, mass))*1.2, 7, 26);
+  }
+  function lengthFor(mass){
+    // body length in pixels
+    return clamp(220 + mass*18, 220, 2200);
+  }
+
+  function stage(){ return STAGES[clamp(me.stageIdx, 0, STAGES.length-1)]; }
+
+  function resetLoopAnchor(){
+    me.loopStart = { x: me.x, y: me.y, t: now() };
+    me.turnCount = 0;
+  }
+
+  let _toastTimer = null;
+function showToast(msg, ms=1400){
+  try{
+    if (!ui.toast) return;
+    ui.toast.textContent = String(msg || '');
+    ui.toast.classList.add('show');
+    if (_toastTimer) clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(()=>{ try{ ui.toast.classList.remove('show'); }catch(_){ } }, ms);
+  }catch(_){}
+}
+
+function enterSpectate(reason='dead'){
+  me.alive = false;
+  playing = true;
+  showToast(reason === 'timeout' ? '라운드 종료' : '죽었습니다. 관전 중…', 1800);
+}
+
+function turn(dirSign){
+    const st = stage();
+    if (!me.alive) return;
+    const t = now();
+    if (st.quantumDeg > 0){
+      if (t - me.lastTurnAt < 90) return;
+      me.lastTurnAt = t;
+      const rad = st.quantumDeg * Math.PI / 180;
+      me.dir += dirSign * rad;
+      me.turnCount++;
+      SFX.tick();
+    }
+  }
+
+  function applySteer(dt){
+    const st = stage();
+    if (!me.alive) return;
+
+    // Free steer (final stage)
+    if (st.quantumDeg === 0){
+      if (steer.active){
+        const d = angleDiff(steer.targetA, me.dir);
+        const maxRate = 4.2; // rad/sec
+        const rate = clamp(d*3.0, -maxRate, maxRate);
+        me.dir += rate*dt;
+        return;
+      }
+      const rate = 2.8; // keyboard/buttons
+      if (input.left) me.dir -= rate*dt;
+      if (input.right) me.dir += rate*dt;
+      return;
+    }
+
+    // Polygon stages: snap toward touch direction by the stage quantum.
+    // Keyboard/buttons still do immediate single-step turns via turn().
+    if (!steer.active) return;
+    const radStep = st.quantumDeg * Math.PI / 180;
+    const d = angleDiff(steer.targetA, me.dir);
+    if (Math.abs(d) < radStep*0.45) return;
+    turn(d > 0 ? +1 : -1);
+  }
+
+  function maybeAdvanceStage(){
+    const st = stage();
+    if (!me.loopStart) resetLoopAnchor();
+    if (!me.alive) return;
+
+    // already final
+    if (me.stageIdx >= STAGES.length-1) return;
+
+    // Need enough turns to be considered a full loop for that polygon
+    if (st.sides > 0 && me.turnCount < st.sides) return;
+    if (me.mass < st.targetMass) return;
+
+    // Close to loop start = shape complete
+    const r = thicknessFor(me.mass) + 10;
+    if (dist2(me.x, me.y, me.loopStart.x, me.loopStart.y) <= r*r){
+      me.stageIdx++;
+      resetLoopAnchor();
+      SFX.level();
+    }
+  }
+
+  function spawnLocalBodyIfEmpty(){
+    if (me.body.length) return;
+    // initialize as a short tail
+    for (let i=0; i<18; i++){
+      me.body.push({ x: me.x - Math.cos(me.dir)*i*6, y: me.y - Math.sin(me.dir)*i*6 });
+    }
+    resetLoopAnchor();
+  }
+
+  function step(dt){
+    // timer
+    if (!startTs) startTs = now();
+    const tLeft = clamp((startTs + durationMs) - now(), 0, durationMs);
+    ui.timeLeft.textContent = fmtMs(tLeft);
+    if (tLeft <= 0 && playing){
+      // server will end; show a gentle message locally
+      if (me.alive){
+        // do nothing
+      } else {
+        // keep spectating
+      }
+    }
+
+    // camera target: alive -> me; dead -> largest alive from scores
+    let tx = me.x, ty = me.y;
+    if (!me.alive){
+      const best = pickBestSid();
+      const s = best ? net.players[best] : null;
+      if (s && typeof s.x === 'number'){
+        tx = s.x; ty = s.y;
+      }
+    }
+    cam.x += (tx - cam.x) * Math.min(1, dt*4.5);
+    cam.y += (ty - cam.y) * Math.min(1, dt*4.5);
+
+    // movement
+    if (me.alive){
+      spawnLocalBodyIfEmpty();
+      applySteer(dt);
+
+      const vx = Math.cos(me.dir) * me.speed;
+      const vy = Math.sin(me.dir) * me.speed;
+      me.x += vx*dt;
+      me.y += vy*dt;
+
+      // wall collision
+      const pad = WORLD.pad;
+      if (me.x < pad || me.y < pad || me.x > WORLD.W - pad || me.y > WORLD.H - pad){
+        // die
+        me.alive = false;
+        SFX.die();
+        // tell host via state; host will handle kill logic if needed
+        enterSpectate('dead');
+      }
+
+      // update body
+      const spacing = 6;
+      const last = me.body[0] || { x: me.x, y: me.y };
+      if (dist2(last.x,last.y,me.x,me.y) > spacing*spacing){
+        me.body.unshift({ x: me.x, y: me.y });
+      }
+      // trim
+      const maxLenPx = lengthFor(me.mass);
+      const maxPoints = Math.ceil(maxLenPx/spacing);
+      if (me.body.length > maxPoints) me.body.length = maxPoints;
+
+      maybeAdvanceStage();
+
+      // food collision (client-side request)
+      const eatR = thicknessFor(me.mass) + 6;
+      for (let i=0; i<net.foods.length; i++){
+        const f = net.foods[i];
+        if (!f) continue;
+        if (dist2(me.x, me.y, f.x, f.y) <= eatR*eatR){
+          bridgeSend('st_eat', { id: f.id });
+          // local optimistic remove (server will confirm)
+          net.foods.splice(i,1);
+          break;
+        }
+      }
+    }
+
+    // send state
+    if (EMBED && connected){
+      const t = now();
+      if (t - me.lastStateSentAt > 90){
+        me.lastStateSentAt = t;
+        const st = {
+          x: me.x,
+          y: me.y,
+          dir: me.dir,
+          mass: me.mass,
+          alive: me.alive,
+          stageIdx: me.stageIdx,
+          nick: myNick,
+          // cap body points to keep payload small
+          body: me.body.slice(0, 120)
+        };
+        bridgeSend('st_state', { state: st });
+      }
+    }
+
+    // host duties: detect collisions from snapshots and broadcast kills
+    if (isHost && EMBED && connected){
+      hostCollisionTick();
+    }
+    // update HUD
+    const st = stage();
+    if (ui.myStage) ui.myStage.textContent = st ? st.name : '-';
+    renderRanks();
+  }
+
+  let _lastHostColTs = 0;
+  function hostCollisionTick(){
+    const t = now();
+    if (t - _lastHostColTs < 140) return;
+    _lastHostColTs = t;
+
+    // Collect all alive snakes from net.players + host local
+    const all = {};
+    // snapshot map
+    for (const [sid, s] of Object.entries(net.players || {})){
+      if (!s || s.alive === false) continue;
+      all[sid] = s;
+    }
+    // ensure host uses local current state
+    if (mySid){
+      all[mySid] = {
+        x: me.x, y: me.y, dir: me.dir,
+        mass: me.mass, alive: me.alive,
+        stageIdx: me.stageIdx,
+        nick: myNick,
+        body: me.body.slice(0, 160)
+      };
+    }
+
+    const sids = Object.keys(all);
+    if (sids.length < 2) return;
+
+    // detect head-to-body collisions
+    for (const aSid of sids){
+      const a = all[aSid];
+      if (!a || a.alive === false) continue;
+      const aMass = Number(a.mass||0)||0;
+      const aTh = thicknessFor(aMass);
+      const ax = Number(a.x||0)||0, ay = Number(a.y||0)||0;
+
+      for (const bSid of sids){
+        if (aSid === bSid) continue;
+        const b = all[bSid];
+        if (!b || b.alive === false) continue;
+        const bMass = Number(b.mass||0)||0;
+        const bTh = thicknessFor(bMass);
+        const br = (aTh + bTh) * 0.5;
+
+        const body = Array.isArray(b.body) ? b.body : [];
+        // skip first few to avoid false positives near head
+        for (let i=12; i<body.length; i+=2){
+          const p = body[i];
+          if (!p) continue;
+          if (dist2(ax,ay, Number(p.x||0)||0, Number(p.y||0)||0) < br*br){
+            // collision: bigger eats smaller
+            if (aMass === bMass) continue;
+            const killerSid = (aMass > bMass) ? aSid : bSid;
+            const victimSid = (aMass > bMass) ? bSid : aSid;
+
+            // avoid spamming duplicates (only if victim is still alive in snapshot)
+            if (net.scores && net.scores[victimSid] && net.scores[victimSid].alive === false) return;
+
+            // create pellets along victim body
+            const victim = all[victimSid];
+            const pellets = makePelletsFromBody(victimSid, victim);
+            if (pellets.length){
+              bridgeSend('st_spawn', { foods: pellets });
+            }
+            bridgeSend('st_event', { event: { kind:'kill', killerSid, victimSid, t: now(), pellets: pellets.map(p=>p.id) } });
+            return;
+          }
+        }
+      }
+    }
+  }
+
+  function makePelletsFromBody(seedSid, snakeState){
+    const body = Array.isArray(snakeState?.body) ? snakeState.body : [];
+    const pellets = [];
+    const step = Math.max(10, Math.floor(body.length / 18));
+    for (let i=0; i<body.length; i+=step){
+      const p = body[i];
+      if (!p) continue;
+      pellets.push({
+        id: `${seedSid}-${now()}-${i}-${Math.floor(Math.random()*9999)}`,
+        x: Number(p.x||0)||0,
+        y: Number(p.y||0)||0,
+        value: 2 + (Math.random() < 0.20 ? 2 : 0)
+      });
+      if (pellets.length >= 24) break;
+    }
+    return pellets;
+  }
+
+  function fmtMs(ms){
+    const s = Math.floor(ms/1000);
+    const m = Math.floor(s/60);
+    const r = s%60;
+    return `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+  }
+
+  function pickBestSid(){
+    const entries = Object.entries(net.scores || {});
+    if (!entries.length) return '';
+    const alive = entries.filter(([,s])=> s && s.alive);
+    const arr = alive.length ? alive : entries;
+    arr.sort((a,b)=> (Number(b[1]?.mass||0)||0) - (Number(a[1]?.mass||0)||0));
+    return arr[0]?.[0] || '';
+  }
+
+  function renderRanks(){
+  const entries = Object.entries(net.scores || {});
+  if (!ui.rankTop) return;
+
+  if (!entries.length){
+    ui.rankTop.textContent = '-';
+    return;
+  }
+  entries.sort((a,b)=> (Number(b[1]?.mass||0)||0) - (Number(a[1]?.mass||0)||0));
+  const top = entries.slice(0, 2);
+  const parts = top.map(([sid, st], idx)=>{
+    const nick = (st?.nick || sid.slice(0,4));
+    const mass = Math.floor(Number(st?.mass||0)||0);
+    const dead = st && st.alive === false;
+    const deadMark = dead ? 'X ' : '';
+    return `${idx+1}.${deadMark}${nick} ${mass}`;
+  });
+  ui.rankTop.textContent = parts.join(' · ') || '-';
+}
+
+function esc(s){
+    return String(s||'').replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+  }
+
+  // --- Rendering ---
+  function resize(){
+    const dpr = window.devicePixelRatio || 1;
+    const r = cv.getBoundingClientRect();
+    cv.width = Math.max(320, Math.floor(r.width*dpr));
+    cv.height = Math.max(320, Math.floor(r.height*dpr));
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+
+  function worldToScreen(x,y){
+    const w = cv.clientWidth, h = cv.clientHeight;
+    const sx = (x - cam.x) * cam.z + w/2;
+    const sy = (y - cam.y) * cam.z + h/2;
+    return { x:sx, y:sy };
+  }
+
+  function draw(){
+    const w = cv.clientWidth, h = cv.clientHeight;
+    ctx.clearRect(0,0,w,h);
+
+    // background stars
+    ctx.fillStyle = '#070a16';
+    ctx.fillRect(0,0,w,h);
+    // subtle grid
+    ctx.globalAlpha = 0.35;
+    ctx.strokeStyle = 'rgba(255,255,255,.06)';
+    const g = 60;
+    for (let x=-(cam.x%g); x<w; x+=g){
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+    }
+    for (let y=-(cam.y%g); y<h; y+=g){
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // arena border
+    const tl = worldToScreen(0,0);
+    const br = worldToScreen(WORLD.W, WORLD.H);
+    // arena border (requested: thicker)
+    ctx.strokeStyle = 'rgba(255,255,255,.30)';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+
+    // foods
+    for (const f of net.foods){
+      if (!f) continue;
+      const p = worldToScreen(f.x, f.y);
+      const r = 4 + (Number(f.value||2)||2)*0.8;
+      ctx.fillStyle = 'rgba(255, 208, 77, .92)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,.22)';
+      ctx.beginPath(); ctx.arc(p.x+1.2, p.y+1.2, Math.max(1, r*0.45), 0, Math.PI*2); ctx.fill();
+    }
+
+    // draw remote snakes
+    for (const [sid, s] of Object.entries(net.players || {})){
+      if (!s || sid === mySid) continue;
+      drawSnake(sid, s);
+    }
+
+    // draw me on top
+    drawSnake(mySid || 'me', {
+      x: me.x, y: me.y, dir: me.dir,
+      mass: me.mass, alive: me.alive,
+      nick: myNick,
+      body: me.body
+    }, true);
+  }
+
+  function drawSnake(sid, s, isMe=false){
+    const alive = s.alive !== false;
+    const mass = Number(s.mass||0)||0;
+    const th = thicknessFor(mass);
+    const body = Array.isArray(s.body) ? s.body : [];
+
+    // color by sid
+    const hue = hashHue(sid);
+    const col = alive ? `hsla(${hue}, 85%, 60%, .95)` : `hsla(${hue}, 35%, 45%, .55)`;
+
+    // body
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = col;
+    ctx.lineWidth = th;
+    ctx.beginPath();
+    const head = worldToScreen(Number(s.x||0)||0, Number(s.y||0)||0);
+    if (body.length){
+      const p0 = worldToScreen(Number(body[0].x||0)||0, Number(body[0].y||0)||0);
+      ctx.moveTo(p0.x, p0.y);
+      for (let i=1; i<body.length; i++){
+        const bp = body[i];
+        if (!bp) continue;
+        const pp = worldToScreen(Number(bp.x||0)||0, Number(bp.y||0)||0);
+        ctx.lineTo(pp.x, pp.y);
+      }
+    } else {
+      ctx.moveTo(head.x, head.y);
+      ctx.lineTo(head.x-1, head.y-1);
+    }
+    ctx.stroke();
+
+    // head
+    const hr = th*0.55 + 2;
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, Math.PI*2); ctx.fill();
+    // eyes (cute)
+    ctx.fillStyle = 'rgba(0,0,0,.40)';
+    const ex = Math.cos(Number(s.dir||0))*hr*0.35;
+    const ey = Math.sin(Number(s.dir||0))*hr*0.35;
+    ctx.beginPath(); ctx.arc(head.x+ex-2, head.y+ey-1.2, 2.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(head.x+ex+2, head.y+ey-1.2, 2.2, 0, Math.PI*2); ctx.fill();
+
+    // name
+    const nick = (s.nick || sid.slice(0,4));
+    ctx.font = '12px system-ui';
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillText(nick, head.x-ctx.measureText(nick).width/2+1, head.y - hr - 10 + 1);
+    ctx.fillStyle = isMe ? 'rgba(255,208,77,.92)' : 'rgba(233,239,255,.92)';
+    ctx.fillText(nick, head.x-ctx.measureText(nick).width/2, head.y - hr - 10);
+  }
+
+  function hashHue(s){
+    let h = 0;
+    for (let i=0; i<s.length; i++) h = (h*31 + s.charCodeAt(i)) >>> 0;
+    return (h % 360);
+  }
+
+  // --- Loop ---
+  let last = performance.now();
+  function loop(ts){
+    const dt = Math.min(0.04, Math.max(0.001, (ts - last)/1000));
+    last = ts;
+    step(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // --- Controls ---
+  function bindKey(){
+    window.addEventListener('keydown', (e)=>{
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A'){
+        input.left = true;
+        turn(-1);
+        SFX.prime();
+        e.preventDefault();
+      }
+      if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D'){
+        input.right = true;
+        turn(+1);
+        SFX.prime();
+        e.preventDefault();
+      }
+      if (e.key === ' '){
+        SFX.prime();
+      }
+    }, { passive:false });
+    window.addEventListener('keyup', (e)=>{
+      if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = false;
+      if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = false;
+    });
+  }
+
+  function bindTouch(btn, dirSign){
+    const on = (down)=>{
+      if (down) SFX.prime();
+      if (dirSign < 0) input.left = down;
+      if (dirSign > 0) input.right = down;
+      if (down) turn(dirSign);
+    };
+    btn.addEventListener('pointerdown', (e)=>{ on(true); btn.setPointerCapture(e.pointerId); e.preventDefault(); }, { passive:false });
+    btn.addEventListener('pointerup', (e)=>{ on(false); e.preventDefault(); }, { passive:false });
+    btn.addEventListener('pointercancel', ()=> on(false));
+    btn.addEventListener('pointerleave', ()=>{ /* keep state */ });
+  }
+
+  function bindPointerSteer(){
+    const el = ui.canvasWrap || cv;
+    if (!el) return;
+
+    const setTarget = (e)=>{
+      try{
+        const rect = cv.getBoundingClientRect();
+        const hs = worldToScreen(me.x, me.y);
+        const dx = (e.clientX - rect.left) - hs.x;
+        const dy = (e.clientY - rect.top) - hs.y;
+        steer.targetA = Math.atan2(dy, dx);
+      }catch(_){ }
+    };
+
+    const end = (e)=>{
+      try{
+        if (steer.pointerId !== null && e && e.pointerId !== steer.pointerId) return;
+        steer.active = false;
+        steer.pointerId = null;
+      }catch(_){ }
+    };
+
+    el.addEventListener('pointerdown', (e)=>{
+      try{
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+      }catch(_){ }
+      steer.active = true;
+      steer.pointerId = e.pointerId;
+      try{ el.setPointerCapture(e.pointerId); }catch(_){ }
+      setTarget(e);
+      try{ SFX.prime(); }catch(_){ }
+      // let parent blur the dock input when user taps back on the game
+      try{ window.parent && window.parent.postMessage({ type: 'dock_iframe_tap' }, '*'); }catch(_){ }
+      e.preventDefault();
+    }, { passive:false });
+
+    el.addEventListener('pointermove', (e)=>{
+      if (!steer.active) return;
+      if (steer.pointerId !== null && e.pointerId !== steer.pointerId) return;
+      setTarget(e);
+    }, { passive:true });
+
+    el.addEventListener('pointerup', end, { passive:true });
+    el.addEventListener('pointercancel', end, { passive:true });
+    el.addEventListener('pointerleave', (e)=>{ /* keep steering while captured */ }, { passive:true });
+  }
+
+  ui.btnQuit.addEventListener('click', ()=>{
+    if (EMBED) bridgeSend('st_quit', {});
+    else location.reload();
+  });
+  // prime audio on any pointer interaction
+  window.addEventListener('pointerdown', ()=>{ try{ SFX.prime(); }catch(_){ } }, { passive:true, once:false });
+
+  bindKey();
+  bindPointerSteer();
+  // --- Messages from parent / room server relay ---
+  window.addEventListener('message', (e)=>{
+    const d = e.data || {};
+    if (!d || typeof d !== 'object') return;
+
+    if (d.type === 'bridge_init'){
+      mySid = String(d.sessionId || d.mySid || '');
+      myNick = String(d.nick || d.myNick || 'Player');
+      mySeat = Number(d.seat||0)||0;
+      isHost = !!d.isHost;
+      roomCode = String(d.roomCode || 'ROOM');
+            connected = true;
+      // random spawn by seat
+      me.x = 180 + (mySeat%4)*240 + Math.random()*70;
+      me.y = 180 + Math.floor(mySeat/4)*260 + Math.random()*70;
+      me.dir = Math.random()*Math.PI*2;
+      me.mass = 14;
+      me.alive = true;
+      me.stageIdx = 0;
+      me.body = [];
+      resetLoopAnchor();
+      return;
+    }
+
+    if (d.type === 'st_timer'){
+      startTs = Number(d.startTs||0)||now();
+      durationMs = Number(d.durationMs||180000)||180000;
+      return;
+    }
+
+    if (d.type === 'st_players'){
+      net.players = d.players || {};
+      return;
+    }
+
+    if (d.type === 'st_scores'){
+      net.scores = d.scores || {};
+      // if server says I'm dead, switch
+      if (mySid && net.scores[mySid] && net.scores[mySid].alive === false && me.alive){
+        me.alive = false;
+        enterSpectate('dead');
+        SFX.die();
+      }
+      return;
+    }
+
+    if (d.type === 'st_foods'){
+      net.foods = Array.isArray(d.foods) ? d.foods.slice(0) : [];
+      return;
+    }
+
+    if (d.type === 'st_spawn'){
+      const foods = Array.isArray(d.foods) ? d.foods : [];
+      for (const f of foods){
+        if (!f || typeof f !== 'object') continue;
+        if (!f.id) continue;
+        if (!net.foods.find(x => x && x.id === f.id)) net.foods.push(f);
+      }
+      return;
+    }
+
+    if (d.type === 'st_eaten'){
+      const id = String(d.id||'');
+      const eaterSid = String(d.eaterSid||'');
+      const value = Number(d.value||2)||2;
+      // remove
+      net.foods = net.foods.filter(f => f && String(f.id) !== id);
+      if (eaterSid === mySid){
+        me.mass += value;
+        SFX.eat();
+      }
+      return;
+    }
+
+    if (d.type === 'st_event'){
+      const ev = d.event || {};
+      if (ev.kind === 'kill'){
+        const victim = String(ev.victimSid||'');
+        const killer = String(ev.killerSid||'');
+        if (victim === mySid && me.alive){
+          me.alive = false;
+          me.killerSid = killer;
+          enterSpectate('dead');
+          SFX.die();
+        } else {
+          // play a tiny sfx if someone got killed near me
+          SFX.kill();
+        }
+      }
+      return;
+    }
+
+    if (d.type === 'duel_result'){
+      const r = d.payload || {};
+      if (r && r.mode === 'snaketail' && r.done){
+        playing = false;
+        const winner = r.winnerNick || '우승자';
+        showToast(`🏆 ${winner} 우승!`, 2400);
+      }
+      return;
+    }
+
+    if (d.type === 'duel_back'){
+      // parent is leaving game
+      return;
+    }
+  });
+
+  // --- boot ---
+  window.addEventListener('resize', resize);
+  resize();
+
+  if (EMBED){
+    bridgeSend('bridge_ready', {});
+  } else {
+    connected = true;
+    mySid = 'local';
+    resetLoopAnchor();
+    // simple local foods
+    for (let i=0; i<30; i++) net.foods.push({ id:'f'+i, x:100+Math.random()*(WORLD.W-200), y:100+Math.random()*(WORLD.H-200), value:2 });
+  }
+
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

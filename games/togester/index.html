@@ -163,14 +163,44 @@
             top: 0;
             left: 0;
             right: 0;
-            padding: 10px 20px;
+            padding: 8px 10px;
             background: rgba(0,0,0,0.5);
             backdrop-filter: blur(10px);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 8px;
+            flex-wrap: nowrap;
             z-index: 100;
         }
+
+        #gameHeader > * { white-space: nowrap; }
+
+        .header-right{
+            display:flex;
+            align-items:center;
+            gap:8px;
+            flex-wrap:nowrap;
+        }
+
+        .exit-btn{
+            background: rgba(255,255,255,0.14);
+            border: 1px solid rgba(255,255,255,0.22);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 14px;
+            font-family: 'Jua', sans-serif;
+            font-size: 0.85rem;
+            cursor: pointer;
+        }
+        .exit-btn:active{ transform: scale(0.98); }
+
+        @media (max-width: 420px){
+            .room-code{ display:none; }
+            .exit-btn{ padding: 6px 8px; font-size: 0.8rem; }
+            .level-info{ font-size: 0.85rem; }
+        }
+
         
         .room-code {
             background: rgba(255,255,255,0.2);
@@ -182,14 +212,14 @@
         
         .level-info {
             color: #ffd700;
-            font-size: 1rem;
+            font-size: 0.9rem;
         }
         
         .death-count {
             color: #ff6b6b;
-            font-size: 0.9rem;
+            font-size: 0.82rem;
             background: rgba(255,107,107,0.2);
-            padding: 3px 10px;
+            padding: 3px 8px;
             border-radius: 10px;
         }
         
@@ -400,7 +430,10 @@
         <div id="gameHeader">
             <span class="room-code" id="displayRoomCode">방: ----</span>
             <span class="level-info" id="levelInfo">레벨 1</span>
-            <span class="death-count" id="deathCount">💀 0</span>
+            <div class="header-right">
+                <span class="death-count" id="deathCount">💀 0</span>
+                <button class="exit-btn" id="exitBtn" type="button">나가기</button>
+            </div>
         </div>
         
         <canvas id="gameCanvas"></canvas>
@@ -408,7 +441,7 @@
         <div id="playerList"></div>
         
         <div id="controls-hint">
-            좌/우 클릭: 이동 | 양쪽 클릭: 점프 | 박스를 밀어서 버튼을 눌러요!
+            왼쪽/오른쪽 터치: 이동 | 양쪽 터치: 점프
         </div>
     </div>
     
@@ -424,6 +457,7 @@
         // ==================== 설정 ====================
         // Firebase 의존성 제거 (Colyseus/부모 브릿지로 동기화)
         const EMBED = new URLSearchParams(location.search).get('embed') === '1';
+        const EMBED_PRACTICE = EMBED && (new URLSearchParams(location.search).get('practice') === '1');
         function bridgeSend(type, payload){
             if (!EMBED) return;
             try { window.parent && window.parent.postMessage({ type, ...payload }, '*'); } catch(e){}
@@ -437,8 +471,10 @@
         let isHost = false;
         let isGuestMode = false;
         let currentLevel = 1;
+        let levelClearLock = false; // 레벨 클리어 중복 트리거 방지
         
         const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
+        const JUMP_VELOCITY = -13.3334; // 점프 2배 (모바일 세로 맵 기준)
         
         let localPlayer = {
             x: 100,
@@ -449,7 +485,9 @@
             name: '햄찌',
             onGround: false,
             onButton: false,
-            isDead: false
+            isDead: false,
+            facing: 1,
+            variant: 0
         };
         
         let players = {};
@@ -461,7 +499,11 @@
         let gameObjects = [];
         let canvas, ctx;
         let cameraX = 0;
+        let cameraY = 0;
+        let stageBounds = { minX: 0, maxX: 1200, minY: 0, maxY: 1000 };
         let deathCount = 0; // 현재 레벨 사망 횟수
+        let gameRunning = false;
+        let rafId = null;
         
         // 터치 상태
         let touches = {};
@@ -623,470 +665,294 @@
         }
         
         
-        // ==================== 레벨 데이터 ====================
-        // 점프: 약 150px 높이, 200px 거리
-        const LEVELS = [
-            // ===== 1-5: 튜토리얼 =====
+               // ==================== 모바일 세로 진행 레벨 ====================
+        // 한 손 플레이에서도 목적지가 화면 흐름(위/아래) 안에서 자연스럽게 보이도록
+        // 좁고 높은(세로) 스테이지로 구성.
+                const LEVELS = [
+            // 1) 기본 등반 (안전 간격)
             {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 600, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 800, height: 50, color: '#2d3436' }],
-                buttons: [], doors: [], spikes: [], boxes: [],
-                message: "이동: 좌우 클릭"
-            },
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 500, y: 250, width: 80, height: 50 },
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 200, y: 120, width: 120, height: 80 },
                 platforms: [
-                    { x: 0, y: 400, width: 300, height: 50, color: '#2d3436' },
-                    { x: 350, y: 300, width: 250, height: 20, color: '#636e72' },
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    { x: 70,  y: 2230, width: 180, height: 20, color: '#636e72' },
+                    { x: 270, y: 2070, width: 180, height: 20, color: '#636e72' },
+                    { x: 80,  y: 1910, width: 180, height: 20, color: '#636e72' },
+                    { x: 270, y: 1750, width: 180, height: 20, color: '#636e72' },
+                    { x: 110, y: 1590, width: 220, height: 20, color: '#636e72' },
+                    { x: 170, y: 1430, width: 220, height: 20, color: '#636e72' },
+                    { x: 120, y: 1270, width: 260, height: 20, color: '#636e72' },
+                    { x: 150, y: 1110, width: 220, height: 20, color: '#636e72' },
+                    { x: 120, y:  950, width: 260, height: 20, color: '#636e72' },
+                    { x: 150, y:  790, width: 220, height: 20, color: '#636e72' },
+                    { x: 120, y:  630, width: 260, height: 20, color: '#636e72' },
+                    { x: 150, y:  470, width: 220, height: 20, color: '#636e72' },
+                    { x: 120, y:  310, width: 260, height: 20, color: '#636e72' },
+                    { x: 140, y:  170, width: 240, height: 20, color: '#636e72' },
                 ],
-                buttons: [], doors: [], spikes: [], boxes: [],
-                message: "점프: 양쪽 동시 클릭"
-            },
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 550, y: 250, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 400, width: 700, height: 50, color: '#2d3436' },
-                    { x: 450, y: 300, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [], doors: [], spikes: [],
-                boxes: [{ x: 300, y: 360, width: 40, height: 40 }],
-                message: "박스를 밀어서 발판으로!"
-            },
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 600, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 800, height: 50, color: '#2d3436' }],
-                buttons: [{ x: 250, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 450, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [{ x: 150, y: 360, width: 40, height: 40 }],
-                message: "박스로 버튼을 눌러 문을 열어!"
-            },
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 600, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 800, height: 50, color: '#2d3436' }],
-                buttons: [], doors: [],
-                spikes: [{ x: 300, y: 380, width: 60, height: 20 }],
-                boxes: [{ x: 180, y: 360, width: 40, height: 40 }],
-                message: "박스 위로 점프해서 스파이크를 넘어!"
+                buttons: [], doors: [], spikes: [], boxes: [], lifts: [], bridges: [],
+                message: ""
             },
 
-            // ===== 6-10: 기본 퍼즐 (선택과 순서) =====
-            // 6: 박스 위치 선택 - 스파이크를 넘을까 버튼을 누를까
+            // 2) 문(벽) + 버튼 (혼자도 박스로 가능)
             {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 800, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 1000, height: 50, color: '#2d3436' }],
-                buttons: [{ x: 600, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 350, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [{ x: 480, y: 380, width: 60, height: 20 }],
-                boxes: [{ x: 200, y: 360, width: 40, height: 40 }],
-                message: "박스로 버튼? 스파이크? 순서가 중요!"
-            },
-            // 7: 두 개의 스파이크 - 박스 하나로 점프점프
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 700, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 900, height: 50, color: '#2d3436' }],
-                buttons: [], doors: [],
-                spikes: [
-                    { x: 280, y: 380, width: 60, height: 20 },
-                    { x: 450, y: 380, width: 60, height: 20 }
-                ],
-                boxes: [{ x: 150, y: 360, width: 40, height: 40 }],
-                message: "박스 하나로 스파이크 두 개를!"
-            },
-            // 8: 박스 2개 역할 분담
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 850, y: 250, width: 80, height: 50 },
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 120, width: 110, height: 80 },
                 platforms: [
-                    { x: 0, y: 400, width: 700, height: 50, color: '#2d3436' },
-                    { x: 750, y: 300, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [{ x: 350, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 600, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [
-                    { x: 150, y: 360, width: 40, height: 40 },
-                    { x: 500, y: 360, width: 40, height: 40 }
-                ],
-                message: "하나는 버튼에, 하나는 발판으로!"
-            },
-            // 9: 되돌아오기
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 100, y: 200, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 400, width: 400, height: 50, color: '#2d3436' },
-                    { x: 500, y: 400, width: 300, height: 50, color: '#2d3436' },
-                    { x: 0, y: 250, width: 250, height: 20, color: '#636e72' },
-                ],
-                buttons: [{ x: 600, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 430, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [{ x: 200, y: 360, width: 40, height: 40 }],
-                message: "오른쪽 갔다 돌아와야 해!"
-            },
-            // 10: 두 개의 문
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 950, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 1150, height: 50, color: '#2d3436' }],
-                buttons: [
-                    { x: 250, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 550, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    // 문 위로 올라가기 위한 발판들 (문이 열려야 통과)
+                    { x: 80,  y: 2120, width: 200, height: 20, color: '#636e72' },
+                    { x: 260, y: 1960, width: 200, height: 20, color: '#636e72' },
+                    { x: 90,  y: 1800, width: 200, height: 20, color: '#636e72' },
+
+                    { x: 140, y: 1560, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1400, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1240, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1080, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  920, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  760, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  600, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  440, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  280, width: 240, height: 20, color: '#636e72' },
                 ],
                 doors: [
-                    { x: 400, y: 300, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 700, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
+                    // 닫히면 위로 못 올라가게 막는 가로 벽
+                    { x: 0, y: 1680, width: 520, height: 30, open: false }
                 ],
-                spikes: [],
+                buttons: [
+                    { x: 60, y: 2388, width: 70, height: 12, pressed: false, doorId: 0 }
+                ],
                 boxes: [
-                    { x: 150, y: 360, width: 40, height: 40 },
-                    { x: 480, y: 360, width: 40, height: 40 }
+                    { x: 170, y: 2340, width: 40, height: 40, color: '#b2bec3' }
                 ],
-                message: "박스 2개로 문 2개!"
+                spikes: [], lifts: [], bridges: [],
+                message: ""
             },
 
-            // ===== 11-15: 중급 (복합 퍼즐) =====
-            // 11: 함정 구멍 - 박스 떨어뜨리면 끝
+            // 3) 다리 생성(브릿지) + 버튼 (박스로 고정)
             {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 750, y: 350, width: 80, height: 50 },
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 120, width: 110, height: 80 },
                 platforms: [
-                    { x: 0, y: 400, width: 280, height: 50, color: '#2d3436' },
-                    { x: 360, y: 400, width: 550, height: 50, color: '#2d3436' },
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    { x: 70,  y: 2210, width: 180, height: 20, color: '#636e72' },
+                    { x: 270, y: 2050, width: 180, height: 20, color: '#636e72' },
+
+                    // 큰 갭(가운데 다리 필요)
+                    { x: 60,  y: 1760, width: 160, height: 20, color: '#636e72' },
+                    { x: 300, y: 1760, width: 160, height: 20, color: '#636e72' },
+
+                    { x: 140, y: 1480, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1320, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1160, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1000, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  840, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  680, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  520, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  360, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  200, width: 240, height: 20, color: '#636e72' },
                 ],
-                buttons: [{ x: 500, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 630, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [{ x: 150, y: 360, width: 40, height: 40 }],
-                message: "구멍에 박스 빠뜨리지 마!"
-            },
-            // 12: 스파이크 + 문 조합
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 900, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 1100, height: 50, color: '#2d3436' }],
-                buttons: [{ x: 300, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 500, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [
-                    { x: 620, y: 380, width: 60, height: 20 },
-                    { x: 750, y: 380, width: 60, height: 20 }
-                ],
-                boxes: [
-                    { x: 150, y: 360, width: 40, height: 40 },
-                    { x: 550, y: 360, width: 40, height: 40 }
-                ],
-                message: "버튼용 + 스파이크용!"
-            },
-            // 13: 박스 다리
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 650, y: 350, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 400, width: 250, height: 50, color: '#2d3436' },
-                    { x: 400, y: 400, width: 450, height: 50, color: '#2d3436' },
-                ],
-                buttons: [], doors: [],
-                spikes: [{ x: 270, y: 500, width: 110, height: 20 }],
-                boxes: [
-                    { x: 100, y: 360, width: 40, height: 40 },
-                    { x: 160, y: 360, width: 40, height: 40 }
-                ],
-                message: "박스로 다리를 만들어!"
-            },
-            // 14: 중간 발판
-            {
-                spawn: { x: 100, y: 550 },
-                goal: { x: 700, y: 200, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 600, width: 400, height: 50, color: '#2d3436' },
-                    { x: 250, y: 480, width: 150, height: 20, color: '#636e72' },
-                    { x: 500, y: 360, width: 150, height: 20, color: '#636e72' },
-                    { x: 600, y: 250, width: 250, height: 20, color: '#636e72' },
-                ],
-                buttons: [{ x: 300, y: 460, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 430, y: 260, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [{ x: 150, y: 560, width: 40, height: 40 }],
-                message: "박스를 위층으로 올려!"
-            },
-            // 15: 박스 1개로 문 2개 (순서 퍼즐)
-            {
-                spawn: { x: 450, y: 350 },
-                goal: { x: 450, y: 150, width: 80, height: 50 },
-                platforms: [
-                    { x: 350, y: 400, width: 200, height: 50, color: '#2d3436' },
-                    { x: 50, y: 400, width: 150, height: 50, color: '#2d3436' },
-                    { x: 700, y: 400, width: 150, height: 50, color: '#2d3436' },
-                    { x: 350, y: 200, width: 200, height: 20, color: '#636e72' },
+                bridges: [
+                    { x: 210, y: 1760, width: 100, height: 20, color: '#00cec9', active: false }
                 ],
                 buttons: [
-                    { x: 80, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 750, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                    { x: 60, y: 2200, width: 70, height: 12, pressed: false, bridgeId: 0 }
                 ],
-                doors: [
-                    { x: 250, y: 300, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 610, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
+                boxes: [
+                    { x: 160, y: 2340, width: 40, height: 40, color: '#b2bec3' }
                 ],
-                spikes: [],
-                boxes: [{ x: 430, y: 360, width: 40, height: 40 }],
-                message: "박스 1개로 문 2개! 어느 쪽 먼저?"
+                doors: [], spikes: [], lifts: [],
+                message: ""
             },
 
-            // ===== 16-20: 고급 (복잡한 구조) =====
-            // 16: 3단 점프
+            // 4) 리프트(버튼을 누르고 타기) (박스로 고정 가능)
             {
-                spawn: { x: 100, y: 550 },
-                goal: { x: 700, y: 150, width: 80, height: 50 },
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 120, width: 110, height: 80 },
                 platforms: [
-                    { x: 0, y: 600, width: 350, height: 50, color: '#2d3436' },
-                    { x: 200, y: 480, width: 150, height: 20, color: '#636e72' },
-                    { x: 400, y: 360, width: 150, height: 20, color: '#636e72' },
-                    { x: 600, y: 240, width: 200, height: 20, color: '#636e72' },
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    // 리프트 없이 못 올라가게 벽 형태
+                    { x: 60,  y: 2060, width: 180, height: 20, color: '#636e72' },
+                    { x: 280, y: 1900, width: 180, height: 20, color: '#636e72' },
+                    { x: 140, y: 1640, width: 240, height: 20, color: '#636e72' },
+
+                    { x: 140, y: 1480, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1320, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1160, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1000, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  840, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  680, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  520, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  360, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  200, width: 240, height: 20, color: '#636e72' },
                 ],
-                buttons: [{ x: 650, y: 220, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 530, y: 140, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [{ x: 100, y: 560, width: 40, height: 40 }],
-                message: "박스를 끝까지 밀어 올려!"
-            },
-            // 17: 3개의 문
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 1150, y: 350, width: 80, height: 50 },
-                platforms: [{ x: 0, y: 400, width: 1350, height: 50, color: '#2d3436' }],
-                buttons: [
-                    { x: 200, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 500, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false },
-                    { x: 800, y: 380, width: 60, height: 20, color: '#a29bfe', doorId: 2, pressed: false }
-                ],
-                doors: [
-                    { x: 350, y: 300, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 650, y: 300, width: 40, height: 100, color: '#00cec9', open: false },
-                    { x: 950, y: 300, width: 40, height: 100, color: '#a29bfe', open: false }
-                ],
-                spikes: [],
-                boxes: [
-                    { x: 420, y: 360, width: 40, height: 40 },
-                    { x: 720, y: 360, width: 40, height: 40 }
-                ],
-                message: "박스 2개로 문 3개!"
-            },
-            // 18: 복합 지형
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 950, y: 200, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 400, width: 300, height: 50, color: '#2d3436' },
-                    { x: 380, y: 400, width: 300, height: 50, color: '#2d3436' },
-                    { x: 760, y: 400, width: 350, height: 50, color: '#2d3436' },
-                    { x: 850, y: 250, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [{ x: 500, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 690, y: 300, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [
-                    { x: 310, y: 500, width: 60, height: 20 },
-                    { x: 850, y: 380, width: 60, height: 20 }
-                ],
-                boxes: [
-                    { x: 150, y: 360, width: 40, height: 40 },
-                    { x: 800, y: 360, width: 40, height: 40 }
-                ],
-                message: "구멍 + 스파이크 + 문!"
-            },
-            // 19: 역방향 진행
-            {
-                spawn: { x: 900, y: 350 },
-                goal: { x: 100, y: 200, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 400, width: 400, height: 50, color: '#2d3436' },
-                    { x: 500, y: 400, width: 550, height: 50, color: '#2d3436' },
-                    { x: 0, y: 250, width: 250, height: 20, color: '#636e72' },
+                lifts: [
+                    { x: 340, y: 2340, width: 120, height: 20, minY: 1800, maxY: 2340, speed: 3.0, color: '#6c5ce7' }
                 ],
                 buttons: [
-                    { x: 700, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 250, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                    { x: 60, y: 2388, width: 70, height: 12, pressed: false, liftId: 0 }
                 ],
-                doors: [
-                    { x: 430, y: 300, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 50, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
-                ],
-                spikes: [],
                 boxes: [
-                    { x: 800, y: 360, width: 40, height: 40 },
-                    { x: 550, y: 360, width: 40, height: 40 }
+                    { x: 170, y: 2340, width: 40, height: 40, color: '#b2bec3' }
                 ],
-                message: "오른쪽에서 시작! 왼쪽으로!"
-            },
-            // 20: 타워 쌓기
-            {
-                spawn: { x: 100, y: 550 },
-                goal: { x: 350, y: 100, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 600, width: 600, height: 50, color: '#2d3436' },
-                    { x: 300, y: 150, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [{ x: 100, y: 580, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false }],
-                doors: [{ x: 250, y: 250, width: 40, height: 100, color: '#d63031', open: false }],
-                spikes: [],
-                boxes: [
-                    { x: 200, y: 560, width: 40, height: 40 },
-                    { x: 260, y: 560, width: 40, height: 40 },
-                    { x: 320, y: 560, width: 40, height: 40 }
-                ],
-                message: "박스를 쌓아 탑을 만들어!"
+                doors: [], spikes: [], bridges: [],
+                message: ""
             },
 
-            // ===== 21-25: 마스터 =====
-            // 21: 양갈래 + 중앙 목표
+            // 5) 문 + 다리 2단계 (박스 2개)
             {
-                spawn: { x: 450, y: 550 },
-                goal: { x: 450, y: 100, width: 80, height: 50 },
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 120, width: 110, height: 80 },
                 platforms: [
-                    { x: 350, y: 600, width: 200, height: 50, color: '#2d3436' },
-                    { x: 50, y: 450, width: 200, height: 50, color: '#2d3436' },
-                    { x: 650, y: 450, width: 200, height: 50, color: '#2d3436' },
-                    { x: 50, y: 300, width: 150, height: 20, color: '#636e72' },
-                    { x: 700, y: 300, width: 150, height: 20, color: '#636e72' },
-                    { x: 350, y: 150, width: 200, height: 20, color: '#636e72' },
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    { x: 70,  y: 2210, width: 180, height: 20, color: '#636e72' },
+                    { x: 270, y: 2050, width: 180, height: 20, color: '#636e72' },
+
+                    // 갭: 브릿지 필요
+                    { x: 60,  y: 1760, width: 160, height: 20, color: '#636e72' },
+                    { x: 300, y: 1760, width: 160, height: 20, color: '#636e72' },
+
+                    // 문 위로 가는 통로
+                    { x: 140, y: 1500, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1340, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1180, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1020, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  860, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  700, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  540, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  380, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  220, width: 240, height: 20, color: '#636e72' },
                 ],
-                buttons: [
-                    { x: 80, y: 280, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 750, y: 280, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
+                bridges: [
+                    { x: 210, y: 1760, width: 100, height: 20, color: '#00cec9', active: false }
                 ],
                 doors: [
-                    { x: 280, y: 50, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 580, y: 50, width: 40, height: 100, color: '#00cec9', open: false }
+                    { x: 0, y: 1420, width: 520, height: 30, open: false }
                 ],
-                spikes: [],
+                buttons: [
+                    // 브릿지 버튼(아래): 박스로 고정
+                    { x: 60, y: 2200, width: 70, height: 12, pressed: false, bridgeId: 0 },
+                    // 문 버튼(중간): 근처 박스로 고정
+                    { x: 360, y: 1490, width: 70, height: 12, pressed: false, doorId: 0 }
+                ],
                 boxes: [
-                    { x: 400, y: 560, width: 40, height: 40 },
-                    { x: 460, y: 560, width: 40, height: 40 }
+                    { x: 160, y: 2340, width: 40, height: 40, color: '#b2bec3' },
+                    { x: 320, y: 1460, width: 40, height: 40, color: '#b2bec3' },
                 ],
-                message: "양쪽에 박스를 배치!"
+                spikes: [], lifts: [],
+                message: ""
             },
-            // 22: 연쇄 운반
+
+            // 6) 스파이크 회피 (간격/난이도 합리화)
             {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 1050, y: 350, width: 80, height: 50 },
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 120, width: 110, height: 80 },
                 platforms: [
-                    { x: 0, y: 400, width: 280, height: 50, color: '#2d3436' },
-                    { x: 360, y: 400, width: 200, height: 50, color: '#2d3436' },
-                    { x: 640, y: 400, width: 550, height: 50, color: '#2d3436' },
-                ],
-                buttons: [
-                    { x: 150, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 420, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
-                ],
-                doors: [
-                    { x: 290, y: 300, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 570, y: 300, width: 40, height: 100, color: '#00cec9', open: false }
-                ],
-                spikes: [{ x: 800, y: 380, width: 100, height: 20 }],
-                boxes: [
-                    { x: 400, y: 360, width: 40, height: 40 },
-                    { x: 700, y: 360, width: 40, height: 40 }
-                ],
-                message: "박스를 순서대로 옮겨!"
-            },
-            // 23: 4층 탑
-            {
-                spawn: { x: 100, y: 700 },
-                goal: { x: 700, y: 150, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 750, width: 350, height: 50, color: '#2d3436' },
-                    { x: 200, y: 620, width: 150, height: 20, color: '#636e72' },
-                    { x: 400, y: 490, width: 150, height: 20, color: '#636e72' },
-                    { x: 550, y: 360, width: 150, height: 20, color: '#636e72' },
-                    { x: 600, y: 230, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [
-                    { x: 100, y: 730, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 580, y: 340, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false }
-                ],
-                doors: [
-                    { x: 130, y: 650, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 530, y: 130, width: 40, height: 100, color: '#00cec9', open: false }
-                ],
-                spikes: [],
-                boxes: [
-                    { x: 200, y: 710, width: 40, height: 40 },
-                    { x: 450, y: 450, width: 40, height: 40 }
-                ],
-                message: "층층이 박스를 올려!"
-            },
-            // 24: 최후의 시험
-            {
-                spawn: { x: 100, y: 350 },
-                goal: { x: 1000, y: 150, width: 80, height: 50 },
-                platforms: [
-                    { x: 0, y: 400, width: 280, height: 50, color: '#2d3436' },
-                    { x: 360, y: 400, width: 250, height: 50, color: '#2d3436' },
-                    { x: 690, y: 400, width: 450, height: 50, color: '#2d3436' },
-                    { x: 350, y: 280, width: 150, height: 20, color: '#636e72' },
-                    { x: 650, y: 280, width: 150, height: 20, color: '#636e72' },
-                    { x: 900, y: 200, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [
-                    { x: 150, y: 380, width: 60, height: 20, color: '#e17055', doorId: 0, pressed: false },
-                    { x: 450, y: 380, width: 60, height: 20, color: '#00b894', doorId: 1, pressed: false },
-                    { x: 400, y: 260, width: 60, height: 20, color: '#a29bfe', doorId: 2, pressed: false }
-                ],
-                doors: [
-                    { x: 290, y: 300, width: 40, height: 100, color: '#d63031', open: false },
-                    { x: 620, y: 300, width: 40, height: 100, color: '#00cec9', open: false },
-                    { x: 830, y: 100, width: 40, height: 100, color: '#a29bfe', open: false }
-                ],
-                spikes: [{ x: 750, y: 380, width: 60, height: 20 }],
-                boxes: [
-                    { x: 400, y: 360, width: 40, height: 40 },
-                    { x: 700, y: 260, width: 40, height: 40 }
-                ],
-                message: "박스 2개로 문 3개! 순서가 핵심!"
-            },
-            // 25: 최종 보스
-            {
-                spawn: { x: 100, y: 550 },
-                goal: { x: 950, y: 100, width: 100, height: 50 },
-                platforms: [
-                    { x: 0, y: 600, width: 350, height: 50, color: '#2d3436' },
-                    { x: 430, y: 600, width: 300, height: 50, color: '#2d3436' },
-                    { x: 810, y: 600, width: 300, height: 50, color: '#2d3436' },
-                    { x: 200, y: 480, width: 150, height: 20, color: '#636e72' },
-                    { x: 500, y: 380, width: 150, height: 20, color: '#636e72' },
-                    { x: 750, y: 280, width: 150, height: 20, color: '#636e72' },
-                    { x: 850, y: 150, width: 200, height: 20, color: '#636e72' },
-                ],
-                buttons: [
-                    { x: 150, y: 580, width: 60, height: 20, color: '#ff6b6b', doorId: 0, pressed: false },
-                    { x: 530, y: 580, width: 60, height: 20, color: '#4ecdc4', doorId: 1, pressed: false },
-                    { x: 900, y: 580, width: 60, height: 20, color: '#ffe66d', doorId: 2, pressed: false },
-                    { x: 550, y: 360, width: 60, height: 20, color: '#a29bfe', doorId: 3, pressed: false }
-                ],
-                doors: [
-                    { x: 360, y: 500, width: 40, height: 100, color: '#ff6b6b', open: false },
-                    { x: 740, y: 500, width: 40, height: 100, color: '#4ecdc4', open: false },
-                    { x: 680, y: 180, width: 40, height: 100, color: '#ffe66d', open: false },
-                    { x: 800, y: 50, width: 40, height: 100, color: '#a29bfe', open: false }
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    { x: 80,  y: 2230, width: 170, height: 20, color: '#636e72' },
+                    { x: 270, y: 2070, width: 170, height: 20, color: '#636e72' },
+
+                    // 스파이크 구간 위/아래로 우회
+                    { x: 60,  y: 1910, width: 160, height: 20, color: '#636e72' },
+                    { x: 300, y: 1910, width: 160, height: 20, color: '#636e72' },
+
+                    { x: 140, y: 1650, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1490, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1330, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1170, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1010, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  850, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  690, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  530, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  370, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  210, width: 240, height: 20, color: '#636e72' },
                 ],
                 spikes: [
-                    { x: 250, y: 460, width: 60, height: 20 },
-                    { x: 600, y: 580, width: 60, height: 20 }
+                    { x: 160, y: 2360, width: 200, height: 40 },
+                    { x: 160, y: 1870, width: 200, height: 40 },
+                ],
+                doors: [], buttons: [], boxes: [], lifts: [], bridges: [],
+                message: ""
+            },
+
+            // 7) 박스를 발판처럼 써서 올라가기
+            {
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 120, width: 110, height: 80 },
+                platforms: [
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    // 첫 발판은 낮게
+                    { x: 80,  y: 2230, width: 220, height: 20, color: '#636e72' },
+
+                    // 다음 발판이 살짝 높아서 박스 점프가 도움됨
+                    { x: 300, y: 1960, width: 160, height: 20, color: '#636e72' },
+
+                    { x: 140, y: 1700, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1540, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1380, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1220, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1060, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  900, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  740, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  580, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  420, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  260, width: 240, height: 20, color: '#636e72' },
                 ],
                 boxes: [
-                    { x: 250, y: 560, width: 40, height: 40 },
-                    { x: 480, y: 560, width: 40, height: 40 },
-                    { x: 800, y: 260, width: 40, height: 40 }
+                    { x: 150, y: 2340, width: 40, height: 40, color: '#b2bec3' }
                 ],
-                message: "🎊 최종! 박스 3개로 문 4개! 🎊"
-            }
+                doors: [], buttons: [], spikes: [], lifts: [], bridges: [],
+                message: ""
+            },
+
+            // 8) 최종: 리프트 + 브릿지 연계 (박스 2개로 고정)
+            {
+                spawn: { x: 120, y: 2320 },
+                goal:  { x: 210, y: 90, width: 110, height: 90 },
+                platforms: [
+                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+
+                    { x: 70,  y: 2210, width: 180, height: 20, color: '#636e72' },
+                    { x: 270, y: 2050, width: 180, height: 20, color: '#636e72' },
+
+                    // 중간층 갭(브릿지로 연결)
+                    { x: 60,  y: 1700, width: 160, height: 20, color: '#636e72' },
+                    { x: 300, y: 1700, width: 160, height: 20, color: '#636e72' },
+
+                    { x: 140, y: 1440, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1280, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y: 1120, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  960, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  800, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  640, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  480, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  320, width: 240, height: 20, color: '#636e72' },
+                    { x: 140, y:  160, width: 240, height: 20, color: '#636e72' },
+                ],
+                lifts: [
+                    { x: 360, y: 2340, width: 120, height: 20, minY: 1860, maxY: 2340, speed: 3.2, color: '#6c5ce7' }
+                ],
+                bridges: [
+                    { x: 210, y: 1700, width: 100, height: 20, color: '#00cec9', active: false }
+                ],
+                buttons: [
+                    { x: 60, y: 2388, width: 70, height: 12, pressed: false, liftId: 0 },
+                    { x: 360, y: 2040, width: 70, height: 12, pressed: false, bridgeId: 0 }
+                ],
+                boxes: [
+                    { x: 170, y: 2340, width: 40, height: 40, color: '#b2bec3' },
+                    { x: 420, y: 2000, width: 40, height: 40, color: '#b2bec3' },
+                ],
+                doors: [], spikes: [],
+                message: ""
+            },
         ];
         // ==================== 에러 표시 ====================
         function showError(msg, isError = true) {
@@ -1110,13 +976,14 @@
 
         // ==================== 임베드 모드(Colyseus 브릿지) ====================
         function startEmbedded(init){
-            isGuestMode = false;
+            isGuestMode = !!init.practice || EMBED_PRACTICE;
             isHost = !!init.isHost;
             roomId = String(init.roomCode || 'ROOM');
             playerId = String(init.sessionId || ('p_' + Date.now()));
             localPlayer.name = String(init.nick || '햄찌').slice(0, 16);
             const seat = typeof init.seat === 'number' ? init.seat : 0;
             localPlayer.color = HAMSTER_COLORS[seat % HAMSTER_COLORS.length];
+            localPlayer.variant = seat % 4;
             currentLevel = 1;
             try{ tgEnded = false; }catch(e){}
             startGame();
@@ -1136,6 +1003,7 @@
             
             localPlayer.name = name;
             localPlayer.color = HAMSTER_COLORS[0];
+            localPlayer.variant = 0;
             localPlayer.x = LEVELS[0].spawn.x;
             localPlayer.y = LEVELS[0].spawn.y;
             
@@ -1165,7 +1033,7 @@
         function startGame() {
             document.getElementById('lobby').classList.add('hidden');
             document.getElementById('gameContainer').style.display = 'flex';
-            document.getElementById('displayRoomCode').textContent = isGuestMode ? '🎮 연습 모드' : '방: ' + roomId;
+            document.getElementById('displayRoomCode').textContent = isGuestMode ? '연습' : ('방: ' + roomId);
             
             canvas = document.getElementById('gameCanvas');
             ctx = canvas.getContext('2d');
@@ -1181,12 +1049,183 @@
             loadLevel(currentLevel);
             setupControls();
             updatePlayerList();
+            
+            // 나가기 버튼
+            const exitBtn = document.getElementById('exitBtn');
+            if (exitBtn && !exitBtn._bound){
+                exitBtn._bound = true;
+                exitBtn.addEventListener('click', ()=>{
+                    // 임베드(방 안 연습 포함): 부모에게 나가기 신호만 보냄
+                    if (EMBED){
+                        try{ bridgeSend("tg_quit", { practice: !!isGuestMode }); }catch(e){}
+                        try{ stopBGM(); }catch(e){}
+                        gameRunning = false;
+                        if (rafId) { try{ cancelAnimationFrame(rafId); }catch(e){} rafId = null; }
+                        return;
+                    }
+
+                    // 단독/연습 모드는 안전하게 새로고침(중복 리스너 방지)
+                    try{ stopBGM(); }catch(e){}
+                    location.reload();
+                });
+            }
+
+            // 루프 시작
+            gameRunning = true;
             gameLoop();
         }
         
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+        }
+
+        // ==================== 레벨 안전장치 ====================
+        // 점프 높이를 낮춘 상태에서 "문(벽)" 뒤쪽에 버튼이 있어 아예 못 누르는 상황을 방지한다.
+        // - 스폰 위치 기준으로 문과 같은 편에 버튼이 하나도 없으면,
+        //   스폰 근처에 2층(작은 발판 2개) + 버튼을 추가로 생성해서 진행 불가 상태를 제거.
+        function findGroundYAt(x) {
+            // 해당 x 아래에서 가장 "낮은"(y가 큰) 플랫폼 y를 찾는다.
+            let groundY = null;
+            for (const p of (gameObjects?.platforms || [])) {
+                if (x >= p.x && x <= p.x + p.width) {
+                    if (groundY === null || p.y > groundY) groundY = p.y;
+                }
+            }
+            return (groundY === null) ? 400 : groundY;
+        }
+
+        function stageMaxX() {
+            let mx = 1200;
+            const objs = gameObjects || {};
+            (objs.platforms || []).forEach(p => mx = Math.max(mx, p.x + p.width));
+            (objs.doors || []).forEach(d => mx = Math.max(mx, d.x + d.width));
+            if (objs.goal) mx = Math.max(mx, objs.goal.x + (objs.goal.width || 0));
+            return mx;
+        }
+
+        function clamp(v, min, max) {
+            if (max < min) return min;
+            return Math.max(min, Math.min(v, max));
+        }
+
+        function computeStageBounds() {
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            const objs = gameObjects || {};
+
+            const pushRect = (r) => {
+                if (!r) return;
+                const x = (typeof r.x === 'number') ? r.x : 0;
+                const y = (typeof r.y === 'number') ? r.y : 0;
+                const w = (typeof r.width === 'number') ? r.width : 0;
+                const h = (typeof r.height === 'number') ? r.height : 0;
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x + w);
+                maxY = Math.max(maxY, y + h);
+            };
+
+            (objs.platforms || []).forEach(pushRect);
+            (objs.doors || []).forEach(pushRect);
+            (objs.buttons || []).forEach(pushRect);
+            (objs.spikes || []).forEach(pushRect);
+            (objs.boxes || []).forEach(pushRect);
+            (objs.bridges || []).forEach(pushRect);
+
+            // 리프트는 이동 범위를 포함
+            (objs.lifts || []).forEach(l => {
+                const x = (typeof l.x === 'number') ? l.x : 0;
+                const w = (typeof l.width === 'number') ? l.width : 0;
+                const h = (typeof l.height === 'number') ? l.height : 0;
+                const y0 = (typeof l.y === 'number') ? l.y : 0;
+                const minYv = (typeof l.minY === 'number') ? l.minY : y0;
+                const maxYv = (typeof l.maxY === 'number') ? l.maxY : y0;
+                pushRect({ x, y: Math.min(minYv, maxYv), width: w, height: Math.abs(maxYv - minYv) + h });
+            });
+
+            if (objs.goal) pushRect(objs.goal);
+
+            if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+                stageBounds = { minX: 0, maxX: 1200, minY: 0, maxY: 1000 };
+                return stageBounds;
+            }
+
+            // 패딩
+            const padX = 180;
+            const padY = 220;
+            minX = Math.max(0, minX - padX);
+            minY = Math.max(0, minY - padY);
+            maxX = maxX + padX;
+            maxY = maxY + padY;
+
+            stageBounds = { minX, maxX, minY, maxY };
+            return stageBounds;
+        }
+
+
+        function ensureDoorButtonsAccessible(level) {
+            if (!gameObjects?.doors || !gameObjects?.buttons) return;
+
+            const spawnX = level.spawn.x;
+            const mx = stageMaxX();
+
+            gameObjects.doors.forEach((door, doorId) => {
+                // 해당 doorId를 제어하는 버튼이 있는 경우만
+                const related = gameObjects.buttons.filter(b => b.doorId === doorId);
+                if (related.length === 0) return;
+
+                const needLeft = spawnX < door.x;
+                const needRight = spawnX > (door.x + door.width);
+                if (!needLeft && !needRight) return;
+
+                if (needLeft) {
+                    const hasLeft = related.some(b => (b.x + b.width) <= (door.x - 5));
+                    if (hasLeft) return;
+                    addFallbackDoorButton(level, door, doorId, 'left', mx);
+                } else if (needRight) {
+                    const hasRight = related.some(b => b.x >= (door.x + door.width + 5));
+                    if (hasRight) return;
+                    addFallbackDoorButton(level, door, doorId, 'right', mx);
+                }
+            });
+        }
+
+        function addFallbackDoorButton(level, door, doorId, side, mx) {
+            const groundY = findGroundYAt(level.spawn.x);
+            const step = 70; // 점프(2/3) 기준으로 안정적으로 오를 수 있는 높이
+            const midY = Math.max(80, groundY - step);
+            const topY = Math.max(60, groundY - step * 2);
+
+            // 스폰 근처에 작은 2층 발판을 만들고 위층에 버튼 배치
+            let baseX;
+            if (side === 'left') {
+                baseX = level.spawn.x + 110;
+                baseX = Math.min(baseX, door.x - 220);
+                baseX = Math.max(30, baseX);
+            } else {
+                baseX = level.spawn.x - 250;
+                baseX = Math.max(baseX, door.x + door.width + 60);
+                baseX = Math.min(mx - 200, baseX);
+            }
+
+            // 발판 추가 (중복 생성 방지: 같은 doorId fallback이 이미 있으면 skip)
+            if (gameObjects.buttons.some(b => b.doorId === doorId && b.fallback)) return;
+
+            gameObjects.platforms.push(
+                { x: baseX, y: midY, width: 150, height: 20, color: '#636e72' },
+                { x: baseX + 20, y: topY, width: 120, height: 20, color: '#636e72' }
+            );
+
+            gameObjects.buttons.push({
+                x: baseX + 50,
+                y: topY - 20,
+                width: 60,
+                height: 20,
+                color: door.color || '#e17055',
+                doorId,
+                pressed: false,
+                fallback: true
+            });
         }
         
         function loadLevel(levelNum) {
@@ -1204,12 +1243,10 @@
             
             document.getElementById('autoNextHint').style.display = 'block';
             document.getElementById('winScreen').querySelector('.win-text').textContent = '🎉 레벨 클리어! 🎉';
-            let levelMessage = level.message;
-            if (isGuestMode && level.buttons.length > 0) {
-                levelMessage = "박스를 밀어서 버튼을 눌러요!";
-            }
-            document.getElementById('levelInfo').textContent = `레벨 ${levelNum} - ${levelMessage}`;
+            const label = isGuestMode ? `연습 · 레벨 ${levelNum}` : `레벨 ${levelNum}`;
+            document.getElementById('levelInfo').textContent = label;
             document.getElementById('winScreen').classList.remove('show');
+            levelClearLock = false;
             
             // 게임 오브젝트 초기화
             gameObjects = {
@@ -1218,8 +1255,14 @@
                 doors: level.doors.map(d => ({...d, open: false})),
                 spikes: [...level.spikes],
                 goal: {...level.goal},
-                boxes: (level.boxes || []).map(b => ({...b, vx: 0, vy: 0}))
+                boxes: (level.boxes || []).map(b => ({...b, vx: 0, vy: 0})),
+                lifts: (level.lifts || []).map(l => ({...l, y: (typeof l.y === 'number') ? l.y : (typeof l.maxY === 'number' ? l.maxY : 0)})),
+                bridges: (level.bridges || []).map(b => ({...b, active: false}))
             };
+
+            // 버튼이 문 반대편에 있어 진행 불가가 되는 레벨 자동 보정
+            ensureDoorButtonsAccessible(level);
+            computeStageBounds();
             
             // 플레이어 위치 초기화
             const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
@@ -1233,15 +1276,27 @@
             bridgeSendState(true);
 
 cameraX = 0;
+            cameraY = 0;
         }
         
         function nextLevel() {
             if (isGuestMode) {
                 currentLevel++;
                 loadLevel(currentLevel);
-            } else if (isHost) {
+                return;
+            }
+
+            const next = currentLevel + 1;
+
+            // 임베드 멀티: 누가 요청해도 서버가 브로드캐스트로 동기화
+            if (EMBED) {
+                bridgeSend("tg_level", { level: next });
+                return;
+            }
+
+            // 로컬(비임베드) 모드: 기존처럼 호스트만 진행
+            if (isHost) {
                 currentLevel++;
-                bridgeSend("tg_level", { level: currentLevel });
                 loadLevel(currentLevel);
             }
         }
@@ -1263,7 +1318,7 @@ cameraX = 0;
                 // 두 개 이상 터치 = 점프
                 if (Object.keys(touches).length >= 2) {
                     if (localPlayer.onGround) {
-                        localPlayer.vy = -15;
+                        localPlayer.vy = JUMP_VELOCITY;
                         localPlayer.onGround = false;
                         sfxJump();
                     }
@@ -1329,7 +1384,7 @@ cameraX = 0;
                 // 두 개 이상 = 점프 (터치와 동일)
                 if (Object.keys(touches).length >= 2) {
                     if (localPlayer.onGround) {
-                        localPlayer.vy = -15;
+                        localPlayer.vy = JUMP_VELOCITY;
                         localPlayer.onGround = false;
                         sfxJump();
                     }
@@ -1381,7 +1436,7 @@ cameraX = 0;
                 if (e.key === 'ArrowLeft' || e.key === 'a') moveDirection = -1;
                 if (e.key === 'ArrowRight' || e.key === 'd') moveDirection = 1;
                 if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') && localPlayer.onGround) {
-                    localPlayer.vy = -15;
+                    localPlayer.vy = JUMP_VELOCITY;
                     localPlayer.onGround = false;
                     sfxJump();
                 }
@@ -1413,9 +1468,13 @@ cameraX = 0;
         
         // ==================== 게임 물리 ====================
         function updatePhysics() {
+            // 기믹 업데이트 (리프트/다리)
+            updateLifts();
+            updateBridges();
             // 이동
             const speed = 5;
             localPlayer.vx = moveDirection * speed;
+            if (moveDirection !== 0) localPlayer.facing = moveDirection < 0 ? -1 : 1;
             
             // 걷기 효과음 (땅에서 이동 중일 때만)
             if (moveDirection !== 0 && localPlayer.onGround) {
@@ -1423,8 +1482,9 @@ cameraX = 0;
             }
             
             // 중력
-            localPlayer.vy += 0.6;
-            if (localPlayer.vy > 15) localPlayer.vy = 15;
+            // 점프 높이를 2/3로 낮추기 위해(체감 높이 기준), 중력도 함께 2/3로 조정
+            localPlayer.vy += 0.4;
+            if (localPlayer.vy > 10) localPlayer.vy = 10;
             
             // 위치 업데이트
             localPlayer.x += localPlayer.vx;
@@ -1433,7 +1493,7 @@ cameraX = 0;
             // 플랫폼 충돌
             localPlayer.onGround = false;
             
-            for (let platform of gameObjects.platforms) {
+            for (let platform of solidPlatforms()) {
                 if (checkCollision(localPlayer, platform)) {
                     resolveCollision(localPlayer, platform);
                 }
@@ -1445,12 +1505,29 @@ cameraX = 0;
                     resolveCollision(localPlayer, door);
                 }
             }
+
+            // 플레이어-플레이어 충돌 (요청사항: 옆 충돌 + 위에 올라타기 가능)
+            if (!isGuestMode) {
+                try {
+                    Object.entries(players).forEach(([sid, p]) => {
+                        if (!p || p.isDead) return;
+                        const rp = getInterpolatedRemote(sid, p || {});
+                        const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
+                        const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
+                        const remoteRect = { x: px, y: py, width: 40, height: 40 };
+                        if (checkCollision(localPlayer, remoteRect)) {
+                            // Side collision should "push" the other player (requested).
+                            resolvePlayerPlayerCollision(localPlayer, remoteRect, sid);
+                        }
+                    });
+                } catch(_){ }
+            }
             
             // 박스 물리
             for (let box of gameObjects.boxes) {
                 // 박스 중력
-                box.vy += 0.6;
-                if (box.vy > 15) box.vy = 15;
+                box.vy += 0.4;
+                if (box.vy > 10) box.vy = 10;
                 
                 // 박스 위치 업데이트
                 box.x += box.vx;
@@ -1458,7 +1535,7 @@ cameraX = 0;
                 box.vx *= 0.8; // 마찰
                 
                 // 박스-플랫폼 충돌
-                for (let platform of gameObjects.platforms) {
+                for (let platform of solidPlatforms()) {
                     if (checkBoxCollision(box, platform)) {
                         resolveBoxCollision(box, platform);
                     }
@@ -1527,6 +1604,8 @@ cameraX = 0;
             localPlayer.onButton = gameObjects.buttons.some(btn => btn.pressed);
             
             updateDoors();
+            updateBridges();
+            updateLifts();
             
             // 이미 죽은 상태면 사망 처리 스킵
             if (!localPlayer.isDead) {
@@ -1539,7 +1618,7 @@ cameraX = 0;
                 }
                 
                 // 낙사
-                if (localPlayer.y > 1000) {
+                if (localPlayer.y > (stageBounds.maxY + 320)) {
                     onDeath();
                     return;
                 }
@@ -1549,17 +1628,28 @@ cameraX = 0;
             const goal = gameObjects.goal;
             if (localPlayer.x + 20 > goal.x && localPlayer.x < goal.x + goal.width &&
                 localPlayer.y + 40 > goal.y && localPlayer.y < goal.y + goal.height) {
-                // 1명만 도착해도 클리어
-                if (!document.getElementById('winScreen').classList.contains('show')) {
-                    sfxLevelClear();
-                    document.getElementById('winScreen').classList.add('show');
-                    setTimeout(() => nextLevel(), 1500);
+                // 1명이라도 닿으면 전원 다음 레벨로 (서버 tg_level 브로드캐스트)
+                if (!levelClearLock) {
+                    levelClearLock = true;
+                    if (!document.getElementById('winScreen').classList.contains('show')) {
+                        sfxLevelClear();
+                        document.getElementById('winScreen').classList.add('show');
+                    }
+
+                    if (isGuestMode) {
+                        setTimeout(() => { nextLevel(); }, 1500);
+                    } else {
+                        // 멀티: 누가 도착하든 서버에 다음 레벨 요청
+                        bridgeSend("tg_level", { level: currentLevel + 1 });
+                        // 혹시 브로드캐스트가 늦으면 잠금 해제(재트리거 가능)
+                        setTimeout(() => { levelClearLock = false; }, 2000);
+                    }
                 }
             }
-            
+
             // 네트워크(브릿지)로 상태 전송
             bridgeSendState();
-}
+        }
         
         function updateDoors() {
             gameObjects.doors.forEach((door, idx) => {
@@ -1697,6 +1787,52 @@ cameraX = 0;
                 }
             }
         }
+
+        // 플레이어-플레이어 충돌 해결 (옆 충돌 시 상대를 '밀기')
+        // NOTE: 각 플레이어는 자신의 상태만 서버로 전송하므로,
+        //       밀림은 'push impulse' 이벤트를 상대에게 전달해 적용합니다.
+        function bridgeSendPush(toSid, dx){
+            if (!EMBED || isGuestMode) return;
+            const sid = String(toSid || "");
+            if (!sid || sid === mySessionId) return;
+            const now = performance.now();
+            if (!bridgeSendPush._last) bridgeSendPush._last = {};
+            const last = bridgeSendPush._last[sid] || 0;
+            if (now - last < 120) return; // throttle
+            bridgeSendPush._last[sid] = now;
+
+            const v = clamp(Number(dx) || 0, -10, 10);
+            if (!v) return;
+            bridgeSend("tg_push", { to: sid, dx: v });
+        }
+
+        function resolvePlayerPlayerCollision(player, rect, remoteSid){
+            const overlapX = Math.min(player.x + 40 - rect.x, rect.x + rect.width - player.x);
+            const overlapY = Math.min(player.y + 40 - rect.y, rect.y + rect.height - player.y);
+
+            if (overlapX < overlapY) {
+                // Side collision: separate X but keep some velocity, and push the other player
+                if (player.x < rect.x) {
+                    player.x = rect.x - 40;
+                    if (player.vx > 0.2) bridgeSendPush(remoteSid, player.vx * 0.95);
+                } else {
+                    player.x = rect.x + rect.width;
+                    if (player.vx < -0.2) bridgeSendPush(remoteSid, player.vx * 0.95);
+                }
+                // friction so it doesn't jitter-stick
+                player.vx *= 0.35;
+            } else {
+                // Vertical collision: allow standing on top of others
+                if (player.y < rect.y) {
+                    player.y = rect.y - 40;
+                    player.onGround = true;
+                    player.vy = 0;
+                } else {
+                    player.y = rect.y + rect.height;
+                    player.vy = 0;
+                }
+            }
+        }
         
         // 박스 충돌 체크
         function checkBoxCollision(box, rect) {
@@ -1767,7 +1903,43 @@ cameraX = 0;
             }
         }
         
-        // ==================== 렌더링 ====================
+        
+
+        // ===== 기믹: 리프트/생성형 다리 =====
+        function solidPlatforms() {
+            const base = (gameObjects && gameObjects.platforms) ? gameObjects.platforms : [];
+            const lifts = (gameObjects && gameObjects.lifts) ? gameObjects.lifts : [];
+            const bridges = (gameObjects && gameObjects.bridges) ? gameObjects.bridges.filter(b => b.active) : [];
+            return base.concat(lifts, bridges);
+        }
+
+        function updateLifts() {
+            if (!gameObjects || !gameObjects.lifts) return;
+            gameObjects.lifts.forEach((lift, idx) => {
+                const btn = (gameObjects.buttons || []).find(b => b.liftId === idx);
+                const active = btn ? !!btn.pressed : false;
+                const minY = (typeof lift.minY === 'number') ? lift.minY : lift.y;
+                const maxY = (typeof lift.maxY === 'number') ? lift.maxY : lift.y;
+                const targetY = active ? minY : maxY;
+                const speed = (typeof lift.speed === 'number') ? lift.speed : 2;
+                const dy = targetY - lift.y;
+                if (Math.abs(dy) <= speed) {
+                    lift.y = targetY;
+                } else {
+                    lift.y += Math.sign(dy) * speed;
+                }
+            });
+        }
+
+        function updateBridges() {
+            if (!gameObjects || !gameObjects.bridges) return;
+            gameObjects.bridges.forEach((br, idx) => {
+                const btn = (gameObjects.buttons || []).find(b => b.bridgeId === idx);
+                br.active = btn ? !!btn.pressed : false;
+            });
+        }
+
+// ==================== 렌더링 ====================
         function render() {
             // 배경
             const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
@@ -1777,18 +1949,21 @@ cameraX = 0;
             ctx.fillStyle = gradient;
             ctx.fillRect(0, 0, canvas.width, canvas.height);
             
-            // 카메라 따라가기
+            // 카메라 따라가기 (모바일 세로 진행: X/Y 모두 추적)
             const targetCameraX = localPlayer.x - canvas.width / 2;
-            cameraX += (targetCameraX - cameraX) * 0.1;
-            cameraX = Math.max(0, cameraX);
-            
+            const targetCameraY = localPlayer.y - canvas.height / 2;
+            cameraX += (targetCameraX - cameraX) * 0.12;
+            cameraY += (targetCameraY - cameraY) * 0.12;
+
+            cameraX = clamp(cameraX, stageBounds.minX, stageBounds.maxX - canvas.width);
+            cameraY = clamp(cameraY, stageBounds.minY, stageBounds.maxY - canvas.height);
+
             ctx.save();
-            ctx.translate(-cameraX, 0);
-            
-            // 배경 별
+            ctx.translate(-cameraX, -cameraY);
+// 배경 별
             for (let i = 0; i < 50; i++) {
-                const x = (i * 73 + cameraX * 0.1) % 2500;
-                const y = (i * 47) % canvas.height;
+                const x = (i * 73 + cameraX * 0.1) % 2500 + cameraX;
+                const y = (i * 47 + cameraY * 0.1) % 2500 + cameraY;
                 ctx.fillStyle = `rgba(255,255,255,${0.3 + Math.sin(Date.now() / 1000 + i) * 0.2})`;
                 ctx.beginPath();
                 ctx.arc(x, y, 1 + Math.random(), 0, Math.PI * 2);
@@ -1805,6 +1980,40 @@ cameraX = 0;
                 ctx.fillRect(p.x, p.y, p.width, 3);
             });
             
+
+            
+            // 생성형 다리 (버튼 연동)
+            (gameObjects.bridges || []).forEach((br) => {
+                if (br.active) {
+                    ctx.fillStyle = br.color || '#74b9ff';
+                    ctx.fillRect(br.x, br.y, br.width, br.height);
+                    // 하이라이트
+                    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+                    ctx.fillRect(br.x, br.y, br.width, 3);
+                } else {
+                    // 비활성: 위치 힌트(점선)
+                    ctx.strokeStyle = 'rgba(116,185,255,0.25)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([8, 6]);
+                    ctx.strokeRect(br.x, br.y, br.width, br.height);
+                    ctx.setLineDash([]);
+                }
+            });
+            
+            // 리프트 (버튼 연동)
+            (gameObjects.lifts || []).forEach((l) => {
+                ctx.fillStyle = l.color || '#b2bec3';
+                ctx.fillRect(l.x, l.y, l.width, l.height);
+                // 스트라이프
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                const stripes = Math.max(1, Math.floor(l.width / 24));
+                for (let i = 0; i < stripes; i++) {
+                    ctx.fillRect(l.x + 6 + i * 24, l.y + 3, 10, Math.max(1, l.height - 6));
+                }
+                // 하이라이트
+                ctx.fillStyle = 'rgba(255,255,255,0.12)';
+                ctx.fillRect(l.x, l.y, l.width, 2);
+            });
             // 버튼
             gameObjects.buttons.forEach(b => {
                 ctx.fillStyle = b.pressed ? '#2d3436' : b.color;
@@ -1930,127 +2139,240 @@ cameraX = 0;
                 sp.color = tp.color || p.color;
                 sp.name = tp.name || p.name;
                 sp.isDead = !!tp.isDead;
+                sp.vx = (typeof tp.vx === 'number') ? tp.vx : (p.vx || 0);
+                sp.vy = (typeof tp.vy === 'number') ? tp.vy : (p.vy || 0);
+                sp.onGround = (typeof tp.onGround === 'boolean') ? tp.onGround : !!p.onGround;
+                if (!sp.facing) sp.facing = 1;
+                if (Math.abs(sp.vx) > 0.3) sp.facing = sp.vx < 0 ? -1 : 1;
 
-                drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead);
+                drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing });
             });
 // 로컬 플레이어
-            drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead);
+            drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead, localPlayer);
             
             ctx.restore();
         }
         
-        function drawHamster(x, y, color, name, isLocal = false, isDead = false) {
+                // ==================== 캐릭터 렌더링 (픽셀 / 2등신 + 귀/꼬리 + 간단 애니메이션) ====================
+        function _hexToRgb(hex){
+            const h = (hex || '#000000').replace('#','').trim();
+            const v = h.length === 3 ? h.split('').map(c=>c+c).join('') : h.padEnd(6,'0').slice(0,6);
+            const n = parseInt(v,16);
+            return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+        }
+        function _rgbToHex(r,g,b){
+            const to = (x)=>('0'+Math.max(0,Math.min(255,Math.round(x))).toString(16)).slice(-2);
+            return '#'+to(r)+to(g)+to(b);
+        }
+        function _shade(hex, amt){
+            const {r,g,b} = _hexToRgb(hex);
+            // amt: -100..100
+            const f = (x)=> x + (amt/100) * (amt>0 ? (255-x) : x);
+            return _rgbToHex(f(r), f(g), f(b));
+        }
+
+        function drawHamster(x, y, color, name, isLocal = false, isDead = false, state = null) {
+            const s = state || {};
+            const vx = (typeof s.vx === 'number') ? s.vx : 0;
+            const vy = (typeof s.vy === 'number') ? s.vy : 0;
+            const onGround = (typeof s.onGround === 'boolean') ? s.onGround : false;
+            const facing = (typeof s.facing === 'number') ? s.facing : (vx < -0.2 ? -1 : 1);
+            const variant = (typeof s.variant === 'number') ? s.variant : 0;
+
             // 사망 시 반투명 처리
-            if (isDead) {
-                ctx.globalAlpha = 0.4;
-            }
-            
-            // 그림자
+            if (isDead) ctx.globalAlpha = 0.4;
+
+            // 그림자 (기존 유지)
             ctx.fillStyle = 'rgba(0,0,0,0.2)';
             ctx.beginPath();
             ctx.ellipse(x + 20, y + 38, 14, 4, 0, 0, Math.PI * 2);
             ctx.fill();
-            
-            // 몸통 (둥글둥글한 원형)
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.ellipse(x + 20, y + 22, 18, 16, 0, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 귀 (둥근 귀)
-            ctx.beginPath();
-            ctx.arc(x + 6, y + 8, 7, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(x + 34, y + 8, 7, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 귀 안쪽 (분홍색)
-            ctx.fillStyle = '#ffb8b8';
-            ctx.beginPath();
-            ctx.arc(x + 6, y + 8, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(x + 34, y + 8, 4, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 볼 (통통한 볼살)
-            ctx.fillStyle = 'rgba(255,184,184,0.6)';
-            ctx.beginPath();
-            ctx.ellipse(x + 6, y + 26, 6, 5, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.ellipse(x + 34, y + 26, 6, 5, 0, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 눈 (작고 동그란 눈)
-            ctx.fillStyle = '#2d3436';
-            ctx.beginPath();
-            ctx.arc(x + 14, y + 20, 3, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(x + 26, y + 20, 3, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 눈 하이라이트
-            ctx.fillStyle = '#fff';
-            ctx.beginPath();
-            ctx.arc(x + 15, y + 19, 1.2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.arc(x + 27, y + 19, 1.2, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 코 (작은 분홍 코)
-            ctx.fillStyle = '#ff9999';
-            ctx.beginPath();
-            ctx.arc(x + 20, y + 26, 2, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // 이름표
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.beginPath();
-            ctx.roundRect(x - 5, y - 15, 50, 14, 7);
-            ctx.fill();
-            
-            ctx.fillStyle = '#fff';
-            ctx.font = '9px Jua';
-            ctx.textAlign = 'center';
-            ctx.fillText(name, x + 20, y - 4);
-            
-            // 로컬 플레이어 표시 (작은 화살표)
-            if (isLocal && !isDead) {
-                ctx.fillStyle = '#ffd700';
-                ctx.beginPath();
-                ctx.moveTo(x + 20, y - 23);
-                ctx.lineTo(x + 15, y - 30);
-                ctx.lineTo(x + 25, y - 30);
-                ctx.closePath();
-                ctx.fill();
+
+            // 픽셀 스케일/크기
+            const PX = 2;         // 1px = 2 screen px
+            const W = 16, H = 18; // sprite pixels (2등신 느낌)
+            const drawW = W * PX, drawH = H * PX;
+
+            // 히트박스(40x40) 바닥에 스프라이트를 정렬
+            const baseX = Math.round(x + 20 - drawW / 2);
+            const baseY = Math.round(y + 40 - drawH);
+
+            // 애니메이션 파라미터
+            const t = performance.now() / 1000;
+            const moving = onGround && Math.abs(vx) > 0.6;
+            const jumping = !onGround && vy < -0.6;
+
+            const walkPhase = moving ? (Math.floor(t * 10) % 2) : 0;
+            const bob = moving ? Math.sin(t * 12) * 0.8 : Math.sin(t * 2.2) * 0.4;
+            const bobPx = Math.round(bob); // pixel 단위
+
+            // 팔/다리 포즈
+            const armUp = jumping;
+            const legsTuck = !onGround;
+
+            // 꼬리 흔들림
+            const tailWag = moving ? (walkPhase ? 1 : -1) : (Math.sin(t * 3) > 0 ? 1 : -1);
+
+            // 컬러 팔레트 (플레이어 색 기반)
+            const OUT = _shade(color, -45);
+            const BASE = color;
+            const HI = _shade(color, 25);
+            // 요청: 얼굴(얼굴/배 영역)은 살색으로 고정
+            const FACE = '#f2c8a0';
+            const HAIR = _shade(color, -65);
+            const INNER = '#ffb8d0';
+            const EYE = '#1f1f1f';
+            const BLUSH = 'rgba(255,184,208,0.8)';
+
+            // 픽셀 그리기 헬퍼
+            const p = (px, py, w, h, c) => {
+                if (w === undefined) w = 1;
+                if (h === undefined) h = 1;
+                ctx.fillStyle = c;
+                ctx.fillRect(baseX + px * PX, baseY + (py + bobPx) * PX, w * PX, h * PX);
+            };
+
+            // 좌우 반전(방향)
+            ctx.save();
+            ctx.imageSmoothingEnabled = false;
+            const cx = baseX + drawW / 2;
+            const cy = baseY + drawH / 2;
+            ctx.translate(cx, cy);
+            ctx.scale(facing, 1);
+            ctx.translate(-cx, -cy);
+
+            // ===== 꼬리 (먼저) =====
+            const tw = tailWag;
+            p(1 + (tw > 0 ? 0 : 1), 11, 2, 1, OUT);
+            p(1 + (tw > 0 ? 0 : 1), 12, 3, 2, OUT);
+            p(2 + (tw > 0 ? 0 : 1), 12, 2, 2, BASE);
+            p(3 + (tw > 0 ? 0 : 1), 13, 1, 1, HI);
+
+            // ===== 몸통 =====
+            p(4, 9, 8, 7, OUT);
+            p(5, 10, 6, 5, BASE);
+            p(6, 11, 4, 3, FACE);
+            // 개성 포인트(바디 무늬)
+            if (variant === 1) { p(6, 12, 4, 1, HI); }
+            if (variant === 2) { p(7, 12, 2, 1, INNER); }
+            if (variant === 3) { p(8, 11, 1, 2, HI); }
+
+
+            // ===== 머리 =====
+            p(3, 2, 10, 8, OUT);
+            p(4, 3, 8, 6, BASE);
+            p(5, 4, 6, 4, FACE);
+
+            // 4명 각각 작은 포인트(색/장식만 다르게)(색/장식만 다르게)
+            if (variant === 0){
+                // 리본
+                p(3, 4, 1, 1, '#ffd1dc');
+                p(4, 4, 1, 1, '#ffd1dc');
+            } else if (variant === 1){
+                // 별 머리핀
+                p(11, 3, 1, 1, '#ffe66d');
+                p(12, 3, 1, 1, '#ffe66d');
+            } else if (variant === 2){
+                // 헤어밴드
+                p(4, 3, 8, 1, 'rgba(255,255,255,0.9)');
+            } else if (variant === 3){
+                // 작은 꽃
+                p(4, 5, 1, 1, '#ffb8d0');
+                p(4, 6, 1, 1, '#ff6b6b');
             }
-            
-            // 사망 시 X 표시
+
+// ===== 귀 =====
+            p(4, 0, 3, 3, OUT);
+            p(9, 0, 3, 3, OUT);
+            p(5, 1, 2, 2, BASE);
+            p(10, 1, 2, 2, BASE);
+            p(6, 2, 1, 1, INNER);
+            p(11, 2, 1, 1, INNER);
+
+            // ===== 팔 =====
+            if (armUp) {
+                p(2, 8, 2, 2, OUT);
+                p(12, 8, 2, 2, OUT);
+                p(3, 9, 1, 1, BASE);
+                p(12, 9, 1, 1, BASE);
+            } else {
+                p(3, 11, 2, 3, OUT);
+                p(11, 11, 2, 3, OUT);
+                p(4, 12, 1, 2, BASE);
+                p(11, 12, 1, 2, BASE);
+            }
+
+            // ===== 다리 =====
+            if (legsTuck) {
+                p(6, 15, 2, 2, OUT);
+                p(8, 15, 2, 2, OUT);
+                p(7, 16, 1, 1, BASE);
+                p(9, 16, 1, 1, BASE);
+            } else {
+                const a = walkPhase ? 1 : 0;
+                p(6, 15, 2, 2, OUT);
+                p(9, 15, 2, 2, OUT);
+                p(7, 16 - a, 1, 1, BASE);
+                p(10, 16 - (1 - a), 1, 1, BASE);
+            }
+
+            // ===== 얼굴 =====
+            // ===== 눈 (세로 2px) =====
+            p(6, 6, 1, 2, EYE);
+            p(10, 6, 1, 2, EYE);
+            // 하이라이트(위쪽 1px)
+            p(6, 5, 1, 1, 'rgba(255,255,255,0.9)');
+            p(10, 5, 1, 1, 'rgba(255,255,255,0.9)');
+            // 코/입
+            p(8, 7, 1, 1, INNER);
+            p(8, 8, 2, 1, OUT);
+
+            // 볼터치
+            ctx.fillStyle = BLUSH;
+            ctx.fillRect(baseX + 5 * PX, baseY + (8 + bobPx) * PX, 2 * PX, 1 * PX);
+            ctx.fillRect(baseX + 9 * PX, baseY + (8 + bobPx) * PX, 2 * PX, 1 * PX);
+
+            // 로컬 표시(픽셀 화살표)
+            if (isLocal && !isDead) {
+                p(7, -2, 2, 1, '#ffd700');
+                p(8, -3, 1, 1, '#ffd700');
+            }
+
+            // 사망 표시 (픽셀 X)
             if (isDead) {
                 ctx.globalAlpha = 1;
-                ctx.strokeStyle = '#ff0000';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(x + 10, y + 12);
-                ctx.lineTo(x + 30, y + 32);
-                ctx.moveTo(x + 30, y + 12);
-                ctx.lineTo(x + 10, y + 32);
-                ctx.stroke();
+                ctx.fillStyle = '#ff3b3b';
+                for (let i = 0; i < 6; i++) {
+                    ctx.fillRect(baseX + (5 + i) * PX, baseY + (4 + i + bobPx) * PX, PX, PX);
+                    ctx.fillRect(baseX + (10 - i) * PX, baseY + (4 + i + bobPx) * PX, PX, PX);
+                }
             }
-            
+
+            ctx.restore();
+
+            // 이름표 (이름이 있을 때만)
+            if (name) {
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.beginPath();
+                ctx.roundRect(x - 5, y - 15, 50, 14, 7);
+                ctx.fill();
+
+                ctx.fillStyle = '#fff';
+                ctx.font = '9px Jua';
+                ctx.textAlign = 'center';
+                ctx.fillText(name, x + 20, y - 4);
+            }
+
             // globalAlpha 복원
             ctx.globalAlpha = 1;
         }
-        
+
         // ==================== 게임 루프 ====================
         function gameLoop() {
+            if (!gameRunning) return;
             updatePhysics();
             render();
-            requestAnimationFrame(gameLoop);
+            rafId = requestAnimationFrame(gameLoop);
         }
         
         
@@ -2061,7 +2383,6 @@ cameraX = 0;
 
         function bridgeSendOver(success, reason){
             if (!EMBED || isGuestMode) return;
-            if (!isHost) return;
             if (tgEnded) return;
             tgEnded = true;
             bridgeSend("tg_over", { success: !!success, reason: reason || (success ? "clear" : "fail") });
@@ -2077,9 +2398,11 @@ cameraX = 0;
                 y: (p && typeof p.y === 'number') ? p.y : (p?.y || 0),
                 vx: (p && typeof p.vx === 'number') ? p.vx : (p?.vx || 0),
                 vy: (p && typeof p.vy === 'number') ? p.vy : (p?.vy || 0),
+                onGround: !!p?.onGround,
                 isDead: !!p?.isDead,
                 color: p?.color,
-                name: p?.name
+                name: p?.name,
+                variant: (typeof p?.variant === 'number') ? p.variant : 0
             });
 
             // 히스토리 정리
@@ -2114,9 +2437,11 @@ cameraX = 0;
                     y: a.y + (b.y - a.y) * alpha,
                     vx: b.vx,
                     vy: b.vy,
+                    onGround: !!b.onGround,
                     isDead: !!b.isDead,
                     color: b.color,
-                    name: b.name
+                    name: b.name,
+                    variant: (typeof b.variant === 'number') ? b.variant : 0
                 };
             }
 
@@ -2124,15 +2449,17 @@ cameraX = 0;
             const last = hist[hist.length - 1];
             const dtMs = Math.max(0, Math.min(200, renderT - last.t));
             const frames = dtMs / 16.6667;
-            const g = 0.6;
+            const g = 0.4;
             return {
                 x: last.x + (last.vx || 0) * frames,
                 y: last.y + (last.vy || 0) * frames + 0.5 * g * frames * frames,
                 vx: last.vx,
                 vy: last.vy,
+                onGround: !!last.onGround,
                 isDead: !!last.isDead,
                 color: last.color,
-                name: last.name
+                name: last.name,
+                variant: (typeof last.variant === 'number') ? last.variant : 0
             };
         }
 
@@ -2146,11 +2473,12 @@ cameraX = 0;
                 recordRemoteSnapshot(sid, p);
                 // init smoothing slot
                 if (!smoothedPlayers[sid]){
-                    smoothedPlayers[sid] = { x: p.x||0, y: p.y||0, vx: p.vx||0, vy: p.vy||0, isDead: !!p.isDead };
+                    smoothedPlayers[sid] = { x: p.x||0, y: p.y||0, vx: p.vx||0, vy: p.vy||0, onGround: !!p.onGround, isDead: !!p.isDead };
                 }
                 // keep name/color immediately (no alpha)
                 smoothedPlayers[sid].name = p.name;
                 smoothedPlayers[sid].color = p.color;
+                smoothedPlayers[sid].variant = (typeof p.variant === 'number') ? p.variant : 0;
             }
             players = next;
             // prune removed
@@ -2170,6 +2498,8 @@ cameraX = 0;
                 if (gameObjects.buttons[idx]) gameObjects.buttons[idx].pressed = !!pressed;
             }
             updateDoors();
+            updateBridges();
+            updateLifts();
         }
 
         function bridgeSendState(force=false){
@@ -2187,7 +2517,8 @@ cameraX = 0;
                     color: localPlayer.color,
                     name: localPlayer.name,
                     level: currentLevel,
-                    deathCount
+                    deathCount,
+                    variant: localPlayer.variant
                 }
             });
         }
@@ -2219,7 +2550,8 @@ cameraX = 0;
                     seat: mySeat,
                     isHost: !!d.isHost,
                     sessionId: mySessionId,
-                    roomCode: d.roomCode || "ROOM"
+                    roomCode: d.roomCode || "ROOM",
+                    practice: !!d.practice
                 });
                 if (d.players) applyRemotePlayers(d.players);
                 if (d.level) {
@@ -2252,7 +2584,22 @@ cameraX = 0;
                 if (gameObjects?.buttons && gameObjects.buttons[d.idx]){
                     gameObjects.buttons[d.idx].pressed = !!d.pressed;
                     updateDoors();
+                    updateBridges();
+                    updateLifts();
                 }
+                return;
+            }
+
+            if (d.type === "tg_push"){
+                const to = String(d.to || "");
+                if (to && mySessionId && to !== mySessionId) return;
+                const dx = clamp(Number(d.dx) || 0, -10, 10);
+                if (!dx) return;
+                // Apply a small horizontal impulse so the pushed player actually moves
+                localPlayer.x += dx;
+                localPlayer.vx = clamp((localPlayer.vx || 0) + dx * 0.55, -8, 8);
+                try{ sfxPush(); }catch(_){ }
+                bridgeSendState(true);
                 return;
             }
 
@@ -2272,5 +2619,21 @@ cameraX = 0;
             localStorage.setItem('playerName', e.target.value);
         });
     </script>
+
+<script>
+(function(){
+  function ping(){
+    try{
+      if (window.parent && window.parent !== window){
+        window.parent.postMessage({ type: "tg_iframe_tap" }, "*");
+      }
+    }catch(e){}
+  }
+  window.addEventListener("pointerdown", ping, { passive: true });
+  window.addEventListener("touchstart", ping, { passive: true });
+  window.addEventListener("mousedown", ping, { passive: true });
+})();
+</script>
+
 </body>
 </html>

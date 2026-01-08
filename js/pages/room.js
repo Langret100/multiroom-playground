@@ -1,6 +1,8 @@
 
   // Fullscreen game mode (hide chat/side panels while playing)
   function enterGameFullscreen(){
+    // entering gameplay should always use the real room phase
+    forceLobbyUI = false;
     try{ document.body.classList.add("in-game"); }catch(_){}
     // Stop room BGM while the embedded game is running (games may have their own audio)
     try{ window.__bgmBattleHandle?.stop?.(); }catch(_){}
@@ -11,7 +13,8 @@
       duel.ui?.duelFrameWrap?.classList.remove("hidden");
       duel.ui?.duelSpectate?.classList.add("hidden");
     }catch(_){}
-    try{ window.scrollTo(0,0); }catch(_){}
+    try{ window.scrollTo(0,0); }catch(_){ }
+    try{ setTogesterDock(isTogesterActive()); }catch(_){ }
   }
 
   function exitGameFullscreen(){
@@ -31,6 +34,60 @@
       duel.ui?.duelFrameWrap?.classList.add("hidden");
       const fr = duel.ui?.duelFrame;
       if (fr) fr.src = "about:blank";
+    }catch(_){ }
+    try{
+      const dock = document.getElementById("tgDock");
+      if (dock) dock.classList.add("hidden");
+    }catch(_){ }
+    // Reset dock layout vars (avoids residual blank space after leaving a docked game)
+    try{ setTogesterDock(false); }catch(_){ }
+  }
+
+  // Local UI override: when a player leaves SnakeTail mid-match ("나가기"),
+  // the server match can continue for others, but this client should return
+  // to the room lobby UI (ready list/button visible).
+  let forceLobbyUI = false;
+
+  function isTogesterActive(){
+    try{
+      // Prefer the latest room mode cached from the room page runtime.
+      const modeId = (window.__roomModeId || "").toString();
+      if (modeId) return (modeId === "togester" || modeId === "snaketail");
+
+      // Fallbacks (best-effort)
+      const coop = window.__roomCoop;
+      const room = window.__roomRef;
+      const id = (coop && coop.meta && coop.meta.id)
+        ? coop.meta.id
+        : ((room && room.state && room.state.mode) || "");
+      return (id === "togester" || id === "snaketail");
+    }catch(_){
+      return false;
+    }
+  }
+
+  function setTogesterDock(on){
+    try{
+      const dock = document.getElementById("tgDock");
+      if (!dock) return;
+      const root = document.documentElement;
+      const show = !!on && document.body.classList.contains("in-game");
+
+      dock.classList.toggle("hidden", !show);
+      document.body.classList.toggle("tg-mode", !!show);
+
+      if (!show){
+        try{ root.style.setProperty("--tgDockH", "0px"); }catch(_){ }
+        return;
+      }
+
+      // Measure dock height after layout so the iframe area can stop above it.
+      requestAnimationFrame(()=>{
+        try{
+          const h = dock.getBoundingClientRect().height || dock.offsetHeight || 0;
+          root.style.setProperty("--tgDockH", h + "px");
+        }catch(_){ }
+      });
     }catch(_){ }
   }
 
@@ -107,6 +164,10 @@ function setupBgm(audioElId, btnId){
     roomChatLog: document.querySelector("#roomChatLog"),
     roomChatInput: document.querySelector("#roomChatInput"),
     roomChatSend: document.querySelector("#roomChatSend"),
+    tgDock: document.querySelector("#tgDock"),
+    tgDockLog: document.querySelector("#tgDockLog"),
+    tgDockInput: document.querySelector("#tgDockInput"),
+    tgDockSend: document.querySelector("#tgDockSend"),
   };
 
   // CPU difficulty (solo duel: 1 human + CPU)
@@ -224,32 +285,43 @@ function setupBgm(audioElId, btnId){
       : "stackga";
   }
 
-  function updatePreview(modeId){
-    const meta = window.gameById ? window.gameById(modeId) : null;
-    const label = meta?.name || modeLabel(modeId) || "-";
-    // 요청사항: 방 화면에서 제목/기본설명 대신 게임별 2줄 설명만 표시
-    try{
-      if (previewEls.desc){
-        const lines = Array.isArray(meta?.descLines) ? meta.descLines : [];
-        const cleaned = lines
-          .map(s => (s ?? "").toString().trim())
-          .filter(Boolean)
-          .slice(0, 2);
+function updatePreview(modeId){
+  const meta = window.gameById ? window.gameById(modeId) : null;
+  const label = meta?.name || modeLabel(modeId) || "-";
 
-        // 2줄이 없으면 최소 1줄은 보여주기
-        const fallback = cleaned.length ? cleaned : ["게임 시작 시 전체 화면으로 전환됩니다."];
-        previewEls.desc.innerHTML = fallback
-          .map(line => `<div>${safeText(line, 80)}</div>`)
-          .join("");
-      }
-    }catch(_){}
-    try{
-      if (previewEls.thumb){
-        previewEls.thumb.dataset.game = meta?.id || modeId || "";
-        previewEls.thumb.dataset.label = (label || "").slice(0, 6);
-      }
-    }catch(_){}
-  }
+  // 요청사항: 방 화면에서 제목/기본설명 대신 게임별 2줄 설명만 표시
+  try{
+    if (previewEls.desc){
+      const lines = Array.isArray(meta?.descLines) ? meta.descLines : [];
+      const cleaned = lines
+        .map(s => (s ?? "").toString().trim())
+        .filter(Boolean)
+        .slice(0, 2);
+
+      // 2줄이 없으면 최소 1줄은 보여주기
+      const fallback = cleaned.length ? cleaned : ["게임 시작 시 전체 화면으로 전환됩니다."];
+      previewEls.desc.innerHTML = fallback
+        .map(line => `<div>${safeText(line, 80)}</div>`)
+        .join("");
+    }
+  }catch(_){}
+
+  try{
+    if (previewEls.thumb){
+      previewEls.thumb.dataset.game = meta?.id || modeId || "";
+      previewEls.thumb.dataset.label = (label || "").slice(0, 6);
+    }
+  }catch(_){}
+
+  // 요청사항: 방 화면 상단의 모바일 조작 안내를 게임별로 표시
+  try{
+    const sub = document.getElementById("gamePanelSub");
+    if (sub){
+      const hint = (meta && meta.mobileHint) ? String(meta.mobileHint).trim() : "";
+      sub.textContent = hint ? safeText(hint, 80) : "";
+    }
+  }catch(_){}
+}
 
 
   const resultEls = {
@@ -279,8 +351,12 @@ function setupBgm(audioElId, btnId){
     meta: null,
     iframeReady: false,
     iframeLoaded: false,
+    practice: false,
     level: 1,
   };
+
+  // Expose minimal state for helpers defined outside this IIFE (best-effort).
+  try{ window.__roomCoop = coop; }catch(_){ }
   let sim = null;
   let tickRate = 20;
 
@@ -633,7 +709,39 @@ function setupBgm(audioElId, btnId){
       try{ exitGameFullscreen(); }catch(_){ }
       return;
     }
-    // Togester (coop) iframe -> server relay
+    
+    // In-game "나가기" from embedded togester iframe (end coop & return to room UI)
+    if (d.type === "tg_quit"){
+      if (!fromMain) return;
+      // 방 안 연습 모드에서는 서버에 결과를 보내지 않고 바로 방으로 복귀
+      if (coop.practice){
+        try{
+          coop.practice = false;
+          coop.active = false;
+          coop.meta = null;
+          coop.iframeLoaded = false;
+          coop.iframeReady = false;
+        }catch(_){ }
+        try{ exitGameFullscreen(); }catch(_){ }
+        return;
+      }
+      try{ room.send("tg_over", { success: false, reason: "quit" }); }catch(_){ }
+      try{ exitGameFullscreen(); }catch(_){ }
+      return;
+    }
+
+    // In-game "나가기" from embedded SnakeTail iframe (return to room UI only)
+    if (d.type === "st_quit"){
+      if (!fromMain) return;
+      // Snaketail is a shared session; leaving should not end the whole match.
+      // But this client should return to the lobby UI (ready list/button visible)
+      // even while the server match continues for others.
+      forceLobbyUI = true;
+      try{ exitGameFullscreen(); }catch(_){ }
+      try{ renderPlayers(); }catch(_){ }
+      return;
+    }
+// Togester (coop) iframe -> server relay
     if (d.type === "tg_state"){
       if (!fromMain) return;
       const now = Date.now();
@@ -658,12 +766,52 @@ function setupBgm(audioElId, btnId){
       room.send("tg_reset", { t: d.t });
       return;
     }
+    if (d.type === "tg_push"){
+      if (!fromMain) return;
+      // relay a push impulse to the target player (server will broadcast)
+      try{
+        room.send("tg_push", { to: d.to, dx: d.dx, from: mySessionId });
+      }catch(_){ }
+      return;
+    }
     if (d.type === "tg_over"){
       if (!fromMain) return;
       room.send("tg_over", {
         success: !!d.success,
         reason: d.reason
       });
+      return;
+    }
+
+    // SnakeTail (coop competitive) iframe -> server relay
+    if (d.type === "st_state"){
+      if (!fromMain) return;
+      const now = Date.now();
+      if (!window.__lastStStateSent) window.__lastStStateSent = 0;
+      if (now - window.__lastStStateSent >= 120){
+        window.__lastStStateSent = now;
+        try{ room.send("st_state", { state: d.state }); }catch(_){ }
+      }
+      return;
+    }
+    if (d.type === "st_eat"){
+      if (!fromMain) return;
+      try{ room.send("st_eat", { id: d.id }); }catch(_){ }
+      return;
+    }
+    if (d.type === "st_spawn"){
+      if (!fromMain) return;
+      try{ room.send("st_spawn", { foods: d.foods || [] }); }catch(_){ }
+      return;
+    }
+    if (d.type === "st_event"){
+      if (!fromMain) return;
+      try{ room.send("st_event", { event: d.event || {} }); }catch(_){ }
+      return;
+    }
+    if (d.type === "st_over"){
+      if (!fromMain) return;
+      try{ room.send("st_over", { reason: d.reason, winnerSid: d.winnerSid }); }catch(_){ }
       return;
     }
     if (d.type === "duel_state"){
@@ -760,9 +908,115 @@ function setupBgm(audioElId, btnId){
     room.send("input", { mask: m });
   }
 
+  function shouldIgnoreKeyEvent(e){
+    try{
+      const t = e?.target;
+      if (!t) return false;
+      const tag = (t.tagName || "").toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (t.isContentEditable) return true;
+    }catch(_){ }
+    return false;
+  }
+
+  function setupKeyboardAwareForTgDock(){
+    const input = els?.tgDockInput;
+    if (!input) return;
+
+    const root = document.documentElement;
+    const vv = window.visualViewport;
+    let active = false;
+
+    const update = () => {
+      try{
+        const h = vv ? vv.height : window.innerHeight;
+        root.style.setProperty("--vvh", (h * 0.01) + "px");
+        let kb = 0;
+        if (vv){
+          kb = Math.max(0, window.innerHeight - vv.height - (vv.offsetTop || 0));
+        }
+        root.style.setProperty("--kb", kb + "px");
+        // Keep current dock height in a CSS var (0 when hidden)
+        try{
+          const dock = document.getElementById("tgDock");
+          let dh = 0;
+          if (dock && !dock.classList.contains("hidden")){
+            dh = dock.getBoundingClientRect().height || dock.offsetHeight || 0;
+          }
+          root.style.setProperty("--tgDockH", dh + "px");
+        }catch(_){ }
+      }catch(_){ }
+    };
+
+    const activate = () => {
+      active = true;
+      try{ document.body.classList.add("kb-open"); }catch(_){ }
+      update();
+    };
+    const deactivate = () => {
+      active = false;
+      try{ document.body.classList.remove("kb-open"); }catch(_){ }
+      try{ root.style.setProperty("--kb", "0px"); }catch(_){ }
+      update();
+    };
+
+    input.addEventListener("focus", ()=>{
+      if (!isTogesterActive()) return;
+      activate();
+      setTimeout(()=>{ try{ input.scrollIntoView({ block:"center", inline:"nearest" }); }catch(_){ } }, 50);
+    });
+    input.addEventListener("blur", ()=>{ deactivate(); });
+
+    // If the user taps back on the game, close the keyboard (mobile UX).
+    // - We try multiple strategies: parent doc taps, iframe element taps, and a postMessage ping from the togester iframe.
+    if (!window.__tgDockBlurWired){
+      window.__tgDockBlurWired = true;
+
+      const blurInput = () => {
+        try{
+          if (document.activeElement === input) input.blur();
+        }catch(_){ }
+      };
+
+      const onOuterTap = (e) => {
+        try{
+          if (!document.body.classList.contains("tg-mode")) return;
+          const dock = document.getElementById("tgDock");
+          if (dock && e && e.target && dock.contains(e.target)) return;
+          blurInput();
+        }catch(_){ }
+      };
+
+      document.addEventListener("pointerdown", onOuterTap, true);
+      document.addEventListener("touchstart", onOuterTap, true);
+
+      // Some mobile browsers don't deliver parent events for taps inside the iframe.
+      // Togester iframe sends a ping so we can blur the input reliably.
+      window.addEventListener("message", (ev)=>{
+        try{
+          const t = ev && ev.data && ev.data.type;
+          if (t === "tg_iframe_tap" || t === "dock_iframe_tap") blurInput();
+        }catch(_){ }
+      });
+
+      const iframeEl = document.getElementById("duelFrame");
+      if (iframeEl){
+        iframeEl.addEventListener("pointerdown", ()=>{ if (document.body.classList.contains("tg-mode")) blurInput(); }, { passive:true });
+        iframeEl.addEventListener("touchstart", ()=>{ if (document.body.classList.contains("tg-mode")) blurInput(); }, { passive:true });
+      }
+    }
+
+
+    if (vv){
+      vv.addEventListener("resize", ()=>{ if (active) update(); });
+      vv.addEventListener("scroll", ()=>{ if (active) update(); });
+    }
+    window.addEventListener("resize", ()=>{ if (active) update(); });
+  }
+
   function wireInputs(){
-    window.addEventListener("keydown", (e)=>{ setInput(e.key, true); maybeSendInputDelta(); }, { passive:true });
-    window.addEventListener("keyup", (e)=>{ setInput(e.key, false); maybeSendInputDelta(); }, { passive:true });
+    window.addEventListener("keydown", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, true); maybeSendInputDelta(); }, { passive:true });
+    window.addEventListener("keyup", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, false); maybeSendInputDelta(); }, { passive:true });
 
     // Mobile overlay buttons
     const btns = document.querySelectorAll("[data-key]");
@@ -780,15 +1034,14 @@ function setupBgm(audioElId, btnId){
   }
 
   function appendRoomChat(m){
-    if (!els.roomChatLog) return;
-    const line = document.createElement("div");
-    line.className = "chatLine";
     const time = m.time || nowHHMM();
 
-    // System messages (join/leave etc.)
     const rawNick = (m.nick ?? "").toString().trim();
     const rawText = (m.text ?? "").toString().trim();
     const isSystem = (!rawNick || rawNick === "SYSTEM" || rawNick === "?" || m.system === true || m.type === "system");
+
+    let isSysLine = false;
+    let html = "";
 
     if (isSystem){
       let msg = rawText || "";
@@ -796,25 +1049,38 @@ function setupBgm(audioElId, btnId){
       const leave = msg.match(/^(.+?)\s*(퇴장|나감|종료)$/);
       if (join) msg = `${join[1]}님이 접속하셨습니다.`;
       else if (leave) msg = `${leave[1]}님이 퇴장하셨습니다.`;
-      line.classList.add("sys");
-      line.innerHTML = `<span class="t">[${time}]</span> <span class="sysMsg">${safeText(msg, 200)}</span>`;
+      isSysLine = true;
+      html = `<span class="t">[${time}]</span> <span class="sysMsg">${safeText(msg, 200)}</span>`;
     } else {
       const nick = safeText(rawNick, 24);
       const text = safeText(rawText, 200);
-      line.innerHTML = `<span class="t">[${time}]</span> <b class="n">${nick}</b>: <span class="m">${text}</span>`;
+      html = `<span class="t">[${time}]</span> <b class="n">${nick}</b>: <span class="m">${text}</span>`;
     }
 
-    els.roomChatLog.appendChild(line);
-    els.roomChatLog.scrollTop = els.roomChatLog.scrollHeight;
+    function appendTo(logEl){
+      if (!logEl) return;
+      const line = document.createElement("div");
+      line.className = "chatLine";
+      if (isSysLine) line.classList.add("sys");
+      line.innerHTML = html;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    appendTo(els.roomChatLog);
+    appendTo(els.tgDockLog);
   }
 
-  function sendRoomChat(){
-    if (!room) return;
-    const text = safeText(els.roomChatInput.value, 200);
+  function sendChatFrom(inputEl){
+    if (!room || !inputEl) return;
+    const text = safeText(inputEl.value, 200);
     if (!text.trim()) return;
     room.send("chat", { text });
-    els.roomChatInput.value = "";
+    inputEl.value = "";
   }
+
+  function sendRoomChat(){ sendChatFrom(els.roomChatInput); }
+  function sendDockChat(){ sendChatFrom(els.tgDockInput); }
 
   function modeLabel(modeId){
     const g = window.gameById ? window.gameById(modeId) : null;
@@ -825,10 +1091,16 @@ function setupBgm(audioElId, btnId){
     if (!room) return;
     const state = room.state;
 
+    // If the match is truly back in the lobby, clear any local override.
+    if (state.phase === "lobby") forceLobbyUI = false;
+
+    // UI phase (SnakeTail can be left mid-match without ending the whole room).
+    const phase = forceLobbyUI ? "lobby" : state.phase;
+
     // Layout hint for CSS (mobile: hide player list during play).
     try{
-      document.body.classList.toggle("is-playing", state.phase !== "lobby");
-      document.body.classList.toggle("is-lobby", state.phase === "lobby");
+      document.body.classList.toggle("is-playing", phase !== "lobby");
+      document.body.classList.toggle("is-lobby", phase === "lobby");
     }catch(_){ }
     els.players.innerHTML = "";
 
@@ -845,8 +1117,8 @@ function setupBgm(audioElId, btnId){
       row.className = "pRow";
       const seat = (seatOf[sid] ?? 0) + 1;
       const host = p.isHost ? "👑" : "";
-      const ready = (state.phase !== "lobby") ? "PLAY" : (p.isHost ? "방장" : (p.ready ? "READY" : "WAIT"));
-      const readyCls = (state.phase !== "lobby") ? "ok" : (p.isHost ? "ok" : (p.ready ? "ok" : "muted"));
+      const ready = (phase !== "lobby") ? "PLAY" : (p.isHost ? "방장" : (p.ready ? "READY" : "WAIT"));
+      const readyCls = (phase !== "lobby") ? "ok" : (p.isHost ? "ok" : (p.ready ? "ok" : "muted"));
       row.innerHTML = `
         <span class="pSeat">P${seat}</span>
         <span class="pNick">${safeText(p.nick, 20)} ${host}</span>
@@ -862,13 +1134,24 @@ function setupBgm(audioElId, btnId){
     }
 
     // buttons
-    els.readyBtn.textContent = isReady ? "레디 해제" : "레디";
-    // Host only needs Start
-    els.readyBtn.classList.toggle("hidden", isHost);
+    const lockedMidMatch = !!(forceLobbyUI && state.phase !== "lobby");
+    if (lockedMidMatch){
+      // Player left SnakeTail while the match continues.
+      // Show the lobby UI, but keep controls disabled to avoid confusing actions.
+      els.readyBtn.classList.remove("hidden");
+      els.readyBtn.disabled = true;
+      els.readyBtn.textContent = "게임중";
+      els.startBtn.classList.add("hidden");
+    } else {
+      els.readyBtn.disabled = false;
+      els.readyBtn.textContent = isReady ? "준비 해제" : "준비";
+      // Host only needs Start
+      els.readyBtn.classList.toggle("hidden", isHost);
 
-    // 요청: 방장 외에는 시작 버튼이 보이지 않게
-    // (비방장에게는 애초에 시작 UI를 노출하지 않습니다.)
-    els.startBtn.classList.toggle("hidden", !isHost);
+      // 요청: 방장 외에는 시작 버튼이 보이지 않게
+      // (비방장에게는 애초에 시작 UI를 노출하지 않습니다.)
+      els.startBtn.classList.toggle("hidden", !isHost);
+    }
 
     // Start 조건:
 // - 규칙은 "모두 레디" 유지
@@ -897,30 +1180,43 @@ try{
 
 let canStart = false;
 let reason = "";
+let startText = "게임 시작";
+let startAction = "start";
+
+const isTogester = (modeId === "togester");
 
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
-  if (humanCount < 2) reason = "2명 이상 필요합니다.";
-  else if (!nonHostHumanReady) reason = "모두 레디해야 시작됩니다.";
-  else canStart = true;
+  if (isTogester && humanCount === 1){
+    // 협동 방에서 혼자일 때: 방 안 연습 모드(서버 시작 없이 iframe만 실행)
+    canStart = true;
+    startText = "연습 시작";
+    startAction = "practice";
+  } else {
+    if (humanCount < 2) reason = "2명 이상 필요합니다.";
+    else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
+    else canStart = true;
+  }
 } else if (isDuel){
   if (humanCount === 1){
     // 1인 듀얼: 서버가 CPU를 붙여 시작
     canStart = true;
   } else {
     if (humanCount < 2) reason = "2명 이상 필요합니다.";
-    else if (!nonHostHumanReady) reason = "모두 레디해야 시작됩니다.";
+    else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
     else canStart = true;
   }
 } else {
   if (humanCount < 2) reason = "2명 이상 필요합니다.";
-  else if (!nonHostHumanReady) reason = "모두 레디해야 시작됩니다.";
+  else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
   else canStart = true;
 }
 
 els.startBtn.disabled = !canStart;
-els.startBtn.title = canStart ? "게임 시작" : reason;
+els.startBtn.dataset.action = startAction;
+els.startBtn.textContent = startText;
+els.startBtn.title = canStart ? startText : reason;
 
   // Show CPU difficulty only when host starts a solo duel in lobby.
   try{
@@ -930,6 +1226,7 @@ els.startBtn.title = canStart ? "게임 시작" : reason;
       if (cpuDiffSelect) cpuDiffSelect.value = cpuDifficulty;
     }
   }catch(_){ }
+
   }
 
   function showResultOverlay(r){
@@ -1100,7 +1397,8 @@ function sendCoopBridgeInit(){
     seat,
     isHost: !!isHost,
     roomCode: roomId,
-    level: coop.level || 1
+    level: coop.level || 1,
+    practice: !!coop.practice
   });
 }
 
@@ -1214,6 +1512,7 @@ function startCoopEmbed(meta){
   coop.iframeReady = false;
 
   showDuelUI(true);
+  try{ enterGameFullscreen(); }catch(_){ }
   // coop에서는 관전/대진 UI를 숨기고 iframe만 사용
   duel.ui.spectate?.classList.add("hidden");
   duel.ui.frameWrap?.classList.remove("hidden");
@@ -1229,6 +1528,34 @@ function startCoopEmbed(meta){
     duel.iframeEl.src = src;
   }
 }
+
+
+function startCoopPractice(meta){
+  // Practice mode inside a coop room (no server "start"; stays in lobby)
+  coop.active = true;
+  coop.meta = meta;
+  coop.practice = true;
+  coop.level = 1;
+  coop.iframeLoaded = false;
+  coop.iframeReady = false;
+
+  showDuelUI(true);
+  try{ enterGameFullscreen(); }catch(_){ }
+  duel.ui.spectate?.classList.add("hidden");
+  duel.ui.frameWrap?.classList.remove("hidden");
+  if (duel.ui.duelLine) duel.ui.duelLine.textContent = (meta?.name || "협동") + " · 연습";
+  if (duel.ui.duelSub) duel.ui.duelSub.textContent = "";
+
+  const src = `${meta.embedPath}?embed=1&practice=1&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
+  if (duel.iframeEl){
+    duel.iframeEl.onload = ()=>{
+      coop.iframeLoaded = true;
+      sendCoopBridgeInit();
+    };
+    duel.iframeEl.src = src;
+  }
+}
+
 
 function startSim(){
     const modeId = room.state.mode || defaultModeId();
@@ -1317,6 +1644,10 @@ function startSim(){
 
       mySessionId = room.sessionId;
 
+      // cache for fullscreen helpers (togester dock, etc.)
+      try{ window.__roomRef = room; }catch(_){ }
+      try{ window.__roomModeId = room?.state?.mode || ""; }catch(_){ }
+
       // UI header
       els.title.textContent = safeText(room.state.title || "방", 30);
       els.mode.textContent = modeLabel(room.state.mode);
@@ -1331,6 +1662,8 @@ function startSim(){
         els.title.textContent = safeText(room.state.title || "방", 30);
         els.mode.textContent = modeLabel(room.state.mode);
         els.status.textContent = (room.state.phase === "playing") ? "게임중" : "대기중";
+
+        try{ window.__roomModeId = room?.state?.mode || ""; }catch(_){ }
 
         try{ updatePreview(room.state.mode); }catch(_){ }
         // phase transitions (waiting <-> playing)
@@ -1362,6 +1695,7 @@ renderPlayers();
         try{ if (duel.ui.spectateScore) duel.ui.spectateScore.textContent = ""; }catch(_){ }
         try{ resetBracket(); }catch(_){ }
         coop.level = 1;
+        coop.practice = false;
         startSim();
       });
 
@@ -1419,6 +1753,32 @@ renderPlayers();
       room.onMessage("tg_reset", (msg)=>{
         postToMain({ type:"tg_reset", t: msg.t });
       });
+      room.onMessage("tg_push", (msg)=>{
+        postToMain({ type:"tg_push", to: msg.to, dx: msg.dx, from: msg.from });
+      });
+
+      // SnakeTail relay: server -> iframe
+      room.onMessage("st_timer", (msg)=>{
+        postToMain({ type:"st_timer", startTs: msg.startTs, durationMs: msg.durationMs });
+      });
+      room.onMessage("st_foods", (msg)=>{
+        postToMain({ type:"st_foods", foods: msg.foods || [] });
+      });
+      room.onMessage("st_spawn", (msg)=>{
+        postToMain({ type:"st_spawn", foods: msg.foods || [] });
+      });
+      room.onMessage("st_eaten", (msg)=>{
+        postToMain({ type:"st_eaten", id: msg.id, eaterSid: msg.eaterSid, value: msg.value });
+      });
+      room.onMessage("st_players", (msg)=>{
+        postToMain({ type:"st_players", players: msg.players || {} });
+      });
+      room.onMessage("st_scores", (msg)=>{
+        postToMain({ type:"st_scores", scores: msg.scores || {} });
+      });
+      room.onMessage("st_event", (msg)=>{
+        postToMain({ type:"st_event", event: msg.event || {} });
+      });
 
       room.onMessage("frame", (frame)=> {
         // lockstep: server gives inputs for each tick
@@ -1441,11 +1801,12 @@ renderPlayers();
         postToAllIframes({ type: "duel_result", payload: r });
       });
       room.onMessage("backToRoom", ()=> {
+        try{ exitGameFullscreen(); }catch(_){ }
         try{ stopGameBgm(); }catch(_){ }
         hideResultOverlay();
         showDuelUI(false);
         duel.active=null; duel.meta=null;
-        coop.active=false; coop.meta=null; coop.iframeLoaded=false; coop.iframeReady=false;
+        coop.active=false; coop.practice=false; coop.meta=null; coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
         // Notify iframes (best-effort) before clearing.
@@ -1463,6 +1824,21 @@ renderPlayers();
       els.roomChatSend.addEventListener("click", sendRoomChat);
       els.roomChatInput.addEventListener("keydown", (e)=>{ if (e.key==="Enter"){ e.preventDefault(); sendRoomChat(); } });
 
+      // togester in-game dock chat ui (shown only in fullscreen)
+      if (els.tgDockSend) els.tgDockSend.addEventListener("click", sendDockChat);
+      if (els.tgDockInput){
+        // Prevent gameplay key handling while typing.
+        els.tgDockInput.addEventListener("keydown", (e)=>{
+          try{ e.stopPropagation(); }catch(_){ }
+          if (e.key === "Enter"){
+            e.preventDefault();
+            sendDockChat();
+          }
+        });
+        els.tgDockInput.addEventListener("keyup", (e)=>{ try{ e.stopPropagation(); }catch(_){ } });
+        try{ setupKeyboardAwareForTgDock(); }catch(_){ }
+      }
+
       // Ready / Start
       els.readyBtn.addEventListener("click", ()=>{
         if (isHost) return; // host does not need ready
@@ -1475,6 +1851,19 @@ renderPlayers();
         if (els.startBtn.disabled) return;
         // light click sfx (start sfx + shake happens on server "started" for everyone)
         try{ window.SFX?.click?.(); }catch(_){ }
+
+        const action = els.startBtn.dataset.action || "start";
+        if (action === "practice"){
+          const modeId = room?.state?.mode || "";
+          const meta = window.gameById ? window.gameById(modeId) : null;
+          if (meta && meta.type === "coop" && meta.embedPath){
+            try{ enterGameFullscreen(); }catch(_){ }
+            try{ playGameBgm(meta.id); }catch(_){ }
+            startCoopPractice(meta);
+          }
+          return;
+        }
+
         room.send("start", { cpuDifficulty });
       });
 

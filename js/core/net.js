@@ -180,7 +180,15 @@ if (isDuel && humans.length === 1){
       } // room.js sends boolean
       if(legacyType === "start") return { t:"start", d:{} };
       // relay game messages as-is
-      const passthrough = new Set(["duel_state","duel_event","duel_over","tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_over","frame","match"]);
+      const passthrough = new Set([
+        "duel_state","duel_event","duel_over",
+        // Togester
+        "tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_over",
+        // SnakeTail
+        "st_state","st_timer","st_foods","st_spawn","st_eat","st_eaten","st_players","st_scores","st_event","st_over",
+        // misc
+        "frame","match"
+      ]);
       if(passthrough.has(legacyType)) return { t: legacyType, d: payload ?? {} };
       return { t: legacyType, d: payload ?? {} };
     }
@@ -207,7 +215,15 @@ if (isDuel && humans.length === 1){
       if(msg.t === "result") return { type:"result", payload: msg.d };
       if(msg.t === "backToRoom") return { type:"backToRoom", payload: msg.d };
       // relay game events
-      const passthrough = new Set(["duel_state","duel_event","tg_players","tg_level","tg_button","tg_buttons","tg_reset","frame"]);
+      const passthrough = new Set([
+        "duel_state","duel_event",
+        // Togester
+        "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push",
+        // SnakeTail
+        "st_timer","st_foods","st_spawn","st_eaten","st_players","st_scores","st_event",
+        // misc
+        "frame"
+      ]);
       if(passthrough.has(msg.t)) return { type: msg.t, payload: msg.d };
       return null;
     }

@@ -63,6 +63,7 @@ function setupBgm(audioElId, btnId){
     createCancel: document.querySelector("#createCancel"),
     roomTitle: document.querySelector("#roomTitle"),
     gameMode: document.querySelector("#gameMode"),
+    maxClientsLabel: document.querySelector("#maxClientsLabel"),
     maxClients: document.querySelector("#maxClients"),
     chatLog: document.querySelector("#chatLog"),
     chatInput: document.querySelector("#chatInput"),
@@ -245,7 +246,8 @@ function statusDot(room){
     const mode = els.gameMode.value || ((window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id) ? window.GAME_REGISTRY[0].id : "stackga");
     const meta = (window.gameById ? window.gameById(mode) : null);
     const modeType = meta?.type || "coop";
-    const maxClients = Math.max(2, Math.min(4, parseInt(els.maxClients.value||"4",10)||4));
+    const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
+    const maxClients = Math.max(2, Math.min(cap, parseInt(els.maxClients.value||String(cap),10)||cap));
 
     try{
       const room = await client.create("game_room", { title, mode, modeType, maxClients, hostNick: myNick, nick: myNick });
@@ -264,6 +266,35 @@ function statusDot(room){
       opt.textContent = `${g.name}`;
       els.gameMode.appendChild(opt);
     }
+
+    // maxClients options depend on selected game (e.g., 꼬리잡기 supports up to 8)
+    const updateMaxClientsOptions = ()=>{
+      try{
+        const mode = els.gameMode.value || "stackga";
+        const meta = (window.gameById ? window.gameById(mode) : null);
+        const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
+
+        // label hint
+        if (els.maxClientsLabel) els.maxClientsLabel.textContent = `최대 인원 (2~${cap})`;
+
+        const sel = els.maxClients;
+        if (!sel) return;
+        const prev = parseInt(sel.value || String(Math.min(4, cap)), 10) || Math.min(4, cap);
+        const next = Math.max(2, Math.min(cap, prev));
+
+        sel.innerHTML = "";
+        for (let n = cap; n >= 2; n--){
+          const o = document.createElement("option");
+          o.value = String(n);
+          o.textContent = String(n);
+          if (n === next) o.selected = true;
+          sel.appendChild(o);
+        }
+      }catch(_){ }
+    };
+
+    updateMaxClientsOptions();
+    try{ els.gameMode.addEventListener("change", updateMaxClientsOptions); }catch(_){ }
 
     els.refreshBtn.addEventListener("click", ()=> refreshRooms());
 
