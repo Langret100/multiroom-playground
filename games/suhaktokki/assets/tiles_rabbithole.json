@@ -1,0 +1,120 @@
+{
+  "tileSize": 16,
+  "columns": 8,
+  "image": "tiles_rabbithole.png",
+  "tiles": {
+    "0": {
+      "name": "empty",
+      "solid": false,
+      "layer": "ground"
+    },
+    "1": {
+      "name": "dirt_floor_a",
+      "solid": false,
+      "layer": "ground"
+    },
+    "2": {
+      "name": "dirt_floor_b",
+      "solid": false,
+      "layer": "ground"
+    },
+    "3": {
+      "name": "dirt_floor_c",
+      "solid": false,
+      "layer": "ground"
+    },
+    "4": {
+      "name": "dirt_floor_d",
+      "solid": false,
+      "layer": "ground"
+    },
+    "8": {
+      "name": "dirt_wall_8",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "9": {
+      "name": "dirt_wall_9",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "10": {
+      "name": "dirt_wall_10",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "11": {
+      "name": "dirt_wall_11",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "12": {
+      "name": "dirt_wall_12",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "13": {
+      "name": "dirt_wall_13",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "14": {
+      "name": "dirt_wall_14",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "15": {
+      "name": "dirt_wall_15",
+      "solid": true,
+      "layer": "walls",
+      "autotileGroup": "wall_blob"
+    },
+    "16": {
+      "name": "doorframe_16",
+      "solid": true,
+      "layer": "walls"
+    },
+    "17": {
+      "name": "doorframe_17",
+      "solid": true,
+      "layer": "walls"
+    },
+    "18": {
+      "name": "doorframe_18",
+      "solid": true,
+      "layer": "walls"
+    },
+    "19": {
+      "name": "doorframe_19",
+      "solid": true,
+      "layer": "walls"
+    },
+    "24": {
+      "name": "root_overlay",
+      "solid": false,
+      "layer": "deco",
+      "overlay": true
+    },
+    "25": {
+      "name": "glow_mushroom_overlay",
+      "solid": false,
+      "layer": "deco",
+      "overlay": true,
+      "emissive": true
+    },
+    "26": {
+      "name": "crystal_overlay",
+      "solid": false,
+      "layer": "deco",
+      "overlay": true,
+      "emissive": true
+    }
+  }
+}

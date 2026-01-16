@@ -741,6 +741,23 @@ function updatePreview(modeId){
       try{ renderPlayers(); }catch(_){ }
       return;
     }
+
+    // In-game "나가기" from embedded SuhakTokki iframe (return to room UI only)
+    if (d.type === "sk_quit"){
+      if (!fromMain) return;
+      forceLobbyUI = true;
+      try{ exitGameFullscreen(); }catch(_){ }
+      try{ renderPlayers(); }catch(_){ }
+      return;
+    }
+
+    // SuhakTokki iframe -> server relay (generic packet)
+    if (d.type === "sk_msg"){
+      if (!fromMain) return;
+      try{ room.send("sk_msg", { msg: d.msg || {} }); }catch(_){ }
+      return;
+    }
+
 // Togester (coop) iframe -> server relay
     if (d.type === "tg_state"){
       if (!fromMain) return;
@@ -1184,11 +1201,12 @@ let startText = "게임 시작";
 let startAction = "start";
 
 const isTogester = (modeId === "togester");
+const isSuhakTokki = (modeId === "suhaktokki");
 
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
-  if (isTogester && humanCount === 1){
+  if ((isTogester || isSuhakTokki) && humanCount === 1){
     // 협동 방에서 혼자일 때: 방 안 연습 모드(서버 시작 없이 iframe만 실행)
     canStart = true;
     startText = "연습 시작";
@@ -1734,6 +1752,12 @@ renderPlayers();
       room.onMessage("duel_event", (msg)=>{
         // Relay to embedded iframes (player + optional CPU)
         postToAllIframes({ type:"duel_event", sid: msg.sid, event: msg.event });
+      });
+
+      // SuhakTokki relay: server -> iframe (generic packet)
+      room.onMessage("sk_msg", (msg)=>{
+        const inner = (msg && msg.msg) ? msg.msg : msg;
+        postToMain({ type:"sk_msg", msg: inner || {} });
       });
 
       // Togester (coop) relay: server -> iframe

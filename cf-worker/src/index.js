@@ -536,6 +536,7 @@ export class RoomDO{
   _allReady(){
     const cpu = this._cpuUid();
     const duel = isDuelMode(this.meta.mode);
+    const soloCoopOk = (this.meta.mode === "suhaktokki");
     let humanCount = 0;
     for (const [uid] of this.users.entries()){
       if (uid === cpu) continue;
@@ -544,6 +545,8 @@ export class RoomDO{
 
     // Solo duel: host can start immediately (server will attach CPU)
     if (duel && humanCount === 1) return true;
+    // SuhakTokki allows solo play inside a co-op room.
+    if (!duel && soloCoopOk && humanCount === 1) return true;
     if (humanCount < 2) return false;
 
     // Host does not need to ready; only non-host HUMAN players must be ready
@@ -745,9 +748,10 @@ export class RoomDO{
         const soloDuel = (duel && humanCount === 1);
 
         if (!duel){
-          // Co-op (togester) requires 2+ humans
-          if (humanCount < 2){
-            this._send(ws, "system", { text:"2명 이상 있어야 시작할 수 있습니다.", ts: now() });
+          // Co-op usually requires 2+ humans; SuhakTokki allows solo play.
+          const minHumans = (this.meta.mode === "suhaktokki") ? 1 : 2;
+          if (humanCount < minHumans){
+            this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
             return;
           }
         } else {
@@ -811,6 +815,21 @@ export class RoomDO{
         }
 
         this._broadcast("room_state", this._snapshot());
+        return;
+      }
+
+      // ----- SuhakTokki relay (generic packet) -----
+      if (t === "sk_msg"){
+        const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
+        // throttle high-frequency state packets
+        if (String(inner.t||"") === "state"){
+          const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0 };
+          const n = now();
+          if (n - (lim.skTs||0) < 70) return;
+          lim.skTs = n;
+          this._relayLimiter.set(uid, lim);
+        }
+        this._broadcast("sk_msg", { msg: inner });
         return;
       }
 

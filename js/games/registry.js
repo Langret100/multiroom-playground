@@ -62,6 +62,20 @@
       badgeClass: "snake",
       maxClients: 8,
       embedPath: "games/snaketail/index.html"
+    },
+    
+    {
+      id: "suhaktokki",
+      name: "수학토끼",
+      mobileHint: "모바일: 조이스틱 이동 · 조작 버튼",
+      descLines: [
+        "토끼굴에서 미션을 풀어 당근을 막으세요.",
+        "선생토끼(임포스터)를 피해 제한시간 내 협동!"
+      ],
+      type: "coop",
+      badgeClass: "coop",
+      maxClients: 8,
+      embedPath: "games/suhaktokki/index.html"
     }
   ];
 
