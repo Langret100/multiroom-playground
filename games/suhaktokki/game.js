@@ -115,7 +115,9 @@
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
-  const isMobile = matchMedia('(pointer:coarse)').matches;
+  // "모바일" 판정이 너무 보수적이면 조이스틱 UI가 안 뜨는 경우가 있어
+  // coarse pointer + touchpoints 를 함께 고려
+  const isMobile = matchMedia('(pointer:coarse)').matches || ('ontouchstart' in window) || ((navigator && navigator.maxTouchPoints) ? navigator.maxTouchPoints > 0 : false);
   if (isMobile) touchUI.style.display = 'block';
 
   // ---------- Fullscreen / orientation ----------
@@ -595,6 +597,7 @@
       pendingAct: null,
       pendingVote: null,
       joy: { active: false, id: null, cx: 0, cy: 0, dx: 0, dy: 0 },
+      keys: { up:false, down:false, left:false, right:false, using:false },
     },
   };
 
@@ -2716,6 +2719,92 @@ function tileAtPixel(x, y) {
     G.local.mvy = 0;
   });
 
+  // PC keyboard movement (WASD + Arrow keys)
+  function recomputeKeyMove(){
+    const k = G.local.keys;
+    const x = (k.right ? 1 : 0) - (k.left ? 1 : 0);
+    const y = (k.down ? 1 : 0) - (k.up ? 1 : 0);
+    if (x || y){
+      const d = Math.hypot(x, y) || 1;
+      G.local.mvx = x / d;
+      G.local.mvy = y / d;
+      G.local.mouseDown = false; // stop pointer steering while using keys
+      k.using = true;
+    } else {
+      // only zero out if we were using keyboard (avoid killing joystick/pointer mid-drag)
+      if (k.using){
+        G.local.mvx = 0;
+        G.local.mvy = 0;
+      }
+      k.using = false;
+    }
+  }
+
+  function isTyping(){
+    const ae = document.activeElement;
+    if (!ae) return false;
+    const tag = (ae.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || ae.isContentEditable;
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (isMobile) return;
+    if (G.phase !== 'play') return;
+    if (isTyping()) return;
+    let handled = true;
+    switch (e.key){
+      case 'ArrowUp':
+      case 'w':
+      case 'W':
+        G.local.keys.up = true; break;
+      case 'ArrowDown':
+      case 's':
+      case 'S':
+        G.local.keys.down = true; break;
+      case 'ArrowLeft':
+      case 'a':
+      case 'A':
+        G.local.keys.left = true; break;
+      case 'ArrowRight':
+      case 'd':
+      case 'D':
+        G.local.keys.right = true; break;
+      default:
+        handled = false;
+    }
+    if (!handled) return;
+    e.preventDefault();
+    recomputeKeyMove();
+  }, { passive:false });
+
+  window.addEventListener('keyup', (e) => {
+    if (isMobile) return;
+    let handled = true;
+    switch (e.key){
+      case 'ArrowUp':
+      case 'w':
+      case 'W':
+        G.local.keys.up = false; break;
+      case 'ArrowDown':
+      case 's':
+      case 'S':
+        G.local.keys.down = false; break;
+      case 'ArrowLeft':
+      case 'a':
+      case 'A':
+        G.local.keys.left = false; break;
+      case 'ArrowRight':
+      case 'd':
+      case 'D':
+        G.local.keys.right = false; break;
+      default:
+        handled = false;
+    }
+    if (!handled) return;
+    e.preventDefault();
+    recomputeKeyMove();
+  }, { passive:false });
+
   // mobile joystick
   function joyCenter() {
     const r = joy.getBoundingClientRect();
@@ -3115,6 +3204,29 @@ function tileAtPixel(x, y) {
     mapUiCtx.drawImage(mapCanvas, 0, 0, worldW, worldH, ox, oy, worldW * s2, worldH * s2);
     mapUiCtx.restore();
 
+    // room outlines + labels (Among-Us style guidance)
+    if (AS.map.rooms && Array.isArray(AS.map.rooms)) {
+      mapUiCtx.save();
+      mapUiCtx.strokeStyle = 'rgba(255,255,255,.28)';
+      mapUiCtx.lineWidth = 1.6;
+      mapUiCtx.font = '900 11px system-ui';
+      mapUiCtx.textAlign = 'center';
+      mapUiCtx.textBaseline = 'middle';
+      for (const rr of AS.map.rooms) {
+        const [rx, ry, rw, rh] = rr.rect;
+        const x0 = ox + rx * TS * s2;
+        const y0 = oy + ry * TS * s2;
+        const w0 = rw * TS * s2;
+        const h0 = rh * TS * s2;
+        mapUiCtx.beginPath();
+        mapUiCtx.roundRect(x0 + 1, y0 + 1, Math.max(0, w0 - 2), Math.max(0, h0 - 2), 10);
+        mapUiCtx.stroke();
+        mapUiCtx.fillStyle = 'rgba(0,0,0,.45)';
+        mapUiCtx.fillText(rr.name, x0 + w0 / 2, y0 + h0 / 2);
+      }
+      mapUiCtx.restore();
+    }
+
     // mission markers
     const st = G.state;
     const missions = st.missions || {};
@@ -3489,7 +3601,7 @@ function tileAtPixel(x, y) {
   }
 
   function drawPlayer(p, x, y) {
-    // sprite + 귀(오버레이)
+    // sprite (ears are baked into frames; no separate ear overlay)
     const vt = p.vent;
     let restored = false;
     if (vt) {
@@ -3526,10 +3638,7 @@ function tileAtPixel(x, y) {
 
     if (swimming) drawSwimOverlay(x, y);
 
-    // 귀 살랑
-    const sway = (moving ? 0.22 : 0.12) * Math.sin(t * 0.9) + 0.12 * (p.vx / 80);
-    const twitch = (G.phase === 'meeting' && Math.sin(t * 0.4 + p.id) > 0.98) ? 0.5 : 0;
-    drawEars(x, y - 20, sway + twitch);
+    // ears animation is handled in the sprite frames
 
     // 왕관(크루 전용)
     if (p.crown) drawCrown(x, y - 56);

@@ -4,7 +4,11 @@
 // - Swipe left/right: move (continuous)
 // - Swipe down: soft drop (continuous)
 // - Strong swipe down: hard drop
+//
+// NOTE: Loaded as a classic script in room.html.
+// Wrapped in an IIFE to avoid global lexical collisions (e.g., COLS).
 
+(function(){
 const COLS = 10;
 // 요청: 기존 20행에서 +3행 고정
 const ROWS = 23;
@@ -185,5 +189,5 @@ function initTouchControls(canvas, onAction){
   canvas.addEventListener("contextmenu", (e)=>e.preventDefault());
 }
 
-
-window.StackgaTouch = { fitCanvases, initTouchControls };
+  window.StackgaTouch = { fitCanvases, initTouchControls };
+})();
