@@ -3627,7 +3627,8 @@ function tileAtPixel(x, y) {
     const row = COLORS[p.color % COLORS.length].row;
     const moving = Math.hypot(p.vx, p.vy) > 6;
     const t = now() / 120;
-    const frame = moving ? (1 + (Math.floor(t) % 2)) : 0; // 0 idle, 1/2 walk
+    // 0 idle, 1/2/3 walk cycle (use all 4 columns)
+    const frame = moving ? (1 + (Math.floor(t) % 3)) : 0;
 
     const sx = frame * SPR_W;
     const sy = row * SPR_H;
@@ -3824,10 +3825,16 @@ function tileAtPixel(x, y) {
 
     // client input send
     if (G.net && G.phase === 'play') {
-      if (!G.local._lastInputAt) G.local._lastInputAt = 0;
-      if (t - G.local._lastInputAt > 66) {
-        G.local._lastInputAt = t;
-        G.net.post({ t: 'input', playerId: G.net.myPlayerId, mvx: G.local.mvx, mvy: G.local.mvy });
+      // If I'm the host, apply my input locally (do NOT rely on server echo)
+      // so solo/practice play always responds.
+      if (G.net.isHost && G.net.myPlayerId){
+        G.host.inputs.set(G.net.myPlayerId, { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
+      } else {
+        if (!G.local._lastInputAt) G.local._lastInputAt = 0;
+        if (t - G.local._lastInputAt > 66) {
+          G.local._lastInputAt = t;
+          G.net.post({ t: 'input', playerId: G.net.myPlayerId, mvx: G.local.mvx, mvy: G.local.mvy });
+        }
       }
     }
 
@@ -4154,7 +4161,8 @@ function tileAtPixel(x, y) {
 
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
-    window.__EMBED_IS_HOST__ = !!init.isHost;
+    // If parent says solo=true, force host so single-player practice can simulate locally.
+    window.__EMBED_IS_HOST__ = !!init.isHost || !!init.solo;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,8); }catch(_){ }

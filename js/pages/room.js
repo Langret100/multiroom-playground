@@ -1407,17 +1407,27 @@ function sendCoopBridgeInit(){
       return (typeof s === "number") ? s : 0;
     }catch(_){ return 0; }
   })();
+  const humanCount = (()=>{
+    try{ return room?.state?.players ? room.state.players.size : 0; }catch(_){ return 0; }
+  })();
+  const solo = (humanCount === 1);
+  // Some coop games allow solo practice. If you are alone, treat yourself as host
+  // for the embedded game even if the host flag hasn't arrived yet.
+  const effectiveIsHost = !!isHost || (solo && (coop.meta.id === "suhaktokki"));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
     sessionId: mySessionId,
     nick: myNick || "Player",
     seat,
-    isHost: !!isHost,
+    isHost: effectiveIsHost,
+    solo,
     roomCode: roomId,
     level: coop.level || 1,
     practice: !!coop.practice
   });
+  // Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
+  try{ duel.iframeEl?.contentWindow?.focus?.(); }catch(_){ }
 }
 
 function handleDuelMatch(m){
