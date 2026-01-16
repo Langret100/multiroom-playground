@@ -2890,6 +2890,15 @@ function tileAtPixel(x, y) {
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
+    // keyboard actions (PC)
+    if (!isMobile && G.phase === 'play' && !isTyping()) {
+      if (e.key === 'e' || e.key === 'E' || e.key === ' ') {
+        e.preventDefault();
+        if (G.net) G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+        return;
+      }
+    }
+
     if (e.key === 'q' || e.key === 'Q') sendSabotage();
     if (e.key === 'f' || e.key === 'F') sendForceMission();
   });
@@ -3600,20 +3609,166 @@ function tileAtPixel(x, y) {
     ctx.restore();
   }
 
+  
+  // ---------- Togester-style pixel bunny (procedural character; no external sprite dependency) ----------
+  function _hexToRgb(hex){
+    const h = (hex || '#000000').replace('#','').trim();
+    const v = h.length === 3 ? h.split('').map(c=>c+c).join('') : h.padEnd(6,'0').slice(0,6);
+    const n = parseInt(v,16);
+    return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+  }
+  function _rgbToHex(r,g,b){
+    const to = (x)=>('0'+Math.max(0,Math.min(255,Math.round(x))).toString(16)).slice(-2);
+    return '#'+to(r)+to(g)+to(b);
+  }
+  function _shade(hex, amt){
+    const {r,g,b} = _hexToRgb(hex);
+    const f = (x)=> x + (amt/100) * (amt>0 ? (255-x) : x);
+    return _rgbToHex(f(r), f(g), f(b));
+  }
+
+  function drawTogesterBunny(x, y, color, name, isLocal=false, isDead=false, state){
+    ctx.save();
+    if (isDead) ctx.globalAlpha = 0.4;
+    const s = state || {};
+    const vx = (typeof s.vx === 'number') ? s.vx : 0;
+    const vy = (typeof s.vy === 'number') ? s.vy : 0;
+    const onGround = (typeof s.onGround === 'boolean') ? s.onGround : true;
+    const facing = (typeof s.facing === 'number') ? s.facing : (vx < -0.2 ? -1 : 1);
+
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 18, 14, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+
+    const PX = 2;     // 1px = 2 screen px
+    const W = 16, H = 18; // sprite pixels
+    const drawW = W * PX, drawH = H * PX;
+
+    // align bottom-center
+    const baseX = Math.round(x - drawW/2);
+    const baseY = Math.round(y - drawH + 18);
+
+    const t = performance.now() / 1000;
+    const moving = onGround && Math.abs(vx) > 0.6;
+    const jumping = !onGround && vy < -0.6;
+
+    // 3-phase walk
+    const walkPhase = moving ? (Math.floor(t * 12) % 3) : 0;
+    const bob = moving ? Math.sin(t * 12) * 0.8 : Math.sin(t * 2.2) * 0.4;
+    const bobPx = Math.round(bob);
+
+    const OUT = _shade(color, -45);
+    const BASE = color;
+    const HI = _shade(color, 25);
+    const FACE = '#f2c8a0';
+    const INNER = '#ffb8d0';
+    const EYE = '#1f1f1f';
+    const BLUSH = 'rgba(255,184,208,0.85)';
+
+    const p = (px, py, w=1, h=1, c=BASE) => {
+      ctx.fillStyle = c;
+      ctx.fillRect(baseX + px*PX, baseY + (py + bobPx)*PX, w*PX, h*PX);
+    };
+
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    const cx = baseX + drawW/2;
+    const cy = baseY + drawH/2;
+    ctx.translate(cx, cy);
+    ctx.scale(facing, 1);
+    ctx.translate(-cx, -cy);
+
+    // ===== Long bunny ears (built into frame) =====
+    const earTilt = jumping ? 1 : (moving ? walkPhase : 0);
+    // left ear
+    p(4, 0, 2, 6, OUT);
+    p(5, 1, 1, 4, BASE);
+    p(5, 2, 1, 3, INNER);
+    // right ear
+    p(10, 0, 2, 6, OUT);
+    p(10, 1, 1, 4, BASE);
+    p(10, 2, 1, 3, INNER);
+    // ear wobble pixels
+    if (moving){
+      if (earTilt == 1) { p(3, 2, 1, 1, OUT); p(11, 3, 1, 1, OUT); }
+      if (earTilt == 2) { p(3, 3, 1, 1, OUT); p(11, 2, 1, 1, OUT); }
+    }
+
+    // ===== Body (2.5-head-ish) =====
+    // outline shell
+    p(4, 6, 8, 10, OUT);
+    p(5, 7, 6, 8, BASE);
+    // face patch
+    p(6, 8, 4, 4, FACE);
+    p(6, 12, 4, 2, _shade(FACE, -10));
+
+    // visor-like cute highlight (togester vibe but bunny)
+    p(6, 9, 4, 1, _shade(FACE, 18));
+
+    // eyes
+    p(7, 9, 1, 1, EYE);
+    p(9, 9, 1, 1, EYE);
+
+    // blush
+    p(6, 10, 1, 1, BLUSH);
+    p(10, 10, 1, 1, BLUSH);
+
+    // little nose
+    p(8, 10, 1, 1, _shade(INNER, -10));
+
+    // ===== Legs/feet (walk) =====
+    const legY = 15;
+    if (!onGround){
+      // tuck legs
+      p(6, legY, 2, 1, OUT);
+      p(8, legY, 2, 1, OUT);
+    } else if (!moving){
+      p(6, legY, 2, 2, OUT);
+      p(8, legY, 2, 2, OUT);
+      p(6, legY+1, 2, 1, HI);
+      p(8, legY+1, 2, 1, HI);
+    } else {
+      // three-step
+      if (walkPhase === 0){
+        p(6, legY, 2, 2, OUT);
+        p(9, legY, 1, 2, OUT);
+      } else if (walkPhase === 1){
+        p(6, legY, 1, 2, OUT);
+        p(8, legY, 2, 2, OUT);
+      } else {
+        p(6, legY, 2, 2, OUT);
+        p(8, legY, 2, 2, OUT);
+        p(5, legY-1, 1, 1, HI);
+        p(11, legY-1, 1, 1, HI);
+      }
+      // foot highlights
+      p(6, legY+1, 2, 1, HI);
+      p(8, legY+1, 2, 1, HI);
+    }
+
+    // carrot badge (math bunny concept)
+    p(11, 11, 1, 2, '#ff8a3d');
+    p(12, 12, 1, 1, '#ff8a3d');
+    p(12, 11, 1, 1, '#4ade80');
+    ctx.restore();
+    ctx.restore();
+  }
+
+
   function drawPlayer(p, x, y) {
-    // sprite (ears are baked into frames; no separate ear overlay)
+    // togester-style pixel character (procedural) instead of sprite sheet
     const vt = p.vent;
     let restored = false;
     if (vt) {
       const tNow = now();
       const dur = Math.max(1, vt.end - vt.start);
       const p01 = clamp((tNow - vt.start) / dur, 0, 1);
-      // 들어갈 때 사라졌다가, 나올 때 나타나는 느낌
       const alpha = p01 < 0.5 ? (1 - p01 * 2) : ((p01 - 0.5) * 2);
       ctx.save();
       restored = true;
       ctx.globalAlpha = clamp(alpha, 0, 1);
-      // 살짝 아래로 빨려 들어가는 느낌
       y += 10 * (p01 < 0.5 ? p01 * 2 : (1 - p01) * 2);
     }
 
@@ -3624,37 +3779,29 @@ function tileAtPixel(x, y) {
       y += Math.sin(stt) * 2.2;
     }
 
-    const row = COLORS[p.color % COLORS.length].row;
-    const moving = Math.hypot(p.vx, p.vy) > 6;
-    const t = now() / 120;
-    // 0 idle, 1/2/3 walk cycle (use all 4 columns)
-    const frame = moving ? (1 + (Math.floor(t) % 3)) : 0;
+    const meId = G.net?.myPlayerId;
+    const isLocal = (meId === p.id);
 
-    const sx = frame * SPR_W;
-    const sy = row * SPR_H;
-
-    const scale = 2;
-    ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H,
-      x - (SPR_W * scale) / 2, y - (SPR_H * scale) / 2, SPR_W * scale, SPR_H * scale);
+    const col = colorHex(p.color || 0);
+    const st = {
+      vx: p.vx || 0,
+      vy: p.vy || 0,
+      onGround: true,
+      facing: (p.vx < -0.2 ? -1 : 1),
+    };
+    drawTogesterBunny(x, y, col, p.nick || '', isLocal, !!p.down, st);
 
     if (swimming) drawSwimOverlay(x, y);
 
-    // ears animation is handled in the sprite frames
-
-    // 왕관(크루 전용)
     if (p.crown) drawCrown(x, y - 56);
-
-    // 땡글 안경(선생토끼가 틀렸을 때)
     if (p.glassesUntil && now() < p.glassesUntil) drawGlasses(x, y - 10);
 
-    // 상태(빵점/기절)
     if (p.down) {
       ctx.fillStyle = 'rgba(0,0,0,.45)';
       ctx.beginPath();
       ctx.ellipse(x, y + 18, 20, 8, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // 별 빙글(기절 모션)
       const tt = now() / 140;
       for (let i = 0; i < 3; i++) {
         const ang = tt + i * (Math.PI * 2 / 3);
@@ -3672,7 +3819,8 @@ function tileAtPixel(x, y) {
       ctx.fillText('빵점', x, y - 30);
     }
 
-    // 닉
+
+    // nick
     ctx.fillStyle = 'rgba(255,255,255,.95)';
     ctx.strokeStyle = 'rgba(0,0,0,.45)';
     ctx.lineWidth = 4;
@@ -3681,7 +3829,7 @@ function tileAtPixel(x, y) {
     ctx.strokeText(p.nick, x, y - 36);
     ctx.fillText(p.nick, x, y - 36);
 
-    // 선생토끼만 보이는 검은당근 쿨다운 힌트
+    // teacher-only cooldown hint (keep)
     const me = G.state.players[G.net?.myPlayerId];
     if (me && me.id === p.id && p.role === 'teacher') {
       const cd = Math.max(0, Math.ceil((p.killCdUntil - now()) / 1000));
@@ -3696,6 +3844,7 @@ function tileAtPixel(x, y) {
 
     if (restored) ctx.restore();
   }
+
 
   function drawEars(x, y, a) {
     ctx.save();
