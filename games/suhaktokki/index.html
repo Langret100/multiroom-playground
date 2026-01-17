@@ -9,7 +9,7 @@
     :root{--bg:#0c1220;--panel:#121a2e;--line:rgba(255,255,255,.12);--txt:#f4f7ff;--muted:rgba(244,247,255,.72);--accent:#66e0a3;--danger:#ff5a7a;}
     *{box-sizing:border-box;touch-action:none;-webkit-user-select:none;user-select:none;}
     html,body{width:100%;height:100%;margin:0;overflow:hidden;background:radial-gradient(1200px 800px at 50% 10%,#1a2642,#0c1220);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
-    canvas{background:#0b0f1a;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);}
+    canvas{background:#0b0f1a;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);image-rendering:pixelated;image-rendering:crisp-edges;}
 
     /* HUD */
     #hud{position:fixed;left:0;top:0;right:0;z-index:20;pointer-events:none;display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;
@@ -75,13 +75,10 @@
 
     /* Small screens: avoid HUD buttons going off-screen */
     @media (max-width: 520px){
-      #hud{flex-direction:column;align-items:stretch;gap:6px;}
-      #leftHud{justify-content:flex-start;}
-      #rightHud{justify-content:flex-start;max-width:100%;}
       .pill{padding:6px 10px;font-size:12px;}
       .bar{width:92px;}
       button.ui.mini{padding:6px 8px;border-radius:10px;font-size:11px;}
-      #rightHud{gap:6px;}
+      #rightHud{gap:6px;max-width:100%;}
     }
     @media (max-width: 390px){
       #rightHud{max-width:100%;}

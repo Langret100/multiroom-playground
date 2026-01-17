@@ -158,16 +158,6 @@ this.st = {
       this.broadcast("chat", msg);
     });
 
-
-    // SuhakTokki relay: generic packets from iframe -> broadcast to all
-    // (Room page relays iframe postMessage type "sk_msg" to room.send("sk_msg", ...)).
-    this.onMessage("sk_msg", (client, payload) => {
-      // payload shape is usually { msg: {...} }
-      const inner = (payload && payload.msg) ? payload.msg : payload;
-      // Include sender sid (useful for debugging / host election inside iframe)
-      this.broadcast("sk_msg", { msg: inner, from: client.sessionId });
-    });
-
     // ---- Togester relay (Firebase 제거: Colyseus 메시지로 동기화) ----
     this.onMessage("tg_state", (client, { state }) => {
       if (this.state.mode !== "togester") return;

@@ -280,6 +280,7 @@
     objsMeta: null,
     map: null,
     charsImg: null,
+    pixel: {},
   };
 
   async function loadJSON(url) {
@@ -303,85 +304,324 @@
   //   rows: (8 colors) * (5 motions) * (3 directions)
   // Source: palette-indexed 32x36 pixel data (tokki_data.js), scaled to 64x72.
   function buildTokkiSpriteSheet() {
-    // Runtime sprite sheet builder from tokki_data.js (palette+indices)
-    // Dir order in our source data (tokki_data.js) matches the engine expectations:
-    //   0 = front (down), 1 = back (up), 2 = side (left base; flipped for right)
-    if (!window.TOKKI_DATA_READY || !window.TOKKI_W || !window.TOKKI_H || !window.TOKKI_FRAMES || !window.TOKKI_PALETTE) {
-      throw new Error('TOKKI_DATA not ready');
+    // tokki_data.js must be loaded before game.js
+    if (typeof TOKKI_W === 'undefined' || typeof TOKKI_VIEW_0 === 'undefined') {
+      throw new Error('tokki_data.js not loaded');
     }
 
-    const PW = window.TOKKI_W;
-    const PH = window.TOKKI_H;
-    const DIRS = 3;
-    const FR_PER_DIR = 3;
-    const SCALE = 2; // 32x36 -> 64x72
+    const W = TOKKI_W, H = TOKKI_H;
+    const pal = TOKKI_PALETTE;
+    const palLen = Math.floor(pal.length / 4);
 
-    // Sheet layout MUST match drawPlayer():
-    //   rows: COLOR_ROWS * (MOTION_ROWS(5) * DIR_ROWS(3))
-    //   cols: FRAMES(6)
-    const MOTION_ROWS = 5;
-    const DIR_ROWS = 3;
+    // dir mapping in this game: 0=front, 1=back, 2=side
+    const DIRS = [
+      { view: TOKKI_VIEW_1, dress: TOKKI_VIEW_1_DRESS, ear: TOKKI_VIEW_1_EAR, bag: (typeof TOKKI_VIEW_1_BAG !== 'undefined' ? TOKKI_VIEW_1_BAG : null) },
+      { view: TOKKI_VIEW_2, dress: TOKKI_VIEW_2_DRESS, ear: TOKKI_VIEW_2_EAR, bag: (typeof TOKKI_VIEW_2_BAG !== 'undefined' ? TOKKI_VIEW_2_BAG : null) },
+      { view: TOKKI_VIEW_0, dress: TOKKI_VIEW_0_DRESS, ear: TOKKI_VIEW_0_EAR, bag: (typeof TOKKI_VIEW_0_BAG !== 'undefined' ? TOKKI_VIEW_0_BAG : null) },
+    ];
 
-    // For each motion, map engine column(0..5) -> src frame(0..2)
-    // (We keep it strictly "frame-pixel fixed" — no procedural shifting.)
-    const COLMAP = {
-      walk:  [1, 0, 1, 2, 1, 1],
-      swim:  [1, 0, 1, 2, 1, 1],
-      faint: [1, 2, 1, 2, 1, 2],
-      cry:   [1, 0, 1, 2, 1, 2],
-      tsk:   [1, 0, 2, 1, 2, 1],
-    };
-    const motionKeys = ['walk','swim','faint','cry','tsk'];
+    const lum = (r, g, b) => (0.2126 * r + 0.7152 * g + 0.0722 * b);
 
+    // precompute average dress luminance per dir-view (for shading preservation)
+    const avgDressLum = DIRS.map(({ view, dress }) => {
+      let s = 0, n = 0;
+      for (let i = 0; i < view.length; i++) {
+        if (!dress[i]) continue;
+        const idx = view[i] | 0;
+        if (idx <= 0 || idx >= palLen) continue;
+        const r = pal[idx * 4 + 0], g = pal[idx * 4 + 1], b = pal[idx * 4 + 2];
+        s += lum(r, g, b);
+        n++;
+      }
+      return n ? (s / n) : 120;
+    });
+
+    // player color variants (dress tint) matching the in-game COLORS order
+    const DRESS_RGB = [
+      [59, 130, 246],  // blue
+      [34, 197, 94],   // green
+      [236, 72, 153],  // pink
+      [250, 204, 21],  // yellow
+      [168, 85, 247],  // purple
+      [249, 115, 22],  // orange
+      [20, 184, 166],  // teal
+      [239, 68, 68],   // red
+    ];
+
+    const clamp01 = (x) => (x < 0 ? 0 : (x > 1 ? 1 : x));
+    const clamp255 = (x) => (x < 0 ? 0 : (x > 255 ? 255 : x));
+
+    // Apply shading by scaling toward white/black based on luminance ratio.
+    function shadeToTarget(rgb, ratio) {
+      // ratio ~ [0.7 .. 1.35]
+      const t = clamp01((ratio - 0.65) / (1.35 - 0.65));
+      const dark = 0.72, light = 1.18;
+      const s = dark + (light - dark) * t;
+      return [
+        clamp255(rgb[0] * s),
+        clamp255(rgb[1] * s),
+        clamp255(rgb[2] * s),
+      ];
+    }
+
+    // Fixed walk frames (3 unique frames: mid/left/right) mapped into the engine's 6-frame cycle.
+    // This avoids jittery bobbing and makes the stepping read like real pixel animation.
+    const WALK_FRAME_MAP = [0, 1, 0, 2, 0, 1];
+
+    // Swim can stay slightly bobbed (works well for teachers in water)
+    const SWIM_BOB = [0, -1, -1, 0, 1, 0];
+    const SWIM_EAR = [0, 0, -1, 0, 1, 0];
+
+    function cloneU8(a) { return new Uint8Array(a); }
+
+    function movePixelsByPredicate(src, pred, dx, dy) {
+      const out = cloneU8(src);
+      const moved = [];
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const v = src[i] | 0;
+          if (!v) continue;
+          if (!pred(i, x, y, v)) continue;
+          moved.push([x, y, v]);
+          out[i] = 0;
+        }
+      }
+      for (let k = 0; k < moved.length; k++) {
+        const x = moved[k][0], y = moved[k][1], v = moved[k][2];
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        out[ny * W + nx] = v;
+      }
+      return out;
+    }
+
+    function moveMask(src, mask, dx, dy) {
+      if (!mask) return src;
+      return movePixelsByPredicate(src, (i) => (mask[i] ? true : false), dx, dy);
+    }
+
+    // Build 3 walk frames for each direction: mid, left-step, right-step.
+    function makeWalk3Frames(dirIndex, def) {
+      const mid = def.view;
+
+      // Ear wiggle + bag bounce (fixed per frame)
+      const earDY_L = -1, earDY_R = 1;
+      const bagDY_L = 1, bagDY_R = -1;
+
+      // 1) start from base
+      let left = cloneU8(mid);
+      let right = cloneU8(mid);
+
+      // 2) ears
+      left = moveMask(left, def.ear, 0, earDY_L);
+      right = moveMask(right, def.ear, 0, earDY_R);
+
+      // 3) bag (if mask is missing, use a small bbox on the back view)
+      if (def.bag && def.bag.some && def.bag.some(v => v)) {
+        left = moveMask(left, def.bag, 0, bagDY_L);
+        right = moveMask(right, def.bag, 0, bagDY_R);
+      } else if (dirIndex === 1) {
+        // back view: approximate bag bbox
+        const bagPred = (i, x, y) => (x >= 20 && x <= 26 && y >= 20 && y <= 30);
+        left = movePixelsByPredicate(left, (i,x,y,v) => bagPred(i,x,y) && v && !def.dress[i], 0, bagDY_L);
+        right = movePixelsByPredicate(right, (i,x,y,v) => bagPred(i,x,y) && v && !def.dress[i], 0, bagDY_R);
+      }
+
+      // 4) feet / step read
+      if (dirIndex === 0 || dirIndex === 1) {
+        // front/back: split left/right foot and lift the opposite slightly
+        const y0 = 33, y1 = 35;
+        const lf = (i, x, y) => (y >= y0 && y <= y1 && x >= 13 && x <= 15);
+        const rf = (i, x, y) => (y >= y0 && y <= y1 && x >= 16 && x <= 18);
+
+        left = movePixelsByPredicate(left, (i,x,y,v) => lf(i,x,y) && v, -1, 0);
+        left = movePixelsByPredicate(left, (i,x,y,v) => rf(i,x,y) && v, 0, -1);
+
+        right = movePixelsByPredicate(right, (i,x,y,v) => rf(i,x,y) && v, 1, 0);
+        right = movePixelsByPredicate(right, (i,x,y,v) => lf(i,x,y) && v, 0, -1);
+
+        // arm swing (subtle): shift sleeve/hand clusters
+        const lArm = (i,x,y) => (x >= 9 && x <= 12 && y >= 19 && y <= 24);
+        const rArm = (i,x,y) => (x >= 19 && x <= 22 && y >= 19 && y <= 24);
+        left = movePixelsByPredicate(left, (i,x,y,v) => lArm(i,x,y) && v && !def.dress[i], 0, -1);
+        left = movePixelsByPredicate(left, (i,x,y,v) => rArm(i,x,y) && v && !def.dress[i], 0, 1);
+        right = movePixelsByPredicate(right, (i,x,y,v) => lArm(i,x,y) && v && !def.dress[i], 0, 1);
+        right = movePixelsByPredicate(right, (i,x,y,v) => rArm(i,x,y) && v && !def.dress[i], 0, -1);
+
+      } else {
+        // side: swing single foot and a tiny arm/bag shift already handles most of the read
+        const foot = (i, x, y) => (y >= 33 && y <= 35 && x >= 15 && x <= 17);
+        left = movePixelsByPredicate(left, (i,x,y,v) => foot(i,x,y) && v, 1, 0);
+        right = movePixelsByPredicate(right, (i,x,y,v) => foot(i,x,y) && v, -1, 0);
+        const arm = (i,x,y) => (x >= 18 && x <= 21 && y >= 19 && y <= 24);
+        left = movePixelsByPredicate(left, (i,x,y,v) => arm(i,x,y) && v && !def.dress[i], 0, 1);
+        right = movePixelsByPredicate(right, (i,x,y,v) => arm(i,x,y) && v && !def.dress[i], 0, -1);
+      }
+
+      return [mid, left, right];
+    }
+
+    const WALK3 = DIRS.map((d, i) => makeWalk3Frames(i, d));
+
+    function paintRGBA(rgba, x, y, r, g, b, a) {
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      const o = (y * W + x) * 4;
+      rgba[o + 0] = r;
+      rgba[o + 1] = g;
+      rgba[o + 2] = b;
+      rgba[o + 3] = a;
+    }
+
+    function renderRGBA(dir, colorIdx, motion, frame) {
+      const def = DIRS[dir];
+      const wfi = (motion === 0 /* walk */) ? (WALK_FRAME_MAP[frame] | 0) : 0;
+      const view = (motion === 0 /* walk */) ? (WALK3[dir][wfi] || def.view) : def.view;
+      const dress = def.dress;
+      const ear = def.ear;
+
+      const bob = (motion === 1 /* swim */) ? SWIM_BOB[frame] : 0;
+      const earW = (motion === 1 /* swim */) ? SWIM_EAR[frame] : 0;
+
+      // palette indices after motion offsets
+      const dstIdx = new Uint16Array(W * H);
+      const dstDress = new Uint8Array(W * H);
+
+      // motion: 0 walk, 1 swim, 2 faint, 3 cry, 4 tsk
+      // for non-walk motions (except swim), keep minimal bob to reduce jitter
+      const bobY = (motion <= 1) ? bob : 0;
+      const earDY = (motion <= 1) ? earW : 0;
+
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const idx = view[i] | 0;
+          if (!idx) continue;
+          let ny = y + bobY;
+          let nx = x;
+          // subtle ear wiggle only
+          if (ear[i]) ny += earDY;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const di = ny * W + nx;
+          dstIdx[di] = idx;
+          if (dress[i]) dstDress[di] = 1;
+        }
+      }
+
+      // Convert to RGBA + recolor dress
+      const rgba = new Uint8ClampedArray(W * H * 4);
+      const target = DRESS_RGB[(colorIdx | 0) % DRESS_RGB.length];
+      const refLum = avgDressLum[dir] || 120;
+
+      for (let i = 0; i < dstIdx.length; i++) {
+        const idx = dstIdx[i] | 0;
+        if (!idx || idx >= palLen) continue;
+        let r = pal[idx * 4 + 0], g = pal[idx * 4 + 1], b = pal[idx * 4 + 2], a = pal[idx * 4 + 3];
+        if (dstDress[i]) {
+          const ratio = lum(r, g, b) / refLum;
+          const rr = shadeToTarget(target, ratio);
+          r = rr[0]; g = rr[1]; b = rr[2];
+        }
+        const o = i * 4;
+        rgba[o + 0] = r;
+        rgba[o + 1] = g;
+        rgba[o + 2] = b;
+        rgba[o + 3] = a;
+      }
+
+      // Small emote overlays (front/back/side all get them; front looks best)
+      if (motion === 3 /* cry */) {
+        const t = frame % 4;
+        const dx = (t === 1 || t === 2) ? 0 : 1;
+        // tear drops
+        paintRGBA(rgba, 12, 18 + dx, 125, 211, 252, 235);
+        paintRGBA(rgba, 19, 18 + dx, 125, 211, 252, 235);
+        paintRGBA(rgba, 12, 19 + dx, 125, 211, 252, 210);
+        paintRGBA(rgba, 19, 19 + dx, 125, 211, 252, 210);
+      } else if (motion === 4 /* tsk */) {
+        const t = frame % 3;
+        // tiny anger mark near top-right
+        paintRGBA(rgba, 22, 10, 255, 90, 122, 240);
+        if (t === 1) paintRGBA(rgba, 23, 9, 255, 90, 122, 230);
+        if (t === 2) paintRGBA(rgba, 21, 9, 255, 90, 122, 230);
+        // mouth wiggle
+        paintRGBA(rgba, 16, 18, 0, 0, 0, 0); // clear
+        paintRGBA(rgba, 16 + (t - 1), 18, 56, 10, 27, 255);
+      }
+
+      return rgba;
+    }
+
+    // --- Build sheet ---
     const sheet = document.createElement('canvas');
     sheet.width = SPR_W * FRAMES;
-    sheet.height = SPR_H * (COLOR_ROWS * MOTION_ROWS * DIR_ROWS);
-    const sctx = sheet.getContext('2d', { alpha: true });
+    sheet.height = SPR_H * (COLOR_ROWS * 5 * 3);
+    const sctx = sheet.getContext('2d');
     sctx.imageSmoothingEnabled = false;
 
-    // Reusable temp surface for a single 32x36 frame.
-    const tmp = document.createElement('canvas');
-    tmp.width = PW;
-    tmp.height = PH;
-    const tctx = tmp.getContext('2d', { alpha: true, willReadFrequently: true });
+    // tiny (32x36) buffer canvas
+    const tiny = document.createElement('canvas');
+    tiny.width = W;
+    tiny.height = H;
+    const tctx = tiny.getContext('2d');
     tctx.imageSmoothingEnabled = false;
-    const img = tctx.createImageData(PW, PH);
-    const imgData = img.data;
 
-    const pal = window.TOKKI_PALETTE;
-    const frames = window.TOKKI_FRAMES;
+    // 64x72 cell canvas (used for rotation in faint)
+    const cell = document.createElement('canvas');
+    cell.width = SPR_W;
+    cell.height = SPR_H;
+    const cctx = cell.getContext('2d');
+    cctx.imageSmoothingEnabled = false;
 
-    function blitSrc(dir, srcFrame, dx, dy) {
-      const base = (dir * FR_PER_DIR + srcFrame) * PW * PH;
-      for (let i = 0; i < PW * PH; i++) {
-        const idx = frames[base + i] | 0;
-        const pi = idx * 4;
-        const di = i * 4;
-        imgData[di + 0] = pal[pi + 0];
-        imgData[di + 1] = pal[pi + 1];
-        imgData[di + 2] = pal[pi + 2];
-        imgData[di + 3] = pal[pi + 3];
-      }
+    // motion row mapping must match drawPlayer()
+    const MOTION = { walk: 0, swim: 1, faint: 2, cry: 3, tsk: 4 };
+
+    function drawScaledRGBA(rgba32, dx, dy) {
+      const img = new ImageData(rgba32, W, H);
+      tctx.clearRect(0, 0, W, H);
       tctx.putImageData(img, 0, 0);
-
-      // scale into the 64x72 sprite cell (centered)
-      const ox = dx + Math.floor((SPR_W - PW * SCALE) / 2);
-      const oy = dy + Math.floor((SPR_H - PH * SCALE) / 2);
-      sctx.drawImage(tmp, 0, 0, PW, PH, ox, oy, PW * SCALE, PH * SCALE);
+      sctx.drawImage(tiny, 0, 0, W, H, dx, dy, SPR_W, SPR_H);
     }
 
-    // Fill every color row with identical pixels (keeps the character EXACTLY like the reference).
-    for (let colorRow = 0; colorRow < COLOR_ROWS; colorRow++) {
-      for (let mi = 0; mi < MOTION_ROWS; mi++) {
-        const motion = motionKeys[mi];
-        const cm = COLMAP[motion];
-        for (let dir = 0; dir < DIRS; dir++) {
-          const row = colorRow * (MOTION_ROWS * DIR_ROWS) + mi * DIR_ROWS + dir;
-          for (let col = 0; col < FRAMES; col++) {
-            const srcFrame = cm[col] ?? 1;
-            const dx = col * SPR_W;
-            const dy = row * SPR_H;
-            blitSrc(dir, srcFrame, dx, dy);
+    // Build each row into the sheet
+    for (let color = 0; color < COLOR_ROWS; color++) {
+      for (let motion = 0; motion < 5; motion++) {
+        for (let dir = 0; dir < 3; dir++) {
+          const row = color * (5 * 3) + motion * 3 + dir;
+          const baseY = row * SPR_H;
+          for (let f = 0; f < FRAMES; f++) {
+            const x = f * SPR_W;
+
+            // faint: 2 frames used; rotate front sprite to look "down"
+            if (motion === MOTION.faint) {
+              const useF = (f % 2);
+              const rgba32 = renderRGBA(0, color, 0, 0); // front idle as base
+              cctx.clearRect(0, 0, SPR_W, SPR_H);
+              // draw base scaled into cell
+              const img = new ImageData(rgba32, W, H);
+              tctx.clearRect(0, 0, W, H);
+              tctx.putImageData(img, 0, 0);
+              cctx.save();
+              cctx.translate(SPR_W / 2, SPR_H / 2);
+              cctx.rotate(-Math.PI / 2 + (useF ? 0.06 : -0.04));
+              cctx.drawImage(tiny, -SPR_W / 2, -SPR_H / 2, SPR_W, SPR_H);
+              // simple dim
+              cctx.globalAlpha = 0.22;
+              cctx.fillStyle = 'black';
+              cctx.fillRect(-SPR_W / 2, -SPR_H / 2, SPR_W, SPR_H);
+              cctx.restore();
+              sctx.drawImage(cell, 0, 0, SPR_W, SPR_H, x, baseY, SPR_W, SPR_H);
+              continue;
+            }
+
+            // cry/tsk: only a few frames are referenced, others duplicate
+            let rf = f;
+            if (motion === MOTION.cry) rf = f % 4;
+            if (motion === MOTION.tsk) rf = f % 3;
+            if (motion === MOTION.walk || motion === MOTION.swim) rf = f; // 0..5
+
+            const rgba32 = renderRGBA(dir, color, motion, rf);
+            drawScaledRGBA(rgba32, x, baseY);
           }
         }
       }
@@ -397,22 +637,49 @@
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
-    // Character sprites are now generated in-code from pixel data (tokki_data.js)
-    // to keep assets small and make animation tweaks easier.
+    // Character sprites: prefer the provided PNG sheet for pixel-perfect rendering.
+    // Fallback to in-code generation only if the image fails to load.
     try {
-      AS.charsImg = buildTokkiSpriteSheet();
-    } catch (e) {
-      console.warn('[tokki] sprite build failed, fallback to png sheet', e);
       AS.charsImg = await loadImage('assets/chars_bunny_v3.png');
+    } catch (e) {
+      console.warn('[tokki] chars png load failed; building sprites in-code', e);
+      AS.charsImg = buildTokkiSpriteSheet();
     }
+
+    // Custom pixel-art pack (user provided)
+    // (All images are optional; game falls back to default rendering if missing.)
+    AS.pixel = {};
+    const px = [
+      ['floor_tile', 'assets/pixel/floor_tile.png'],
+      ['corridor_dirt_tile', 'assets/pixel/corridor_dirt_tile.png'],
+      ['wall', 'assets/pixel/wall.png'],
+      ['wall_alt', 'assets/pixel/wall_alt.png'],
+      ['vent', 'assets/pixel/vent.png'],
+      ['water_overflow_sheet', 'assets/pixel/water_overflow_sheet.png'],
+      ['rock_1', 'assets/pixel/rock_1.png'],
+      ['rock_2', 'assets/pixel/rock_2.png'],
+      ['round_table', 'assets/pixel/round_table.png'],
+      ['diamond_table', 'assets/pixel/diamond_table.png'],
+      ['megaphone', 'assets/pixel/megaphone.png'],
+      ['street_lamp', 'assets/pixel/street_lamp.png'],
+      ['floor_lamp', 'assets/pixel/floor_lamp.png'],
+      ['rock_diamond_decor', 'assets/pixel/rock_diamond_decor.png'],
+      ['vine_door_closed', 'assets/pixel/vine_door_closed.png'],
+      ['vine_door_side', 'assets/pixel/vine_door_side.png'],
+      ['vine_door_open', 'assets/pixel/vine_door_open.png'],
+    ];
+    await Promise.all(px.map(async ([k, url]) => {
+      try { AS.pixel[k] = await loadImage(url); }
+      catch (e) { AS.pixel[k] = null; }
+    }));
   }
 
   // ---------- Render sizing ----------
-  let DPR = (window.devicePixelRatio || 1) >= 1.5 ? 2 : 1;
+  let DPR = Math.round(Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
   let viewW = 0, viewH = 0;
 
   function resize() {
-    DPR = (window.devicePixelRatio || 1) >= 1.5 ? 2 : 1;
+    DPR = Math.round(Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
     const w = window.innerWidth;
     const h = window.innerHeight;
     // canvas는 화면을 꽉 쓰되, 둥근 모서리 유지
@@ -462,6 +729,45 @@
     return !!t?.solid;
   }
 
+  function getPixelDecorPlacements() {
+    // Static, non-networked decorations to make the burrow feel more "Among-Us".
+    // NOTE: Only place items when the corresponding image exists.
+    const out = [];
+    if (!AS.map || !AS.pixel) return out;
+
+    const roomRect = (id) => (AS.map.rooms || []).find(r => r.id === id)?.rect || null;
+    const add = (key, tx, ty, w = 64, h = 64, solid = true) => {
+      if (!AS.pixel[key]) return;
+      out.push({ key, tx, ty, w, h, solid });
+    };
+
+    // Admin-ish center table
+    {
+      const rr = roomRect('admin');
+      if (rr) add('diamond_table', rr[0] + Math.floor(rr[2] / 2), rr[1] + Math.floor(rr[3] / 2), 64, 64, true);
+    }
+    // Reactor crystal (decor)
+    {
+      const rr = roomRect('reactor');
+      if (rr) add('rock_diamond_decor', rr[0] + Math.floor(rr[2] / 2), rr[1] + Math.floor(rr[3] / 2), 32, 32, true);
+    }
+    // Warren hall lamps (keep near a corner)
+    {
+      const rr = roomRect('warren');
+      if (rr) {
+        add('street_lamp', rr[0] + 3, rr[1] + 2, 64, 64, true);
+        add('floor_lamp', rr[0] + rr[2] - 4, rr[1] + rr[3] - 4, 32, 32, true);
+      }
+    }
+    // Med nook lamp
+    {
+      const rr = roomRect('med');
+      if (rr) add('floor_lamp', rr[0] + 2, rr[1] + 2, 32, 32, true);
+    }
+
+    return out;
+  }
+
   function buildCollision() {
     const { width: W, height: H } = AS.map;
     solid = new Uint8Array(W * H);
@@ -488,6 +794,20 @@
         solid[i] = 1;
       }
     }
+
+    // Make the emergency meeting table tile solid (players stand around it, not on it)
+    for (const o of (AS.map.objects || [])) {
+      if (o.type !== 'meeting_bell') continue;
+      const tx = o.x | 0, ty = o.y | 0;
+      if (tx >= 0 && ty >= 0 && tx < W && ty < H) solid[ty * W + tx] = 1;
+    }
+
+    // Static decor collisions
+    for (const d of getPixelDecorPlacements()) {
+      if (!d.solid) continue;
+      const tx = d.tx | 0, ty = d.ty | 0;
+      if (tx >= 0 && ty >= 0 && tx < W && ty < H) solid[ty * W + tx] = 1;
+    }
   }
 
   function buildMapPrerender() {
@@ -498,22 +818,76 @@
     const mctx = mapCanvas.getContext('2d');
     mctx.imageSmoothingEnabled = false;
 
-    const cols = AS.tilesMeta.columns;
-    const drawLayer = (layerArr) => {
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          const id = layerArr[y * W + x];
-          if (!id) continue;
-          const sx = (id % cols) * TS;
-          const sy = Math.floor(id / cols) * TS;
-          mctx.drawImage(AS.tilesImg, sx, sy, TS, TS, x * TS, y * TS, TS, TS);
-        }
+    const ground = AS.map.layers.ground || [];
+    const walls = AS.map.layers.walls || [];
+    const deco = AS.map.layers.deco || [];
+
+    // If the custom pack is available, draw the map using it.
+    const floorImg = AS.pixel?.floor_tile;
+    const corrImg = AS.pixel?.corridor_dirt_tile || floorImg;
+    const wallImg = AS.pixel?.wall;
+    const wallAltImg = AS.pixel?.wall_alt || wallImg;
+
+    // dark void
+    mctx.fillStyle = 'rgb(12,16,26)';
+    mctx.fillRect(0, 0, W * TS, H * TS);
+
+    const inAnyRoom = (tx, ty) => {
+      for (const r of (AS.map.rooms || [])) {
+        const [rx, ry, rw, rh] = r.rect;
+        if (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh) return true;
       }
+      return false;
     };
 
-    drawLayer(AS.map.layers.ground);
-    drawLayer(AS.map.layers.walls);
-    drawLayer(AS.map.layers.deco);
+    if (floorImg) {
+      // floors
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const has = (ground[i] || walls[i] || deco[i]);
+          if (!has) continue;
+          const use = inAnyRoom(x, y) ? floorImg : corrImg;
+          if (use) mctx.drawImage(use, 0, 0, use.width, use.height, x * TS, y * TS, TS, TS);
+        }
+      }
+
+      // walls
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          if (!walls[i]) continue;
+          const use = ((x + y) % 2 === 0) ? wallImg : wallAltImg;
+          if (use) mctx.drawImage(use, 0, 0, use.width, use.height, x * TS, y * TS, TS, TS);
+        }
+      }
+    } else {
+      // fallback to original tilesheet
+      const cols = AS.tilesMeta.columns;
+      const drawLayer = (layerArr) => {
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const id = layerArr[y * W + x];
+            if (!id) continue;
+            const sx = (id % cols) * TS;
+            const sy = Math.floor(id / cols) * TS;
+            mctx.drawImage(AS.tilesImg, sx, sy, TS, TS, x * TS, y * TS, TS, TS);
+          }
+        }
+      };
+      drawLayer(ground);
+      drawLayer(walls);
+      drawLayer(deco);
+    }
+
+    // static decorations
+    for (const d of getPixelDecorPlacements()) {
+      const im = AS.pixel[d.key];
+      if (!im) continue;
+      const px = (d.tx + 0.5) * TS - d.w / 2;
+      const py = (d.ty + 0.5) * TS - d.h / 2;
+      mctx.drawImage(im, 0, 0, im.width, im.height, Math.floor(px), Math.floor(py), d.w, d.h);
+    }
   }
 
   // ---------- Networking: BroadcastChannel ----------
@@ -530,7 +904,7 @@
 
       this.bc.onmessage = (ev) => {
         const msg = ev.data;
-        if (!msg || msg.room !== this.room) return;
+        if (!msg || (msg.room && msg.room !== this.room)) return;
         if (msg.t === 'host') this.lastHostSeen = Date.now();
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
@@ -584,7 +958,7 @@
       this.ws.addEventListener('message', (ev) => {
         let msg = null;
         try { msg = JSON.parse(ev.data); } catch (_) { return; }
-        if (!msg || msg.room !== this.room) return;
+        if (!msg || (msg.room && msg.room !== this.room)) return;
         if (msg.t === 'host') this.lastHostSeen = Date.now();
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
@@ -652,7 +1026,7 @@
         if (!data || typeof data !== "object") return;
         if (data.type !== "sk_msg") return;
         const msg = data.msg;
-        if (!msg || msg.room !== this.room) return;
+        if (!msg || (msg.room && msg.room !== this.room)) return;
         if (msg.t === "host") this.lastHostSeen = Date.now();
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
@@ -744,7 +1118,6 @@
   // ---------- Host simulation ----------
   function hostInitFromMap() {
     const st = G.state;
-    tickHUD();
     st.objects = {};
     st.missions = {};
     st.doors = {};
@@ -779,9 +1152,8 @@
     G.host.alarmText = '';
   }
 
-  function hostAddPlayer(nick, isBot = false) {
+  function hostAddPlayer(nick, isBot = false, clientId = null) {
     const st = G.state;
-    tickHUD();
     const ids = Object.keys(st.players).map(n => parseInt(n, 10)).filter(n => !Number.isNaN(n));
     const nextId = ids.length ? Math.max(...ids) + 1 : 1;
 
@@ -790,6 +1162,9 @@
 
     st.players[nextId] = {
       id: nextId,
+      clientId: clientId ? String(clientId) : null,
+      dir: 0,
+      facing: 1,
       nick: nick.slice(0, 10),
       color,
       x: (sp.x + 0.5) * TS,
@@ -821,7 +1196,6 @@
 
   function hostAssignTeacher() {
     const st = G.state;
-    tickHUD();
     if (st.practice) {
       st.teacherId = null;
       for (const p of Object.values(st.players)) p.role = 'crew';
@@ -859,13 +1233,11 @@
 
   function hostCrewAliveCount() {
     const st = G.state;
-    tickHUD();
     return Object.values(st.players).filter(p => p.alive && !p.down && p.id !== st.teacherId).length;
   }
 
   function hostActivateRandomMission() {
     const st = G.state;
-    tickHUD();
     const alive = hostAliveCount();
     const limit = Math.max(1, Math.ceil(alive * 2 / 3));
     const active = Object.values(st.missions).filter(m => m.state === 'active').length;
@@ -883,7 +1255,6 @@
 
   function hostFailMission(siteId, reason) {
     const st = G.state;
-    tickHUD();
     const m = st.missions[siteId];
     if (!m) return;
 
@@ -923,7 +1294,6 @@
 
   function hostTick(dt) {
     const st = G.state;
-    tickHUD();
     if (st.winner) return;
 
     // 타이머(누수 레벨이 높을수록 더 빨리 줄어듦)
@@ -1013,14 +1383,15 @@
       let mvy = frozen ? 0 : (inp.mvy || 0);
       if (now() < (p.invertUntil || 0)) { mvx = -mvx; mvy = -mvy; }
 
-      // facing/dir 결정은 '속도'가 아니라 '입력' 기준으로(옆 이동인데 뒷모습 되는 문제 방지)
-      const inLen = Math.hypot(mvx, mvy);
-      if (inLen > 0.18) {
-        if (Math.abs(mvx) > 0.12) p.facing = mvx < 0 ? -1 : 1;
-        const ax = Math.abs(mvx), ay = Math.abs(mvy);
-        // joysticks often produce tiny diagonal drift; bias to side if X is present.
-        if (ax > 0.20 && ax >= ay * 0.85) p.dir = 2;
-        else if (ay > 0.20) p.dir = (mvy < 0 ? 1 : 0);
+      // Save intended direction for rendering (prevents left/right input showing as back/front).
+      const ilen = Math.hypot(mvx, mvy);
+      if (ilen > 0.12) {
+        if (Math.abs(mvx) >= Math.abs(mvy)) {
+          p.dir = 2;
+          p.facing = (mvx < 0 ? -1 : 1);
+        } else {
+          p.dir = (mvy < 0 ? 1 : 0);
+        }
       }
 
       let spd = SPEED;
@@ -1155,7 +1526,6 @@ function tileAtPixel(x, y) {
 
   function doorSolidAt(tx, ty) {
     const st = G.state;
-    tickHUD();
     for (const obj of Object.values(st.objects)) {
       if (obj.type !== 'root_door') continue;
       if (obj.x === tx && obj.y === ty) {
@@ -1168,7 +1538,6 @@ function tileAtPixel(x, y) {
 
   function waterAtTile(tx, ty) {
     const st = G.state;
-    tickHUD();
     for (const wb of Object.values(st.waterBlocks)) {
       if (wb && Array.isArray(wb.tiles) && wb.tiles.length) {
         for (const t of wb.tiles) {
@@ -1234,7 +1603,6 @@ function tileAtPixel(x, y) {
   // ---------- Host actions ----------
   function hostNearestInteractable(player) {
     const st = G.state;
-    tickHUD();
     let best = null;
     let bestD2 = Infinity;
 
@@ -1277,7 +1645,6 @@ function tileAtPixel(x, y) {
 
   function hostHandleInteract(playerId) {
     const st = G.state;
-    tickHUD();
     const p = st.players[playerId];
     if (!p || !p.alive || p.down) return;
 
@@ -1386,7 +1753,6 @@ function tileAtPixel(x, y) {
 
   function hostHandleKill(playerId) {
     const st = G.state;
-    tickHUD();
     if (st.practice || !st.teacherId) return;
     const killer = st.players[playerId];
     if (!killer || !killer.alive || killer.down) return;
@@ -1414,7 +1780,6 @@ function tileAtPixel(x, y) {
 
   function hostHandleSabotage(playerId) {
     const st = G.state;
-    tickHUD();
     if (st.practice || !st.teacherId) return;
     const t = st.players[playerId];
     if (!t || !t.alive || t.down) return;
@@ -1553,7 +1918,6 @@ function tileAtPixel(x, y) {
 
     function hostHandleForceMission(playerId) {
       const st = G.state;
-    tickHUD();
       if (st.practice || !st.teacherId) return;
       const t = st.players[playerId];
       if (!t || !t.alive || t.down) return;
@@ -1616,7 +1980,6 @@ function tileAtPixel(x, y) {
   function hostSubmitVote(playerId, targetIdOrNull) {
     if (G.phase !== 'meeting') return;
     const st = G.state;
-    tickHUD();
     const voter = st.players[playerId];
     if (!voter || !voter.alive || voter.down) return;
 
@@ -1631,7 +1994,6 @@ function tileAtPixel(x, y) {
 
   function hostResolveMeeting() {
     const st = G.state;
-    tickHUD();
     if (G.phase !== 'meeting') return;
 
     // 집계
@@ -1873,7 +2235,6 @@ function tileAtPixel(x, y) {
 
   function hostMissionSubmit(playerId, payload) {
     const st = G.state;
-    tickHUD();
     const p = st.players[playerId];
     if (!p || !p.alive || p.down) return;
 
@@ -1985,7 +2346,6 @@ function tileAtPixel(x, y) {
 
   function applyPenalty(kind, playerId) {
     const st = G.state;
-    tickHUD();
     const doors = Object.values(st.doors);
     const victim = st.players[playerId];
 
@@ -2085,7 +2445,6 @@ function tileAtPixel(x, y) {
   function broadcastState(force = false) {
     if (!G.net || !G.net.isHost) return;
     const st = G.state;
-    tickHUD();
     const payload = {
       t: 'state',
       phase: G.phase,
@@ -2095,7 +2454,6 @@ function tileAtPixel(x, y) {
       total: st.total,
       practice: st.practice,
       players: st.players,
-      objects: st.objects,
       missions: st.missions,
       doors: st.doors,
       waterBlocks: st.waterBlocks,
@@ -2119,21 +2477,8 @@ function tileAtPixel(x, y) {
   }
 
   // ---------- Client input & UI ----------
-  function getDisplayedTimeLeft() {
-    const st = G.state;
-    tickHUD();
-    const base = st.timeLeft || 0;
-    if (G.phase === 'play' && G.net && !G.net.isHost) {
-      const at = st.lastUpdateAt || now();
-      const dt = (now() - at) / 1000;
-      return Math.max(0, base - dt);
-    }
-    return base;
-  }
-
   function setRolePill() {
     const st = G.state;
-    tickHUD();
     const me = st.players[G.net?.myPlayerId];
     if (!me) {
       rolePill.style.display = 'none';
@@ -2156,7 +2501,6 @@ function tileAtPixel(x, y) {
 
   function hasIdleMissionNearby(me) {
     const st = G.state;
-    tickHUD();
     for (const obj of Object.values(st.objects)) {
       if (obj.type !== 'mission') continue;
       const m = st.missions[obj.id];
@@ -2170,7 +2514,6 @@ function tileAtPixel(x, y) {
 
   function nearestFloodSpotDoor(me) {
     const st = G.state;
-    tickHUD();
     let best = null;
     let bestD2 = Infinity;
     for (const obj of Object.values(st.objects)) {
@@ -2227,7 +2570,6 @@ function tileAtPixel(x, y) {
 
     // 선생토끼 전용: 스킬 버튼 UI
     const st = G.state;
-    tickHUD();
     const me = st.players[G.net?.myPlayerId];
     const show = !!(G.net && me && !st.practice && me.role === 'teacher');
 
@@ -2568,7 +2910,6 @@ function tileAtPixel(x, y) {
   function renderVoteList() {
     voteList.innerHTML = '';
     const st = G.state;
-    tickHUD();
     const meId = G.net?.myPlayerId;
 
     const alive = Object.values(st.players).filter(p => p.alive && !p.down);
@@ -2879,7 +3220,6 @@ function tileAtPixel(x, y) {
 
   function setMoveFromPointer(px, py) {
     const st = G.state;
-    tickHUD();
     const me = st.players[G.net?.myPlayerId];
     if (!me) return;
 
@@ -3119,15 +3459,6 @@ default:
   });
 
   // ---------- Rendering ----------
-  let hudNextAt = 0;
-  function tickHUD() {
-    if (!G.net) return;
-    const t = now();
-    if (t < hudNextAt) return;
-    hudNextAt = t + 120;
-    setHUD();
-  }
-
   function getCamera(me) {
     const W = AS.map.width * TS;
     const H = AS.map.height * TS;
@@ -3152,7 +3483,6 @@ default:
     }
 
     const st = G.state;
-    tickHUD();
     const me = st.players[G.net?.myPlayerId] || Object.values(st.players)[0];
     let cam = me ? getCamera(me) : { x: 0, y: 0, vw: viewW / ZOOM, vh: viewH / ZOOM };
 
@@ -3225,13 +3555,18 @@ default:
         const m = st.missions[obj.id];
         drawMissionSpot(x, y, m);
       } else if (obj.type === 'meeting_bell') {
-        drawObjSprite('meeting_bell', x, y);
+        drawEmergencyMeeting(x, y);
       } else if (obj.type === 'admin_board') {
         drawObjSprite('admin_board', x, y);
       } else if (obj.type === 'camera_monitor') {
         drawObjSprite('camera_monitor', x, y);
       } else if (obj.type === 'vent_hole') {
-        drawObjSprite('vent_hole', x, y);
+        if (AS.pixel?.vent) {
+          const im = AS.pixel.vent;
+          ctx.drawImage(im, 0, 0, im.width, im.height, Math.round(x - TS / 2), Math.round(y - TS / 2), TS, TS);
+        } else {
+          drawObjSprite('vent_hole', x, y);
+        }
       }
     }
 
@@ -3358,7 +3693,6 @@ default:
   function drawMiniMap(x, y) {
     // "곱셈 패널티: 위치 공개" 시 잠깐 뜨는 간단 미니맵
     const st = G.state;
-    tickHUD();
     if (!AS.map) return;
 
     const worldW = AS.map.width * TS;
@@ -3415,7 +3749,7 @@ default:
     if (!G.ui.mapOpen || !mapUiCanvas || !mapUiCtx) return;
     if (!AS.map || !mapCanvas) return;
 
-    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const dpr = Math.round(Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
     const cw = mapUiCanvas.clientWidth || 520;
     const ch = mapUiCanvas.clientHeight || 420;
     const w = Math.max(200, Math.floor(cw));
@@ -3477,7 +3811,6 @@ default:
 
     // mission markers
     const st = G.state;
-    tickHUD();
     const missions = st.missions || {};
     for (const obj of Object.values(st.objects || {})) {
       if (obj.type !== 'mission') continue;
@@ -3550,8 +3883,82 @@ default:
     ctx.restore();
   }
 
+  function drawEmergencyMeeting(x, y) {
+    const table = AS.pixel?.round_table;
+    const mega = AS.pixel?.megaphone;
+
+    if (!table) {
+      drawObjSprite('meeting_bell', x, y);
+      return;
+    }
+
+    ctx.save();
+    ctx.translate(x, y);
+
+    // table (64x64)
+    const tw = 64, th = 64;
+    ctx.drawImage(table, 0, 0, table.width, table.height, Math.round(-tw / 2), Math.round(-th / 2), tw, th);
+
+    // megaphone on top
+    if (mega) {
+      const mw = 32, mh = 32;
+      ctx.drawImage(mega, 0, 0, mega.width, mega.height, Math.round(-mw / 2), Math.round(-mh / 2 - 14), mw, mh);
+    }
+
+    // During an emergency meeting, add a pulsing "alarm" ring so it feels like Among Us.
+    if (G.phase === 'meeting' && (G.host.meetingKind === 'emergency')) {
+      const t = now() * 0.012;
+      const pulse = (Math.sin(t) * 0.5 + 0.5);
+      const r = 18 + pulse * 12;
+      ctx.strokeStyle = `rgba(255,255,255,${0.15 + pulse * 0.20})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(0, 6, r * 1.35, r * 0.75, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
   function drawDoor(x, y, closed, blocked, seedKey) {
-    // 뿌리 문(덩굴): 살짝 꿈틀 + 물막기면 물결
+    // Prefer user provided vine-door sprites (pixel art)
+    const imClosed = AS.pixel?.vine_door_closed;
+    const imSide = AS.pixel?.vine_door_side;
+    const imOpen = AS.pixel?.vine_door_open;
+
+    if (imClosed && imOpen) {
+      // Determine doorway orientation (use the side sprite for horizontal-ish doors)
+      let useSide = false;
+      try {
+        const tx = Math.floor(x / TS);
+        const ty = Math.floor(y / TS);
+        const W = AS.map.width, H = AS.map.height;
+        const sL = (tx - 1 >= 0) ? solid[ty * W + (tx - 1)] : 1;
+        const sR = (tx + 1 < W) ? solid[ty * W + (tx + 1)] : 1;
+        const sU = (ty - 1 >= 0) ? solid[(ty - 1) * W + tx] : 1;
+        const sD = (ty + 1 < H) ? solid[(ty + 1) * W + tx] : 1;
+        // If left/right are more blocked than up/down, the doorway reads horizontal.
+        useSide = (sL + sR) > (sU + sD);
+      } catch (_) {}
+
+      const im = closed ? ((useSide && imSide) ? imSide : imClosed) : imOpen;
+      const dw = 64, dh = 64;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.drawImage(im, 0, 0, im.width, im.height, Math.round(-dw / 2), Math.round(-dh / 2), dw, dh);
+      if (blocked) {
+        const pulse = (Math.sin(now() * 0.015 + (strHash(seedKey || '') % 999) * 0.01) * 0.5 + 0.5);
+        ctx.strokeStyle = `rgba(125,211,252,${0.25 + pulse * 0.25})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-TS * 0.55, -TS * 0.48, TS * 1.1, TS * 0.96, 10);
+        ctx.stroke();
+      }
+      ctx.restore();
+      return;
+    }
+
+    // Fallback procedural vine door
     const w = TS * 0.95;
     const h = TS * 0.9;
     const tNow = now();
@@ -3575,7 +3982,6 @@ default:
     ctx.fill();
     ctx.stroke();
 
-    // 뿌리 줄(살짝 꿈틀)
     ctx.strokeStyle = blocked ? 'rgba(125,211,252,.72)' : 'rgba(255,255,255,.6)';
     ctx.lineWidth = closed ? 5 : 2.5;
 
@@ -3605,53 +4011,56 @@ default:
 
   function drawMissionSpot(x, y, m) {
     if (!m) return;
+    const sheet = AS.pixel?.water_overflow_sheet;
+    const rock = AS.pixel?.rock_2 || AS.pixel?.rock_1;
+
     ctx.save();
     ctx.translate(x, y);
 
-    // 구멍
+    // hole shadow
     ctx.fillStyle = 'rgba(0,0,0,.35)';
     ctx.beginPath();
-    ctx.ellipse(0, 6, 10, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 8, 11, 6.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
     if (m.state === 'solved') {
-      // 당근으로 막힘
-      ctx.fillStyle = 'rgba(255,152,84,.9)';
-      ctx.strokeStyle = 'rgba(255,255,255,.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(-5, -8, 10, 18, 6);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(102,224,163,.85)';
-      ctx.beginPath();
-      ctx.ellipse(-6, -10, 6, 4, -0.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(6, -10, 6, 4, 0.6, 0, Math.PI * 2);
-      ctx.fill();
+      // Mission solved: water is blocked (rock on the hole)
+      if (rock) {
+        const rw = 32, rh = 32;
+        ctx.drawImage(rock, 0, 0, rock.width, rock.height, Math.round(-rw / 2), Math.round(-rh / 2 + 2), rw, rh);
+      } else {
+        // fallback
+        ctx.fillStyle = 'rgba(165,120,78,.95)';
+        ctx.beginPath();
+        ctx.roundRect(-10, -10, 20, 20, 6);
+        ctx.fill();
+      }
     } else {
-      // 물 솟음
-      const active = (m.state === 'active');
-      const t = now() / 300;
-      const amp = active ? 6 : 3;
-      ctx.strokeStyle = (() => {
-        const forced = !!(m.forceFailAt || m.forcedBy);
-        if (forced) return active ? 'rgba(255,90,122,.95)' : 'rgba(255,90,122,.70)';
-        return active ? 'rgba(125,211,252,.95)' : 'rgba(125,211,252,.70)';
-      })();
-      ctx.lineWidth = active ? 4 : 3;
-      ctx.beginPath();
-      ctx.moveTo(0, 2);
-      ctx.bezierCurveTo(-3, -8 - Math.sin(t)*amp, 3, -12 - Math.cos(t)*amp, 0, -18 - Math.sin(t*1.3)*amp);
-      ctx.stroke();
+      // Unsolved: water is overflowing (animated)
+      if (sheet) {
+        const active = (m.state === 'active');
+        const frame = (Math.floor(now() / 220) % 2);
+        const bob = Math.sin(now() * 0.01) * (active ? 2.0 : 1.0);
+        const sx = frame * 32;
+        ctx.drawImage(sheet, sx, 0, 32, 32, Math.round(-16), Math.round(-24 + bob), 32, 32);
+      } else {
+        // fallback simple water jet
+        const active = (m.state === 'active');
+        const t = now() / 300;
+        const amp = active ? 6 : 3;
+        ctx.strokeStyle = active ? 'rgba(125,211,252,.95)' : 'rgba(125,211,252,.70)';
+        ctx.lineWidth = active ? 4 : 3;
+        ctx.beginPath();
+        ctx.moveTo(0, 2);
+        ctx.bezierCurveTo(-3, -8 - Math.sin(t)*amp, 3, -12 - Math.cos(t)*amp, 0, -18 - Math.sin(t*1.3)*amp);
+        ctx.stroke();
+      }
 
-      if (active) {
-        // 느낌표
+      if (m.state === 'active') {
         ctx.fillStyle = 'rgba(255,255,255,.95)';
         ctx.font = '900 14px system-ui';
         ctx.textAlign = 'center';
-        ctx.fillText('!', 0, -22);
+        ctx.fillText('!', 0, -24);
       }
     }
 
@@ -4025,11 +4434,11 @@ default:
 
     const speed = Math.hypot(p.vx || 0, p.vy || 0);
     const moving = speed > 4.5;
-    const facing = (p.facing === -1 || p.facing === 1) ? p.facing : (p.vx < -0.2 ? -1 : 1);
+    const facing = (typeof p.facing === 'number') ? p.facing : (p.vx < -0.2 ? -1 : 1);
 
     // Motion selection (v3 sheet): walk / swim / faint / cry / tsk
     const MOTION_ROWS = 5;
-    const DIR_ROWS = 3; // 0:front/down, 1:back/up, 2:side (left base; flip for right)
+    const DIR_ROWS = 3; // 0:front/down, 1:back/up, 2:side (left/right via mirroring)
     const motionMap = { walk: 0, swim: 1, faint: 2, cry: 3, tsk: 4 };
     let motion = 'walk';
     if (p.down) motion = 'faint';
@@ -4046,14 +4455,14 @@ default:
     else if (motion === 'tsk') frame = Math.floor((base * 0.9) % 3);
 
     // 픽셀 퍼펙트: 서브픽셀 렌더링은 얇은 투명 줄/떨림을 만든다.
+    // (특히 스프라이트시트에서 한 줄이 투명해 보이는 현상)
     x = Math.round(x);
     y = Math.round(y);
 
-    // direction row: **입력 기반**으로 저장된 dir/facing를 우선 사용한다.
-    // (옆으로 가는데 뒷모습으로 보이는 문제 방지)
+    // direction row (only affects sprite selection; movement/physics unchanged)
+    const avx = p.vx || 0, avy = p.vy || 0;
     let dir = (typeof p.dir === 'number') ? p.dir : 0;
     if (typeof p.dir !== 'number') {
-      const avx = p.vx || 0, avy = p.vy || 0;
       if (Math.abs(avy) > Math.abs(avx)) dir = (avy < -0.2 ? 1 : 0);
       else if (Math.abs(avx) > 0.2) dir = 2;
     }
@@ -4065,7 +4474,7 @@ default:
       ctx.imageSmoothingEnabled = false;
       ctx.translate(x, y);
       // Mirror only for side sprites; front/back stay facing camera
-      if (dir === 2) ctx.scale((facing === 1 ? -1 : 1), 1);
+      if (dir === 2) ctx.scale(facing, 1);
       else ctx.scale(1, 1);
       const sx = frame * SPR_W;
       const sy = row * SPR_H;
@@ -4204,7 +4613,6 @@ default:
 
   function nearestHint(me) {
     const st = G.state;
-    tickHUD();
     let canInteract = false;
     let canKill = false;
 
@@ -4288,7 +4696,6 @@ default:
       const rm = G.ui.reopenMission;
       if (now() >= rm.at && now() >= (G.host.missionDisabledUntil || 0)) {
         const st = G.state;
-    tickHUD();
         const me = st.players[G.net.myPlayerId];
         const obj = st.objects && st.objects[rm.siteId];
         if (me && obj && obj.type === 'mission') {
@@ -4315,7 +4722,7 @@ default:
   async function joinRoom() {
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); applyPhaseUI(); return; }
     const nick = (nickEl.value || '토끼').trim().slice(0, 10);
-    const room = (roomEl.value || '1234').trim().slice(0, 8);
+    const room = (roomEl.value || '1234').trim().slice(0, 64);
 
     const wsBase = (window.__ONLINE_WS_BASE__ || '').trim();
     let net;
@@ -4341,13 +4748,12 @@ default:
     net.on('join', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-    tickHUD();
       const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
       if (playersCount >= 8) {
         net.post({ t: 'joinDenied', toClient: m.from, reason: '방이 가득 찼어!' });
         return;
       }
-      const pid = hostAddPlayer(m.nick || '토끼', false);
+      const pid = hostAddPlayer(m.nick || '토끼', false, m.from);
       // clientId -> playerId 매핑
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
       G.host._clientToPlayer.set(m.from, pid);
@@ -4361,17 +4767,6 @@ default:
       G.phase = 'lobby';
       setRolePill();
       setHUD();
-
-      // cid match fallback: joinAck가 누락돼도 내 플레이어 id를 복구
-      if (!net.myPlayerId && net.clientId) {
-        for (const [pid, pl] of Object.entries(G.state.players || {})) {
-          if (pl && pl.cid === net.clientId) {
-            net.myPlayerId = pid;
-            break;
-          }
-        }
-      }
-
       applyPhaseUI();
       if (net.isHost) {
         startBtn.disabled = false;
@@ -4414,7 +4809,6 @@ default:
     net.on('openMission', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-    tickHUD();
       const p = st.players[m.playerId];
       if (!p || !p.alive || p.down) return;
       const obj = st.objects[m.siteId];
@@ -4467,9 +4861,17 @@ default:
       G.state.total = m.total;
       G.state.practice = !!m.practice;
       G.state.players = m.players;
-      G.state.objects = m.objects || G.state.objects;
+
+      // If joinAck was missed, recover myPlayerId by matching clientId.
+      if (!net.myPlayerId && m.players) {
+        for (const [pid, pp] of Object.entries(m.players)) {
+          if (pp && pp.clientId && String(pp.clientId) === String(net.clientId)) {
+            net.myPlayerId = parseInt(pid, 10);
+            break;
+          }
+        }
+      }
       G.state.missions = m.missions;
-      G.state.lastUpdateAt = m.at || now();
       G.state.doors = m.doors;
       G.state.waterBlocks = m.waterBlocks;
       G.state.leaks = m.leaks || {};
@@ -4501,19 +4903,8 @@ default:
       startBtn.disabled = !(net.isHost && Object.keys(G.state.players).length >= 1 && !G.host.started);
       if (net.isHost && !G.host.started) {
         const n = Object.keys(G.state.players).length;
-        startBtn.textContent = n >= 4 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
+        startBtn.textContent = n >= 2 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
       }
-
-      // cid match fallback: joinAck가 누락돼도 내 플레이어 id를 복구
-      if (!net.myPlayerId && net.clientId) {
-        for (const [pid, pl] of Object.entries(G.state.players || {})) {
-          if (pl && pl.cid === net.clientId) {
-            net.myPlayerId = pid;
-            break;
-          }
-        }
-      }
-
       applyPhaseUI();
     });
 
@@ -4578,24 +4969,13 @@ default:
     if (net.isHost) {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
-      const pid = hostAddPlayer(nick, false);
+      const pid = hostAddPlayer(nick, false, net.clientId);
       net.myPlayerId = pid;
       G.phase = 'lobby';
       setRolePill();
       setHUD();
-      setLobbyStatus('대기실: 플레이어를 추가하고 시작하세요. (4명 미만이면 연습 모드)', null);
+      setLobbyStatus('대기실: 플레이어를 추가하고 시작하세요. (1명일 때 연습 모드)', null);
       broadcastState(true);
-
-      // cid match fallback: joinAck가 누락돼도 내 플레이어 id를 복구
-      if (!net.myPlayerId && net.clientId) {
-        for (const [pid, pl] of Object.entries(G.state.players || {})) {
-          if (pl && pl.cid === net.clientId) {
-            net.myPlayerId = pid;
-            break;
-          }
-        }
-      }
-
       applyPhaseUI();
     } else {
       // join 요청
@@ -4618,7 +4998,6 @@ default:
     }
     if (!G.net?.isHost) return;
     const st = G.state;
-    tickHUD();
     const current = Object.values(st.players).length;
     if (current >= 8) return;
     hostAddPlayer('봇' + (current + 1), true);
@@ -4635,7 +5014,7 @@ default:
     if (G.host.started) return;
     G.phase = 'play';
     const n = Object.values(G.state.players).length;
-    const practice = n < 4;
+    const practice = n <= 1;
     hostStartGame(practice);
     broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
     applyPhaseUI();
@@ -4660,7 +5039,7 @@ default:
     window.__EMBED_IS_HOST__ = !!init.isHost || !!init.solo;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
-    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,8); }catch(_){ }
+    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,64); }catch(_){ }
 
     // hide local lobby controls (room UI is handled by parent)
     try{ joinBtn.style.display = 'none'; }catch(_){ }
