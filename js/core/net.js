@@ -221,6 +221,8 @@ if (isDuel && humans.length === 1){
         "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push",
         // SnakeTail
         "st_timer","st_foods","st_spawn","st_eaten","st_players","st_scores","st_event",
+        // SuhakTokki (coop)
+        "sk_msg",
         // misc
         "frame"
       ]);
