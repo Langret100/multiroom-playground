@@ -75,13 +75,16 @@
 
     /* Small screens: avoid HUD buttons going off-screen */
     @media (max-width: 520px){
+      #hud{flex-direction:column;align-items:stretch;gap:6px;}
+      #leftHud{justify-content:flex-start;}
+      #rightHud{justify-content:flex-start;max-width:100%;}
       .pill{padding:6px 10px;font-size:12px;}
       .bar{width:92px;}
       button.ui.mini{padding:6px 8px;border-radius:10px;font-size:11px;}
-      #rightHud{gap:6px;max-width:76vw;}
+      #rightHud{gap:6px;}
     }
     @media (max-width: 390px){
-      #rightHud{max-width:84vw;}
+      #rightHud{max-width:100%;}
       button.ui.icon{width:28px;height:28px;border-radius:10px;}
     }
     #interactBtn.ready,#killBtn.ready,#saboBtnTouch.ready,#forceBtnTouch.ready{opacity:1;pointer-events:auto;}
