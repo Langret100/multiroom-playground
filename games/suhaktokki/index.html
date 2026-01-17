@@ -12,14 +12,20 @@
     canvas{background:#0b0f1a;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);}
 
     /* HUD */
-    #hud{position:fixed;left:0;top:0;right:0;z-index:20;pointer-events:none;display:flex;gap:8px;justify-content:space-between;align-items:flex-start;padding:10px;}
+    #hud{position:fixed;left:0;top:0;right:0;z-index:20;pointer-events:none;display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;
+      padding:
+        calc(10px + env(safe-area-inset-top))
+        calc(10px + env(safe-area-inset-right))
+        calc(10px + env(safe-area-inset-bottom))
+        calc(10px + env(safe-area-inset-left));
+    }
     #leftHud{display:flex;gap:8px;align-items:flex-start;pointer-events:none;}
     .pill{pointer-events:auto;background:rgba(18,26,46,.75);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:999px;padding:8px 12px;font-weight:800;font-size:13px;display:flex;gap:10px;align-items:center;}
     #roomPill{padding:7px 10px;font-size:12px;opacity:.9}
     .pill small{font-weight:800;color:var(--muted)}
     .bar{width:120px;height:10px;border-radius:999px;background:rgba(255,255,255,.12);overflow:hidden;border:1px solid rgba(255,255,255,.10)}
     .bar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--accent),#7dd3fc);}
-    #rightHud{display:flex;gap:8px;align-items:flex-start;}
+    #rightHud{display:flex;gap:8px;align-items:flex-start;justify-content:flex-end;flex-wrap:wrap;max-width:70vw;}
     button.ui{pointer-events:auto;border:1px solid var(--line);background:rgba(18,26,46,.75);color:var(--txt);border-radius:12px;padding:10px 12px;font-weight:900;font-size:13px;cursor:pointer;}
     button.ui:active{transform:translateY(1px)}
     button.ui.mini{padding:7px 9px;border-radius:10px;font-size:12px;}
@@ -56,14 +62,28 @@
     .chip .bot{opacity:.85;font-weight:1000;color:rgba(125,211,252,.95)}
 
     /* Touch UI */
-    #touchUI{position:fixed;inset:0;z-index:19;pointer-events:none;display:none;}
-    #joy{position:absolute;left:14px;bottom:14px;width:140px;height:140px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(6px);}
+    #touchUI{position:fixed;inset:0;z-index:19;pointer-events:none;display:none;
+      padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    }
+    #joy{position:absolute;left:calc(14px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));width:140px;height:140px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(6px);}
     #joyKnob{position:absolute;left:50%;top:50%;width:64px;height:64px;border-radius:999px;transform:translate(-50%,-50%);background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.12);}
-    #interactBtn,#killBtn,#saboBtnTouch,#forceBtnTouch{position:absolute;right:14px;width:140px;height:64px;border-radius:18px;display:flex;align-items:center;justify-content:center;font-weight:1000;font-size:16px;opacity:.35;pointer-events:none;}
-    #interactBtn{bottom:18px;background:linear-gradient(180deg,#66e0a3,#33c38a);border:0;color:#071022;}
-    #killBtn{bottom:92px;background:linear-gradient(180deg,#222,#000);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
-    #saboBtnTouch{bottom:166px;background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
-    #forceBtnTouch{bottom:240px;background:linear-gradient(180deg,#a855f7,#7c3aed);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
+    #interactBtn,#killBtn,#saboBtnTouch,#forceBtnTouch{position:absolute;right:calc(14px + env(safe-area-inset-right));width:140px;height:64px;border-radius:18px;display:flex;align-items:center;justify-content:center;font-weight:1000;font-size:16px;opacity:.35;pointer-events:none;}
+    #interactBtn{bottom:calc(18px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#66e0a3,#33c38a);border:0;color:#071022;}
+    #killBtn{bottom:calc(92px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#222,#000);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
+    #saboBtnTouch{bottom:calc(166px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
+    #forceBtnTouch{bottom:calc(240px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#a855f7,#7c3aed);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
+
+    /* Small screens: avoid HUD buttons going off-screen */
+    @media (max-width: 520px){
+      .pill{padding:6px 10px;font-size:12px;}
+      .bar{width:92px;}
+      button.ui.mini{padding:6px 8px;border-radius:10px;font-size:11px;}
+      #rightHud{gap:6px;max-width:76vw;}
+    }
+    @media (max-width: 390px){
+      #rightHud{max-width:84vw;}
+      button.ui.icon{width:28px;height:28px;border-radius:10px;}
+    }
     #interactBtn.ready,#killBtn.ready,#saboBtnTouch.ready,#forceBtnTouch.ready{opacity:1;pointer-events:auto;}
 
     /* Modals */
@@ -225,6 +245,8 @@
     // Cloudflare Workers로 온라인 연동할 때 여기에 wss 주소를 넣어줘 (예: wss://your-domain.workers.dev)
     window.__ONLINE_WS_BASE__ = '';
   </script>
+  <!-- Pixel character data (generated from the user's 3-view sprite) -->
+  <script src="tokki_data.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

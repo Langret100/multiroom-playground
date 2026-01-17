@@ -1,6 +1,6 @@
 {
   "name": "Burrow-01",
-  "tileSize": 16,
+  "tileSize": 32,
   "width": 64,
   "height": 48,
   "layers": {

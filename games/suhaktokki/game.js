@@ -21,6 +21,14 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
+  // Ensure keyboard controls work reliably inside an iframe (multiroom embed):
+  // make canvas focusable and focus it on interaction.
+  try {
+    canvas.tabIndex = 0;
+    canvas.style.outline = 'none';
+    canvas.addEventListener('pointerdown', () => { try { canvas.focus(); } catch (_) {} });
+  } catch (_) {}
+
   const lobby = document.getElementById('lobby');
   const nickEl = document.getElementById('nick');
   const roomEl = document.getElementById('room');
@@ -282,6 +290,338 @@
     });
   }
 
+  // ---------- Tokki pixel sprite generator ----------
+  // Builds a full v3-style sprite sheet (same layout as chars_bunny_v3.png):
+  //   columns: 6 frames
+  //   rows: (8 colors) * (5 motions) * (3 directions)
+  // Source: palette-indexed 32x36 pixel data (tokki_data.js), scaled to 64x72.
+  function buildTokkiSpriteSheet() {
+    // tokki_data.js must be loaded before game.js
+    if (typeof TOKKI_W === 'undefined' || typeof TOKKI_VIEW_0 === 'undefined') {
+      throw new Error('tokki_data.js not loaded');
+    }
+
+    const W = TOKKI_W, H = TOKKI_H;
+    const pal = TOKKI_PALETTE;
+    const palLen = Math.floor(pal.length / 4);
+
+    // dir mapping in this game: 0=front, 1=back, 2=side
+    const DIRS = [
+      { view: TOKKI_VIEW_1, dress: TOKKI_VIEW_1_DRESS, ear: TOKKI_VIEW_1_EAR, bag: (typeof TOKKI_VIEW_1_BAG !== 'undefined' ? TOKKI_VIEW_1_BAG : null) },
+      { view: TOKKI_VIEW_2, dress: TOKKI_VIEW_2_DRESS, ear: TOKKI_VIEW_2_EAR, bag: (typeof TOKKI_VIEW_2_BAG !== 'undefined' ? TOKKI_VIEW_2_BAG : null) },
+      { view: TOKKI_VIEW_0, dress: TOKKI_VIEW_0_DRESS, ear: TOKKI_VIEW_0_EAR, bag: (typeof TOKKI_VIEW_0_BAG !== 'undefined' ? TOKKI_VIEW_0_BAG : null) },
+    ];
+
+    const lum = (r, g, b) => (0.2126 * r + 0.7152 * g + 0.0722 * b);
+
+    // precompute average dress luminance per dir-view (for shading preservation)
+    const avgDressLum = DIRS.map(({ view, dress }) => {
+      let s = 0, n = 0;
+      for (let i = 0; i < view.length; i++) {
+        if (!dress[i]) continue;
+        const idx = view[i] | 0;
+        if (idx <= 0 || idx >= palLen) continue;
+        const r = pal[idx * 4 + 0], g = pal[idx * 4 + 1], b = pal[idx * 4 + 2];
+        s += lum(r, g, b);
+        n++;
+      }
+      return n ? (s / n) : 120;
+    });
+
+    // player color variants (dress tint) matching the in-game COLORS order
+    const DRESS_RGB = [
+      [59, 130, 246],  // blue
+      [34, 197, 94],   // green
+      [236, 72, 153],  // pink
+      [250, 204, 21],  // yellow
+      [168, 85, 247],  // purple
+      [249, 115, 22],  // orange
+      [20, 184, 166],  // teal
+      [239, 68, 68],   // red
+    ];
+
+    const clamp01 = (x) => (x < 0 ? 0 : (x > 1 ? 1 : x));
+    const clamp255 = (x) => (x < 0 ? 0 : (x > 255 ? 255 : x));
+
+    // Apply shading by scaling toward white/black based on luminance ratio.
+    function shadeToTarget(rgb, ratio) {
+      // ratio ~ [0.7 .. 1.35]
+      const t = clamp01((ratio - 0.65) / (1.35 - 0.65));
+      const dark = 0.72, light = 1.18;
+      const s = dark + (light - dark) * t;
+      return [
+        clamp255(rgb[0] * s),
+        clamp255(rgb[1] * s),
+        clamp255(rgb[2] * s),
+      ];
+    }
+
+    // Fixed walk frames (3 unique frames: mid/left/right) mapped into the engine's 6-frame cycle.
+    // This avoids jittery bobbing and makes the stepping read like real pixel animation.
+    const WALK_FRAME_MAP = [0, 1, 0, 2, 0, 1];
+
+    // Swim can stay slightly bobbed (works well for teachers in water)
+    const SWIM_BOB = [0, -1, -1, 0, 1, 0];
+    const SWIM_EAR = [0, 0, -1, 0, 1, 0];
+
+    function cloneU8(a) { return new Uint8Array(a); }
+
+    function movePixelsByPredicate(src, pred, dx, dy) {
+      const out = cloneU8(src);
+      const moved = [];
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const v = src[i] | 0;
+          if (!v) continue;
+          if (!pred(i, x, y, v)) continue;
+          moved.push([x, y, v]);
+          out[i] = 0;
+        }
+      }
+      for (let k = 0; k < moved.length; k++) {
+        const x = moved[k][0], y = moved[k][1], v = moved[k][2];
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        out[ny * W + nx] = v;
+      }
+      return out;
+    }
+
+    function moveMask(src, mask, dx, dy) {
+      if (!mask) return src;
+      return movePixelsByPredicate(src, (i) => (mask[i] ? true : false), dx, dy);
+    }
+
+    // Build 3 walk frames for each direction: mid, left-step, right-step.
+    function makeWalk3Frames(dirIndex, def) {
+      const mid = def.view;
+
+      // Ear wiggle + bag bounce (fixed per frame)
+      const earDY_L = -1, earDY_R = 1;
+      const bagDY_L = 1, bagDY_R = -1;
+
+      // 1) start from base
+      let left = cloneU8(mid);
+      let right = cloneU8(mid);
+
+      // 2) ears
+      left = moveMask(left, def.ear, 0, earDY_L);
+      right = moveMask(right, def.ear, 0, earDY_R);
+
+      // 3) bag (if mask is missing, use a small bbox on the back view)
+      if (def.bag && def.bag.some && def.bag.some(v => v)) {
+        left = moveMask(left, def.bag, 0, bagDY_L);
+        right = moveMask(right, def.bag, 0, bagDY_R);
+      } else if (dirIndex === 1) {
+        // back view: approximate bag bbox
+        const bagPred = (i, x, y) => (x >= 20 && x <= 26 && y >= 20 && y <= 30);
+        left = movePixelsByPredicate(left, (i,x,y,v) => bagPred(i,x,y) && v && !def.dress[i], 0, bagDY_L);
+        right = movePixelsByPredicate(right, (i,x,y,v) => bagPred(i,x,y) && v && !def.dress[i], 0, bagDY_R);
+      }
+
+      // 4) feet / step read
+      if (dirIndex === 0 || dirIndex === 1) {
+        // front/back: split left/right foot and lift the opposite slightly
+        const y0 = 33, y1 = 35;
+        const lf = (i, x, y) => (y >= y0 && y <= y1 && x >= 13 && x <= 15);
+        const rf = (i, x, y) => (y >= y0 && y <= y1 && x >= 16 && x <= 18);
+
+        left = movePixelsByPredicate(left, (i,x,y,v) => lf(i,x,y) && v, -1, 0);
+        left = movePixelsByPredicate(left, (i,x,y,v) => rf(i,x,y) && v, 0, -1);
+
+        right = movePixelsByPredicate(right, (i,x,y,v) => rf(i,x,y) && v, 1, 0);
+        right = movePixelsByPredicate(right, (i,x,y,v) => lf(i,x,y) && v, 0, -1);
+
+        // arm swing (subtle): shift sleeve/hand clusters
+        const lArm = (i,x,y) => (x >= 9 && x <= 12 && y >= 19 && y <= 24);
+        const rArm = (i,x,y) => (x >= 19 && x <= 22 && y >= 19 && y <= 24);
+        left = movePixelsByPredicate(left, (i,x,y,v) => lArm(i,x,y) && v && !def.dress[i], 0, -1);
+        left = movePixelsByPredicate(left, (i,x,y,v) => rArm(i,x,y) && v && !def.dress[i], 0, 1);
+        right = movePixelsByPredicate(right, (i,x,y,v) => lArm(i,x,y) && v && !def.dress[i], 0, 1);
+        right = movePixelsByPredicate(right, (i,x,y,v) => rArm(i,x,y) && v && !def.dress[i], 0, -1);
+
+      } else {
+        // side: swing single foot and a tiny arm/bag shift already handles most of the read
+        const foot = (i, x, y) => (y >= 33 && y <= 35 && x >= 15 && x <= 17);
+        left = movePixelsByPredicate(left, (i,x,y,v) => foot(i,x,y) && v, 1, 0);
+        right = movePixelsByPredicate(right, (i,x,y,v) => foot(i,x,y) && v, -1, 0);
+        const arm = (i,x,y) => (x >= 18 && x <= 21 && y >= 19 && y <= 24);
+        left = movePixelsByPredicate(left, (i,x,y,v) => arm(i,x,y) && v && !def.dress[i], 0, 1);
+        right = movePixelsByPredicate(right, (i,x,y,v) => arm(i,x,y) && v && !def.dress[i], 0, -1);
+      }
+
+      return [mid, left, right];
+    }
+
+    const WALK3 = DIRS.map((d, i) => makeWalk3Frames(i, d));
+
+    function paintRGBA(rgba, x, y, r, g, b, a) {
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      const o = (y * W + x) * 4;
+      rgba[o + 0] = r;
+      rgba[o + 1] = g;
+      rgba[o + 2] = b;
+      rgba[o + 3] = a;
+    }
+
+    function renderRGBA(dir, colorIdx, motion, frame) {
+      const def = DIRS[dir];
+      const wfi = (motion === 0 /* walk */) ? (WALK_FRAME_MAP[frame] | 0) : 0;
+      const view = (motion === 0 /* walk */) ? (WALK3[dir][wfi] || def.view) : def.view;
+      const dress = def.dress;
+      const ear = def.ear;
+
+      const bob = (motion === 1 /* swim */) ? SWIM_BOB[frame] : 0;
+      const earW = (motion === 1 /* swim */) ? SWIM_EAR[frame] : 0;
+
+      // palette indices after motion offsets
+      const dstIdx = new Uint16Array(W * H);
+      const dstDress = new Uint8Array(W * H);
+
+      // motion: 0 walk, 1 swim, 2 faint, 3 cry, 4 tsk
+      // for non-walk motions (except swim), keep minimal bob to reduce jitter
+      const bobY = (motion <= 1) ? bob : 0;
+      const earDY = (motion <= 1) ? earW : 0;
+
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const idx = view[i] | 0;
+          if (!idx) continue;
+          let ny = y + bobY;
+          let nx = x;
+          // subtle ear wiggle only
+          if (ear[i]) ny += earDY;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const di = ny * W + nx;
+          dstIdx[di] = idx;
+          if (dress[i]) dstDress[di] = 1;
+        }
+      }
+
+      // Convert to RGBA + recolor dress
+      const rgba = new Uint8ClampedArray(W * H * 4);
+      const target = DRESS_RGB[(colorIdx | 0) % DRESS_RGB.length];
+      const refLum = avgDressLum[dir] || 120;
+
+      for (let i = 0; i < dstIdx.length; i++) {
+        const idx = dstIdx[i] | 0;
+        if (!idx || idx >= palLen) continue;
+        let r = pal[idx * 4 + 0], g = pal[idx * 4 + 1], b = pal[idx * 4 + 2], a = pal[idx * 4 + 3];
+        if (dstDress[i]) {
+          const ratio = lum(r, g, b) / refLum;
+          const rr = shadeToTarget(target, ratio);
+          r = rr[0]; g = rr[1]; b = rr[2];
+        }
+        const o = i * 4;
+        rgba[o + 0] = r;
+        rgba[o + 1] = g;
+        rgba[o + 2] = b;
+        rgba[o + 3] = a;
+      }
+
+      // Small emote overlays (front/back/side all get them; front looks best)
+      if (motion === 3 /* cry */) {
+        const t = frame % 4;
+        const dx = (t === 1 || t === 2) ? 0 : 1;
+        // tear drops
+        paintRGBA(rgba, 12, 18 + dx, 125, 211, 252, 235);
+        paintRGBA(rgba, 19, 18 + dx, 125, 211, 252, 235);
+        paintRGBA(rgba, 12, 19 + dx, 125, 211, 252, 210);
+        paintRGBA(rgba, 19, 19 + dx, 125, 211, 252, 210);
+      } else if (motion === 4 /* tsk */) {
+        const t = frame % 3;
+        // tiny anger mark near top-right
+        paintRGBA(rgba, 22, 10, 255, 90, 122, 240);
+        if (t === 1) paintRGBA(rgba, 23, 9, 255, 90, 122, 230);
+        if (t === 2) paintRGBA(rgba, 21, 9, 255, 90, 122, 230);
+        // mouth wiggle
+        paintRGBA(rgba, 16, 18, 0, 0, 0, 0); // clear
+        paintRGBA(rgba, 16 + (t - 1), 18, 56, 10, 27, 255);
+      }
+
+      return rgba;
+    }
+
+    // --- Build sheet ---
+    const sheet = document.createElement('canvas');
+    sheet.width = SPR_W * FRAMES;
+    sheet.height = SPR_H * (COLOR_ROWS * 5 * 3);
+    const sctx = sheet.getContext('2d');
+    sctx.imageSmoothingEnabled = false;
+
+    // tiny (32x36) buffer canvas
+    const tiny = document.createElement('canvas');
+    tiny.width = W;
+    tiny.height = H;
+    const tctx = tiny.getContext('2d');
+    tctx.imageSmoothingEnabled = false;
+
+    // 64x72 cell canvas (used for rotation in faint)
+    const cell = document.createElement('canvas');
+    cell.width = SPR_W;
+    cell.height = SPR_H;
+    const cctx = cell.getContext('2d');
+    cctx.imageSmoothingEnabled = false;
+
+    // motion row mapping must match drawPlayer()
+    const MOTION = { walk: 0, swim: 1, faint: 2, cry: 3, tsk: 4 };
+
+    function drawScaledRGBA(rgba32, dx, dy) {
+      const img = new ImageData(rgba32, W, H);
+      tctx.clearRect(0, 0, W, H);
+      tctx.putImageData(img, 0, 0);
+      sctx.drawImage(tiny, 0, 0, W, H, dx, dy, SPR_W, SPR_H);
+    }
+
+    // Build each row into the sheet
+    for (let color = 0; color < COLOR_ROWS; color++) {
+      for (let motion = 0; motion < 5; motion++) {
+        for (let dir = 0; dir < 3; dir++) {
+          const row = color * (5 * 3) + motion * 3 + dir;
+          const baseY = row * SPR_H;
+          for (let f = 0; f < FRAMES; f++) {
+            const x = f * SPR_W;
+
+            // faint: 2 frames used; rotate front sprite to look "down"
+            if (motion === MOTION.faint) {
+              const useF = (f % 2);
+              const rgba32 = renderRGBA(0, color, 0, 0); // front idle as base
+              cctx.clearRect(0, 0, SPR_W, SPR_H);
+              // draw base scaled into cell
+              const img = new ImageData(rgba32, W, H);
+              tctx.clearRect(0, 0, W, H);
+              tctx.putImageData(img, 0, 0);
+              cctx.save();
+              cctx.translate(SPR_W / 2, SPR_H / 2);
+              cctx.rotate(-Math.PI / 2 + (useF ? 0.06 : -0.04));
+              cctx.drawImage(tiny, -SPR_W / 2, -SPR_H / 2, SPR_W, SPR_H);
+              // simple dim
+              cctx.globalAlpha = 0.22;
+              cctx.fillStyle = 'black';
+              cctx.fillRect(-SPR_W / 2, -SPR_H / 2, SPR_W, SPR_H);
+              cctx.restore();
+              sctx.drawImage(cell, 0, 0, SPR_W, SPR_H, x, baseY, SPR_W, SPR_H);
+              continue;
+            }
+
+            // cry/tsk: only a few frames are referenced, others duplicate
+            let rf = f;
+            if (motion === MOTION.cry) rf = f % 4;
+            if (motion === MOTION.tsk) rf = f % 3;
+            if (motion === MOTION.walk || motion === MOTION.swim) rf = f; // 0..5
+
+            const rgba32 = renderRGBA(dir, color, motion, rf);
+            drawScaledRGBA(rgba32, x, baseY);
+          }
+        }
+      }
+    }
+
+    return sheet;
+  }
+
   async function loadAssets() {
     AS.tilesMeta = await loadJSON('assets/tiles_rabbithole.json');
     AS.objsMeta = await loadJSON('assets/objects_rabbithole.json');
@@ -289,7 +629,14 @@
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
-    AS.charsImg = await loadImage('assets/chars_bunny_suits.png');
+    // Character sprites are now generated in-code from pixel data (tokki_data.js)
+    // to keep assets small and make animation tweaks easier.
+    try {
+      AS.charsImg = buildTokkiSpriteSheet();
+    } catch (e) {
+      console.warn('[tokki] sprite build failed, fallback to png sheet', e);
+      AS.charsImg = await loadImage('assets/chars_bunny_v3.png');
+    }
   }
 
   // ---------- Render sizing ----------
@@ -312,24 +659,30 @@
   resize();
 
   // ---------- Game constants ----------
-  const TS = 16;
-  const PLAYER_R = 7;
-  const SPEED = 92; // px/s
-  const KILL_RANGE = 26;
-  const INTERACT_RANGE = 28;
+  const TS = 32;
+  const ZOOM = 1; // 화면 확대(픽셀 퍼펙트). 1=기본, 2=2배
+
+  const PLAYER_R = 14;
+  const SPEED = 184; // px/s
+  const KILL_RANGE = 52;
+  const INTERACT_RANGE = 56;
   const VENT_TRAVEL_MS = 850;
   const VENT_COOLDOWN_MS = 4500;
   const FORCE_COOLDOWN_MS = 40_000;
 
-  const COLOR_ROWS = 4; // sprite rows
-  const FRAMES = 4; // sprite cols
-  const SPR_W = 16, SPR_H = 18;
+  const COLOR_ROWS = 8; // sprite rows
+  const FRAMES = 6; // sprite cols
+  const SPR_W = 64, SPR_H = 72;
 
   const COLORS = [
     { name: '파랑', row: 0 },
     { name: '초록', row: 1 },
     { name: '핑크', row: 2 },
     { name: '노랑', row: 3 },
+    { name: '보라', row: 4 },
+    { name: '주황', row: 5 },
+    { name: '청록', row: 6 },
+    { name: '빨강', row: 7 },
   ];
 
   // ---------- Map pre-render ----------
@@ -344,10 +697,15 @@
   function buildCollision() {
     const { width: W, height: H } = AS.map;
     solid = new Uint8Array(W * H);
-    const walls = AS.map.layers.walls;
-    for (let i = 0; i < walls.length; i++) {
-      const id = walls[i];
-      if (id && tileIsSolid(id)) solid[i] = 1;
+    // NOTE: some maps place "blocking" visuals in the deco layer.
+    // To avoid "walking through walls" when the art looks solid,
+    // we treat *both* walls + deco tiles marked solid as collision.
+    const walls = AS.map.layers.walls || [];
+    const deco = AS.map.layers.deco || [];
+    for (let i = 0; i < solid.length; i++) {
+      const wid = walls[i] || 0;
+      const did = deco[i] || 0;
+      if ((wid && tileIsSolid(wid)) || (did && tileIsSolid(did))) solid[i] = 1;
     }
   }
 
@@ -670,6 +1028,8 @@
       vent: null, // {fromX,fromY,toX,toY,start,end,fromVent,toVent}
       isBot,
       botBrain: isBot ? { t: 0, target: null } : null,
+      emoteKind: null,
+      emoteUntil: 0,
     };
 
     return nextId;
@@ -945,7 +1305,7 @@
     const h = th * TS;
 
     // clip to viewport
-    const vx0 = 0, vy0 = 0, vx1 = viewW, vy1 = viewH;
+    const vx0 = 0, vy0 = 0, vx1 = (cam.vw || viewW), vy1 = (cam.vh || viewH);
     const rx0 = Math.max(vx0, x), ry0 = Math.max(vy0, y);
     const rx1 = Math.min(vx1, x + w), ry1 = Math.min(vy1, y + h);
     if (rx1 <= rx0 || ry1 <= ry0) return;
@@ -2440,7 +2800,7 @@ function tileAtPixel(x, y) {
 
   function colorHex(colorIdx) {
     // 캐릭터 팔레트(간단)
-    return ['#58a6ff', '#58e58c', '#ff76c8', '#ffd24a'][colorIdx % 4];
+    return ['#58a6ff','#58e58c','#ff76c8','#ffd24a','#a578ff','#ffa04a','#28d2dc','#ff5a5a'][colorIdx % 8];
   }
 
   function roundRect(c, x, y, w, h, r) {
@@ -2769,7 +3129,13 @@ function tileAtPixel(x, y) {
       case 'd':
       case 'D':
         G.local.keys.right = true; break;
-      default:
+            case '1':
+        if (G.net) G.net.post({ t: 'emote', playerId: G.net.myPlayerId, kind: 'cry' });
+        handled = true; break;
+      case '2':
+        if (G.net) G.net.post({ t: 'emote', playerId: G.net.myPlayerId, kind: 'tsk' });
+        handled = true; break;
+default:
         handled = false;
     }
     if (!handled) return;
@@ -2862,6 +3228,12 @@ function tileAtPixel(x, y) {
   interactBtn.addEventListener('click', () => {
     if (!G.net) return;
     if (G.phase !== 'play') return;
+    // If I'm the host (solo / practice), handle immediately without relying on relay/echo.
+    if (G.net.isHost && G.net.myPlayerId) {
+      hostHandleInteract(G.net.myPlayerId);
+      broadcastState(true);
+      return;
+    }
     G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
   });
 
@@ -2894,7 +3266,12 @@ function tileAtPixel(x, y) {
     if (!isMobile && G.phase === 'play' && !isTyping()) {
       if (e.key === 'e' || e.key === 'E' || e.key === ' ') {
         e.preventDefault();
-        if (G.net) G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+        if (G.net?.isHost && G.net.myPlayerId) {
+          hostHandleInteract(G.net.myPlayerId);
+          broadcastState(true);
+        } else if (G.net) {
+          G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+        }
         return;
       }
     }
@@ -2907,11 +3284,11 @@ function tileAtPixel(x, y) {
   function getCamera(me) {
     const W = AS.map.width * TS;
     const H = AS.map.height * TS;
-    const vw = viewW;
-    const vh = viewH;
+    const vw = viewW / ZOOM;
+    const vh = viewH / ZOOM;
     const x = clamp(me.x - vw / 2, 0, Math.max(0, W - vw));
     const y = clamp(me.y - vh / 2, 0, Math.max(0, H - vh));
-    return { x, y };
+    return { x, y, vw, vh };
   }
 
   function draw() {
@@ -2927,21 +3304,27 @@ function tileAtPixel(x, y) {
 
     const st = G.state;
     const me = st.players[G.net?.myPlayerId] || Object.values(st.players)[0];
-    let cam = me ? getCamera(me) : { x: 0, y: 0 };
+    let cam = me ? getCamera(me) : { x: 0, y: 0, vw: viewW / ZOOM, vh: viewH / ZOOM };
 
     // time warning shake (10초 이하)
     if (G.phase === 'play' && st.timeLeft > 0 && st.timeLeft <= 10) {
       const amp = (1 - st.timeLeft / 10) * 3.0;
-      cam = {
+      cam = { ...cam,
         x: cam.x + Math.sin(now() * 0.07) * amp,
         y: cam.y + Math.cos(now() * 0.09) * amp * 0.8,
       };
     }
 
-    // map
-    ctx.drawImage(mapCanvas, cam.x, cam.y, viewW, viewH, 0, 0, viewW, viewH);
+    // world render (pixel-perfect zoom)
+    ctx.save();
+    ctx.scale(ZOOM, ZOOM);
 
-    // locked room big overlay (add-penalty)
+    // map
+    const vw = (cam.vw || (viewW / ZOOM));
+    const vh = (cam.vh || (viewH / ZOOM));
+    ctx.drawImage(mapCanvas, cam.x, cam.y, vw, vh, 0, 0, vw, vh);
+
+    // locked room overlay (add-penalty)
     drawLockedRoomOverlay(cam, st);
 
     // room name pill
@@ -3013,6 +3396,8 @@ function tileAtPixel(x, y) {
       const py = p.y - cam.y;
       drawPlayer(p, px, py);
     }
+
+    ctx.restore();
 
     // UI hints
     if (G.phase === 'play' && me) {
@@ -3758,7 +4143,8 @@ function tileAtPixel(x, y) {
 
 
   function drawPlayer(p, x, y) {
-    // togester-style pixel character (procedural) instead of sprite sheet
+    // Sprite-sheet character (togester-like, bunny suit). We keep the old
+    // procedural fallback so the game still runs even if the sheet fails.
     const vt = p.vent;
     let restored = false;
     if (vt) {
@@ -3782,14 +4168,61 @@ function tileAtPixel(x, y) {
     const meId = G.net?.myPlayerId;
     const isLocal = (meId === p.id);
 
-    const col = colorHex(p.color || 0);
-    const st = {
-      vx: p.vx || 0,
-      vy: p.vy || 0,
-      onGround: true,
-      facing: (p.vx < -0.2 ? -1 : 1),
-    };
-    drawTogesterBunny(x, y, col, p.nick || '', isLocal, !!p.down, st);
+    const speed = Math.hypot(p.vx || 0, p.vy || 0);
+    const moving = speed > 4.5;
+    const facing = (p.vx < -0.2 ? -1 : 1);
+
+    // Motion selection (v3 sheet): walk / swim / faint / cry / tsk
+    const MOTION_ROWS = 5;
+    const DIR_ROWS = 3; // 0:front/down, 1:back/up, 2:side (left/right via mirroring)
+    const motionMap = { walk: 0, swim: 1, faint: 2, cry: 3, tsk: 4 };
+    let motion = 'walk';
+    if (p.down) motion = 'faint';
+    else if (p.emoteUntil && now() < p.emoteUntil && (p.emoteKind === 'cry' || p.emoteKind === 'tsk')) motion = p.emoteKind;
+    else if (swimming) motion = 'swim';
+
+    // frame index
+    const base = now() * 0.012 + (strHash(p.id) % 997);
+    let frame = 0;
+    if (motion === 'walk') frame = moving ? Math.floor(base % 6) : 0;
+    else if (motion === 'swim') frame = Math.floor(base % 6);
+    else if (motion === 'faint') frame = Math.floor((base * 0.35) % 2);
+    else if (motion === 'cry') frame = Math.floor((base * 0.8) % 4);
+    else if (motion === 'tsk') frame = Math.floor((base * 0.9) % 3);
+
+    // direction row (only affects sprite selection; movement/physics unchanged)
+    const avx = p.vx || 0, avy = p.vy || 0;
+    let dir = 0;
+    if (Math.abs(avy) > Math.abs(avx)) dir = (avy < -0.2 ? 1 : 0);
+    else if (Math.abs(avx) > 0.2) dir = 2;
+
+    const row = ((p.color || 0) % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS) + motionMap[motion] * DIR_ROWS + dir;
+
+    if (AS.charsImg) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.translate(x, y);
+      // Mirror only for side sprites; front/back stay facing camera
+      if (dir === 2) ctx.scale(facing, 1);
+      else ctx.scale(1, 1);
+      const sx = frame * SPR_W;
+      const sy = row * SPR_H;
+      // anchor: center-ish
+      ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
+      // outline for local player
+      if (isLocal && !p.down) {
+        ctx.globalAlpha = 0.35;
+        ctx.strokeStyle = 'rgba(125,211,252,.95)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(-SPR_W / 2 - 2, -60 - 2, SPR_W + 4, SPR_H + 4);
+      }
+      ctx.restore();
+    } else {
+      // fallback (should rarely happen)
+      const col = colorHex(p.color || 0);
+      const st = { vx: p.vx || 0, vy: p.vy || 0, onGround: true, facing };
+      drawTogesterBunny(x, y, col, p.nick || '', isLocal, !!p.down, st);
+    }
 
     if (swimming) drawSwimOverlay(x, y);
 
@@ -4082,6 +4515,17 @@ function tileAtPixel(x, y) {
       if (!net.isHost) return;
       if (!m.playerId) return;
       G.host.inputs.set(m.playerId, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
+    });
+
+    net.on('emote', (m) => {
+      if (!net.isHost) return;
+      const p = G.state.players[m.playerId];
+      if (!p || !p.alive) return;
+      const kind = (m.kind === 'cry' || m.kind === 'tsk') ? m.kind : null;
+      if (!kind) return;
+      p.emoteKind = kind;
+      p.emoteUntil = now() + (kind === 'cry' ? 1800 : 900);
+      broadcastState();
     });
 
     net.on('act', (m) => {

@@ -65,11 +65,20 @@
 
     #canvasWrap{ flex:1; position:relative; touch-action:none; }
     canvas{ position:absolute; inset:0; width:100%; height:100%; }
+    /* 3D renderer canvas sits below 2D (2D can be transparent debug/compat layer) */
+    #cv3d{ z-index:1; }
+    #cv2d{ z-index:2; pointer-events:none; }
 
     #hud{
       position:absolute; left:12px; top:62px; z-index:10; display:flex; flex-direction:column; gap:8px;
       pointer-events:none;
     }
+    #hudRight{
+      position:absolute; right:12px; top:62px; z-index:10; display:flex; flex-direction:column; gap:8px;
+      pointer-events:none; align-items:flex-end;
+    }
+    #mini{ width:160px; height:160px; border-radius: 12px; background: rgba(0,0,0,.18); border:1px solid var(--line); }
+    #rankList{ margin-top:6px; }
     .card{ pointer-events:auto; padding:10px 12px; border-radius:14px; background:var(--panel); border:1px solid var(--line); backdrop-filter: blur(10px); min-width: 220px; max-width: 280px; }
     .row{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
     .row .k{ color:var(--muted); font-size:12px; }
@@ -125,6 +134,9 @@
       #controls{ display:none; }
     }
   </style>
+
+  <!-- SnakeTail 3D renderer (CDN). If unavailable, the game falls back to 2D canvas. -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
 </head>
 <body>
     <div id="wrap">
@@ -138,8 +150,32 @@
     </div>
 
     <div id="canvasWrap">
-      <canvas id="cv"></canvas>
+      <canvas id="cv3d"></canvas>
+      <canvas id="cv2d"></canvas>
       <div id="toast"></div>
+      <div id="hud">
+        <div class="card" id="cardHint">
+          <div class="row"><span class="k">조작</span><span class="v" id="ctlHint">←/→ 회전 · Shift 부스트</span></div>
+          <div class="small" id="stageHint">-</div>
+        </div>
+        <div class="card" id="cardRank">
+          <div class="row"><span class="k">랭킹 TOP5</span><span class="k" id="rankMe">-</span></div>
+          <div class="small" id="rankList">-</div>
+        </div>
+      </div>
+      <div id="hudRight">
+        <div class="card" id="cardMini">
+          <div class="row"><span class="k">미니맵</span><span class="k">B/Shift:부스트</span></div>
+          <canvas id="mini" width="160" height="160"></canvas>
+        </div>
+      </div>
+      <div id="controls">
+        <div style="display:flex; gap:12px; pointer-events:auto;">
+          <div class="btnCtl" id="btnLeft">⟵</div>
+          <div class="btnCtl" id="btnRight">⟶</div>
+        </div>
+        <div class="btnCtl" id="btnBoost">⚡</div>
+      </div>
     </div>
   </div>
 
@@ -149,8 +185,10 @@
   const EMBED = qs.get('embed') === '1' || qs.get('embed') === 'true';
   const PRACTICE = qs.get('practice') === '1' || qs.get('practice') === 'true';
 
-  const cv = document.getElementById('cv');
-  const ctx = cv.getContext('2d');
+  const cv3d = document.getElementById('cv3d');
+  const cv2d = document.getElementById('cv2d');
+  const cv = cv2d;
+  const ctx = cv2d.getContext('2d');
 
   const ui = {
   canvasWrap: document.getElementById('canvasWrap'),
@@ -159,6 +197,13 @@
   myStage: document.getElementById('myStage'),
   rankTop: document.getElementById('rankTop'),
   toast: document.getElementById('toast'),
+  stageHint: document.getElementById('stageHint'),
+  rankList: document.getElementById('rankList'),
+  rankMe: document.getElementById('rankMe'),
+  mini: document.getElementById('mini'),
+  btnLeft: document.getElementById('btnLeft'),
+  btnRight: document.getElementById('btnRight'),
+  btnBoost: document.getElementById('btnBoost'),
 };
 
   // --- Cute SFX (WebAudio) ---
@@ -208,6 +253,29 @@
   // --- World settings ---
   const WORLD = { W:1600, H:900, pad:24 };
 
+  // Food tiers (tiny -> huge)
+  const FOOD_TYPES = {
+    1: { kind: 1, value: 1, r: 4.0, s3: 0.85 },
+    2: { kind: 2, value: 2, r: 5.5, s3: 1.05 },
+    3: { kind: 3, value: 4, r: 7.5, s3: 1.30 },
+    4: { kind: 4, value: 7, r: 10.5, s3: 1.60 },
+    5: { kind: 5, value: 12, r: 14.5, s3: 2.05 },
+  };
+  function foodInfo(f){
+    const kind = Number(f?.kind||0)||0;
+    if (kind && FOOD_TYPES[kind]) return FOOD_TYPES[kind];
+    const v = Number(f?.value||0)||0;
+    // nearest by value
+    let best = FOOD_TYPES[2];
+    let bestd = 1e9;
+    for (const k of [1,2,3,4,5]){
+      const t = FOOD_TYPES[k];
+      const d = Math.abs((t.value||0) - v);
+      if (d < bestd){ bestd = d; best = t; }
+    }
+    return best;
+  }
+
   const STAGES = [
     // 외각 기준 회전. 정삼각형(내각 60°)을 닫으려면 120°씩 회전합니다.
     { key:'tri', name:'삼각형', quantumDeg:120, sides:3, targetMass:22, hint:'120도씩만 회전할 수 있어요.' },
@@ -227,6 +295,11 @@
   let connected = false;
   let playing = true;
 
+  // If the room server isn't running (or initial food sync is missed),
+  // allow a solo/offline fallback so foods still appear.
+  let offlineSolo = false;
+  let lastFoodsAt = 0;
+
   let startTs = 0;
   let durationMs = 180000;
 
@@ -236,6 +309,35 @@
     foods: [],       // authoritative food list
     lastEventTs: 0,
   };
+
+  function randFoodKind(){
+    // Weighted like snake.io: many small, few huge.
+    const r = Math.random();
+    if (r < 0.52) return 1;
+    if (r < 0.78) return 2;
+    if (r < 0.92) return 3;
+    if (r < 0.985) return 4;
+    return 5;
+  }
+
+  function spawnOneFood(){
+    const kind = randFoodKind();
+    const info = FOOD_TYPES[kind];
+    const f = {
+      id: `l${now()}-${Math.floor(Math.random()*1e9)}`,
+      x: WORLD.pad + Math.random()*(WORLD.W - WORLD.pad*2),
+      y: WORLD.pad + Math.random()*(WORLD.H - WORLD.pad*2),
+      kind,
+      value: info.value,
+    };
+    net.foods.push(f);
+  }
+
+  function spawnLocalFoods(count=80){
+    net.foods.length = 0;
+    for (let i=0; i<count; i++) spawnOneFood();
+    lastFoodsAt = now();
+  }
 
   const me = {
     x: 220 + Math.random()*120,
@@ -258,7 +360,7 @@
   const cam = { x: me.x, y: me.y, z: 1 };
 
   // input
-  const input = { left:false, right:false };
+  const input = { left:false, right:false, boost:false };
 
   // pointer steering (tap/drag toward a direction; snaps to stage angle)
   const steer = { active:false, targetA:0, pointerId:null };
@@ -410,6 +512,35 @@ function turn(dirSign){
       spawnLocalBodyIfEmpty();
       applySteer(dt);
 
+      // --- BOOST (snake.io-style) ---
+      const canBoost = input.boost && me.mass > 10.5;
+      const baseSpeed = 160;
+      const boostMul = 1.85;
+      me.speed = canBoost ? baseSpeed*boostMul : baseSpeed;
+
+      // Boost consumes mass and drops tiny pellets.
+      if (!me._boostAcc) me._boostAcc = 0;
+      if (canBoost){
+        // mass drain
+        me.mass = Math.max(8, me.mass - dt*1.6);
+        me._boostAcc += dt;
+        if (me._boostAcc >= 0.12 && me.body.length > 6){
+          me._boostAcc = 0;
+          const tail = me.body[Math.min(me.body.length-1, 24)] || me.body[me.body.length-1];
+          if (tail){
+            const pid = `${mySid||'me'}-b-${now()}-${Math.floor(Math.random()*9999)}`;
+            const pellet = { id: pid, x: Number(tail.x)||0, y: Number(tail.y)||0, kind: 1, value: 1 };
+            // local optimistic
+            net.foods.push(pellet);
+            lastFoodsAt = now();
+            if (EMBED && connected && !offlineSolo){
+              // allow non-host boost pellets via server (rate-limited server-side)
+              bridgeSend('st_spawn', { source:'boost', foods:[pellet] });
+            }
+          }
+        }
+      }
+
       const vx = Math.cos(me.dir) * me.speed;
       const vy = Math.sin(me.dir) * me.speed;
       me.x += vx*dt;
@@ -443,10 +574,22 @@ function turn(dirSign){
       for (let i=0; i<net.foods.length; i++){
         const f = net.foods[i];
         if (!f) continue;
-        if (dist2(me.x, me.y, f.x, f.y) <= eatR*eatR){
-          bridgeSend('st_eat', { id: f.id });
-          // local optimistic remove (server will confirm)
-          net.foods.splice(i,1);
+        const fr = foodInfo(f).r;
+        const rr = (eatR + fr);
+        if (dist2(me.x, me.y, f.x, f.y) <= rr*rr){
+          const value = Number(f.value||foodInfo(f).value)||foodInfo(f).value;
+          if (offlineSolo || !connected){
+            // Offline/solo fallback: eat locally + respawn one.
+            net.foods.splice(i,1);
+            me.mass += value;
+            SFX.eat();
+            spawnOneFood();
+            lastFoodsAt = now();
+          } else {
+            bridgeSend('st_eat', { id: f.id });
+            // local optimistic remove (server will confirm)
+            net.foods.splice(i,1);
+          }
           break;
         }
       }
@@ -479,7 +622,9 @@ function turn(dirSign){
     // update HUD
     const st = stage();
     if (ui.myStage) ui.myStage.textContent = st ? st.name : '-';
+    if (ui.stageHint) ui.stageHint.textContent = st ? (st.hint || '') : '';
     renderRanks();
+    drawMiniMap();
   }
 
   let _lastHostColTs = 0;
@@ -588,46 +733,415 @@ function turn(dirSign){
   }
 
   function renderRanks(){
-  const entries = Object.entries(net.scores || {});
-  if (!ui.rankTop) return;
+    const entries = Object.entries(net.scores || {});
+    if (ui.rankTop && !entries.length) ui.rankTop.textContent = '-';
+    if (ui.rankList && !entries.length) ui.rankList.textContent = '-';
+    if (ui.rankMe && !entries.length) ui.rankMe.textContent = '-';
+    if (!entries.length) return;
 
-  if (!entries.length){
-    ui.rankTop.textContent = '-';
-    return;
+    entries.sort((a,b)=> (Number(b[1]?.mass||0)||0) - (Number(a[1]?.mass||0)||0));
+
+    // top2 (topbar)
+    if (ui.rankTop){
+      const top2 = entries.slice(0, 2).map(([sid, st], idx)=>{
+        const nick = (st?.nick || sid.slice(0,4));
+        const mass = Math.floor(Number(st?.mass||0)||0);
+        const dead = st && st.alive === false;
+        return `${idx+1}.${dead ? 'X ' : ''}${nick} ${mass}`;
+      });
+      ui.rankTop.textContent = top2.join(' · ') || '-';
+    }
+
+    // top5 list
+    if (ui.rankList){
+      const top5 = entries.slice(0, 5).map(([sid, st], idx)=>{
+        const nick = esc(st?.nick || sid.slice(0,4));
+        const mass = Math.floor(Number(st?.mass||0)||0);
+        const dead = st && st.alive === false;
+        return `<div>${idx+1}. ${dead ? '☠ ' : ''}${nick} <b style="color:var(--accent)">${mass}</b></div>`;
+      }).join('');
+      ui.rankList.innerHTML = top5 || '-';
+    }
+
+    // my rank
+    if (ui.rankMe && mySid){
+      const idx = entries.findIndex(([sid])=> sid === mySid);
+      if (idx >= 0){
+        const meSt = entries[idx][1] || {};
+        const mass = Math.floor(Number(meSt.mass||0)||0);
+        ui.rankMe.textContent = `내 순위 ${idx+1}/${entries.length} · ${mass}`;
+      }else{
+        ui.rankMe.textContent = '-';
+      }
+    }
   }
-  entries.sort((a,b)=> (Number(b[1]?.mass||0)||0) - (Number(a[1]?.mass||0)||0));
-  const top = entries.slice(0, 2);
-  const parts = top.map(([sid, st], idx)=>{
-    const nick = (st?.nick || sid.slice(0,4));
-    const mass = Math.floor(Number(st?.mass||0)||0);
-    const dead = st && st.alive === false;
-    const deadMark = dead ? 'X ' : '';
-    return `${idx+1}.${deadMark}${nick} ${mass}`;
-  });
-  ui.rankTop.textContent = parts.join(' · ') || '-';
-}
 
 function esc(s){
     return String(s||'').replace(/[&<>"']/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
   }
 
+  // --- MiniMap (snake.io-like) ---
+  let _lastMiniAt = 0;
+  function drawMiniMap(){
+    const c = ui.mini;
+    if (!c) return;
+    const t = now();
+    if (t - _lastMiniAt < 120) return;
+    _lastMiniAt = t;
+    const mctx = c.getContext('2d');
+    const W = c.width, H = c.height;
+    mctx.clearRect(0,0,W,H);
+    // bg
+    mctx.fillStyle = 'rgba(0,0,0,.20)';
+    mctx.fillRect(0,0,W,H);
+    // border
+    mctx.strokeStyle = 'rgba(255,255,255,.30)';
+    mctx.lineWidth = 2;
+    mctx.strokeRect(2,2,W-4,H-4);
+    const sx = (x)=> 4 + (x / WORLD.W) * (W-8);
+    const sy = (y)=> 4 + (y / WORLD.H) * (H-8);
+
+    // foods
+    mctx.globalAlpha = 0.75;
+    mctx.fillStyle = 'rgba(255,208,77,.95)';
+    const foods = net.foods || [];
+    for (let i=0; i<foods.length; i+=4){
+      const f = foods[i];
+      if (!f) continue;
+      mctx.fillRect(sx(f.x)-1, sy(f.y)-1, 2, 2);
+    }
+    mctx.globalAlpha = 1;
+
+    // snakes
+    const snap = {};
+    for (const [sid, st] of Object.entries(net.players||{})) if (st) snap[sid]=st;
+    if (mySid) snap[mySid] = { x: me.x, y: me.y, mass: me.mass, alive: me.alive };
+
+    for (const [sid, st] of Object.entries(snap)){
+      if (!st) continue;
+      const alive = st.alive !== false;
+      const hue = hashHue(String(sid));
+      mctx.fillStyle = alive ? `hsla(${hue},85%,60%,.95)` : 'rgba(200,200,200,.35)';
+      const r = (sid===mySid) ? 4 : 3;
+      const x = sx(Number(st.x||0)||0), y = sy(Number(st.y||0)||0);
+      mctx.beginPath(); mctx.arc(x,y,r,0,Math.PI*2); mctx.fill();
+    }
+  }
+
+
   // --- Rendering ---
+  // --- 3D (three.js) ---
+  // NOTE: We load three.js from CDN. If unavailable, the game runs in 2D.
+  let use3D = false;
+  let THREE_REF = null;
+  const R3 = {
+    renderer: null,
+    scene: null,
+    camera: null,
+    root: null,
+    food: null,
+    players: new Map(), // sid -> { group, head, tail, maxTail }
+    tmpMat: null,
+    S: 0.02, // world(px) -> scene units
+  };
+
+  function w2x(x){ return (x - WORLD.W/2) * R3.S; }
+  function w2z(y){ return (y - WORLD.H/2) * R3.S; }
+
+  function ensure3D(){
+    if (use3D) return true;
+    const T = window.THREE;
+    if (!T) return false;
+    THREE_REF = T;
+    try{
+      const renderer = new T.WebGLRenderer({ canvas: cv3d, antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+      renderer.setClearColor(0x070a16, 1);
+
+      const scene = new T.Scene();
+      scene.fog = new T.Fog(0x070a16, 12, 60);
+
+      const camera = new T.PerspectiveCamera(55, 1, 0.1, 200);
+
+      // lights
+      scene.add(new T.AmbientLight(0xffffff, 0.65));
+      const dir = new T.DirectionalLight(0xffffff, 0.75);
+      dir.position.set(10, 18, 8);
+      scene.add(dir);
+
+      // ground
+      const groundW = WORLD.W * R3.S;
+      const groundH = WORLD.H * R3.S;
+      const ground = new T.Mesh(
+        new T.PlaneGeometry(groundW, groundH, 1, 1),
+        new T.MeshStandardMaterial({ color: 0x0b1030, roughness: 1, metalness: 0 })
+      );
+      ground.rotation.x = -Math.PI/2;
+      ground.position.y = 0;
+      scene.add(ground);
+
+      // grid helper
+      const grid = new T.GridHelper(Math.max(groundW, groundH), 24, 0x2a335f, 0x141a33);
+      grid.position.y = 0.01;
+      scene.add(grid);
+
+      // arena border
+      const pts = [
+        new T.Vector3(w2x(0), 0.03, w2z(0)),
+        new T.Vector3(w2x(WORLD.W), 0.03, w2z(0)),
+        new T.Vector3(w2x(WORLD.W), 0.03, w2z(WORLD.H)),
+        new T.Vector3(w2x(0), 0.03, w2z(WORLD.H)),
+      ];
+      const borderGeo = new T.BufferGeometry().setFromPoints(pts.concat([pts[0]]));
+      const border = new T.Line(borderGeo, new T.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }));
+      scene.add(border);
+
+      // foods (instanced)
+      const foodGeo = new T.IcosahedronGeometry(0.18, 0);
+      const foodMat = new T.MeshStandardMaterial({ color: 0xffd04d, emissive: 0x553300, emissiveIntensity: 0.35, roughness: 0.6, metalness: 0.0 });
+      const foodMax = 220;
+      const food = new T.InstancedMesh(foodGeo, foodMat, foodMax);
+      food.count = 0;
+      food.instanceMatrix.setUsage(T.DynamicDrawUsage);
+      scene.add(food);
+
+      R3.tmpMat = new T.Matrix4();
+      R3.tmpQ = new T.Quaternion();
+      R3.tmpV1 = new T.Vector3();
+      R3.tmpV2 = new T.Vector3();
+      R3.tmpUp = new T.Vector3(0,1,0);
+      R3.renderer = renderer;
+      R3.scene = scene;
+      R3.camera = camera;
+      R3.food = { mesh: food, max: foodMax };
+      use3D = true;
+
+      // Make 2D canvas effectively transparent in 3D mode (keeps sizing math intact).
+      try{ cv2d.style.opacity = "0"; }catch(_){ }
+      return true;
+    }catch(err){
+      console.warn("3D init failed, falling back to 2D", err);
+      use3D = false;
+      return false;
+    }
+  }
+
+  function colorForSid(sid){
+    const T = THREE_REF;
+    const hue = hashHue(String(sid||""));
+    const c = new T.Color();
+    c.setHSL((hue%360)/360, 0.85, 0.6);
+    return c;
+  }
+
+  function ensurePlayer3D(sid){
+    const T = THREE_REF;
+    if (R3.players.has(sid)) return R3.players.get(sid);
+    const col = colorForSid(sid);
+    // Cute snake materials
+    const headMat = new T.MeshStandardMaterial({ color: col, roughness: 0.45, metalness: 0.04, transparent: true, opacity: 0.99 });
+    const tailMat = new T.MeshStandardMaterial({ color: col, roughness: 0.72, metalness: 0.02, transparent: true, opacity: 0.96 });
+
+    // head: round + snout, with eyes + tongue (no bunny ears)
+    const g = new T.Group();
+    const head = new T.Mesh(new T.SphereGeometry(0.28, 16, 12), headMat);
+    head.position.y = 0.26;
+    g.add(head);
+
+    const snout = new T.Mesh(new T.SphereGeometry(0.18, 14, 10), headMat);
+    snout.position.set(0, 0.20, -0.22);
+    g.add(snout);
+
+    const eyeWhiteMat = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.0 });
+    const pupilMat = new T.MeshStandardMaterial({ color: 0x111111, roughness: 0.85, metalness: 0.0 });
+    const eyeGeo = new T.SphereGeometry(0.06, 10, 8);
+    const pupilGeo = new T.SphereGeometry(0.03, 10, 8);
+
+    const eyeL = new T.Mesh(eyeGeo, eyeWhiteMat);
+    const eyeR = new T.Mesh(eyeGeo, eyeWhiteMat);
+    eyeL.position.set(-0.10, 0.34, -0.12);
+    eyeR.position.set( 0.10, 0.34, -0.12);
+    g.add(eyeL); g.add(eyeR);
+
+    const pL = new T.Mesh(pupilGeo, pupilMat);
+    const pR = new T.Mesh(pupilGeo, pupilMat);
+    pL.position.set(-0.10, 0.33, -0.17);
+    pR.position.set( 0.10, 0.33, -0.17);
+    g.add(pL); g.add(pR);
+
+    const tongueMat = new T.MeshStandardMaterial({ color: 0xff4d6d, roughness: 0.65, metalness: 0.0, emissive: 0x330008, emissiveIntensity: 0.25 });
+    const tongue = new T.Mesh(new T.BoxGeometry(0.05, 0.01, 0.14), tongueMat);
+    tongue.position.set(0, 0.16, -0.36);
+    g.add(tongue);
+
+    const tailMax = 160;
+    const SegGeo = (T.CapsuleGeometry ? new T.CapsuleGeometry(0.09, 0.20, 4, 8) : new T.CylinderGeometry(0.10, 0.10, 0.30, 10));
+    const tail = new T.InstancedMesh(SegGeo, tailMat, tailMax);
+    tail.count = 0;
+    tail.instanceMatrix.setUsage(T.DynamicDrawUsage);
+    g.add(tail);
+
+    const tip = new T.Mesh(new T.ConeGeometry(0.08, 0.22, 10), tailMat);
+    tip.position.set(0, 0.12, 0.0);
+    tip.rotation.x = Math.PI;
+    g.add(tip);
+
+    R3.scene.add(g);
+    const obj = { group: g, headMat, tail, tailTip: tip, maxTail: tailMax, tongue };
+    R3.players.set(sid, obj);
+    return obj;
+  }
+
+  function prunePlayers3D(keepSet){
+    for (const [sid, obj] of R3.players.entries()){
+      if (keepSet.has(sid)) continue;
+      try{ R3.scene.remove(obj.group); }catch(_){ }
+      R3.players.delete(sid);
+    }
+  }
+
+  function render3D(){
+    if (!use3D) return;
+    const T = THREE_REF;
+    const { renderer, scene, camera } = R3;
+    if (!renderer || !scene || !camera) return;
+
+    // update camera to follow 2D camera target
+    const tx = w2x(cam.x);
+    const tz = w2z(cam.y);
+    camera.position.set(tx + 0.0, 11.5, tz + 9.5);
+    camera.lookAt(tx, 0.0, tz);
+
+    // foods
+    const foodMesh = R3.food?.mesh;
+    if (foodMesh){
+      const foods = Array.isArray(net.foods) ? net.foods : [];
+      const n = Math.min(foods.length, R3.food.max);
+      for (let i=0; i<n; i++){
+        const f = foods[i];
+        const x = w2x(Number(f?.x||0)||0);
+        const z = w2z(Number(f?.y||0)||0);
+        const info = foodInfo(f);
+        const v = Number(f?.value||info.value)||info.value;
+        const s = info.s3;
+        R3.tmpMat.identity();
+        R3.tmpMat.makeTranslation(x, 0.14, z);
+        R3.tmpMat.scale(new T.Vector3(s, s, s));
+        foodMesh.setMatrixAt(i, R3.tmpMat);
+      }
+      foodMesh.count = n;
+      foodMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // players snapshot (remote + me)
+    const snap = {};
+    for (const [sid, s] of Object.entries(net.players || {})){
+      if (!s) continue;
+      snap[sid] = s;
+    }
+    if (mySid){
+      snap[mySid] = { x: me.x, y: me.y, dir: me.dir, mass: me.mass, alive: me.alive, nick: myNick, body: me.body };
+    }
+
+    const keep = new Set(Object.keys(snap));
+    prunePlayers3D(keep);
+
+    for (const [sid, s] of Object.entries(snap)){
+      const obj = ensurePlayer3D(sid);
+      const alive = s.alive !== false;
+      obj.headMat.opacity = alive ? 0.98 : 0.35;
+      obj.tail.material.opacity = alive ? 0.95 : 0.25;
+
+      const x = w2x(Number(s.x||0)||0);
+      const z = w2z(Number(s.y||0)||0);
+      obj.group.position.set(x, 0, z);
+      const yaw = -Number(s.dir||0)||0;
+      obj.group.rotation.y = yaw;
+
+      // tail instances (oriented capsules to look like a snake)
+      const body = Array.isArray(s.body) ? s.body : [];
+      const step = 2;
+      const maxN = Math.min(Math.floor(body.length/step), obj.maxTail);
+      let lastPx=0, lastPz=0;
+      for (let i=0; i<maxN; i++){
+        const p = body[i*step];
+        const pn = body[Math.min(body.length-1, i*step+step)] || p;
+        if (!p || !pn) continue;
+        const ax = w2x(Number(p.x||0)||0) - x;
+        const az = w2z(Number(p.y||0)||0) - z;
+        const bx = w2x(Number(pn.x||0)||0) - x;
+        const bz = w2z(Number(pn.y||0)||0) - z;
+        const mx = (ax+bx)*0.5, mz = (az+bz)*0.5;
+        // direction from p to pn
+        R3.tmpV1.set(bx-ax, 0, bz-az);
+        const len = Math.max(1e-6, R3.tmpV1.length());
+        R3.tmpV1.multiplyScalar(1/len);
+        // orient capsule's Y axis to the segment direction
+        R3.tmpQ.setFromUnitVectors(R3.tmpUp, R3.tmpV1);
+        const t = maxN <= 1 ? 0 : (i / (maxN-1));
+        const sc = 1.0 - t*0.55;
+        R3.tmpMat.compose(new T.Vector3(mx, 0.14, mz), R3.tmpQ, new T.Vector3(sc, sc*(len/0.38), sc));
+        obj.tail.setMatrixAt(i, R3.tmpMat);
+        lastPx = ax; lastPz = az;
+      }
+      obj.tail.count = maxN;
+      obj.tail.instanceMatrix.needsUpdate = true;
+
+      // tail tip
+      try{
+        if (obj.tailTip && maxN>2){
+          const p = body[Math.min(body.length-1, (maxN-1)*step)] || body[body.length-1];
+          const p2 = body[Math.min(body.length-1, (maxN-2)*step)] || p;
+          const tx = w2x(Number(p.x||0)||0) - x;
+          const tz = w2z(Number(p.y||0)||0) - z;
+          R3.tmpV2.set(tx-(w2x(Number(p2.x||0)||0)-x), 0, tz-(w2z(Number(p2.y||0)||0)-z));
+          const tlen = Math.max(1e-6, R3.tmpV2.length());
+          R3.tmpV2.multiplyScalar(1/tlen);
+          obj.tailTip.position.set(tx, 0.14, tz);
+          obj.tailTip.quaternion.setFromUnitVectors(new T.Vector3(0,0,-1), R3.tmpV2);
+          obj.tailTip.scale.set(1.0, 1.0, 1.0);
+        }
+      }catch(_){ }
+
+      // tongue flick
+      try{ if (obj.tongue){ obj.tongue.visible = ((now()>>8)&1)===0; } }catch(_){ }
+    }
+
+    renderer.render(scene, camera);
+  }
+
   function resize(){
     const dpr = window.devicePixelRatio || 1;
-    const r = cv.getBoundingClientRect();
-    cv.width = Math.max(320, Math.floor(r.width*dpr));
-    cv.height = Math.max(320, Math.floor(r.height*dpr));
+    const r = (ui.canvasWrap || cv2d).getBoundingClientRect();
+    // 2D canvas (fallback / transparent overlay)
+    cv2d.width = Math.max(320, Math.floor(r.width*dpr));
+    cv2d.height = Math.max(320, Math.floor(r.height*dpr));
     ctx.setTransform(dpr,0,0,dpr,0,0);
+    // 3D canvas (renderer)
+    cv3d.width = Math.max(320, Math.floor(r.width*dpr));
+    cv3d.height = Math.max(320, Math.floor(r.height*dpr));
+    if (use3D && R3.renderer && R3.camera){
+      R3.renderer.setSize(Math.max(320, Math.floor(r.width)), Math.max(320, Math.floor(r.height)), false);
+      R3.camera.aspect = Math.max(1e-6, r.width / Math.max(1, r.height));
+      R3.camera.updateProjectionMatrix();
+    }
   }
 
   function worldToScreen(x,y){
-    const w = cv.clientWidth, h = cv.clientHeight;
+    const w = (ui.canvasWrap?.clientWidth || cv.clientWidth || 0);
+    const h = (ui.canvasWrap?.clientHeight || cv.clientHeight || 0);
     const sx = (x - cam.x) * cam.z + w/2;
     const sy = (y - cam.y) * cam.z + h/2;
     return { x:sx, y:sy };
   }
 
   function draw(){
+    // Prefer 3D if available.
+    if (!use3D) ensure3D();
+    if (use3D){
+      render3D();
+      return;
+    }
     const w = cv.clientWidth, h = cv.clientHeight;
     ctx.clearRect(0,0,w,h);
 
@@ -658,7 +1172,8 @@ function esc(s){
     for (const f of net.foods){
       if (!f) continue;
       const p = worldToScreen(f.x, f.y);
-      const r = 4 + (Number(f.value||2)||2)*0.8;
+      const info = foodInfo(f);
+      const r = info.r;
       ctx.fillStyle = 'rgba(255, 208, 77, .92)';
       ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI*2); ctx.fill();
       ctx.fillStyle = 'rgba(0,0,0,.22)';
@@ -690,38 +1205,125 @@ function esc(s){
     const hue = hashHue(sid);
     const col = alive ? `hsla(${hue}, 85%, 60%, .95)` : `hsla(${hue}, 35%, 45%, .55)`;
 
-    // body
-    ctx.lineJoin = 'round';
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = col;
-    ctx.lineWidth = th;
-    ctx.beginPath();
     const head = worldToScreen(Number(s.x||0)||0, Number(s.y||0)||0);
-    if (body.length){
-      const p0 = worldToScreen(Number(body[0].x||0)||0, Number(body[0].y||0)||0);
+
+    // spine stroke (makes it look like a real snake, not beads)
+    if (body.length > 3){
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      // outline
+      ctx.strokeStyle = 'rgba(0,0,0,.22)';
+      ctx.lineWidth = th*0.92;
+      ctx.beginPath();
+      for (let i=0; i<body.length; i+=3){
+        const bp = body[i]; if (!bp) continue;
+        const pp = worldToScreen(Number(bp.x||0)||0, Number(bp.y||0)||0);
+        if (i==0) ctx.moveTo(pp.x, pp.y); else ctx.lineTo(pp.x, pp.y);
+      }
+      ctx.stroke();
+      // main
+      ctx.strokeStyle = col;
+      ctx.lineWidth = th*0.78;
+      ctx.beginPath();
+      for (let i=0; i<body.length; i+=3){
+        const bp = body[i]; if (!bp) continue;
+        const pp = worldToScreen(Number(bp.x||0)||0, Number(bp.y||0)||0);
+        if (i==0) ctx.moveTo(pp.x, pp.y); else ctx.lineTo(pp.x, pp.y);
+      }
+      ctx.stroke();
+    }
+
+    // body (cute snake segments): draw circles with taper
+    // under-stroke to make it feel like one continuous snake
+    const segStep = 3;
+    const max = body.length;
+
+    // continuous stroke
+    if (body.length > 3){
+      ctx.strokeStyle = col;
+      ctx.lineWidth = th*0.95;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      const p0 = worldToScreen(Number(s.x||0)||0, Number(s.y||0)||0);
       ctx.moveTo(p0.x, p0.y);
-      for (let i=1; i<body.length; i++){
+      for (let i=0; i<body.length; i+=segStep){
         const bp = body[i];
         if (!bp) continue;
         const pp = worldToScreen(Number(bp.x||0)||0, Number(bp.y||0)||0);
         ctx.lineTo(pp.x, pp.y);
       }
-    } else {
-      ctx.moveTo(head.x, head.y);
-      ctx.lineTo(head.x-1, head.y-1);
+      ctx.stroke();
     }
-    ctx.stroke();
+    for (let i=max-1; i>=0; i-=segStep){
+      const bp = body[i];
+      if (!bp) continue;
+      const t = max <= 1 ? 0 : (i / (max-1));
+      const r = (th*0.55 + 1) * (0.62 + (1-t)*0.38); // thicker near head
+      const pp = worldToScreen(Number(bp.x||0)||0, Number(bp.y||0)||0);
+      // soft outline
+      ctx.fillStyle = 'rgba(0,0,0,.18)';
+      ctx.beginPath(); ctx.arc(pp.x+1, pp.y+1, r, 0, Math.PI*2); ctx.fill();
+      // segment
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.arc(pp.x, pp.y, r, 0, Math.PI*2); ctx.fill();
+    }
 
     // head
-    const hr = th*0.55 + 2;
+    const hr = th*0.62 + 3;
+    ctx.fillStyle = 'rgba(0,0,0,.18)';
+    ctx.beginPath(); ctx.arc(head.x+1, head.y+1, hr, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, Math.PI*2); ctx.fill();
-    // eyes (cute)
-    ctx.fillStyle = 'rgba(0,0,0,.40)';
-    const ex = Math.cos(Number(s.dir||0))*hr*0.35;
-    const ey = Math.sin(Number(s.dir||0))*hr*0.35;
-    ctx.beginPath(); ctx.arc(head.x+ex-2, head.y+ey-1.2, 2.2, 0, Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(head.x+ex+2, head.y+ey-1.2, 2.2, 0, Math.PI*2); ctx.fill();
+
+    // face direction
+    const dir = Number(s.dir||0)||0;
+    const fx = Math.cos(dir), fy = Math.sin(dir);
+
+    // eyes (white + pupil)
+    const eyeSep = hr*0.36;
+    const eyeFwd = hr*0.18;
+    const lx = head.x + fx*eyeFwd - fy*eyeSep;
+    const ly = head.y + fy*eyeFwd + fx*eyeSep;
+    const rx = head.x + fx*eyeFwd + fy*eyeSep;
+    const ry = head.y + fy*eyeFwd - fx*eyeSep;
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.beginPath(); ctx.arc(lx, ly, 3.2, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rx, ry, 3.2, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.beginPath(); ctx.arc(lx+fx*1.2, ly+fy*1.2, 1.6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rx+fx*1.2, ry+fy*1.2, 1.6, 0, Math.PI*2); ctx.fill();
+
+    // tail tip triangle
+    if (body.length > 10){
+      const pA = body[Math.min(body.length-1, 18)];
+      const pB = body[Math.min(body.length-1, 22)];
+      if (pA && pB){
+        const a = worldToScreen(Number(pA.x||0)||0, Number(pA.y||0)||0);
+        const b = worldToScreen(Number(pB.x||0)||0, Number(pB.y||0)||0);
+        const dx = a.x - b.x, dy = a.y - b.y;
+        const L = Math.max(1e-6, Math.hypot(dx,dy));
+        const ux = dx/L, uy = dy/L;
+        const px = -uy, py = ux;
+        const tip = { x: a.x + ux*(th*0.9), y: a.y + uy*(th*0.9) };
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        ctx.moveTo(tip.x, tip.y);
+        ctx.lineTo(a.x + px*(th*0.45), a.y + py*(th*0.45));
+        ctx.lineTo(a.x - px*(th*0.45), a.y - py*(th*0.45));
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    // tongue
+    ctx.strokeStyle = 'rgba(255, 92, 116, .9)';
+    ctx.lineWidth = 2.2;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(head.x + fx*(hr*0.70), head.y + fy*(hr*0.70));
+    ctx.lineTo(head.x + fx*(hr*1.20), head.y + fy*(hr*1.20));
+    ctx.stroke();
 
     // name
     const nick = (s.nick || sid.slice(0,4));
@@ -763,6 +1365,11 @@ function esc(s){
         SFX.prime();
         e.preventDefault();
       }
+      if (e.key === 'Shift' || e.key === 'b' || e.key === 'B'){
+        input.boost = true;
+        SFX.prime();
+        e.preventDefault();
+      }
       if (e.key === ' '){
         SFX.prime();
       }
@@ -770,6 +1377,7 @@ function esc(s){
     window.addEventListener('keyup', (e)=>{
       if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') input.left = false;
       if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') input.right = false;
+      if (e.key === 'Shift' || e.key === 'b' || e.key === 'B') input.boost = false;
     });
   }
 
@@ -792,7 +1400,7 @@ function esc(s){
 
     const setTarget = (e)=>{
       try{
-        const rect = cv.getBoundingClientRect();
+        const rect = (ui.canvasWrap || cv3d || cv).getBoundingClientRect();
         const hs = worldToScreen(me.x, me.y);
         const dx = (e.clientX - rect.left) - hs.x;
         const dy = (e.clientY - rect.top) - hs.y;
@@ -842,6 +1450,18 @@ function esc(s){
 
   bindKey();
   bindPointerSteer();
+  try{ if (ui.btnLeft) bindTouch(ui.btnLeft, -1); }catch(_){}
+  try{ if (ui.btnRight) bindTouch(ui.btnRight, +1); }catch(_){}
+  try{
+    const bb = ui.btnBoost;
+    if (bb){
+      const setB = (down)=>{ input.boost = down; if (down) SFX.prime(); };
+      bb.addEventListener('pointerdown', (e)=>{ setB(true); try{ bb.setPointerCapture(e.pointerId);}catch(_){} e.preventDefault(); }, {passive:false});
+      bb.addEventListener('pointerup', (e)=>{ setB(false); e.preventDefault(); }, {passive:false});
+      bb.addEventListener('pointercancel', ()=> setB(false));
+      bb.addEventListener('pointerleave', ()=>{ /* keep if captured */ });
+    }
+  }catch(_){}
   // --- Messages from parent / room server relay ---
   window.addEventListener('message', (e)=>{
     const d = e.data || {};
@@ -854,6 +1474,10 @@ function esc(s){
       isHost = !!d.isHost;
       roomCode = String(d.roomCode || 'ROOM');
             connected = true;
+      offlineSolo = false;
+      lastFoodsAt = 0;
+      // clear any stale foods until we receive a sync from server
+      net.foods.length = 0;
       // random spawn by seat
       me.x = 180 + (mySeat%4)*240 + Math.random()*70;
       me.y = 180 + Math.floor(mySeat/4)*260 + Math.random()*70;
@@ -863,6 +1487,20 @@ function esc(s){
       me.stageIdx = 0;
       me.body = [];
       resetLoopAnchor();
+
+      // If server isn't running or initial st_foods was missed, fall back for solo testing.
+      // (Keeps multiplayer behavior unchanged when server is healthy.)
+      setTimeout(()=>{
+        try{
+          if (!EMBED) return;
+          if (!isHost) return;
+          if (net.foods.length > 0) return;
+          // no foods received within grace period
+          offlineSolo = true;
+          spawnLocalFoods(90);
+          showToast('서버 연결 없음: 오프라인 연습(먹이 로컬 생성)', 2400);
+        }catch(_){ }
+      }, 1400);
       return;
     }
 
@@ -890,6 +1528,8 @@ function esc(s){
 
     if (d.type === 'st_foods'){
       net.foods = Array.isArray(d.foods) ? d.foods.slice(0) : [];
+      lastFoodsAt = now();
+      offlineSolo = false;
       return;
     }
 
@@ -900,6 +1540,7 @@ function esc(s){
         if (!f.id) continue;
         if (!net.foods.find(x => x && x.id === f.id)) net.foods.push(f);
       }
+      if (foods.length) lastFoodsAt = now();
       return;
     }
 
@@ -913,6 +1554,7 @@ function esc(s){
         me.mass += value;
         SFX.eat();
       }
+      lastFoodsAt = now();
       return;
     }
 
@@ -960,8 +1602,12 @@ function esc(s){
     connected = true;
     mySid = 'local';
     resetLoopAnchor();
-    // simple local foods
-    for (let i=0; i<30; i++) net.foods.push({ id:'f'+i, x:100+Math.random()*(WORLD.W-200), y:100+Math.random()*(WORLD.H-200), value:2 });
+    // simple local foods (dev)
+    for (let i=0; i<60; i++){
+      const kind = 1 + Math.floor(Math.random()*5);
+      const info = FOOD_TYPES[kind];
+      net.foods.push({ id:'f'+i, x:100+Math.random()*(WORLD.W-200), y:100+Math.random()*(WORLD.H-200), kind, value: info.value });
+    }
   }
 
   requestAnimationFrame(loop);

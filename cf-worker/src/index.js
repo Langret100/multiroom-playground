@@ -701,6 +701,15 @@ export class RoomDO{
         this.meta.status = (this.meta.phase === "playing") ? "playing" : "waiting";
         this._scheduleLobbyUpdate();
         this._broadcast("room_state", this._snapshot());
+
+        // SnakeTail: if a match is already running, sync timer/foods/snapshots to the joining client
+        // (prevents missing initial food spawn due to iframe load timing).
+        if (this.meta.phase === "playing" && this.meta.mode === "snaketail"){
+          try{ this._send(ws, "st_timer", { startTs: this.st.startedAt || now(), durationMs: this.st.durationMs || 180000 }); }catch(_){ }
+          try{ this._send(ws, "st_foods", { foods: Array.isArray(this.st.foods) ? this.st.foods : [] }); }catch(_){ }
+          try{ this._send(ws, "st_players", { players: this.st.players || {} }); }catch(_){ }
+          try{ this._send(ws, "st_scores", { scores: this.st.scores || {} }); }catch(_){ }
+        }
         // Inform lobby presence list that this user is currently inside a room.
         // This allows the lobby's online list to include room occupants and show their room.
         await this._presenceSet(wantUid, nick, this.meta.roomId);
@@ -748,8 +757,8 @@ export class RoomDO{
         const soloDuel = (duel && humanCount === 1);
 
         if (!duel){
-          // Co-op usually requires 2+ humans; SuhakTokki allows solo play.
-          const minHumans = (this.meta.mode === "suhaktokki") ? 1 : 2;
+          // Co-op usually requires 2+ humans; allow solo for SuhakTokki and SnakeTail.
+          const minHumans = (this.meta.mode === "suhaktokki" || this.meta.mode === "snaketail") ? 1 : 2;
           if (humanCount < minHumans){
             this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
             return;
@@ -800,7 +809,7 @@ export class RoomDO{
         if (this.meta.mode === "snaketail"){
           this.st.startedAt = now();
           this.st.durationMs = 180000;
-          try{ this._spawnInitialSnakeTailFoods(45); }catch(_){ }
+          try{ this._spawnInitialSnakeTailFoods(80); }catch(_){ }
           this._broadcast("st_timer", { startTs: this.st.startedAt, durationMs: this.st.durationMs });
 
           if (this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
@@ -873,6 +882,17 @@ export class RoomDO{
       }
 
       // ----- SnakeTail relay (snaketail) -----
+      if (t === "st_sync"){
+        // Client asks for a resync (useful when iframe loads after initial broadcast)
+        if (this.meta.mode !== "snaketail") return;
+        if (this.meta.phase !== "playing") return;
+        try{ this._send(ws, "st_timer", { startTs: this.st.startedAt || now(), durationMs: this.st.durationMs || 180000 }); }catch(_){ }
+        try{ this._send(ws, "st_foods", { foods: Array.isArray(this.st.foods) ? this.st.foods : [] }); }catch(_){ }
+        try{ this._send(ws, "st_players", { players: this.st.players || {} }); }catch(_){ }
+        try{ this._send(ws, "st_scores", { scores: this.st.scores || {} }); }catch(_){ }
+        return;
+      }
+
       if (t === "st_state"){
         const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0 };
         const n = now();
@@ -901,7 +921,7 @@ export class RoomDO{
         if (idx < 0) return;
         const [food] = this.st.foods.splice(idx, 1);
         // Broadcast consumed + growth info
-        this._broadcast("st_eaten", { id, eaterSid: uid, value: Number(food?.value||2)||2 });
+        this._broadcast("st_eaten", { id, eaterSid: uid, value: Number(food?.value||2)||2, kind: Number(food?.kind||0)||0 });
         // Update server score immediately
         const cur = this.st.scores[uid] || { mass:0, alive:true, nick: this.users.get(uid)?.nick || "" };
         cur.mass = (Number(cur.mass)||0) + (Number(food?.value||2)||2);
@@ -915,19 +935,51 @@ export class RoomDO{
       }
 
       if (t === "st_spawn"){
-        // Only host can spawn extra food (e.g., from a kill)
-        if (uid !== this.meta.ownerUserId) return;
+        // Host spawns extra food (kills). Non-host players can request *boost pellets* only.
         const foods = Array.isArray(d.foods) ? d.foods : [];
         if (!foods.length) return;
+
+        const source = String(d.source || "");
+        const isHost = (uid === this.meta.ownerUserId);
+
+        if (!isHost){
+          // Allow boost pellets from any client, but heavily restricted + rate-limited.
+          if (source !== "boost") return;
+          const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, stBoostTs:0 };
+          const n = now();
+          if (n - (lim.stBoostTs||0) < 130) return; // ~7.7/sec max
+          lim.stBoostTs = n;
+          this._relayLimiter.set(uid, lim);
+
+          // Only 1-2 tiny pellets at a time
+          if (foods.length > 2) return;
+        }
+
+        const normalized = [];
         for (const f of foods){
           if (!f || typeof f !== "object") continue;
           const id = String(f.id || crypto.randomUUID());
           const x = Number(f.x||0) || 0;
           const y = Number(f.y||0) || 0;
-          const value = Number(f.value||2) || 2;
-          this.st.foods.push({ id, x, y, value });
+          const valueIn = Number(f.value||0) || 0;
+          const kindIn = Number(f.kind||0) || 0;
+
+          // Clamp non-host boost pellets to small values only
+          if (!isHost){
+            if (x < 0 || y < 0 || x > 2000 || y > 2000) continue;
+            if (valueIn > 1.6) continue;
+            if (kindIn && kindIn !== 1) continue;
+          }
+
+          const ft = this._foodTypeFromValue(valueIn);
+          const kind = (kindIn >= 1 && kindIn <= 5) ? kindIn : ft.kind;
+          const value = (valueIn > 0) ? valueIn : ft.value;
+          const rec = { id, x, y, kind, value };
+          this.st.foods.push(rec);
+          normalized.push(rec);
         }
-        this._broadcast("st_spawn", { foods });
+
+        if (normalized.length) this._broadcast("st_spawn", { foods: normalized });
         return;
       }
 
@@ -1088,14 +1140,54 @@ export class RoomDO{
       try{ this._maybeEndSnakeTail(); }catch(_){ }
     }, 110);
   }
+  _foodTypeFromValue(v){
+    const TYPES = [
+      { kind: 1, value: 1 },
+      { kind: 2, value: 2 },
+      { kind: 3, value: 4 },
+      { kind: 4, value: 7 },
+      { kind: 5, value: 12 },
+    ];
+    const val = Number(v||0) || 0;
+    if (!val) return TYPES[1];
+    let best = TYPES[1];
+    let bestd = 1e9;
+    for (const t of TYPES){
+      const d = Math.abs((Number(t.value)||0) - val);
+      if (d < bestd){ bestd = d; best = t; }
+    }
+    return best;
+  }
 
   _randFood(id){
+    // Snake.io-style 5-tier foods (tiny -> huge)
+    const TYPES = [
+      { kind: 1, value: 1, w: 45 },
+      { kind: 2, value: 2, w: 28 },
+      { kind: 3, value: 4, w: 16 },
+      { kind: 4, value: 7, w: 8 },
+      { kind: 5, value: 12, w: 3 },
+    ];
+
+    let r = Math.random() * TYPES.reduce((a,t)=>a+t.w, 0);
+    let pick = TYPES[0];
+    for (const t of TYPES){
+      r -= t.w;
+      if (r <= 0){ pick = t; break; }
+    }
+
     // World coordinates are client-defined; keep a sane default arena.
     const W = 1600, H = 900;
     const x = 80 + Math.random() * (W - 160);
     const y = 80 + Math.random() * (H - 160);
-    const value = 2 + (Math.random() < 0.12 ? 3 : 0); // mostly small, sometimes bigger
-    return { id: id || crypto.randomUUID(), x, y, value };
+
+    return {
+      id: id || crypto.randomUUID(),
+      x,
+      y,
+      kind: pick.kind,
+      value: pick.value,
+    };
   }
 
   _spawnInitialSnakeTailFoods(count=45){

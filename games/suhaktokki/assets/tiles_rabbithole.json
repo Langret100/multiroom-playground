@@ -1,5 +1,5 @@
 {
-  "tileSize": 16,
+  "tileSize": 32,
   "columns": 8,
   "image": "tiles_rabbithole.png",
   "tiles": {

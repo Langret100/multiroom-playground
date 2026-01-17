@@ -1201,6 +1201,7 @@ let startText = "게임 시작";
 let startAction = "start";
 
 const isTogester = (modeId === "togester");
+const isSnakeTail = (modeId === "snaketail");
 const isSuhakTokki = (modeId === "suhaktokki");
 
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
@@ -1211,6 +1212,11 @@ else if (isCoop){
     canStart = true;
     startText = "연습 시작";
     startAction = "practice";
+  } else if (isSnakeTail && humanCount === 1){
+    // SnakeTail은 혼자서도 정상 라운드를 시작할 수 있어요(먹이/타이머는 서버가 관리).
+    canStart = true;
+    startText = "혼자 시작";
+    startAction = "start";
   } else {
     if (humanCount < 2) reason = "2명 이상 필요합니다.";
     else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
@@ -1426,7 +1432,14 @@ function sendCoopBridgeInit(){
     level: coop.level || 1,
     practice: !!coop.practice
   });
-  // Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
+  
+  // SnakeTail: ensure we don't miss initial food/timer messages due to iframe load timing
+  try{
+    if (coop.meta && coop.meta.id === "snaketail"){
+      room?.send?.("st_sync", {});
+    }
+  }catch(_){ }
+// Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
   try{ duel.iframeEl?.contentWindow?.focus?.(); }catch(_){ }
 }
 
