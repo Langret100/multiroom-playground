@@ -704,18 +704,22 @@
   }
 
   // ---------- Render sizing ----------
-  let DPR = Math.round(Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
+  let DPR = Math.max(1, (window.devicePixelRatio || 1));
   let viewW = 0, viewH = 0;
 
+  // Snap a CSS-pixel coordinate to the nearest device pixel (keeps pixel art crisp
+  // even on fractional DPR like 1.25/1.5).
+  const snapPx = (v) => Math.round(v * DPR) / DPR;
+
   function resize() {
-    DPR = Math.round(Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
+    DPR = Math.max(1, (window.devicePixelRatio || 1));
     const w = window.innerWidth;
     const h = window.innerHeight;
     // canvas는 화면을 꽉 쓰되, 둥근 모서리 유지
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
-    canvas.width = Math.floor(w * DPR);
-    canvas.height = Math.floor(h * DPR);
+    canvas.width = Math.round(w * DPR);
+    canvas.height = Math.round(h * DPR);
     viewW = w;
     viewH = h;
   }
@@ -1392,7 +1396,7 @@
       return;
     }
     const aliveIds = Object.values(st.players).filter(p => p.alive).map(p => p.id);
-    if (aliveIds.length < 4) return;
+    if (aliveIds.length < 2) return;
     const idx = Math.floor(Math.random() * aliveIds.length);
     const tid = aliveIds[idx];
     st.teacherId = tid;
@@ -3141,7 +3145,7 @@ function tileAtPixel(x, y) {
     if (!ui || !G.net) return;
     const payload = {
       t: 'missionSubmit',
-      playerId: G.net.myPlayerId,
+      playerId: Number(G.net.myPlayerId || 0),
       siteId: ui.siteId,
       kind: ui.kind,
       practice: ui.practice,
@@ -3220,7 +3224,7 @@ function tileAtPixel(x, y) {
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
     G.ui.meeting.voted = true;
-    G.net.post({ t: 'vote', playerId: G.net.myPlayerId, target: null });
+    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
     renderVoteList();
   });
 
@@ -3243,8 +3247,8 @@ function tileAtPixel(x, y) {
     const rect = sceneCanvas.getBoundingClientRect();
     const w = Math.max(10, rect.width);
     const h = Math.max(10, rect.height);
-    sceneCanvas.width = Math.floor(w * DPR);
-    sceneCanvas.height = Math.floor(h * DPR);
+    sceneCanvas.width = Math.round(w * DPR);
+    sceneCanvas.height = Math.round(h * DPR);
   }
 
   function initRain() {
@@ -3591,10 +3595,10 @@ function tileAtPixel(x, y) {
       case 'D':
         G.local.keys.right = true; break;
             case '1':
-        if (G.net) G.net.post({ t: 'emote', playerId: G.net.myPlayerId, kind: 'cry' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'cry' });
         handled = true; break;
       case '2':
-        if (G.net) G.net.post({ t: 'emote', playerId: G.net.myPlayerId, kind: 'tsk' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'tsk' });
         handled = true; break;
 default:
         handled = false;
@@ -3695,25 +3699,25 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
   });
 
   killBtn.addEventListener('click', () => {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'kill' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'kill' });
   });
 
   function sendSabotage() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'sabotage' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'sabotage' });
   }
 
   function sendForceMission() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'forceMission' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'forceMission' });
   }
 
   saboBtn?.addEventListener('click', () => sendSabotage());
@@ -3731,7 +3735,7 @@ default:
           hostHandleInteract(G.net.myPlayerId);
           broadcastState(true);
         } else if (G.net) {
-          G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+          G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
         }
         return;
       }
@@ -3783,7 +3787,7 @@ default:
     ctx.scale(ZOOM, ZOOM);
 
     // 정수 픽셀 스냅(가로/세로 한 줄이 투명해 보이는 현상 방지)
-    cam = { ...cam, x: Math.round(cam.x), y: Math.round(cam.y) };
+    cam = { ...cam, x: snapPx(cam.x), y: snapPx(cam.y) };
 
     // map
     const vw = (cam.vw || (viewW / ZOOM));
@@ -3844,13 +3848,16 @@ default:
       } else if (obj.type === 'camera_monitor') {
         drawObjSprite('camera_monitor', x, y);
       } else if (obj.type === 'vent_hole') {
-        if (AS.pixel?.vent) {
-          const im = AS.pixel.vent;
-          const dw = TS * 2;
-          const dh = TS * 2;
-          ctx.drawImage(im, 0, 0, im.width, im.height, Math.round(x - dw / 2), Math.round(y - dh / 2), dw, dh);
-        } else {
-          drawObjSprite('vent_hole', x, y);
+        // Vents should only be visible/usable to the teacher (imposter).
+        if (me && me.role === 'teacher' && !st.practice) {
+          if (AS.pixel?.vent) {
+            const im = AS.pixel.vent;
+            const dw = TS * 2;
+            const dh = TS * 2;
+            ctx.drawImage(im, 0, 0, im.width, im.height, Math.round(x - dw / 2), Math.round(y - dh / 2), dw, dh);
+          } else {
+            drawObjSprite('vent_hole', x, y);
+          }
         }
       }
     }
@@ -3865,9 +3872,23 @@ default:
 
     for (const p of players) {
       if (!p.alive) continue;
-      const px = p.x - cam.x;
-      const py = p.y - cam.y;
-      drawPlayer(p, px, py);
+
+      let wx = p.x, wy = p.y;
+      let pDraw = p;
+      // Client-side smoothing for remote players (render-only)
+      if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
+        const ex = G.netSmooth.players.get(p.id);
+        if (ex) {
+          const a = clamp((now() - ex.t0) / 120, 0, 1);
+          wx = ex.px + (ex.tx - ex.px) * a;
+          wy = ex.py + (ex.ty - ex.py) * a;
+          pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
+        }
+      }
+
+      const px = wx - cam.x;
+      const py = wy - cam.y;
+      drawPlayer(pDraw, px, py);
     }
 
     ctx.restore();
@@ -4877,8 +4898,8 @@ default:
 
     // 픽셀 퍼펙트: 서브픽셀 렌더링은 얇은 투명 줄/떨림을 만든다.
     // (특히 스프라이트시트에서 한 줄이 투명해 보이는 현상)
-    x = Math.round(x);
-    y = Math.round(y);
+    x = snapPx(x);
+    y = snapPx(y);
 
     // direction row (only affects sprite selection; movement/physics unchanged)
     const avx = p.vx || 0, avy = p.vy || 0;
@@ -4901,13 +4922,6 @@ default:
       const sy = row * SPR_H;
       // anchor: center-ish
       ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
-      // outline for local player
-      if (isLocal && !p.down) {
-        ctx.globalAlpha = 0.35;
-        ctx.strokeStyle = 'rgba(125,211,252,.95)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(-SPR_W / 2 - 2, -60 - 2, SPR_W + 4, SPR_H + 4);
-      }
       ctx.restore();
     } else {
       // fallback (should rarely happen)
@@ -5102,12 +5116,12 @@ default:
       // If I'm the host, apply my input locally (do NOT rely on server echo)
       // so solo/practice play always responds.
       if (G.net.isHost && G.net.myPlayerId){
-        G.host.inputs.set(G.net.myPlayerId, { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
+        G.host.inputs.set(Number(G.net.myPlayerId || 0), { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
       } else {
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
         if (t - G.local._lastInputAt > 66) {
           G.local._lastInputAt = t;
-          G.net.post({ t: 'input', playerId: G.net.myPlayerId, mvx: G.local.mvx, mvy: G.local.mvy });
+          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), mvx: G.local.mvx, mvy: G.local.mvy });
         }
       }
     }
@@ -5123,7 +5137,7 @@ default:
           const ox = (obj.x + 0.5) * TS;
           const oy = (obj.y + 0.5) * TS;
           if (dist2(me.x, me.y, ox, oy) <= INTERACT_RANGE ** 2) {
-            G.net.post({ t: 'openMission', playerId: G.net.myPlayerId, siteId: rm.siteId });
+            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), siteId: rm.siteId });
           }
         }
         // attempt only once
@@ -5169,22 +5183,39 @@ default:
     net.on('join', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
-      if (playersCount >= 8) {
-        net.post({ t: 'joinDenied', toClient: m.from, reason: '방이 가득 찼어!' });
+      const from = (m && m.from != null) ? String(m.from) : '';
+      if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
+
+      // Dedupe: some environments resend 'join' (or re-run embed init), which used to
+      // create a second player for the same client and break input syncing.
+      if (from && G.host._clientToPlayer.has(from)) {
+        const pid = Number(G.host._clientToPlayer.get(from) || 0);
+        const p = st.players[pid];
+        if (p) {
+          p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
+          p.clientId = from;
+          p.isBot = false;
+          p.alive = true;
+        }
+        net.post({ t: 'joinAck', toClient: from, playerId: pid, isHost: false });
+        broadcastState(true);
         return;
       }
-      const pid = hostAddPlayer(m.nick || '토끼', false, m.from);
-      // clientId -> playerId 매핑
-      if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
-      G.host._clientToPlayer.set(m.from, pid);
-      net.post({ t: 'joinAck', toClient: m.from, playerId: pid, isHost: false });
+
+      const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
+      if (playersCount >= 8) {
+        net.post({ t: 'joinDenied', toClient: from || m.from, reason: '방이 가득 찼어!' });
+        return;
+      }
+      const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
+      if (from) G.host._clientToPlayer.set(from, pid);
+      net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false });
       broadcastState(true);
     });
 
     net.on('joinAck', (m) => {
       if (m.toClient !== net.clientId) return;
-      net.myPlayerId = m.playerId;
+      net.myPlayerId = Number(m.playerId || 0);
       G.phase = 'lobby';
       setRolePill();
       setHUD();
@@ -5205,13 +5236,15 @@ default:
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
-      if (!m.playerId) return;
-      G.host.inputs.set(m.playerId, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      G.host.inputs.set(pid, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
     });
 
     net.on('emote', (m) => {
       if (!net.isHost) return;
-      const p = G.state.players[m.playerId];
+      const pid = Number(m.playerId || 0);
+      const p = G.state.players[pid];
       if (!p || !p.alive) return;
       const kind = (m.kind === 'cry' || m.kind === 'tsk') ? m.kind : null;
       if (!kind) return;
@@ -5222,15 +5255,18 @@ default:
 
     net.on('act', (m) => {
       if (!net.isHost) return;
-      if (m.kind === 'interact') hostHandleInteract(m.playerId);
-      if (m.kind === 'kill') hostHandleKill(m.playerId);
-      if (m.kind === 'sabotage') hostHandleSabotage(m.playerId);
-      if (m.kind === 'forceMission') hostHandleForceMission(m.playerId);
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      if (m.kind === 'interact') hostHandleInteract(pid);
+      if (m.kind === 'kill') hostHandleKill(pid);
+      if (m.kind === 'sabotage') hostHandleSabotage(pid);
+      if (m.kind === 'forceMission') hostHandleForceMission(pid);
     });
     net.on('openMission', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const p = st.players[m.playerId];
+      const pid = Number(m.playerId || 0);
+      const p = st.players[pid];
       if (!p || !p.alive || p.down) return;
       const obj = st.objects[m.siteId];
       if (!obj || obj.type !== 'mission') return;
@@ -5240,33 +5276,37 @@ default:
 
       // reuse the same logic as interact-mission block
       if (now() < G.host.missionDisabledUntil) {
-        sendToPlayer(m.playerId, { t: 'toast', text: '지금은 미션을 풀 수 없어!' });
+        sendToPlayer(pid, { t: 'toast', text: '지금은 미션을 풀 수 없어!' });
         return;
       }
       const mm = st.missions[obj.id];
       if (!mm || mm.state === 'solved') {
-        sendToPlayer(m.playerId, { t: 'toast', text: '이미 당근으로 막았어!' });
+        sendToPlayer(pid, { t: 'toast', text: '이미 당근으로 막았어!' });
         return;
       }
       const practice = mm.state !== 'active';
       const ui = buildMissionUI(obj.id, mm.kind, practice);
-      let prog = hostGetMissionProg(m.playerId, obj.id);
+      let prog = hostGetMissionProg(pid, obj.id);
       if (!prog || prog.practice !== !!practice) {
-        hostInitMissionProg(m.playerId, obj.id, mm.kind, practice);
-        prog = hostGetMissionProg(m.playerId, obj.id);
+        hostInitMissionProg(pid, obj.id, mm.kind, practice);
+        prog = hostGetMissionProg(pid, obj.id);
       }
-      sendToPlayer(m.playerId, { t: 'uiMissionOpen', ...ui, correct: prog?.correct || 0 });
+      sendToPlayer(pid, { t: 'uiMissionOpen', ...ui, correct: prog?.correct || 0 });
     });
 
 
     net.on('missionSubmit', (m) => {
       if (!net.isHost) return;
-      hostMissionSubmit(m.playerId, m);
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      hostMissionSubmit(pid, { ...m, playerId: pid });
     });
 
     net.on('vote', (m) => {
       if (!net.isHost) return;
-      hostSubmitVote(m.playerId, m.target);
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      hostSubmitVote(pid, m.target);
     });
 
     // state (all clients)
@@ -5292,6 +5332,46 @@ default:
           }
         }
       }
+      
+
+      // Smooth remote players on clients so other players look less 'choppy'.
+      try {
+        if (!net.isHost) {
+          if (!G.netSmooth) G.netSmooth = { players: new Map() };
+          const sm = G.netSmooth.players;
+          const tNow = now();
+          const myId = Number(net.myPlayerId || 0);
+          const playersObj = m.players || {};
+
+          // prune missing players
+          for (const pid of Array.from(sm.keys())) {
+            if (!playersObj[String(pid)]) sm.delete(pid);
+          }
+
+          for (const [pidStr, pp] of Object.entries(playersObj)) {
+            const pid = Number(pidStr || 0);
+            if (!pid || pid === myId || !pp) continue;
+            const ex = sm.get(pid);
+            if (!ex) {
+              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
+              continue;
+            }
+            const a = clamp((tNow - ex.t0) / 120, 0, 1);
+            const cx = ex.px + (ex.tx - ex.px) * a;
+            const cy = ex.py + (ex.ty - ex.py) * a;
+            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);
+            if (jump) {
+              ex.px = pp.x; ex.py = pp.y; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
+            } else {
+              ex.px = cx; ex.py = cy; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
+            }
+            ex.down = !!pp.down;
+            ex.alive = !!pp.alive;
+            ex.vent = !!pp.vent;
+          }
+        }
+      } catch (_) {}
+
       G.state.missions = m.missions;
       G.state.doors = m.doors;
       G.state.waterBlocks = m.waterBlocks;
@@ -5331,18 +5411,18 @@ default:
 
     // UI events
     net.on('uiMissionOpen', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       openMissionUI(m);
     });
 
     net.on('uiMissionResult', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       if (!G.ui.mission) return;
       renderQuestion(m.text);
     });
 
     net.on('uiMissionNext', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       if (!G.ui.mission) return;
       if (typeof m.correct === 'number') G.ui.mission.correct = m.correct;
       G.ui.mission.question = m.question;
@@ -5370,7 +5450,7 @@ default:
     });
 
     net.on('toast', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       showToast(m.text || '');
     });
 
