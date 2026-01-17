@@ -245,6 +245,29 @@
     // Cloudflare Workers로 온라인 연동할 때 여기에 wss 주소를 넣어줘 (예: wss://your-domain.workers.dev)
     window.__ONLINE_WS_BASE__ = '';
   </script>
+
+  <!-- Embedded(coop) mode: parent가 이미 로비/룸 UI를 갖고 있으므로
+       게임 내부 로비는 숨기고, bridge_init 레이스를 대비해 init 메시지를 버퍼링한다. -->
+  <script>
+  (function(){
+    try{
+      const sp = new URLSearchParams(location.search);
+      if (sp.get('embed') !== '1') return;
+
+      // Hide internal lobby immediately (prevents "게임 시작" 화면이 상대에게 남는 문제)
+      try{ document.getElementById('lobby')?.classList?.add('hidden'); }catch(_){ }
+
+      // Early handshake + buffering (init이 module 로딩 전에 도착할 수 있음)
+      try{ window.parent?.postMessage({ type: 'bridge_ready' }, '*'); }catch(_){ }
+      window.addEventListener('message', (e)=>{
+        const d = e.data || {};
+        if (d && typeof d === 'object' && d.type === 'bridge_init'){
+          window.__PENDING_BRIDGE_INIT__ = d;
+        }
+      });
+    }catch(_){ }
+  })();
+  </script>
   <!-- Pixel character data (generated from the user's 3-view sprite) -->
   <script src="tokki_data.js"></script>
   <script src="game.js"></script>

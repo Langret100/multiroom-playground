@@ -208,12 +208,19 @@
   function applyPhaseUI() {
     const inGame = EMBED ? !!G.net : !!(G.net && G.phase !== 'lobby');
     // lobby vs game
-    if (inGame) {
+    if (EMBED) {
+      // multiroom(부모)에서 이미 로비/룸 UI를 제공하므로
+      // iframe 내부 로비는 어떤 경우에도 보이지 않게 한다.
       lobby?.classList.add('hidden');
-      if (hud) hud.style.display = 'flex';
+      if (hud) hud.style.display = inGame ? 'flex' : 'none';
     } else {
-      lobby?.classList.remove('hidden');
-      if (hud) hud.style.display = 'none';
+      if (inGame) {
+        lobby?.classList.add('hidden');
+        if (hud) hud.style.display = 'flex';
+      } else {
+        lobby?.classList.remove('hidden');
+        if (hud) hud.style.display = 'none';
+      }
     }
 
     // inputs enabled only before join
@@ -697,15 +704,28 @@
   function buildCollision() {
     const { width: W, height: H } = AS.map;
     solid = new Uint8Array(W * H);
-    // NOTE: some maps place "blocking" visuals in the deco layer.
-    // To avoid "walking through walls" when the art looks solid,
-    // we treat *both* walls + deco tiles marked solid as collision.
+    // NOTE:
+    // - "빈"(ground=0) 타일은 맵 안이어도 실제로는 void(검은 영역)처럼 보이므로
+    //   아예 걸을 수 없게 막아줘야 한다.
+    // - 일부 맵은 deco 레이어에 시각적 벽(충돌이 있어야 하는 것)을 올려둔다.
+    //   그래서 walls + deco + (필요 시) ground의 solid 플래그를 모두 반영한다.
+    const ground = AS.map.layers.ground || [];
     const walls = AS.map.layers.walls || [];
     const deco = AS.map.layers.deco || [];
     for (let i = 0; i < solid.length; i++) {
+      const gid = ground[i] || 0;
       const wid = walls[i] || 0;
       const did = deco[i] || 0;
-      if ((wid && tileIsSolid(wid)) || (did && tileIsSolid(did))) solid[i] = 1;
+
+      // void: ground 자체가 없으면 "맵 밖" 취급(검은 영역 방지)
+      if (!gid && !wid && !did) {
+        solid[i] = 1;
+        continue;
+      }
+
+      if ((gid && tileIsSolid(gid)) || (wid && tileIsSolid(wid)) || (did && tileIsSolid(did))) {
+        solid[i] = 1;
+      }
     }
   }
 
@@ -715,6 +735,7 @@
     mapCanvas.width = W * TS;
     mapCanvas.height = H * TS;
     const mctx = mapCanvas.getContext('2d');
+    mctx.imageSmoothingEnabled = false;
 
     const cols = AS.tilesMeta.columns;
     const drawLayer = (layerArr) => {
@@ -1400,9 +1421,17 @@ function tileAtPixel(x, y) {
     // 축별 분리
     let x = nx;
     let y = p.y;
-    if (collidesCircle(p, x, y, PLAYER_R)) x = p.x;
+    if (collidesCircle(p, x, y, PLAYER_R)) {
+      x = p.x;
+      // 실제 이동이 막혔는데 속도가 남아있으면(특히 복도에서 대각 입력)
+      // 스프라이트 방향이 엉뚱하게(옆으로 가는데 뒷모습 등) 잡히는 문제가 생긴다.
+      p.vx = 0;
+    }
     y = ny;
-    if (collidesCircle(p, x, y, PLAYER_R)) y = p.y;
+    if (collidesCircle(p, x, y, PLAYER_R)) {
+      y = p.y;
+      p.vy = 0;
+    }
     p.x = x;
     p.y = y;
   }
@@ -3293,6 +3322,8 @@ default:
 
   function draw() {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    // 픽셀 아트: 항상 최근접/정수 좌표로 렌더링
+    ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, viewW, viewH);
 
     if (!AS.map || !mapCanvas) {
@@ -3318,6 +3349,9 @@ default:
     // world render (pixel-perfect zoom)
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
+
+    // 정수 픽셀 스냅(가로/세로 한 줄이 투명해 보이는 현상 방지)
+    cam = { ...cam, x: Math.round(cam.x), y: Math.round(cam.y) };
 
     // map
     const vw = (cam.vw || (viewW / ZOOM));
@@ -4190,6 +4224,11 @@ default:
     else if (motion === 'cry') frame = Math.floor((base * 0.8) % 4);
     else if (motion === 'tsk') frame = Math.floor((base * 0.9) % 3);
 
+    // 픽셀 퍼펙트: 서브픽셀 렌더링은 얇은 투명 줄/떨림을 만든다.
+    // (특히 스프라이트시트에서 한 줄이 투명해 보이는 현상)
+    x = Math.round(x);
+    y = Math.round(y);
+
     // direction row (only affects sprite selection; movement/physics unchanged)
     const avx = p.vx || 0, avy = p.vy || 0;
     let dir = 0;
@@ -4776,6 +4815,17 @@ default:
   if (EMBED){
     // Tell parent we're ready for bridge_init
     bridgeSend('bridge_ready', {});
+
+    // bridge_init가 listener보다 먼저 도착하는 레이스를 방지하기 위해
+    // index.html에서 window.__PENDING_BRIDGE_INIT__에 버퍼링해둘 수 있다.
+    try{
+      const pending = window.__PENDING_BRIDGE_INIT__;
+      if (pending && typeof pending === 'object' && pending.type === 'bridge_init'){
+        window.__PENDING_BRIDGE_INIT__ = null;
+        startEmbedded(pending).catch(()=>{});
+      }
+    }catch(_){ }
+
     window.addEventListener('message', (ev)=>{
       const d = ev.data || {};
       if (!d || typeof d !== 'object') return;
