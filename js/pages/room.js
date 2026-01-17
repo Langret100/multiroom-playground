@@ -1417,9 +1417,12 @@ function sendCoopBridgeInit(){
     try{ return room?.state?.players ? room.state.players.size : 0; }catch(_){ return 0; }
   })();
   const solo = (humanCount === 1);
+  const isHostFromState = (()=>{
+    try{ return !!room?.state?.players?.get(mySessionId)?.isHost; }catch(_){ return false; }
+  })();
   // Some coop games allow solo practice. If you are alone, treat yourself as host
   // for the embedded game even if the host flag hasn't arrived yet.
-  const effectiveIsHost = !!isHost || (solo && (coop.meta.id === "suhaktokki"));
+  const effectiveIsHost = isHostFromState || !!isHost || (solo && (coop.meta.id === "suhaktokki"));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,

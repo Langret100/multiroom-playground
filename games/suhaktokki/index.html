@@ -6,7 +6,7 @@
   <title>수학토끼</title>
   <link rel="icon" href="../../favicon.ico" />
   <style>
-    :root{--bg:#0c1220;--panel:#121a2e;--line:rgba(255,255,255,.12);--txt:#f4f7ff;--muted:rgba(244,247,255,.72);--accent:#66e0a3;--danger:#ff5a7a;}
+    :root{--bg:#0c1220;--panel:#121a2e;--line:rgba(255,255,255,.12);--txt:#f4f7ff;--muted:rgba(244,247,255,.72);--accent:#66e0a3;--danger:#ff5a7a;--actW:200px;--actH:88px;--actGap:16px;--actStep:calc(var(--actH) + var(--actGap))}
     *{box-sizing:border-box;touch-action:none;-webkit-user-select:none;user-select:none;}
     html,body{width:100%;height:100%;margin:0;overflow:hidden;background:radial-gradient(1200px 800px at 50% 10%,#1a2642,#0c1220);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
     canvas{background:#0b0f1a;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);image-rendering:pixelated;image-rendering:crisp-edges;}
@@ -65,16 +65,20 @@
     #touchUI{position:fixed;inset:0;z-index:19;pointer-events:none;display:none;
       padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
     }
-    #joy{position:absolute;left:calc(14px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));width:140px;height:140px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(6px);}
-    #joyKnob{position:absolute;left:50%;top:50%;width:64px;height:64px;border-radius:999px;transform:translate(-50%,-50%);background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.12);}
-    #interactBtn,#killBtn,#saboBtnTouch,#forceBtnTouch{position:absolute;right:calc(14px + env(safe-area-inset-right));width:140px;height:64px;border-radius:18px;display:flex;align-items:center;justify-content:center;font-weight:1000;font-size:16px;opacity:.35;pointer-events:none;}
+    #joy{position:absolute;left:calc(14px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));width:180px;height:180px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(6px);}
+    #joyKnob{position:absolute;left:50%;top:50%;width:80px;height:80px;border-radius:999px;transform:translate(-50%,-50%);background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.12);}
+    #interactBtn,#killBtn,#saboBtnTouch,#forceBtnTouch{position:absolute;right:calc(14px + env(safe-area-inset-right));width:var(--actW);height:var(--actH);border-radius:22px;display:flex;align-items:center;justify-content:center;font-weight:1000;font-size:22px;opacity:.35;pointer-events:none;}
     #interactBtn{bottom:calc(18px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#66e0a3,#33c38a);border:0;color:#071022;}
-    #killBtn{bottom:calc(92px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#222,#000);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
-    #saboBtnTouch{bottom:calc(166px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
-    #forceBtnTouch{bottom:calc(240px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#a855f7,#7c3aed);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:15px;}
+    #killBtn{bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep));background:linear-gradient(180deg,#222,#000);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
+    #saboBtnTouch{bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep) + var(--actStep));background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
+    #forceBtnTouch{bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep) + var(--actStep) + var(--actStep));background:linear-gradient(180deg,#a855f7,#7c3aed);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
 
     /* Small screens: avoid HUD buttons going off-screen */
     @media (max-width: 520px){
+      :root{--actW:160px;--actH:72px;--actGap:12px;--actStep:calc(var(--actH) + var(--actGap));}
+      #joy{width:150px;height:150px;}
+      #joyKnob{width:68px;height:68px;}
+
       .pill{padding:6px 10px;font-size:12px;}
       .bar{width:92px;}
       button.ui.mini{padding:6px 8px;border-radius:10px;font-size:11px;}

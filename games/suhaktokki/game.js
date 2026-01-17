@@ -298,6 +298,30 @@
     });
   }
 
+  // Green-screen keying (EXACT): only RGB(0,255,0) becomes transparent.
+  // This prevents accidental holes in the sprite caused by HSV/threshold keying.
+  function greenKeyExact(src) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = src.width | 0;
+      c.height = src.height | 0;
+      const cctx = c.getContext('2d');
+      cctx.imageSmoothingEnabled = false;
+      cctx.drawImage(src, 0, 0);
+      const id = cctx.getImageData(0, 0, c.width, c.height);
+      const d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] === 0 && d[i + 1] === 255 && d[i + 2] === 0 && d[i + 3] === 255) {
+          d[i + 3] = 0;
+        }
+      }
+      cctx.putImageData(id, 0, 0);
+      return c;
+    } catch (_) {
+      return src;
+    }
+  }
+
   // ---------- Tokki pixel sprite generator ----------
   // Builds a full v3-style sprite sheet (same layout as chars_bunny_v3.png):
   //   columns: 6 frames
@@ -637,13 +661,18 @@
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
-    // Character sprites: prefer the provided PNG sheet for pixel-perfect rendering.
-    // Fallback to in-code generation only if the image fails to load.
+    // Character sprites: prefer the tokki_data-based generator (3-pose) for deterministic layout.
+    // Fallback to PNG only if generator fails (e.g., tokki_data missing).
     try {
-      AS.charsImg = await loadImage('assets/chars_bunny_v3.png');
-    } catch (e) {
-      console.warn('[tokki] chars png load failed; building sprites in-code', e);
       AS.charsImg = buildTokkiSpriteSheet();
+    } catch (e) {
+      console.warn('[tokki] sprite build failed; falling back to chars_bunny_v3.png', e);
+      try {
+        AS.charsImg = greenKeyExact(await loadImage('assets/chars_bunny_v3.png'));
+      } catch (e2) {
+        console.warn('[tokki] chars png load failed', e2);
+        AS.charsImg = null;
+      }
     }
 
     // Custom pixel-art pack (user provided)
@@ -669,7 +698,7 @@
       ['vine_door_open', 'assets/pixel/vine_door_open.png'],
     ];
     await Promise.all(px.map(async ([k, url]) => {
-      try { AS.pixel[k] = await loadImage(url); }
+      try { AS.pixel[k] = greenKeyExact(await loadImage(url)); }
       catch (e) { AS.pixel[k] = null; }
     }));
   }
@@ -700,7 +729,7 @@
   const PLAYER_R = 14;
   const SPEED = 184; // px/s
   const KILL_RANGE = 52;
-  const INTERACT_RANGE = 56;
+  const INTERACT_RANGE = 112;
   const VENT_TRAVEL_MS = 850;
   const VENT_COOLDOWN_MS = 4500;
   const FORCE_COOLDOWN_MS = 40_000;
@@ -1236,34 +1265,53 @@
       if (!solid) return true;
       return solid[ty * W + tx] ? false : true;
     };
-
     const pushDoorOutward = (o) => {
       const r = roomById.get(o.roomId);
       if (!r) return;
       const [rx, ry, rw, rh] = r.rect;
+
+      const ix = o.x | 0, iy = o.y | 0;
+
+      // Choose nearest edge direction
+      const dTop = Math.abs(iy - ry);
+      const dBot = Math.abs((ry + rh - 1) - iy);
+      const dL = Math.abs(ix - rx);
+      const dR = Math.abs((rx + rw - 1) - ix);
+      const m = Math.min(dTop, dBot, dL, dR);
+
       let dx = 0, dy = 0;
-      // If the door is on a room edge, push it 1 tile outward toward corridor.
-      if (o.y === ry) dy = -1;
-      else if (o.y === ry + rh - 1) dy = 1;
-      else if (o.x === rx) dx = -1;
-      else if (o.x === rx + rw - 1) dx = 1;
-      else {
-        // fallback: choose nearest edge
-        const dTop = Math.abs(o.y - ry);
-        const dBot = Math.abs((ry + rh - 1) - o.y);
-        const dL = Math.abs(o.x - rx);
-        const dR = Math.abs((rx + rw - 1) - o.x);
-        const m = Math.min(dTop, dBot, dL, dR);
-        if (m === dTop) dy = -1;
-        else if (m === dBot) dy = 1;
-        else if (m === dL) dx = -1;
-        else dx = 1;
+      if (m == dTop) dy = -1;
+      else if (m == dBot) dy = 1;
+      else if (m == dL) dx = -1;
+      else dx = 1;
+
+      // Compute the first tile just outside the room boundary
+      let stepToExit = 1;
+      if (dx == -1) stepToExit = (ix - rx) + 1;
+      else if (dx == 1) stepToExit = ((rx + rw - 1) - ix) + 1;
+      else if (dy == -1) stepToExit = (iy - ry) + 1;
+      else if (dy == 1) stepToExit = ((ry + rh - 1) - iy) + 1;
+
+      // Try a few tiles outside the room to find a walkable corridor tile
+      for (let extra = 0; extra <= 4; extra++) {
+        const tx = ix + dx * (stepToExit + extra);
+        const ty = iy + dy * (stepToExit + extra);
+        if (canWalk(tx, ty)) {
+          o.x = tx;
+          o.y = ty;
+          return;
+        }
       }
-      const tx = (o.x | 0) + dx;
-      const ty = (o.y | 0) + dy;
-      if (canWalk(tx, ty)) {
-        o.x = tx;
-        o.y = ty;
+
+      // Fallback: step-by-step (in case room rect metadata is slightly off)
+      for (let s = 1; s <= 8; s++) {
+        const tx = ix + dx * s;
+        const ty = iy + dy * s;
+        if (canWalk(tx, ty)) {
+          o.x = tx;
+          o.y = ty;
+          return;
+        }
       }
     };
 
@@ -4080,7 +4128,7 @@ default:
 
       if (m?.state === 'active') {
         mapUiCtx.fillStyle = 'rgba(0,0,0,.75)';
-        mapUiCtx.font = '900 10px system-ui';
+        mapUiCtx.font = '900 14px system-ui';
         mapUiCtx.textAlign = 'center';
         mapUiCtx.textBaseline = 'middle';
         mapUiCtx.fillText('!', mx, my - 0.5);
@@ -4392,7 +4440,7 @@ default:
 
       if (active) {
         ctx.fillStyle = 'rgba(255,255,255,.95)';
-        ctx.font = '900 18px system-ui';
+        ctx.font = '900 26px system-ui';
         ctx.textAlign = 'center';
         ctx.fillText('!', 0, -DW * 0.75);
       }
