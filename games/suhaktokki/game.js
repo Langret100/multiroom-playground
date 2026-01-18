@@ -7287,6 +7287,10 @@ net.on('uiMeetingOpen', (m) => {
 
     await joinRoom();
 
+    // In embed mode, once we successfully joined via the parent bridge, hide the internal lobby
+    // so players only see the main room UI outside the iframe.
+    try{ lobby && lobby.classList && lobby.classList.add('hidden'); }catch(_){ }
+
     // host: auto-start only after enough players join (prevents starting practice by accident)
     if (window.__EMBED_IS_HOST__){
       if (init.solo){
@@ -7317,7 +7321,10 @@ net.on('uiMeetingOpen', (m) => {
       const pending = window.__PENDING_BRIDGE_INIT__;
       if (pending && typeof pending === 'object' && pending.type === 'bridge_init'){
         window.__PENDING_BRIDGE_INIT__ = null;
-        startEmbedded(pending).catch(()=>{});
+        startEmbedded(pending).catch((e)=>{
+          try{ console.error(e); }catch(_){ }
+          try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
+        });
       }
     }catch(_){ }
 
@@ -7325,7 +7332,10 @@ net.on('uiMeetingOpen', (m) => {
       const d = ev.data || {};
       if (!d || typeof d !== 'object') return;
       if (d.type === 'bridge_init'){
-        startEmbedded(d).catch(()=>{});
+        startEmbedded(d).catch((e)=>{
+          try{ console.error(e); }catch(_){ }
+          try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
+        });
       }
     });
   }

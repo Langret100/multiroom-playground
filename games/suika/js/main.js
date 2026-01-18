@@ -723,8 +723,19 @@ function onEventRecv(payload){
     return;
   }
   if(ev.kind === "rocks"){
-    const n = Math.max(0, Math.min(12, (ev.payload && ev.payload.n) || 0));
-    try{ game?.dropRocks?.(n); }catch{}
+    // Events are broadcast to all peers (including the sender).
+    // Only opponents should receive the rock drop.
+    try{
+      if(mode !== "offline" && pid && ev.from && String(ev.from) === String(pid)) {
+        // ignore echo
+      } else {
+        const n = Math.max(0, Math.min(12, (ev.payload && ev.payload.n) || 0));
+        try{ game?.dropRocks?.(n); }catch{}
+      }
+    }catch(_){
+      const n = Math.max(0, Math.min(12, (ev.payload && ev.payload.n) || 0));
+      try{ game?.dropRocks?.(n); }catch{}
+    }
   }
 
   if(ev.kind === "over"){

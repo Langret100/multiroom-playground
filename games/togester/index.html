@@ -531,14 +531,18 @@
         const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
         const JUMP_VELOCITY = -13.3334; // 점프 2배 (모바일 세로 맵 기준)
         const RESPAWN_COOLDOWN_MS = 1500; // 1.5초
-        const PUSH_IMPULSE_X = 11;
-        const PUSH_IMPULSE_Y = -10;
+        const PUSH_IMPULSE_X = 12;
+        const PUSH_IMPULSE_Y = -11;
         const PUSH_HITBOX_OFFSET_PX = 10; // player front edge +10px
         const PUSH_HITBOX_WIDTH = 140; // big hitbox (wide)
         const PUSH_HITBOX_HEIGHT = 44;
         const PUSH_HITBOX_Y_OFFSET = 6; // lower band (avoid hitting above)
         const FLOOR_COOLDOWN_MS = 220;
         const PUSH_ANIM_MS = 180; // push animation duration
+        // Player-vs-player collision box is slimmer than the tile/platform box (matches sprite better)
+        const PVP_PAD_X = 4;
+        const PVP_W = 32;
+        const PVP_H = 40;
         
         let localPlayer = {
             x: 100,
@@ -555,7 +559,11 @@
             jumpUsed: false,
             deadAt: 0,
             nextRespawnAt: 0,
-            pushAnimUntil: 0
+            pushAnimUntil: 0,
+            knockbackUntil: 0,
+            knockbackVx: 0,
+            noHeadBlockUntil: 0,
+            noHeadBlockSids: []
         };
         
         let players = {};
@@ -1397,32 +1405,44 @@ cameraX = 0;
 
         function doJump(){
             if (!canJump()) return;
+            const now = performance.now();
             localPlayer.vy = JUMP_VELOCITY;
             localPlayer.onGround = false;
             localPlayer.jumpUsed = true;
             sfxJump();
-            launchPlayersOnTop();
+            const launched = launchPlayersOnTop();
+            if (launched && launched.length){
+                localPlayer.noHeadBlockUntil = now + 180;
+                localPlayer.noHeadBlockSids = launched;
+            } else {
+                localPlayer.noHeadBlockUntil = 0;
+                localPlayer.noHeadBlockSids = [];
+            }
         }
 
         function launchPlayersOnTop(){
-            if (isGuestMode) return;
-            const myL = localPlayer.x;
-            const myR = localPlayer.x + 40;
+            const launched = [];
+            if (isGuestMode) return launched;
+            const myL = localPlayer.x + PVP_PAD_X;
+            const myR = myL + PVP_W;
             const myTop = localPlayer.y;
             for (const [sid, p] of Object.entries(players || {})){
                 if (!p || p.isDead) continue;
                 const rp = getInterpolatedRemote(sid, p || {});
                 const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
                 const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
-                const prL = px;
-                const prR = px + 40;
-                const prBottom = py + 40;
+                const prL = px + PVP_PAD_X;
+                const prR = prL + PVP_W;
+                const prBottom = py + PVP_H;
                 const overlapX = (prR > myL + 2) && (prL < myR - 2);
-                const onMyHead = (prBottom >= myTop - 2) && (prBottom <= myTop + 12);
+                const onMyHead = (prBottom >= myTop - 4) && (prBottom <= myTop + 20);
                 if (overlapX && onMyHead){
-                    bridgeSendPush(sid, 0, -12);
+                    launched.push(sid);
+                    // stronger lift so it visibly pops up
+                    bridgeSendPush(sid, 0, -15);
                 }
             }
+            return launched;
         }
 
         function maybeHandleRespawn(){
@@ -1481,12 +1501,15 @@ cameraX = 0;
 
         function getPushHitboxRect(dir){
             // Requested: do NOT search a specific target.
-            // Create a big hitbox right in front of the player (front edge + 10px) and push anyone inside.
-            const baseY = localPlayer.y + PUSH_HITBOX_Y_OFFSET;
-            const x = (dir > 0)
+            // Create a big hitbox centered at "front edge + 10px" (or back edge -10px),
+            // so it reliably connects even when player colliders touch.
+            const centerY = localPlayer.y + 24;
+            const y = centerY - (PUSH_HITBOX_HEIGHT / 2);
+            const centerX = (dir > 0)
                 ? (localPlayer.x + 40 + PUSH_HITBOX_OFFSET_PX)
-                : (localPlayer.x - PUSH_HITBOX_OFFSET_PX - PUSH_HITBOX_WIDTH);
-            return { x, y: baseY, width: PUSH_HITBOX_WIDTH, height: PUSH_HITBOX_HEIGHT };
+                : (localPlayer.x - PUSH_HITBOX_OFFSET_PX);
+            const x = centerX - (PUSH_HITBOX_WIDTH / 2);
+            return { x, y, width: PUSH_HITBOX_WIDTH, height: PUSH_HITBOX_HEIGHT };
         }
 
         
@@ -1505,8 +1528,8 @@ cameraX = 0;
             const dx = (dir > 0) ? PUSH_IMPULSE_X : -PUSH_IMPULSE_X;
 
             const myTop = localPlayer.y;
-            const myFront = localPlayer.x + 40;
-            const myBack  = localPlayer.x;
+            const myBottom = localPlayer.y + 40;
+            const myCenterX = localPlayer.x + 20;
 
             let anyHit = false;
             for (const [sid, p] of Object.entries(players || {})) {
@@ -1515,18 +1538,18 @@ cameraX = 0;
                 const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
                 const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
 
-                // Exclude characters that are behind me (relative to push direction)
+                // Exclude characters behind/above me (do not push people behind or on my head)
                 const theirCenterX = px + 20;
                 if (dir > 0) {
-                    if (theirCenterX < myFront + 2) continue;
+                    if (theirCenterX < myCenterX + 4) continue;
                 } else {
-                    if (theirCenterX > myBack - 2) continue;
+                    if (theirCenterX > myCenterX - 4) continue;
                 }
 
-                // Exclude characters above me (stacked/on-head or higher ledges)
-                // Only allow roughly same vertical band.
-                if (py < myTop - 4) continue;
-                if (py > myTop + 30) continue;
+                // Above me (stacked/on-head or higher ledges) should NOT be pushed
+                if (py < myTop - 14) continue;
+                // Too far below (different floor) also ignore
+                if (py > myBottom - 6) continue;
 
                 const remoteRect = { x: px, y: py, width: 40, height: 40 };
 
@@ -1781,11 +1804,25 @@ cameraX = 0;
             updateBridges();
             // 이동
             const speed = 5;
-            localPlayer.vx = moveDirection * speed;
-            if (moveDirection !== 0) localPlayer.facing = moveDirection < 0 ? -1 : 1;
-            // Push animation window
             const _now = performance.now();
-            localPlayer.pushing = (_now < (localPlayer.pushAnimUntil || 0));
+            let vx = moveDirection * speed;
+            if (moveDirection !== 0) localPlayer.facing = moveDirection < 0 ? -1 : 1;
+
+            // Knockback window: pushed players keep their momentum briefly (enables chain pushing)
+            if (_now < (localPlayer.knockbackUntil || 0)) {
+                const kb = (typeof localPlayer.knockbackVx === 'number') ? localPlayer.knockbackVx : 0;
+                if (Math.abs(kb) > 0.001) vx = kb;
+                // decay
+                localPlayer.knockbackVx = kb * 0.92;
+                if (Math.abs(localPlayer.knockbackVx) < 0.25) {
+                    localPlayer.knockbackUntil = 0;
+                }
+                if (Math.abs(vx) > 0.3) localPlayer.facing = vx < 0 ? -1 : 1;
+            }
+            localPlayer.vx = vx;
+
+            // Push animation window
+                        localPlayer.pushing = (_now < (localPlayer.pushAnimUntil || 0));
             
             // 걷기 효과음 (땅에서 이동 중일 때만)
             if (moveDirection !== 0 && localPlayer.onGround) {
@@ -1825,9 +1862,10 @@ cameraX = 0;
                         const rp = getInterpolatedRemote(sid, p || {});
                         const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
                         const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
-                        const remoteRect = { x: px, y: py, width: 40, height: 40 };
+                        const remoteRect = { x: px + PVP_PAD_X, y: py, width: PVP_W, height: PVP_H };
+                        const myRect = { x: localPlayer.x + PVP_PAD_X, y: localPlayer.y, width: PVP_W, height: PVP_H };
 
-                        if (checkCollision(localPlayer, remoteRect)) {
+                        if (checkCollision(myRect, remoteRect)) {
                             // Side collision should "push" the other player (requested).
                             resolvePlayerPlayerCollision(localPlayer, remoteRect, sid);
                         }
@@ -2098,8 +2136,8 @@ cameraX = 0;
             const overlapY = Math.min(player.y + 40 - rect.y, rect.y + rect.height - player.y);
             
             if (overlapX < overlapY) {
-                if (player.x < rect.x) {
-                    player.x = rect.x - 40;
+                if (pRect.x < rect.x) {
+                    pRect.x = rect.x - pRect.width;
                 } else {
                     player.x = rect.x + rect.width;
                 }
@@ -2136,33 +2174,50 @@ cameraX = 0;
         }
 
         function resolvePlayerPlayerCollision(player, rect, remoteSid){
-            const overlapX = Math.min(player.x + 40 - rect.x, rect.x + rect.width - player.x);
-            const overlapY = Math.min(player.y + 40 - rect.y, rect.y + rect.height - player.y);
+            // PvP collision uses a slimmer rect to match the 32px sprite body.
+            const pRect = { x: player.x + PVP_PAD_X, y: player.y, width: PVP_W, height: PVP_H };
+
+            const overlapX = Math.min(pRect.x + pRect.width - rect.x, rect.x + rect.width - pRect.x);
+            const overlapY = Math.min(pRect.y + pRect.height - rect.y, rect.y + rect.height - pRect.y);
 
             if (overlapX < overlapY) {
                 // Side collision: separate X but keep some velocity, and push the other player
-                if (player.x < rect.x) {
-                    player.x = rect.x - 40;
+                if (pRect.x < rect.x) {
+                    pRect.x = rect.x - pRect.width;
+                    player.x = pRect.x - PVP_PAD_X;
+                    // If we're moving into them, send an impulse so they bounce forward.
                     if (player.vx > 0.35) bridgeSendPush(remoteSid, player.vx * 1.05, Math.abs(player.vx) > 2.0 ? -2.2 : 0);
                 } else {
-                    player.x = rect.x + rect.width;
+                    pRect.x = rect.x + rect.width;
+                    player.x = pRect.x - PVP_PAD_X;
                     if (player.vx < -0.35) bridgeSendPush(remoteSid, player.vx * 1.05, Math.abs(player.vx) > 2.0 ? -2.2 : 0);
                 }
-                // friction so it doesn't jitter-stick
-                player.vx *= 0.35;
+                // Do not kill momentum completely—helps chain reactions feel physical.
+                player.vx *= 0.45;
             } else {
                 // Vertical collision: allow standing on top of others
-                if (player.y < rect.y) {
-                    player.y = rect.y - 40;
+                if (pRect.y < rect.y) {
+                    player.y = rect.y - pRect.height;
                     player.onGround = true;
                     player.vy = 0;
                 } else {
+                    // When I jump while someone is stacked on my head, don't let their (slightly delayed)
+                    // position cancel my jump. We already launch them upward; give a short grace window.
+                    try{
+                        const now = performance.now();
+                        const blockUntil = player.noHeadBlockUntil || 0;
+                        const list = player.noHeadBlockSids;
+                        if (player.vy < -0.2 && now < blockUntil && Array.isArray(list) && list.indexOf(remoteSid) !== -1){
+                            return;
+                        }
+                    }catch(_){ }
+
                     player.y = rect.y + rect.height;
                     player.vy = 0;
                 }
             }
         }
-        
+
         // 박스 충돌 체크
         function checkBoxCollision(box, rect) {
             return box.x + box.width > rect.x &&
@@ -2942,11 +2997,15 @@ cameraX = 0;
                 if (to && mySessionId && to !== mySessionId) return;
                 const dx = clamp(Number(d.dx) || 0, -16, 16);
                 const dy = clamp(Number(d.dy) || 0, -16, 16);
+                const now = performance.now();
+                // Remember knockback so it is not immediately overwritten by local movement input
+                localPlayer.knockbackUntil = now + 220;
                 if (!dx && !dy) return;
                 // Apply impulse (horizontal + slight lift)
                 if (dx){
                     localPlayer.x += dx;
-                    localPlayer.vx = clamp((localPlayer.vx || 0) + dx * 0.55, -8, 8);
+                    localPlayer.knockbackVx = clamp((localPlayer.knockbackVx || 0) + dx * 0.95, -12, 12);
+                    localPlayer.vx = clamp((localPlayer.vx || 0) + dx * 0.55, -12, 12);
                 }
                 if (dy){
                     localPlayer.y += dy * 0.25;

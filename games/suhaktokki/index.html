@@ -301,8 +301,8 @@
       const sp = new URLSearchParams(location.search);
       if (sp.get('embed') !== '1') return;
 
-      // Hide internal lobby immediately (prevents "게임 시작" 화면이 상대에게 남는 문제)
-      try{ document.getElementById('lobby')?.classList?.add('hidden'); }catch(_){ }
+      // In embed mode, keep a small status visible until we receive bridge_init.
+      try{ const st=document.getElementById('lobbyStatus'); if(st) st.textContent='연결중...'; }catch(_){ }
 
       // Early handshake + buffering (init이 module 로딩 전에 도착할 수 있음)
       try{ window.parent?.postMessage({ type: 'bridge_ready' }, '*'); }catch(_){ }

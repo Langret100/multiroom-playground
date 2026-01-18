@@ -1035,6 +1035,28 @@ export class RoomDO{
       this.users.delete(uid);
       this.userSockets.delete(uid);
 
+      // ---- transient per-game state cleanup (no persistence) ----
+      // Make sure a leaving player does not remain in any server-side snapshots
+      // (prevents ghost state and avoids leaving per-user records in memory).
+      try{ this._relayLimiter.delete(uid); }catch(_){ }
+      try{
+        if (this.tg && this.tg.players && this.tg.players[uid]){
+          delete this.tg.players[uid];
+          this._scheduleTgBroadcast();
+        }
+      }catch(_){ }
+      try{
+        if (this.st){
+          if (this.st.players && this.st.players[uid]) delete this.st.players[uid];
+          if (this.st.scores && this.st.scores[uid]) delete this.st.scores[uid];
+          if (this.meta.mode === "snaketail" && this.meta.phase === "playing"){
+            this._broadcast("st_players", { players: this.st.players || {} });
+            this._broadcast("st_scores", { scores: this.st.scores || {} });
+            try{ this._maybeEndSnakeTail(); }catch(_){ }
+          }
+        }
+      }catch(_){ }
+
       if (u?.nick){
         this._broadcast("system", { text: `${u.nick} 퇴장`, ts: now() });
       }
