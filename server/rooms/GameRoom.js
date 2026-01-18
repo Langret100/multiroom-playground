@@ -54,6 +54,7 @@ this.maxClients = clamp(requestedMax, 2, (this.state.modeType === "duel" ? 4 : c
     this.tg = {
       players: new Map(),   // sessionId -> last state snapshot
       buttons: {},          // idx -> pressed
+      floors: new Map(),    // id -> {id, owner, x, y, width, height, color, t}
       level: 1,
       lastBroadcastAt: 0,
       over: false,
@@ -124,12 +125,14 @@ this.st = {
       // Reset transient co-op state (no persistence)
       if (this.state.mode === "togester"){
         try{ this.tg.players.clear(); }catch(_){ }
+        try{ this.tg.floors.clear(); }catch(_){ }
         this.tg.buttons = {};
         this.tg.level = 1;
         this.tg.lastBroadcastAt = 0;
         this.tg.over = false;
         this.broadcast("tg_level", { level: this.tg.level });
         this.broadcast("tg_buttons", { buttons: this.tg.buttons });
+        this.broadcast("tg_floors", { floors: [] });
       }
 
       // SnakeTail init (3-minute round) for coop-competitive mode
@@ -166,6 +169,8 @@ this.st = {
       const p = this.state.players.get(client.sessionId);
       if (!p) return;
 
+      const prev = this.tg.players.get(client.sessionId);
+
       const s = state || {};
       // sanitize & clamp a bit
       const snap = {
@@ -180,6 +185,22 @@ this.st = {
         name: String(p.nick || s.name || "Player").slice(0, 16),
       };
       this.tg.players.set(client.sessionId, snap);
+
+      // If this player just died, remove their temporary floors ("바닥" 버튼)
+      if (snap.isDead && !prev?.isDead){
+        try{
+          const removed = [];
+          for (const [fid, fl] of this.tg.floors.entries()){
+            if (fl && fl.owner === client.sessionId){
+              this.tg.floors.delete(fid);
+              removed.push(fid);
+            }
+          }
+          if (removed.length){
+            this.broadcast("tg_floor_remove", { owner: client.sessionId, ids: removed });
+          }
+        }catch(_){ }
+      }
 
       // throttle broadcast to ~20Hz total per room
       const now = Date.now();
@@ -202,8 +223,8 @@ this.st = {
       this.broadcast("tg_button", { idx: i, pressed: v });
     });
 
-    // Player push impulse (side collision): forwarded to target client
-    this.onMessage("tg_push", (client, { to, dx, from }) => {
+    // Player push impulse (side collision / action button): forwarded to target client
+    this.onMessage("tg_push", (client, { to, dx, dy, from }) => {
       if (this.state.mode !== "togester") return;
       if (this.state.phase !== "playing") return;
       if (this.tg.over) return;
@@ -212,15 +233,66 @@ this.st = {
       // Only allow pushing real players in the room
       const tp = this.state.players.get(targetSid);
       if (!tp) return;
-      const impulse = clamp(Number(dx) || 0, -16, 16);
-      if (!impulse) return;
+      const ix = clamp(Number(dx) || 0, -16, 16);
+      const iy = clamp(Number(dy) || 0, -16, 16);
+      if (!ix && !iy) return;
       this.broadcast("tg_push", {
         to: targetSid,
-        dx: impulse,
+        dx: ix,
+        dy: iy,
         from: String(from || client.sessionId || "").slice(0, 64),
       });
     });
 
+
+
+    // Temporary floor spawn ("바닥" 버튼)
+    this.onMessage("tg_floor", (client, payload) => {
+      if (this.state.mode !== "togester") return;
+      if (this.state.phase !== "playing") return;
+      if (this.tg.over) return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+
+      const now = Date.now();
+      const rawId = String(payload?.id || "");
+      const gen = () => `${client.sessionId}:${now.toString(36)}${Math.random().toString(36).slice(2,6)}`;
+      const id = (rawId ? rawId : gen()).slice(0, 64);
+
+      const floor = {
+        id,
+        owner: client.sessionId,
+        x: clamp(Number(payload?.x) || 0, -2000, 20000),
+        y: clamp(Number(payload?.y) || 0, -2000, 20000),
+        width: clamp(Number(payload?.width) || 80, 20, 240),
+        height: clamp(Number(payload?.height) || 20, 10, 120),
+        color: String(payload?.color || "#636e72").slice(0, 16),
+        t: now,
+      };
+
+      // Enforce per-owner floor limit (keep latest 5)
+      try{
+        const owned = [];
+        for (const [fid, fl] of this.tg.floors.entries()){
+          if (fl?.owner === client.sessionId) owned.push(fl);
+        }
+        if (owned.length >= 5){
+          owned.sort((a,b)=>(a.t||0)-(b.t||0));
+          const removeCount = owned.length - 4;
+          const removedIds = [];
+          for (let i=0;i<removeCount;i++){
+            const rid = owned[i].id;
+            if (this.tg.floors.delete(rid)) removedIds.push(rid);
+          }
+          if (removedIds.length){
+            this.broadcast("tg_floor_remove", { owner: client.sessionId, ids: removedIds });
+          }
+        }
+      }catch(_){ }
+
+      this.tg.floors.set(id, floor);
+      this.broadcast("tg_floor", floor);
+    });
     this.onMessage("tg_level", (client, { level }) => {
       if (this.state.mode !== "togester") return;
       if (this.state.phase !== "playing") return;
@@ -234,7 +306,9 @@ this.st = {
       if (lv !== this.tg.level + 1) return; // do not allow skipping or rewinding
 
       this.tg.level = lv;
+      try{ this.tg.floors.clear(); }catch(_){ }
       this.broadcast("tg_level", { level: lv });
+      this.broadcast("tg_floors", { floors: [] });
     });
 
     this.onMessage("tg_reset", (client, { t }) => {
@@ -245,8 +319,10 @@ this.st = {
       if (!p?.isHost) return; // host-only
       // clear buttons, keep player snapshots
       this.tg.buttons = {};
+      try{ this.tg.floors.clear(); }catch(_){ }
       this.broadcast("tg_reset", { t: Number(t)||Date.now() });
       this.broadcast("tg_buttons", { buttons: this.tg.buttons });
+      this.broadcast("tg_floors", { floors: [] });
     });
 
     // Togester game over (success/fail) -> result -> backToRoom
@@ -532,6 +608,16 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
         client.send("st_scores", { scores: this.st.scores || {} });
       }
     }catch(_){ }
+
+    // Togester: late join sync (level/buttons/floors)
+    try{
+      if (this.state.mode === "togester" && this.state.phase === "playing" && !this.tg.over){
+        client.send("tg_level", { level: this.tg.level });
+        client.send("tg_buttons", { buttons: this.tg.buttons });
+        client.send("tg_floors", { floors: Array.from(this.tg.floors.values()) });
+      }
+    }catch(_){ }
+
   }
 
   onLeave(client){
@@ -543,6 +629,20 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     // Togester transient state cleanup (no persistence)
     try{
       if (this.tg?.players) this.tg.players.delete(client.sessionId);
+      try{
+        if (this.tg?.floors){
+          const removed = [];
+          for (const [fid, fl] of this.tg.floors.entries()){
+            if (fl && fl.owner === client.sessionId){
+              this.tg.floors.delete(fid);
+              removed.push(fid);
+            }
+          }
+          if (removed.length){
+            this.broadcast("tg_floor_remove", { owner: client.sessionId, ids: removed });
+          }
+        }
+      }catch(_){ }
       if (this.state.mode === "togester" && this.state.phase === "playing"){
         const out = {};
         for (const [sid, st] of this.tg.players.entries()) out[sid] = st;

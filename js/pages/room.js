@@ -787,10 +787,26 @@ function updatePreview(modeId){
       if (!fromMain) return;
       // relay a push impulse to the target player (server will broadcast)
       try{
-        room.send("tg_push", { to: d.to, dx: d.dx, from: mySessionId });
+        room.send("tg_push", { to: d.to, dx: d.dx, dy: d.dy, from: mySessionId });
       }catch(_){ }
       return;
     }
+
+    if (d.type === "tg_floor"){
+      if (!fromMain) return;
+      try{
+        room.send("tg_floor", {
+          id: d.id,
+          x: d.x,
+          y: d.y,
+          width: d.width,
+          height: d.height,
+          color: d.color
+        });
+      }catch(_){ }
+      return;
+    }
+
     if (d.type === "tg_over"){
       if (!fromMain) return;
       room.send("tg_over", {
@@ -1804,7 +1820,17 @@ renderPlayers();
         postToMain({ type:"tg_reset", t: msg.t });
       });
       room.onMessage("tg_push", (msg)=>{
-        postToMain({ type:"tg_push", to: msg.to, dx: msg.dx, from: msg.from });
+        postToMain({ type:"tg_push", to: msg.to, dx: msg.dx, dy: msg.dy, from: msg.from });
+      });
+
+      room.onMessage("tg_floors", (msg)=>{
+        postToMain({ type:"tg_floors", floors: msg.floors || [] });
+      });
+      room.onMessage("tg_floor", (msg)=>{
+        postToMain(Object.assign({ type:"tg_floor" }, msg || {}));
+      });
+      room.onMessage("tg_floor_remove", (msg)=>{
+        postToMain({ type:"tg_floor_remove", ids: msg.ids || null, owner: msg.owner || null });
       });
 
       // SnakeTail relay: server -> iframe

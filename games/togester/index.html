@@ -340,6 +340,56 @@
         .error-msg.show {
             display: block;
         }
+    
+
+        /* Action buttons (right side) */
+        #actionButtons{
+            position: absolute;
+            right: 14px;
+            bottom: 120px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 200;
+            pointer-events: auto;
+        }
+        .action-btn{
+            width: 76px;
+            height: 76px;
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.22);
+            background: rgba(255,255,255,0.16);
+            color: #fff;
+            font-family: 'Black Han Sans', sans-serif;
+            font-size: 1.05rem;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.22);
+            touch-action: manipulation;
+            user-select: none;
+        }
+        .action-btn:active{
+            transform: scale(0.96);
+        }
+
+        /* Screen shake on death */
+        @keyframes tgShake {
+            0% { transform: translate3d(0,0,0); }
+            15% { transform: translate3d(-10px, 6px, 0); }
+            30% { transform: translate3d(9px, -7px, 0); }
+            45% { transform: translate3d(-8px, -5px, 0); }
+            60% { transform: translate3d(7px, 6px, 0); }
+            75% { transform: translate3d(-6px, 4px, 0); }
+            100% { transform: translate3d(0,0,0); }
+        }
+        #gameContainer.screen-shake{
+            animation: tgShake 260ms linear;
+        }
+
     </style>
 </head>
 <body>
@@ -439,6 +489,11 @@
         <canvas id="gameCanvas"></canvas>
         
         <div id="playerList"></div>
+
+        <div id="actionButtons" aria-label="액션 버튼">
+            <button id="pushBtn" class="action-btn" type="button" title="앞에 있는 캐릭터를 밀기">밀기</button>
+            <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥</button>
+        </div>
         
         <div id="controls-hint">
             왼쪽/오른쪽 터치: 이동 | 양쪽 터치: 점프
@@ -475,6 +530,15 @@
         
         const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
         const JUMP_VELOCITY = -13.3334; // 점프 2배 (모바일 세로 맵 기준)
+        const RESPAWN_COOLDOWN_MS = 1500; // 1.5초
+        const PUSH_IMPULSE_X = 11;
+        const PUSH_IMPULSE_Y = -10;
+        const PUSH_HITBOX_OFFSET_PX = 10; // player front edge +10px
+        const PUSH_HITBOX_WIDTH = 140; // big hitbox (wide)
+        const PUSH_HITBOX_HEIGHT = 44;
+        const PUSH_HITBOX_Y_OFFSET = 6; // lower band (avoid hitting above)
+        const FLOOR_COOLDOWN_MS = 220;
+        const PUSH_ANIM_MS = 180; // push animation duration
         
         let localPlayer = {
             x: 100,
@@ -487,11 +551,20 @@
             onButton: false,
             isDead: false,
             facing: 1,
-            variant: 0
+            variant: 0,
+            jumpUsed: false,
+            deadAt: 0,
+            nextRespawnAt: 0,
+            pushAnimUntil: 0
         };
         
         let players = {};
         let smoothedPlayers = {};
+        let tgFloors = {}; // id -> platform (temporary floors)
+        let tgFloorSeq = 0;
+        let lastFloorAt = 0;
+        let lastPushAt = 0;
+
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
         let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
         const NET_INTERP_DELAY_MS = 120; // 약간의 지연을 두고 보간 (지터/끊김 완화)
@@ -1048,6 +1121,7 @@
             
             loadLevel(currentLevel);
             setupControls();
+            setupActionButtons();
             updatePlayerList();
             
             // 나가기 버튼
@@ -1260,6 +1334,9 @@
                 bridges: (level.bridges || []).map(b => ({...b, active: false}))
             };
 
+            // 동적 발판(바닥 버튼) 초기화
+            clearAllFloors();
+
             // 버튼이 문 반대편에 있어 진행 불가가 되는 레벨 자동 보정
             ensureDoorButtonsAccessible(level);
             computeStageBounds();
@@ -1271,6 +1348,9 @@
             localPlayer.vx = 0;
             localPlayer.vy = 0;
             localPlayer.isDead = false;
+            localPlayer.jumpUsed = false;
+            localPlayer.deadAt = 0;
+            localPlayer.nextRespawnAt = 0;
             
             // 네트워크(브릿지)로 초기 위치 전송
             bridgeSendState(true);
@@ -1301,6 +1381,237 @@ cameraX = 0;
             }
         }
         
+
+
+        // ==================== 액션/점프/부활/발판 헬퍼 ====================
+        function canJump(){
+            return !localPlayer.isDead && !localPlayer.jumpUsed;
+        }
+
+        function anyTeammateAlive(){
+            for (const p of Object.values(players || {})){
+                if (p && !p.isDead) return true;
+            }
+            return false;
+        }
+
+        function doJump(){
+            if (!canJump()) return;
+            localPlayer.vy = JUMP_VELOCITY;
+            localPlayer.onGround = false;
+            localPlayer.jumpUsed = true;
+            sfxJump();
+            launchPlayersOnTop();
+        }
+
+        function launchPlayersOnTop(){
+            if (isGuestMode) return;
+            const myL = localPlayer.x;
+            const myR = localPlayer.x + 40;
+            const myTop = localPlayer.y;
+            for (const [sid, p] of Object.entries(players || {})){
+                if (!p || p.isDead) continue;
+                const rp = getInterpolatedRemote(sid, p || {});
+                const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
+                const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
+                const prL = px;
+                const prR = px + 40;
+                const prBottom = py + 40;
+                const overlapX = (prR > myL + 2) && (prL < myR - 2);
+                const onMyHead = (prBottom >= myTop - 2) && (prBottom <= myTop + 12);
+                if (overlapX && onMyHead){
+                    bridgeSendPush(sid, 0, -12);
+                }
+            }
+        }
+
+        function maybeHandleRespawn(){
+            if (isGuestMode) return;
+            if (!localPlayer.isDead) return;
+            if (!anyTeammateAlive()) return;
+            const now = performance.now();
+            if (!localPlayer.deadAt) localPlayer.deadAt = now;
+            if (now < (localPlayer.nextRespawnAt || 0)) return;
+            if (now - localPlayer.deadAt < RESPAWN_COOLDOWN_MS) return;
+            respawnLocal();
+        }
+
+        function respawnLocal(){
+            const level = LEVELS[currentLevel - 1];
+            if (!level) return;
+            const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
+            localPlayer.x = level.spawn.x + (colorIndex * 50);
+            localPlayer.y = level.spawn.y;
+            localPlayer.vx = 0;
+            localPlayer.vy = 0;
+            localPlayer.isDead = false;
+            localPlayer.jumpUsed = false;
+            localPlayer.deadAt = 0;
+            localPlayer.nextRespawnAt = 0;
+            localPlayer.jumpUsed = false;
+            localPlayer.deadAt = 0;
+            localPlayer.nextRespawnAt = performance.now() + 120;
+            bridgeSendState(true);
+        }
+
+        function setupActionButtons(){
+            const pushBtn = document.getElementById('pushBtn');
+            const floorBtn = document.getElementById('floorBtn');
+            if (!pushBtn || !floorBtn) return;
+
+            if (!pushBtn._bound){
+                pushBtn._bound = true;
+                const h = (e)=>{
+                    try{ e.preventDefault(); e.stopPropagation(); }catch(_){ }
+                    initAudio();
+                    doPushAction();
+                };
+                pushBtn.addEventListener('pointerdown', h, { passive: false });
+            }
+            if (!floorBtn._bound){
+                floorBtn._bound = true;
+                const h = (e)=>{
+                    try{ e.preventDefault(); e.stopPropagation(); }catch(_){ }
+                    initAudio();
+                    createFloorUnderFoot();
+                };
+                floorBtn.addEventListener('pointerdown', h, { passive: false });
+            }
+        }
+
+        function getPushHitboxRect(dir){
+            // Requested: do NOT search a specific target.
+            // Create a big hitbox right in front of the player (front edge + 10px) and push anyone inside.
+            const baseY = localPlayer.y + PUSH_HITBOX_Y_OFFSET;
+            const x = (dir > 0)
+                ? (localPlayer.x + 40 + PUSH_HITBOX_OFFSET_PX)
+                : (localPlayer.x - PUSH_HITBOX_OFFSET_PX - PUSH_HITBOX_WIDTH);
+            return { x, y: baseY, width: PUSH_HITBOX_WIDTH, height: PUSH_HITBOX_HEIGHT };
+        }
+
+        
+        function doPushAction(){
+            if (isGuestMode) return;
+            if (localPlayer.isDead) return;
+            const now = performance.now();
+            if (now - lastPushAt < 260) return;
+            lastPushAt = now;
+
+            // Push animation (works even in air)
+            localPlayer.pushAnimUntil = now + PUSH_ANIM_MS;
+
+            const dir = (moveDirection !== 0) ? moveDirection : (localPlayer.facing || 1);
+            const hitbox = getPushHitboxRect(dir);
+            const dx = (dir > 0) ? PUSH_IMPULSE_X : -PUSH_IMPULSE_X;
+
+            const myTop = localPlayer.y;
+            const myFront = localPlayer.x + 40;
+            const myBack  = localPlayer.x;
+
+            let anyHit = false;
+            for (const [sid, p] of Object.entries(players || {})) {
+                if (!p || p.isDead) continue;
+                const rp = getInterpolatedRemote(sid, p || {});
+                const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
+                const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
+
+                // Exclude characters that are behind me (relative to push direction)
+                const theirCenterX = px + 20;
+                if (dir > 0) {
+                    if (theirCenterX < myFront + 2) continue;
+                } else {
+                    if (theirCenterX > myBack - 2) continue;
+                }
+
+                // Exclude characters above me (stacked/on-head or higher ledges)
+                // Only allow roughly same vertical band.
+                if (py < myTop - 4) continue;
+                if (py > myTop + 30) continue;
+
+                const remoteRect = { x: px, y: py, width: 40, height: 40 };
+
+                if (checkCollision(remoteRect, hitbox)) {
+                    bridgeSendPush(sid, dx, PUSH_IMPULSE_Y);
+                    anyHit = true;
+                }
+            }
+            if (anyHit) sfxPush();
+            // Ensure our push pose replicates quickly
+            bridgeSendState(true);
+        }
+
+
+        function addFloorPlatform(pl){
+            if (!pl || !gameObjects || !gameObjects.platforms) return;
+            const id = String(pl.id || '');
+            if (!id) return;
+            if (tgFloors[id]) return;
+            const platform = {
+                x: Number(pl.x) || 0,
+                y: Number(pl.y) || 0,
+                width: Number(pl.width) || 80,
+                height: Number(pl.height) || 20,
+                color: pl.color || '#2f3640',
+                temp: true,
+                owner: pl.owner || null,
+                id
+            };
+            tgFloors[id] = platform;
+            gameObjects.platforms.push(platform);
+        }
+
+        function removeFloorById(id){
+            id = String(id || '');
+            const pl = tgFloors[id];
+            if (!pl || !gameObjects || !gameObjects.platforms) return;
+            delete tgFloors[id];
+            gameObjects.platforms = gameObjects.platforms.filter(p => !(p && p.temp && p.id === id));
+        }
+
+        function removeFloorsByOwner(owner){
+            const oid = String(owner || '');
+            const ids = [];
+            for (const [id, pl] of Object.entries(tgFloors)){
+                if (pl && String(pl.owner || '') === oid) ids.push(id);
+            }
+            for (const id of ids) removeFloorById(id);
+        }
+
+        function clearAllFloors(){
+            if (!gameObjects || !gameObjects.platforms) return;
+            tgFloors = {};
+            gameObjects.platforms = gameObjects.platforms.filter(p => !(p && p.temp));
+        }
+
+        function createFloorUnderFoot(){
+            if (localPlayer.isDead) return;
+            const now = performance.now();
+            if (now - lastFloorAt < FLOOR_COOLDOWN_MS) return;
+            lastFloorAt = now;
+
+            // 최대 5개까지만(성능 보호). 초과 시 가장 오래된 것 제거
+            const myOwner = (EMBED && mySessionId) ? mySessionId : (playerId || 'local');
+            const mine = Object.values(tgFloors).filter(p => String(p.owner||'') === String(myOwner));
+            if (mine.length >= 5){
+                mine.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+                removeFloorById(mine[0].id);
+            }
+
+            const w = 90;
+            const h = 20;
+            const x = (localPlayer.x + 20) - w/2;
+            const y = (localPlayer.y + 40) + 4;
+            const id = `${myOwner}:${Date.now().toString(36)}:${(tgFloorSeq++ % 9999)}`;
+
+            const pl = { id, owner: myOwner, x, y, width: w, height: h, color: '#2f3640' };
+            addFloorPlatform(pl);
+
+            if (EMBED && !isGuestMode){
+                bridgeSend('tg_floor', { id: pl.id, x: pl.x, y: pl.y, width: pl.width, height: pl.height, color: pl.color });
+            }
+        }
+
+
         // ==================== 터치 컨트롤 ====================
         function setupControls() {
             // 터치 시작
@@ -1317,11 +1628,7 @@ cameraX = 0;
                 
                 // 두 개 이상 터치 = 점프
                 if (Object.keys(touches).length >= 2) {
-                    if (localPlayer.onGround) {
-                        localPlayer.vy = JUMP_VELOCITY;
-                        localPlayer.onGround = false;
-                        sfxJump();
-                    }
+                    doJump();
                 } else {
                     // 단일 터치 = 이동 방향 결정
                     updateMoveDirection();
@@ -1383,11 +1690,7 @@ cameraX = 0;
                 
                 // 두 개 이상 = 점프 (터치와 동일)
                 if (Object.keys(touches).length >= 2) {
-                    if (localPlayer.onGround) {
-                        localPlayer.vy = JUMP_VELOCITY;
-                        localPlayer.onGround = false;
-                        sfxJump();
-                    }
+                    doJump();
                 } else {
                     updateMoveDirection();
                 }
@@ -1435,10 +1738,8 @@ cameraX = 0;
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'ArrowLeft' || e.key === 'a') moveDirection = -1;
                 if (e.key === 'ArrowRight' || e.key === 'd') moveDirection = 1;
-                if ((e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') && localPlayer.onGround) {
-                    localPlayer.vy = JUMP_VELOCITY;
-                    localPlayer.onGround = false;
-                    sfxJump();
+                if (e.key === 'ArrowUp' || e.key === 'w' || e.key === ' ') {
+                    doJump();
                 }
             });
             
@@ -1468,6 +1769,13 @@ cameraX = 0;
         
         // ==================== 게임 물리 ====================
         function updatePhysics() {
+            maybeHandleRespawn();
+            if (localPlayer.isDead){
+                moveDirection = 0;
+                localPlayer.vx = 0;
+                localPlayer.vy = 0;
+                return;
+            }
             // 기믹 업데이트 (리프트/다리)
             updateLifts();
             updateBridges();
@@ -1475,6 +1783,9 @@ cameraX = 0;
             const speed = 5;
             localPlayer.vx = moveDirection * speed;
             if (moveDirection !== 0) localPlayer.facing = moveDirection < 0 ? -1 : 1;
+            // Push animation window
+            const _now = performance.now();
+            localPlayer.pushing = (_now < (localPlayer.pushAnimUntil || 0));
             
             // 걷기 효과음 (땅에서 이동 중일 때만)
             if (moveDirection !== 0 && localPlayer.onGround) {
@@ -1515,6 +1826,19 @@ cameraX = 0;
                         const px = (typeof rp.x === 'number') ? rp.x : (p.x || 0);
                         const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
                         const remoteRect = { x: px, y: py, width: 40, height: 40 };
+
+                // Exclude characters that are behind me (relative to direction)
+                const theirCenterX = px + 20;
+                const myFront = localPlayer.x + 40;
+                const myBack = localPlayer.x;
+                if (dir > 0 && theirCenterX < myFront + 2) continue;
+                if (dir < 0 && theirCenterX > myBack - 2) continue;
+
+                // Exclude characters above me (e.g., stacked on my head / higher platform)
+                // Only affect roughly the same vertical band around my torso/feet.
+                if (py < localPlayer.y - 4) continue;
+                if (py > localPlayer.y + 32) continue;
+
                         if (checkCollision(localPlayer, remoteRect)) {
                             // Side collision should "push" the other player (requested).
                             resolvePlayerPlayerCollision(localPlayer, remoteRect, sid);
@@ -1522,6 +1846,9 @@ cameraX = 0;
                     });
                 } catch(_){ }
             }
+
+            // 착지하면 점프 사용권 복구 (공중에서 아직 점프 안했으면 1회 가능)
+            if (localPlayer.onGround) localPlayer.jumpUsed = false;
             
             // 박스 물리
             for (let box of gameObjects.boxes) {
@@ -1667,13 +1994,25 @@ cameraX = 0;
             deathCount++;
             updateDeathCountUI();
             sfxDeath();
-            
+            // 사망 시점 기록 (부활 쿨타임)
+            const _now = performance.now();
+            localPlayer.deadAt = _now;
+            localPlayer.nextRespawnAt = _now + RESPAWN_COOLDOWN_MS;
+            // 내 발판(바닥 버튼) 제거
+            try{
+                const _owner = (EMBED && mySessionId) ? mySessionId : (playerId || 'local');
+                removeFloorsByOwner(_owner);
+            }catch(_){ }
+
             if (isGuestMode) {
                 // 게스트 모드: 바로 맵 초기화
                 showDeathEffect(() => {
                     resetMap();
                 });
             } else {
+                // 멀티 플레이: 사망 화면 진동
+                showDeathEffect();
+
                 // 멀티 플레이: 브릿지로 사망 상태 전송
                 bridgeSendState(true);
 
@@ -1687,24 +2026,22 @@ cameraX = 0;
         }
         
         function showDeathEffect(callback) {
-            // 간단한 사망 이펙트 (화면 깜빡임)
-            const overlay = document.createElement('div');
-            overlay.style.cssText = `
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background: rgba(255,0,0,0.3);
-                z-index: 500;
-                pointer-events: none;
-            `;
-            document.body.appendChild(overlay);
-            
+            // 사망 연출: 화면 빨갛게 대신 잠깐 진동(쉐イク)
+            const gc = document.getElementById('gameContainer');
+            if (gc) {
+                try{
+                    gc.classList.remove('screen-shake');
+                    // reflow to restart animation
+                    void gc.offsetWidth;
+                    gc.classList.add('screen-shake');
+                    setTimeout(() => {
+                        try{ gc.classList.remove('screen-shake'); }catch(_){ }
+                    }, 280);
+                }catch(_){ }
+            }
             setTimeout(() => {
-                overlay.remove();
                 if (callback) callback();
-            }, 300);
+            }, 270);
         }
         
         function checkAllDead() {
@@ -1739,6 +2076,9 @@ cameraX = 0;
             // 맵 초기화 (버튼, 문 상태 리셋)
             loadLevel(currentLevel);
             localPlayer.isDead = false;
+            localPlayer.jumpUsed = false;
+            localPlayer.deadAt = 0;
+            localPlayer.nextRespawnAt = 0;
             
             // 브릿지: 리셋 전파(호스트만)
             if (!isGuestMode && isHost) {
@@ -1791,7 +2131,7 @@ cameraX = 0;
         // 플레이어-플레이어 충돌 해결 (옆 충돌 시 상대를 '밀기')
         // NOTE: 각 플레이어는 자신의 상태만 서버로 전송하므로,
         //       밀림은 'push impulse' 이벤트를 상대에게 전달해 적용합니다.
-        function bridgeSendPush(toSid, dx){
+        function bridgeSendPush(toSid, dx, dy){
             if (!EMBED || isGuestMode) return;
             const sid = String(toSid || "");
             if (!sid || sid === mySessionId) return;
@@ -1801,9 +2141,10 @@ cameraX = 0;
             if (now - last < 120) return; // throttle
             bridgeSendPush._last[sid] = now;
 
-            const v = clamp(Number(dx) || 0, -10, 10);
-            if (!v) return;
-            bridgeSend("tg_push", { to: sid, dx: v });
+            const vx = clamp(Number(dx) || 0, -16, 16);
+            const vy = clamp(Number(dy) || 0, -16, 16);
+            if (!vx && !vy) return;
+            bridgeSend("tg_push", { to: sid, dx: vx, dy: vy });
         }
 
         function resolvePlayerPlayerCollision(player, rect, remoteSid){
@@ -1814,10 +2155,10 @@ cameraX = 0;
                 // Side collision: separate X but keep some velocity, and push the other player
                 if (player.x < rect.x) {
                     player.x = rect.x - 40;
-                    if (player.vx > 0.2) bridgeSendPush(remoteSid, player.vx * 0.95);
+                    if (player.vx > 0.35) bridgeSendPush(remoteSid, player.vx * 1.05, Math.abs(player.vx) > 2.0 ? -2.2 : 0);
                 } else {
                     player.x = rect.x + rect.width;
-                    if (player.vx < -0.2) bridgeSendPush(remoteSid, player.vx * 0.95);
+                    if (player.vx < -0.35) bridgeSendPush(remoteSid, player.vx * 1.05, Math.abs(player.vx) > 2.0 ? -2.2 : 0);
                 }
                 // friction so it doesn't jitter-stick
                 player.vx *= 0.35;
@@ -2142,10 +2483,12 @@ cameraX = 0;
                 sp.vx = (typeof tp.vx === 'number') ? tp.vx : (p.vx || 0);
                 sp.vy = (typeof tp.vy === 'number') ? tp.vy : (p.vy || 0);
                 sp.onGround = (typeof tp.onGround === 'boolean') ? tp.onGround : !!p.onGround;
+                sp.pushing = !!tp.pushing;
+
                 if (!sp.facing) sp.facing = 1;
                 if (Math.abs(sp.vx) > 0.3) sp.facing = sp.vx < 0 ? -1 : 1;
 
-                drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing });
+                drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing, pushing: sp.pushing });
             });
 // 로컬 플레이어
             drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead, localPlayer);
@@ -2178,6 +2521,7 @@ cameraX = 0;
             const onGround = (typeof s.onGround === 'boolean') ? s.onGround : false;
             const facing = (typeof s.facing === 'number') ? s.facing : (vx < -0.2 ? -1 : 1);
             const variant = (typeof s.variant === 'number') ? s.variant : 0;
+            const pushing = !!s.pushing || (typeof s.pushAnimUntil === 'number' && performance.now() < s.pushAnimUntil);
 
             // 사망 시 반투명 처리
             if (isDead) ctx.globalAlpha = 0.4;
@@ -2209,6 +2553,7 @@ cameraX = 0;
             // 팔/다리 포즈
             const armUp = jumping;
             const legsTuck = !onGround;
+            const pushPose = pushing && !isDead;
 
             // 꼬리 흔들림
             const tailWag = moving ? (walkPhase ? 1 : -1) : (Math.sin(t * 3) > 0 ? 1 : -1);
@@ -2290,7 +2635,16 @@ cameraX = 0;
             p(11, 2, 1, 1, INNER);
 
             // ===== 팔 =====
-            if (armUp) {
+            if (pushPose) {
+                // 밀치기 포즈: 앞팔을 뻗고 몸을 살짝 앞으로
+                p(2, 11, 2, 3, OUT);
+                p(3, 12, 1, 2, BASE);
+
+                // 앞쪽(전면) 팔
+                p(12, 10, 3, 2, OUT);
+                p(13, 11, 2, 1, BASE);
+                p(15, 11, 1, 1, HI);
+            } else if (armUp) {
                 p(2, 8, 2, 2, OUT);
                 p(12, 8, 2, 2, OUT);
                 p(3, 9, 1, 1, BASE);
@@ -2402,7 +2756,8 @@ cameraX = 0;
                 isDead: !!p?.isDead,
                 color: p?.color,
                 name: p?.name,
-                variant: (typeof p?.variant === 'number') ? p.variant : 0
+                variant: (typeof p?.variant === 'number') ? p.variant : 0,
+                pushing: !!p?.pushing
             });
 
             // 히스토리 정리
@@ -2441,7 +2796,8 @@ cameraX = 0;
                     isDead: !!b.isDead,
                     color: b.color,
                     name: b.name,
-                    variant: (typeof b.variant === 'number') ? b.variant : 0
+                    variant: (typeof b.variant === 'number') ? b.variant : 0,
+                    pushing: !!b.pushing
                 };
             }
 
@@ -2459,7 +2815,8 @@ cameraX = 0;
                 isDead: !!last.isDead,
                 color: last.color,
                 name: last.name,
-                variant: (typeof last.variant === 'number') ? last.variant : 0
+                variant: (typeof last.variant === 'number') ? last.variant : 0,
+                pushing: !!last.pushing
             };
         }
 
@@ -2473,12 +2830,13 @@ cameraX = 0;
                 recordRemoteSnapshot(sid, p);
                 // init smoothing slot
                 if (!smoothedPlayers[sid]){
-                    smoothedPlayers[sid] = { x: p.x||0, y: p.y||0, vx: p.vx||0, vy: p.vy||0, onGround: !!p.onGround, isDead: !!p.isDead };
+                    smoothedPlayers[sid] = { x: p.x||0, y: p.y||0, vx: p.vx||0, vy: p.vy||0, onGround: !!p.onGround, isDead: !!p.isDead, pushing: !!p.pushing };
                 }
                 // keep name/color immediately (no alpha)
                 smoothedPlayers[sid].name = p.name;
                 smoothedPlayers[sid].color = p.color;
                 smoothedPlayers[sid].variant = (typeof p.variant === 'number') ? p.variant : 0;
+                smoothedPlayers[sid].pushing = !!p.pushing;
             }
             players = next;
             // prune removed
@@ -2518,7 +2876,8 @@ cameraX = 0;
                     name: localPlayer.name,
                     level: currentLevel,
                     deathCount,
-                    variant: localPlayer.variant
+                    variant: localPlayer.variant,
+                    pushing: (performance.now() < (localPlayer.pushAnimUntil || 0))
                 }
             });
         }
@@ -2593,13 +2952,43 @@ cameraX = 0;
             if (d.type === "tg_push"){
                 const to = String(d.to || "");
                 if (to && mySessionId && to !== mySessionId) return;
-                const dx = clamp(Number(d.dx) || 0, -10, 10);
-                if (!dx) return;
-                // Apply a small horizontal impulse so the pushed player actually moves
-                localPlayer.x += dx;
-                localPlayer.vx = clamp((localPlayer.vx || 0) + dx * 0.55, -8, 8);
+                const dx = clamp(Number(d.dx) || 0, -16, 16);
+                const dy = clamp(Number(d.dy) || 0, -16, 16);
+                if (!dx && !dy) return;
+                // Apply impulse (horizontal + slight lift)
+                if (dx){
+                    localPlayer.x += dx;
+                    localPlayer.vx = clamp((localPlayer.vx || 0) + dx * 0.55, -8, 8);
+                }
+                if (dy){
+                    localPlayer.y += dy * 0.25;
+                    localPlayer.vy = clamp((localPlayer.vy || 0) + dy * 0.55, -13.5, 10);
+                    if (dy < 0) localPlayer.onGround = false;
+                }
                 try{ sfxPush(); }catch(_){ }
                 bridgeSendState(true);
+                return;
+            }
+
+            if (d.type === "tg_floors"){
+                // full sync of floors
+                clearAllFloors();
+                const arr = Array.isArray(d.floors) ? d.floors : [];
+                for (const pl of arr) addFloorPlatform(pl);
+                return;
+            }
+
+            if (d.type === "tg_floor"){
+                addFloorPlatform(d);
+                return;
+            }
+
+            if (d.type === "tg_floor_remove"){
+                if (d.ids && Array.isArray(d.ids)) {
+                    for (const id of d.ids) removeFloorById(id);
+                } else if (d.owner) {
+                    removeFloorsByOwner(d.owner);
+                }
                 return;
             }
 

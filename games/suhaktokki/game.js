@@ -998,7 +998,12 @@
     return !!t?.solid;
   }
 
-    function getPixelDecorPlacements() {
+  // Cached pixel-decor placements (prevents \"invisible collision\" when we also mark decor tiles solid)
+  let PIXEL_DECOR_CACHE = null;
+
+    function getPixelDecorPlacements(solidRef) {
+    if (PIXEL_DECOR_CACHE) return PIXEL_DECOR_CACHE;
+    const solidGrid = solidRef || solid;
     // Static, non-networked decorations to make the burrow feel more "Among-Us".
     // We keep these out of the network/state to avoid desync.
     const out = [];
@@ -1023,18 +1028,27 @@
       }
       return false;
     };
+    const roomIdAt = (tx, ty) => {
+      for (const r of (AS.map.rooms || [])) {
+        const rect = r && r.rect;
+        if (!rect) continue;
+        const [rx, ry, rw, rh] = rect;
+        if (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh) return r.id || null;
+      }
+      return null;
+    };
     const okTile = (tx, ty) => {
       if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
       if (occ.has(`${tx|0},${ty|0}`)) return false;
       // If collision map already exists, don't place on blocked tiles.
-      if (solid && solid[ty * W + tx]) return false;
+      if (solidGrid && solidGrid[ty * W + tx]) return false;
       return true;
     };
 
     const add = (key, tx, ty, w = 64, h = 64, solidFlag = true) => {
       if (!AS.pixel[key]) return;
       if (!okTile(tx, ty)) return;
-      out.push({ key, tx, ty, w, h, solid: !!solidFlag });
+      out.push({ key, tx, ty, w, h, solid: !!solidFlag, roomId: roomIdAt(tx, ty) });
     };
 
     // Useful map layer helpers (for corridor/edge decoration).
@@ -1073,41 +1087,49 @@
         const [rx, ry, rw, rh] = rr;
         add('diamond_table', rx + Math.floor(rw / 2), ry + Math.floor(rh / 2), 64, 64, true);
         add('rock_diamond_decor', rx + 3, ry + 3, 32, 32, true);
+        // more obvious lamps
+        add('street_lamp', rx + 3, ry + rh - 4, 64, 64, true);
         add('street_lamp', rx + rw - 4, ry + 3, 64, 64, true);
       }
     }
 
-    // Security: monitors vibe (lamp + rock)
+    // Security: monitors vibe (lamps + rocks)
     {
       const rr = roomRect('security');
       if (rr) {
         const [rx, ry, rw, rh] = rr;
         add('floor_lamp', rx + 2, ry + rh - 3, 32, 32, true);
+        add('floor_lamp', rx + rw - 3, ry + 2, 32, 32, true);
         add('rock_1', rx + Math.floor(rw / 2), ry + 3, 64, 64, true);
+        add('rock_2', rx + 3, ry + 3, 64, 64, true);
       }
     }
 
-    // Lab: table + lamp
+    // Lab: table-heavy (different feel) + lamps
     {
       const rr = roomRect('lab');
       if (rr) {
         const [rx, ry, rw, rh] = rr;
         add('diamond_table', rx + Math.floor(rw / 2), ry + 4, 64, 64, true);
+        add('round_table', rx + 3, ry + rh - 4, 64, 64, true);
+        add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
         add('floor_lamp', rx + rw - 3, ry + rh - 3, 32, 32, true);
       }
     }
 
-    // Reactor: big crystal + rocks
+    // Reactor: big crystal + rocks + lamps
     {
       const rr = roomRect('reactor');
       if (rr) {
         const [rx, ry, rw, rh] = rr;
         add('rock_diamond_decor', rx + Math.floor(rw / 2), ry + Math.floor(rh / 2), 64, 64, true);
         add('rock_2', rx + 3, ry + rh - 4, 64, 64, true);
+        add('rock_1', rx + rw - 5, ry + 3, 64, 64, true);
+        add('street_lamp', rx + 2, ry + 2, 64, 64, true);
       }
     }
 
-    // Warren hall: street lamps + rocks along edges
+    // Warren hall: street lamps + rocks along edges (wide hall)
     {
       const rr = roomRect('warren');
       if (rr) {
@@ -1116,6 +1138,7 @@
         add('street_lamp', rx + rw - 4, ry + 2, 64, 64, true);
         add('rock_1', rx + 4, ry + rh - 3, 64, 64, true);
         add('rock_2', rx + rw - 5, ry + rh - 3, 64, 64, true);
+        add('round_table', rx + Math.floor(rw/2), ry + Math.floor(rh/2), 64, 64, true);
       }
     }
 
@@ -1128,6 +1151,7 @@
         add('rock_2', rx + rw - 7, ry + 4, 64, 64, true);
         add('floor_lamp', rx + 2, ry + rh - 3, 32, 32, true);
         add('floor_lamp', rx + rw - 3, ry + rh - 3, 32, 32, true);
+        add('rock_1', rx + Math.floor(rw/2), ry + Math.floor(rh/2), 64, 64, true);
       }
     }
 
@@ -1140,6 +1164,7 @@
         add('rock_diamond_decor', rx + rw - 6, ry + 6, 32, 32, true);
         add('rock_1', rx + 6, ry + rh - 5, 64, 64, true);
         add('rock_2', rx + rw - 7, ry + rh - 5, 64, 64, true);
+        add('street_lamp', rx + Math.floor(rw/2), ry + 2, 64, 64, true);
       }
     }
 
@@ -1150,14 +1175,19 @@
         const [rx, ry, rw, rh] = rr;
         add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
         add('rock_diamond_decor', rx + rw - 4, ry + rh - 4, 32, 32, true);
+        add('round_table', rx + Math.floor(rw/2), ry + Math.floor(rh/2), 64, 64, true);
       }
     }
     {
       const rr = roomRect('storage');
       if (rr) {
         const [rx, ry, rw, rh] = rr;
+        // storage: rocks pile
         add('rock_1', rx + Math.floor(rw / 2), ry + Math.floor(rh / 2), 64, 64, true);
+        add('rock_2', rx + 3, ry + 3, 64, 64, true);
+        add('rock_2', rx + rw - 4, ry + rh - 4, 64, 64, true);
         add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
+        add('floor_lamp', rx + rw - 3, ry + 2, 32, 32, true);
       }
     }
 
@@ -1195,6 +1225,7 @@
       }
     }
 
+    PIXEL_DECOR_CACHE = out;
     return out;
   }
 
@@ -1297,11 +1328,14 @@
         }
       }
 
-      // walls
+      // walls (+ solid deco tiles). Some maps use the "deco" layer for solid blockers.
+      // When we render with the custom pixel pack, those blockers could become invisible
+      // unless we draw them as walls too.
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
           const i = y * W + x;
-          if (!walls[i]) continue;
+          const solidDeco = !!(deco[i] && tileIsSolid(deco[i]));
+          if (!walls[i] && !solidDeco) continue;
           const use = ((x + y) % 2 === 0) ? wallImg : wallAltImg;
           if (use) mctx.drawImage(use, 0, 0, use.width, use.height, x * TS, y * TS, TS, TS);
         }
@@ -1310,12 +1344,14 @@
       // ambient occlusion-ish shadows to make walls readable (prevents "invisible" blockers)
       const isWallTile = (x, y) => {
         if (x < 0 || y < 0 || x >= W || y >= H) return false;
-        return !!walls[y * W + x];
+        const i = y * W + x;
+        return !!walls[i] || !!(deco[i] && tileIsSolid(deco[i]));
       };
       const isWalkableTile = (x, y) => {
         if (x < 0 || y < 0 || x >= W || y >= H) return false;
         const i = y * W + x;
-        return !!(ground[i] || deco[i] || walls[i]) && !walls[i];
+        // treat solid deco tiles as non-walkable
+        return !!(ground[i] || deco[i] || walls[i]) && !walls[i] && !(deco[i] && tileIsSolid(deco[i]));
       };
       mctx.save();
       mctx.fillStyle = 'rgba(0,0,0,.22)';
@@ -1387,14 +1423,50 @@
       this.myPlayerId = null;
       this.handlers = new Map();
       this.lastHostSeen = 0;
+      // Track peers for deterministic leader election (fixes "2명만 보임/연습모드" split-host issue)
+      this.peers = new Map(); // id -> lastSeen(ms)
+      this._helloTimer = null;
+      this._watchTimer = null;
 
       this.bc.onmessage = (ev) => {
         const msg = ev.data;
         if (!msg || (msg.room && msg.room !== this.room)) return;
-        if (msg.t === 'host') this.lastHostSeen = Date.now();
+        const tNow = Date.now();
+        if (msg.from) this.peers.set(String(msg.from), tNow);
+        if (msg.t === 'hello') {
+          // peer discovery
+          if (msg.from) this.peers.set(String(msg.from), tNow);
+        }
+        if (msg.t === 'host') {
+          this.lastHostSeen = tNow;
+          if (msg.hostId) {
+            // Always converge to the smallest known hostId
+            const hid = String(msg.hostId);
+            if (!this.hostId || hid < this.hostId) this.hostId = hid;
+            // If I'm host but another smaller host exists, step down.
+            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+              this.isHost = false;
+            }
+          }
+        }
+        if (msg.t === 'discover') {
+          // Reply to discovery with a hello (and host ping if I'm host)
+          this._sendHello();
+          if (this.isHost) this.post({ t: 'host', hostId: this.hostId, at: tNow });
+        }
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
       };
+
+      // Periodic hello helps cross-tab stability.
+      this._sendHello();
+      this._helloTimer = setInterval(() => this._sendHello(), 1200);
+      // Host watchdog: if host disappears, re-elect.
+      this._watchTimer = setInterval(() => {
+        if (this.isHost) return;
+        if (this.hostId && (Date.now() - this.lastHostSeen) <= 3500) return;
+        this._electHost();
+      }, 1000);
     }
 
     on(type, fn) { this.handlers.set(type, fn); }
@@ -1405,13 +1477,45 @@
       this.bc.postMessage(msg);
     }
 
-    async discoverHost() {
-      this.post({ t: 'discover', at: Date.now() });
-      await new Promise(r => setTimeout(r, 250));
-      if (!this.hostId) {
-        // host가 없다면 내가 host
-        this.becomeHost();
+    _sendHello() {
+      try {
+        this.post({ t: 'hello', at: Date.now() });
+      } catch (_) {}
+    }
+
+    _electHost() {
+      const tNow = Date.now();
+      // Keep peers fresh for ~3.5s
+      const live = new Set([String(this.clientId)]);
+      for (const [id, seen] of this.peers.entries()) {
+        if ((tNow - (seen || 0)) <= 3500) live.add(String(id));
       }
+      // If we already have a fresh host ping, prefer that.
+      if (this.hostId && (tNow - this.lastHostSeen) <= 3500) {
+        this.isHost = (this.hostId === this.clientId);
+        return;
+      }
+      // Deterministic: smallest id becomes host
+      let best = null;
+      for (const id of live) {
+        if (!best || id < best) best = id;
+      }
+      if (!best) best = String(this.clientId);
+      this.hostId = best;
+      if (best === String(this.clientId)) {
+        this.becomeHost();
+      } else {
+        this.isHost = false;
+      }
+    }
+
+    async discoverHost() {
+      // Handshake + deterministic leader election.
+      this._sendHello();
+      this.post({ t: 'discover', at: Date.now() });
+      // Slightly longer window so different browsers/devices join reliably.
+      await new Promise(r => setTimeout(r, 650));
+      this._electHost();
     }
 
     becomeHost() {
@@ -1421,6 +1525,8 @@
     }
 
     close() {
+      try { if (this._helloTimer) clearInterval(this._helloTimer); } catch (_) {}
+      try { if (this._watchTimer) clearInterval(this._watchTimer); } catch (_) {}
       try { this.bc.close(); } catch (_) {}
     }
   }
@@ -1438,6 +1544,9 @@
       this.handlers = new Map();
       this.wsBase = wsBase;
       this.lastHostSeen = 0;
+      this.peers = new Map(); // id -> lastSeen(ms)
+      this._helloTimer = null;
+      this._watchTimer = null;
 
       const url = this._makeWsUrl(wsBase, roomCode);
       this.ws = new WebSocket(url);
@@ -1445,7 +1554,25 @@
         let msg = null;
         try { msg = JSON.parse(ev.data); } catch (_) { return; }
         if (!msg || (msg.room && msg.room !== this.room)) return;
-        if (msg.t === 'host') this.lastHostSeen = Date.now();
+        const tNow = Date.now();
+        if (msg.from) this.peers.set(String(msg.from), tNow);
+        if (msg.t === 'hello') {
+          if (msg.from) this.peers.set(String(msg.from), tNow);
+        }
+        if (msg.t === 'host') {
+          this.lastHostSeen = tNow;
+          if (msg.hostId) {
+            const hid = String(msg.hostId);
+            if (!this.hostId || hid < this.hostId) this.hostId = hid;
+            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+              this.isHost = false;
+            }
+          }
+        }
+        if (msg.t === 'discover') {
+          this._sendHello();
+          if (this.isHost) this.post({ t: 'host', hostId: this.hostId, at: tNow });
+        }
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
       });
@@ -1454,6 +1581,15 @@
         // 연결이 끊기면 로컬로 자동 복귀하지는 않고, 토스트만
         showToast('온라인 연결이 끊겼어. 새로고침해줘!');
       });
+
+      // Periodic hello helps stable peer discovery across devices.
+      this._sendHello();
+      this._helloTimer = setInterval(() => this._sendHello(), 1500);
+      this._watchTimer = setInterval(() => {
+        if (this.isHost) return;
+        if (this.hostId && (Date.now() - this.lastHostSeen) <= 4000) return;
+        this._electHost();
+      }, 1100);
     }
 
     _makeWsUrl(wsBase, room) {
@@ -1477,11 +1613,37 @@
       try { this.ws.send(JSON.stringify(msg)); } catch (_) {}
     }
 
+    _sendHello() {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      this.post({ t: 'hello', at: Date.now() });
+    }
+
+    _electHost() {
+      const tNow = Date.now();
+      const live = new Set([String(this.clientId)]);
+      for (const [id, seen] of this.peers.entries()) {
+        if ((tNow - (seen || 0)) <= 4000) live.add(String(id));
+      }
+      if (this.hostId && (tNow - this.lastHostSeen) <= 4000) {
+        this.isHost = (this.hostId === this.clientId);
+        return;
+      }
+      let best = null;
+      for (const id of live) {
+        if (!best || id < best) best = id;
+      }
+      if (!best) best = String(this.clientId);
+      this.hostId = best;
+      if (best === String(this.clientId)) this.becomeHost();
+      else this.isHost = false;
+    }
+
     async discoverHost() {
-      // 기존 로직(클라이언트 호스트 선출)을 그대로 사용
+      // Deterministic leader election (fixes split-host on multi-device joins)
+      this._sendHello();
       this.post({ t: 'discover', at: Date.now() });
-      await new Promise(r => setTimeout(r, 250));
-      if (!this.hostId) this.becomeHost();
+      await new Promise(r => setTimeout(r, 800));
+      this._electHost();
     }
 
     becomeHost() {
@@ -1491,6 +1653,8 @@
     }
 
     close() {
+      try { if (this._helloTimer) clearInterval(this._helloTimer); } catch (_) {}
+      try { if (this._watchTimer) clearInterval(this._watchTimer); } catch (_) {}
       try { this.ws.close(); } catch (_) {}
     }
   }
@@ -1627,139 +1791,96 @@
       if (!solid) return true;
       return solid[ty * W + tx] ? false : true;
     };
+
     const pushDoorOutward = (o) => {
+      // Place doors on the room-corridor boundary (Among Us style).
+      // This prevents doors from ending up in the middle of a room or mis-sized vs corridor width.
       const r = roomById.get(o.roomId);
-      if (!r) return;
+      if (!r || !r.rect) return;
       const [rx, ry, rw, rh] = r.rect;
 
-      const ix = o.x | 0, iy = o.y | 0;
+      const ox0 = o.x | 0, oy0 = o.y | 0;
+      const inRoomRect = (tx, ty) => (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh);
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
 
-      // Choose nearest edge direction
+      // Prefer doorway candidates near the room boundary (stable + fast)
+      let best = null;
+      const band = 3;
+      for (let ty = ry; ty < ry + rh; ty++) {
+        for (let tx = rx; tx < rx + rw; tx++) {
+          const nearEdge = (tx - rx < band) || (rx + rw - 1 - tx < band) || (ty - ry < band) || (ry + rh - 1 - ty < band);
+          if (!nearEdge) continue;
+          if (!canWalk(tx, ty)) continue;
+          for (const d of dirs) {
+            const nx = tx + d.dx;
+            const ny = ty + d.dy;
+            if (inRoomRect(nx, ny)) continue;
+            if (!canWalk(nx, ny)) continue;
+            const dist = Math.abs(tx - ox0) + Math.abs(ty - oy0);
+            if (!best || dist < best.dist) {
+              best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, dist };
+            }
+          }
+        }
+      }
+
+      // Full scan fallback (handles slightly-off room rect metadata)
+      if (!best) {
+        for (let ty = ry; ty < ry + rh; ty++) {
+          for (let tx = rx; tx < rx + rw; tx++) {
+            if (!canWalk(tx, ty)) continue;
+            for (const d of dirs) {
+              const nx = tx + d.dx;
+              const ny = ty + d.dy;
+              if (inRoomRect(nx, ny)) continue;
+              if (!canWalk(nx, ny)) continue;
+              const dist = Math.abs(tx - ox0) + Math.abs(ty - oy0);
+              if (!best || dist < best.dist) {
+                best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, dist };
+              }
+            }
+          }
+        }
+      }
+
+      if (best) {
+        // Place the door on the corridor side; store outward (room -> corridor) direction.
+        o.x = best.outX;
+        o.y = best.outY;
+        o._doorDx = best.dx;
+        o._doorDy = best.dy;
+        return;
+      }
+
+      // Last resort: never push into room interior.
+      const ix = ox0, iy = oy0;
       const dTop = Math.abs(iy - ry);
       const dBot = Math.abs((ry + rh - 1) - iy);
       const dL = Math.abs(ix - rx);
       const dR = Math.abs((rx + rw - 1) - ix);
       const m = Math.min(dTop, dBot, dL, dR);
-
       let dx = 0, dy = 0;
-      if (m == dTop) dy = -1;
-      else if (m == dBot) dy = 1;
-      else if (m == dL) dx = -1;
+      if (m === dTop) dy = -1;
+      else if (m === dBot) dy = 1;
+      else if (m === dL) dx = -1;
       else dx = 1;
-
-      // Persist the outward direction so we can keep door visuals/collision consistent
-      // even when the nearby corridor is wide/ambiguous.
       o._doorDx = dx;
       o._doorDy = dy;
-
-      // Compute the first tile just outside the room boundary
-      let stepToExit = 1;
-      if (dx == -1) stepToExit = (ix - rx) + 1;
-      else if (dx == 1) stepToExit = ((rx + rw - 1) - ix) + 1;
-      else if (dy == -1) stepToExit = (iy - ry) + 1;
-      else if (dy == 1) stepToExit = ((ry + rh - 1) - iy) + 1;
-
-      // Try a few tiles outside the room to find a walkable corridor tile
-      for (let extra = 0; extra <= 4; extra++) {
-        const tx = ix + dx * (stepToExit + extra);
-        const ty = iy + dy * (stepToExit + extra);
-        if (canWalk(tx, ty)) {
-          o.x = tx;
-          o.y = ty;
-          return;
-        }
-      }
-
-      // Fallback: step-by-step (in case room rect metadata is slightly off)
-      for (let s = 1; s <= 8; s++) {
+      for (let s = 1; s <= 10; s++) {
         const tx = ix + dx * s;
         const ty = iy + dy * s;
+        if (inRoomRect(tx, ty)) continue;
         if (canWalk(tx, ty)) {
           o.x = tx;
           o.y = ty;
           return;
         }
       }
-    };
-
-    for (const o0 of AS.map.objects) {
-      const o = { ...o0 };
-      if (o.type === 'root_door') pushDoorOutward(o);
-      st.objects[o.id] = o;
-      if (o.type === 'mission') {
-        st.missions[o.id] = { kind: o.kind, state: 'idle', expiresAt: 0, sealedAt: 0 };
-      }
-      if (o.type === 'root_door') {
-        st.doors[o.id] = { closed: false, closedUntil: 0, roomId: o.roomId };
-      }
-    }
-
-    // Lamps: derived from pixel decor placements so they can be toggled on/off.
-    try {
-      const decos = (typeof getPixelDecorPlacements === 'function') ? getPixelDecorPlacements() : [];
-      let li = 0;
-      const isLampKey = (k) => (k === 'floor_lamp' || k === 'street_lamp');
-      for (const d of decos) {
-        if (!d || !isLampKey(d.key)) continue;
-        const id = 'lamp_' + (++li);
-        // store as tile coords (same convention as other objects)
-        st.objects[id] = { id, type: 'lamp', x: d.tx, y: d.ty, kind: d.key, roomId: d.roomId || null };
-        st.lamps[id] = { on: true, kind: d.key };
-      }
-    } catch (_) {}
-
-    st.total = Object.keys(st.missions).length;
-    st.solved = 0;
-    st.timeLeft = 180;
-    st.maxTime = 180;
-    st.practice = false;
-    st.teacherId = null;
-    st.winner = null;
-    st.lastUpdateAt = now();
-
-    G.host.missionDisabledUntil = 0;
-    G.host.revealUntil = 0;
-    G.host.alarmUntil = 0;
-    G.host.alarmText = '';
-  }
-
-  function hostAddPlayer(nick, isBot = false, clientId = null) {
-    const st = G.state;
-    const ids = Object.keys(st.players).map(n => parseInt(n, 10)).filter(n => !Number.isNaN(n));
-    const nextId = ids.length ? Math.max(...ids) + 1 : 1;
-
-    const sp = AS.map.spawnPoints[(nextId - 1) % AS.map.spawnPoints.length];
-    const color = (nextId - 1) % COLORS.length;
-
-    st.players[nextId] = {
-      id: nextId,
-      clientId: clientId ? String(clientId) : null,
-      dir: 0,
-      facing: 1,
-      nick: nick.slice(0, 10),
-      color,
-      x: (sp.x + 0.5) * TS,
-      y: (sp.y + 0.5) * TS,
-      vx: 0,
-      vy: 0,
-      alive: true,
-      down: false,
-      role: 'crew',
-      frozenUntil: 0,
-      slowUntil: 0,
-      killCdUntil: 0,
-      saboCdUntil: 0,
-      forceCdUntil: 0,
-      glassesUntil: 0,
-      invertUntil: 0,
-      darkUntil: 0,
-      crown: false,
-      ventCdUntil: 0,
-      vent: null, // {fromX,fromY,toX,toY,start,end,fromVent,toVent}
-      isBot,
-      botBrain: isBot ? { t: 0, target: null } : null,
-      emoteKind: null,
-      emoteUntil: 0,
     };
 
     return nextId;
@@ -2151,7 +2272,7 @@ function tileAtPixel(x, y) {
       corridorVertical = true;
     }
 
-    const crossTiles = clamp(corridorVertical ? spanX : spanY, 2, 3);
+    const crossTiles = clamp(corridorVertical ? spanX : spanY, 2, 4);
     return { corridorVertical, crossTiles };
   }
 
@@ -5177,6 +5298,12 @@ default:
     ctx.save();
     ctx.translate(x, y);
 
+    // Neutral drop shadow (table sprite had a green-ish ground tint; this overrides it)
+    ctx.fillStyle = 'rgba(0,0,0,.30)';
+    ctx.beginPath();
+    ctx.ellipse(0, 22, 26, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
     // subtle glow
     if (alarm) {
       ctx.fillStyle = `rgba(255,90,122,${0.10 + pulse * 0.10})`;
@@ -5188,6 +5315,10 @@ default:
     // table (64x64)
     const tw = 64, th = 64;
     ctx.drawImage(table, 0, 0, table.width, table.height, Math.round(-tw / 2), Math.round(-th / 2), tw, th);
+
+    // Extra bottom shading to avoid any greenish-looking ground pixels in the table asset
+    ctx.fillStyle = 'rgba(0,0,0,.14)';
+    ctx.fillRect(-tw/2, 10, tw, 22);
 
     // megaphone on top (bob + shake)
     if (mega) {
@@ -6282,8 +6413,9 @@ default:
     ctx.textAlign = 'center';
     // Slightly higher so it doesn't overlap ears/glasses on small screens.
     // Requested: raise nickname a bit more for readability.
-    ctx.strokeText(p.nick, x, y - 50);
-    ctx.fillText(p.nick, x, y - 50);
+    // Raise nickname a bit more (requested: ~7px)
+    ctx.strokeText(p.nick, x, y - 64);
+    ctx.fillText(p.nick, x, y - 64);
 
     // teacher-only cooldown hint (keep)
     const me = G.state.players[G.net?.myPlayerId];
@@ -6376,16 +6508,17 @@ default:
 
     ctx.save();
     ctx.globalAlpha = 0.92;
-    ctx.font = '1000 18px system-ui';
+    ctx.font = '1100 20px system-ui';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    const iconW = 30;
-    const padX = 16;
-    const padY = 10;
+    // Larger prompt for door open/close on mobile.
+    const iconW = 40;
+    const padX = 18;
+    const padY = 12;
     const textW = ctx.measureText(label).width;
     const w = Math.max(76, textW + padX * 2 + iconW);
-    const h = 38;
+    const h = 44;
 
     // keep on screen
     x = clamp(x, w/2 + 10, viewW - w/2 - 10);
@@ -6402,22 +6535,22 @@ default:
 
     // icon
     ctx.save();
-    ctx.translate(x - w/2 + 18, y);
+    ctx.translate(x - w/2 + 20, y);
     ctx.fillStyle = (target.type === 'root_door') ? 'rgba(102,224,163,.95)' : 'rgba(255,255,255,.85)';
     ctx.strokeStyle = 'rgba(0,0,0,.35)';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.arc(0, 0, 11, 0, Math.PI*2);
+    ctx.arc(0, 0, 14, 0, Math.PI*2);
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = 'rgba(8,16,34,.95)';
-    ctx.font = '1000 16px system-ui';
+    ctx.font = '1100 18px system-ui';
     ctx.fillText((target.type === 'root_door') ? (label === '열기' ? '↗' : '↘') : 'E', 0, 0);
     ctx.restore();
 
     // label
     ctx.fillStyle = 'rgba(255,255,255,.96)';
-    ctx.font = '1000 18px system-ui';
+    ctx.font = '1100 20px system-ui';
     ctx.fillText(label, x + iconW*0.15, y);
     ctx.restore();
   }

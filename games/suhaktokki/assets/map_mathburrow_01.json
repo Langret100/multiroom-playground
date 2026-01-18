@@ -18645,15 +18645,15 @@
     {
       "id": "door_lab",
       "type": "root_door",
-      "x": 12,
+      "x": 18,
       "y": 50,
       "roomId": "lab"
     },
     {
       "id": "door_reactor",
       "type": "root_door",
-      "x": 52,
-      "y": 50,
+      "x": 46,
+      "y": 49,
       "roomId": "reactor"
     },
     {
@@ -18666,14 +18666,14 @@
     {
       "id": "door_med",
       "type": "root_door",
-      "x": 12,
+      "x": 18,
       "y": 76,
       "roomId": "med"
     },
     {
       "id": "door_storage",
       "type": "root_door",
-      "x": 52,
+      "x": 46,
       "y": 76,
       "roomId": "storage"
     },
