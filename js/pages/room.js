@@ -1284,11 +1284,11 @@ els.startBtn.title = canStart ? startText : reason;
       try{ resultEls.overlay.classList.remove("win","lose"); resultEls.overlay.classList.add(ok ? "win" : "lose"); }catch(_){ }
       try{ (ok ? window.SFX?.win : window.SFX?.lose)?.(); }catch(_){ }
       const title = ok ? "성공!" : "실패";
-      let desc = ok ? "🎉 협동 클리어!" : "💥 전원 사망";
+      let desc = ok ? "🎉 협동 클리어!" : "💥 게임 오버";
       if (r.reason && typeof r.reason === "string"){
         const rs = r.reason.toLowerCase();
         if (rs.includes("clear") || rs.includes("game")) desc = "🎉 협동 클리어!";
-        if (rs.includes("dead") || rs.includes("fail")) desc = "💥 전원 사망";
+        if (rs.includes("dead") || rs.includes("fail")) desc = "💥 게임 오버";
       }
       setText(resultEls.title, title);
       setText(resultEls.desc, desc);

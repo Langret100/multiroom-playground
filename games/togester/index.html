@@ -531,8 +531,8 @@
         const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
         const JUMP_VELOCITY = -13.3334; // 점프 2배 (모바일 세로 맵 기준)
         const RESPAWN_COOLDOWN_MS = 1500; // 1.5초
-        const PUSH_IMPULSE_X = 12;
-        const PUSH_IMPULSE_Y = -11;
+        const PUSH_IMPULSE_X = 15;
+        const PUSH_IMPULSE_Y = -12;
         const PUSH_HITBOX_OFFSET_PX = 10; // player front edge +10px
         const PUSH_HITBOX_WIDTH = 140; // big hitbox (wide)
         const PUSH_HITBOX_HEIGHT = 44;
@@ -1500,15 +1500,13 @@ cameraX = 0;
         }
 
         function getPushHitboxRect(dir){
-            // Requested: do NOT search a specific target.
-            // Create a big hitbox centered at "front edge + 10px" (or back edge -10px),
-            // so it reliably connects even when player colliders touch.
-            const centerY = localPlayer.y + 24;
-            const y = centerY - (PUSH_HITBOX_HEIGHT / 2);
-            const centerX = (dir > 0)
-                ? (localPlayer.x + 40 + PUSH_HITBOX_OFFSET_PX)
-                : (localPlayer.x - PUSH_HITBOX_OFFSET_PX);
-            const x = centerX - (PUSH_HITBOX_WIDTH / 2);
+            // Requested: big hitbox located only in FRONT of me (never behind/above).
+            const bodyL = localPlayer.x + PVP_PAD_X;
+            const bodyR = bodyL + PVP_W;
+            const x = (dir > 0)
+                ? (bodyR + PUSH_HITBOX_OFFSET_PX)
+                : (bodyL - PUSH_HITBOX_OFFSET_PX - PUSH_HITBOX_WIDTH);
+            const y = localPlayer.y + PUSH_HITBOX_Y_OFFSET;
             return { x, y, width: PUSH_HITBOX_WIDTH, height: PUSH_HITBOX_HEIGHT };
         }
 
@@ -1553,7 +1551,7 @@ cameraX = 0;
 
                 const remoteRect = { x: px, y: py, width: 40, height: 40 };
 
-                if (checkCollision(remoteRect, hitbox)) {
+                if (rectsOverlap(remoteRect, hitbox)) {
                     bridgeSendPush(sid, dx, PUSH_IMPULSE_Y);
                     anyHit = true;
                 }
@@ -1865,7 +1863,7 @@ cameraX = 0;
                         const remoteRect = { x: px + PVP_PAD_X, y: py, width: PVP_W, height: PVP_H };
                         const myRect = { x: localPlayer.x + PVP_PAD_X, y: localPlayer.y, width: PVP_W, height: PVP_H };
 
-                        if (checkCollision(myRect, remoteRect)) {
+                        if (rectsOverlap(myRect, remoteRect)) {
                             // Side collision should "push" the other player (requested).
                             resolvePlayerPlayerCollision(localPlayer, remoteRect, sid);
                         }
@@ -2130,20 +2128,29 @@ cameraX = 0;
                    player.y + 40 > rect.y &&
                    player.y < rect.y + rect.height;
         }
+
+        function rectsOverlap(a, b){
+            return a.x < b.x + b.width &&
+                   a.x + a.width > b.x &&
+                   a.y < b.y + b.height &&
+                   a.y + a.height > b.y;
+        }
         
         function resolveCollision(player, rect) {
+            // Resolve AABB collision for a 40x40 player box against a rect.
             const overlapX = Math.min(player.x + 40 - rect.x, rect.x + rect.width - player.x);
             const overlapY = Math.min(player.y + 40 - rect.y, rect.y + rect.height - player.y);
-            
             if (overlapX < overlapY) {
-                if (pRect.x < rect.x) {
-                    pRect.x = rect.x - pRect.width;
+                // left/right
+                if (player.x + 20 < rect.x + rect.width / 2) {
+                    player.x = rect.x - 40;
                 } else {
                     player.x = rect.x + rect.width;
                 }
                 player.vx = 0;
             } else {
-                if (player.y < rect.y) {
+                // up/down
+                if (player.y + 20 < rect.y + rect.height / 2) {
                     player.y = rect.y - 40;
                     player.onGround = true;
                     player.vy = 0;
@@ -2999,7 +3006,7 @@ cameraX = 0;
                 const dy = clamp(Number(d.dy) || 0, -16, 16);
                 const now = performance.now();
                 // Remember knockback so it is not immediately overwritten by local movement input
-                localPlayer.knockbackUntil = now + 220;
+                localPlayer.knockbackUntil = now + 320;
                 if (!dx && !dy) return;
                 // Apply impulse (horizontal + slight lift)
                 if (dx){

@@ -440,13 +440,17 @@
   }
 
   function applyPhaseUI() {
-    const inGame = EMBED ? !!G.net : !!(G.net && G.phase !== 'lobby');
+    const inGame = EMBED ? !!(G.net && G.phase !== 'lobby') : !!(G.net && G.phase !== 'lobby');
     // lobby vs game
     if (EMBED) {
-      // multiroom(부모)에서 이미 로비/룸 UI를 제공하므로
-      // iframe 내부 로비는 어떤 경우에도 보이지 않게 한다.
-      lobby?.classList.add('hidden');
-      if (hud) hud.style.display = inGame ? 'flex' : 'none';
+      // Embed: show lobby while still waiting/ready in the in-game lobby (prevents blank screen).
+      if (inGame) {
+        lobby?.classList.add('hidden');
+        if (hud) hud.style.display = 'flex';
+      } else {
+        lobby?.classList.remove('hidden');
+        if (hud) hud.style.display = 'none';
+      }
     } else {
       if (inGame) {
         lobby?.classList.add('hidden');
