@@ -161,6 +161,26 @@ this.st = {
       this.broadcast("chat", msg);
     });
 
+    // ---- SuhakTokki relay (embedded iframe) ----
+    // The game runs inside an iframe and communicates with the room via "sk_msg" packets.
+    // We simply broadcast these packets to all clients in the room so every iframe sees them.
+    // (This enables emergency meeting, voting, and meeting chat.)
+    this.onMessage("sk_msg", (client, payload) => {
+      if (this.state.mode !== "suhaktokki") return;
+      if (this.state.phase !== "playing") return;
+      const inner = payload?.msg || payload;
+      if (!inner || typeof inner !== "object") return;
+      const t = String(inner.t || "").slice(0, 32);
+      if (!t) return;
+
+      // Minimal sanitization for chat payloads
+      if (t === "meetingChat") {
+        inner.text = String(inner.text || "").replace(/[\r\n\t]/g, " ").slice(0, 120);
+      }
+
+      this.broadcast("sk_msg", { msg: inner });
+    });
+
     // ---- Togester relay (Firebase 제거: Colyseus 메시지로 동기화) ----
     this.onMessage("tg_state", (client, { state }) => {
       if (this.state.mode !== "togester") return;
@@ -662,6 +682,19 @@ try{
     }
   }
 }catch(_){ }
+
+    // Togester: if someone leaves mid-run, end the round for remaining players
+    // so the room reliably transitions back.
+    try{
+      if (this.state.mode === "togester" && this.state.phase === "playing" && this.tg && !this.tg.over){
+        const humansLeft = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
+        if (humansLeft.length === 1){
+          this.tg.over = true;
+          const winnerSid = humansLeft[0];
+          this.finishTogester(true, "player_left", winnerSid);
+        }
+      }
+    }catch(_){ }
 
     // playerCount/allReady are derived in recomputeReady()
 

@@ -91,6 +91,10 @@
 
   const meetingModal = document.getElementById('meetingModal');
   const meetingInfo = document.getElementById('meetingInfo');
+  const meetingRoster = document.getElementById('meetingRoster');
+  const meetingChatLog = document.getElementById('meetingChatLog');
+  const meetingChatText = document.getElementById('meetingChatText');
+  const meetingChatSend = document.getElementById('meetingChatSend');
   const voteList = document.getElementById('voteList');
   const skipVote = document.getElementById('skipVote');
 
@@ -1750,6 +1754,7 @@
       mission: null, // {siteId, kind, correct, practice}
       reopenMission: null, // {siteId, at} (graph penalty)
       meeting: { voted: false },
+      meetingChat: { id: 0, msgs: [], lastSentAt: 0 },
       meetingAlarmUntil: 0,
       meetingAlarmFlashUntil: 0,
       mapOpen: false,
@@ -3836,8 +3841,104 @@ function tileAtPixel(x, y) {
 
   closeMission.addEventListener('click', () => closeMissionUI());
 
+  // ---------- Meeting chat (Among-Us style) ----------
+  function nowHHMM(){
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2,'0');
+    const mm = String(d.getMinutes()).padStart(2,'0');
+    return `${hh}:${mm}`;
+  }
+
+  function sanitizeMeetingText(s){
+    return String(s || '').replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
+
+  function renderMeetingRoster(){
+    if (!meetingRoster) return;
+    const st = G.state;
+    meetingRoster.innerHTML = '';
+    const players = Object.values(st.players || {}).slice().sort((a,b)=> (a.id||0) - (b.id||0));
+    for (const p of players){
+      const chip = document.createElement('div');
+      chip.className = 'mAvatar' + ((p.alive && !p.down) ? '' : ' mDead');
+      const dot = document.createElement('span');
+      dot.className = 'mDot';
+      dot.style.background = colorHex(p.color ?? 0);
+      dot.textContent = '🐰';
+      const name = document.createElement('span');
+      name.textContent = String(p.nick || 'Player').slice(0, 10);
+      chip.appendChild(dot);
+      chip.appendChild(name);
+      meetingRoster.appendChild(chip);
+    }
+  }
+
+  function renderMeetingChat(){
+    if (!meetingChatLog) return;
+    const msgs = (G.ui.meetingChat?.msgs || []).slice(-80);
+    meetingChatLog.innerHTML = '';
+    for (const m of msgs){
+      const line = document.createElement('div');
+      line.className = 'mLine';
+
+      const dot = document.createElement('span');
+      dot.className = 'mDot';
+      dot.style.background = colorHex(m.color ?? 0);
+      dot.textContent = '🐰';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'mBubble';
+
+      const meta = document.createElement('div');
+      meta.className = 'mMeta';
+      const nick = document.createElement('span');
+      nick.className = 'mNick';
+      nick.textContent = String(m.nick || 'Player').slice(0, 10);
+      const time = document.createElement('span');
+      time.className = 'mTime';
+      time.textContent = String(m.time || '');
+      meta.appendChild(nick);
+      meta.appendChild(time);
+
+      const text = document.createElement('div');
+      text.textContent = String(m.text || '');
+
+      bubble.appendChild(meta);
+      bubble.appendChild(text);
+
+      line.appendChild(dot);
+      line.appendChild(bubble);
+      meetingChatLog.appendChild(line);
+    }
+    // always scroll to bottom on update
+    try{ meetingChatLog.scrollTop = meetingChatLog.scrollHeight; }catch(_){ }
+  }
+
+  function sendMeetingChat(){
+    if (!G.net) return;
+    if (G.phase !== 'meeting') return;
+    const text = sanitizeMeetingText(meetingChatText?.value || '');
+    if (!text) return;
+    const tNow = now();
+    if (tNow - (G.ui.meetingChat?.lastSentAt || 0) < 350) return;
+    G.ui.meetingChat.lastSentAt = tNow;
+    const meetingId = G.ui.meetingChat?.id || 0;
+    const meId = Number(G.net.myPlayerId || 0);
+    G.net.post({ t:'meetingChat', meetingId, playerId: meId, text });
+    if (meetingChatText) meetingChatText.value = '';
+  }
+
+  if (meetingChatSend) meetingChatSend.addEventListener('click', () => sendMeetingChat());
+  if (meetingChatText) meetingChatText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); sendMeetingChat(); }
+  });
+
   function openMeetingUI(kind, reason, endsAt) {
     meetingModal.classList.add('show');
+
+    // Initialize meeting chat (new meeting instance id)
+    G.ui.meetingChat.id = Number(endsAt || 0);
+    G.ui.meetingChat.msgs = [];
 
     // Emergency bell: flash + siren
     if (kind === 'emergency') {
@@ -3856,7 +3957,12 @@ function tileAtPixel(x, y) {
     meetingInfo.textContent = `${tag} · ${reason}`;
     G.ui.meeting.voted = false;
 
+    renderMeetingRoster();
+    renderMeetingChat();
     renderVoteList();
+
+    // focus chat box (best-effort)
+    try{ setTimeout(()=> meetingChatText && meetingChatText.focus(), 80); }catch(_){ }
 
     // 타이머 업데이트
     const tick = () => {
@@ -3870,12 +3976,19 @@ function tileAtPixel(x, y) {
 
   function closeMeetingUI() {
     meetingModal.classList.remove('show');
+    // clear chat input (keep history cleared on next open)
+    try{ if (meetingChatText) meetingChatText.value = ''; }catch(_){ }
   }
 
   function renderVoteList() {
     voteList.innerHTML = '';
     const st = G.state;
     const meId = G.net?.myPlayerId;
+
+    // Keep roster in sync with current alive/down states
+    renderMeetingRoster();
+
+    renderMeetingRoster();
 
     const alive = Object.values(st.players).filter(p => p.alive && !p.down);
     alive.forEach(p => {
@@ -7011,6 +7124,27 @@ default:
     });
 net.on('uiMeetingOpen', (m) => {
       openMeetingUI(m.kind || 'emergency', m.reason || '회의!', m.endsAt || (now() + 20_000));
+    });
+
+    // Meeting chat packets (Among-Us style)
+    net.on('meetingChat', (m) => {
+      const mid = Number(m.meetingId || 0);
+      // If we already have an active meeting id, ignore messages from other meetings
+      if (G.ui.meetingChat?.id && mid && mid !== Number(G.ui.meetingChat.id)) return;
+
+      const pid = Number(m.playerId || 0);
+      const p = (G.state && G.state.players) ? G.state.players[pid] : null;
+      const nick = String(m.nick || p?.nick || `#${pid}`).
+        replace(/[\r\n\t]/g,' ').slice(0, 12);
+      const color = (typeof m.color === 'number') ? m.color : (p?.color ?? 0);
+      const text = sanitizeMeetingText(m.text || '');
+      if (!text) return;
+
+      const time = nowHHMM();
+      G.ui.meetingChat.msgs.push({ pid, nick, color, text, time });
+      if (G.ui.meetingChat.msgs.length > 140) G.ui.meetingChat.msgs.splice(0, 30);
+      // Render if meeting UI is visible
+      if (G.phase === 'meeting') renderMeetingChat();
     });
 
     net.on('uiScene', (m) => {

@@ -671,6 +671,11 @@ function onEventRecv(payload){
   if(seenEvents.has(key)) return;
   seenEvents.add(key);
   if(ev.kind === "garbage"){
+    // Events are broadcast to both players, including the sender.
+    // Only the opponent should receive the garbage attack.
+    try{
+      if(mode === "online" && pid && ev.from && String(ev.from) === String(pid)) return;
+    }catch(_){ }
     applyGarbageTo(meGame, (ev.payload && ev.payload.n) || 0);
     // 공격 들어올 때 이펙트
     shake("strong");

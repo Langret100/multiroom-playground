@@ -1827,18 +1827,6 @@ cameraX = 0;
                         const py = (typeof rp.y === 'number') ? rp.y : (p.y || 0);
                         const remoteRect = { x: px, y: py, width: 40, height: 40 };
 
-                // Exclude characters that are behind me (relative to direction)
-                const theirCenterX = px + 20;
-                const myFront = localPlayer.x + 40;
-                const myBack = localPlayer.x;
-                if (dir > 0 && theirCenterX < myFront + 2) continue;
-                if (dir < 0 && theirCenterX > myBack - 2) continue;
-
-                // Exclude characters above me (e.g., stacked on my head / higher platform)
-                // Only affect roughly the same vertical band around my torso/feet.
-                if (py < localPlayer.y - 4) continue;
-                if (py > localPlayer.y + 32) continue;
-
                         if (checkCollision(localPlayer, remoteRect)) {
                             // Side collision should "push" the other player (requested).
                             resolvePlayerPlayerCollision(localPlayer, remoteRect, sid);
