@@ -7293,7 +7293,9 @@ net.on('uiMeetingOpen', (m) => {
 
     // In embed mode, once we successfully joined via the parent bridge, hide the internal lobby
     // so players only see the main room UI outside the iframe.
-    try{ lobby && lobby.classList && lobby.classList.add('hidden'); }catch(_){ }
+    // Embedded: do not hide lobby UI; otherwise only the background/canvas remains visible.
+    // (The server will switch phase to play and applyPhaseUI() will hide/show the right panels.)
+    try{ /* keep lobby visible */ }catch(_){ }
 
     // host: auto-start only after enough players join (prevents starting practice by accident)
     if (window.__EMBED_IS_HOST__){

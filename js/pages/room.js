@@ -797,6 +797,7 @@ function updatePreview(modeId){
       try{
         room.send("tg_floor", {
           id: d.id,
+          owner: d.owner || mySessionId,
           x: d.x,
           y: d.y,
           width: d.width,
@@ -807,6 +808,14 @@ function updatePreview(modeId){
       return;
     }
 
+
+    if (d.type === "tg_floor_remove"){
+      if (!fromMain) return;
+      try{
+        room.send("tg_floor_remove", { owner: d.owner || mySessionId, ids: Array.isArray(d.ids) ? d.ids : null });
+      }catch(_){ }
+      return;
+    }
     if (d.type === "tg_over"){
       if (!fromMain) return;
       room.send("tg_over", {

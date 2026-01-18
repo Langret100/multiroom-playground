@@ -444,7 +444,7 @@ export class RoomDO{
     };
 
     this.tour = null;              // tournament state for duel mode
-    this.tg = { players:{}, lastBroadcast:0, timer:null }; // coop state aggregation
+    this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null }; // coop state aggregation
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
 
     this._wired = new WeakSet();
@@ -659,6 +659,13 @@ export class RoomDO{
         if (!this.meta.roomId) this.meta.roomId = wantUid.slice(0,8);
         await this._pullMetaFromLobby(this.meta.roomId);
 
+        // Disallow NEW joins while a game is running (no spectate). Allow reconnect if already in users.
+        if (this.meta.phase === "playing" && !this.users.has(wantUid)) {
+          this._send(ws, "system", { text:"게임중인 방입니다. 게임이 끝난 뒤 입장해 주세요.", ts: now() });
+          try{ ws.close(1008, "playing"); }catch(_){}
+          return;
+        }
+
         // capacity check
         if (this.users.size >= (this.meta.maxPlayers || 4)){
           this._send(ws, "system", { text:"방이 꽉 찼습니다.", ts: now() });
@@ -709,6 +716,15 @@ export class RoomDO{
           try{ this._send(ws, "st_foods", { foods: Array.isArray(this.st.foods) ? this.st.foods : [] }); }catch(_){ }
           try{ this._send(ws, "st_players", { players: this.st.players || {} }); }catch(_){ }
           try{ this._send(ws, "st_scores", { scores: this.st.scores || {} }); }catch(_){ }
+        }
+
+        // Togester: if a match is already running, sync current players + floors to the joining client
+        if (this.meta.phase === "playing" && this.meta.mode === "togester"){
+          try{ this._send(ws, "tg_players", { players: this.tg.players || {} }); }catch(_){ }
+          try{
+            const floors = Object.values(this.tg.floors || {});
+            this._send(ws, "tg_floors", { floors });
+          }catch(_){ }
         }
         // Inform lobby presence list that this user is currently inside a room.
         // This allows the lobby's online list to include room occupants and show their room.
@@ -783,10 +799,11 @@ export class RoomDO{
           this._send(ws, "system", { text:"모두 레디해야 시작됩니다.", ts: now() });
           return;
         }
-
-        // Clear transient states
+        // Clear transient states (prevent stale snapshots carrying into a new match)
         this.tour = null;
+
         this.tg.players = {};
+        this.tg.floors = {};
         if (this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){}
           this.tg.timer = null;
         }
@@ -871,6 +888,56 @@ export class RoomDO{
       }
       if (t === "tg_reset"){
         this._broadcast("tg_reset", { t: d.t || now() });
+        return;
+      }
+
+      if (t === "tg_push"){
+        if (this.meta.mode !== "togester") return;
+        // Broadcast a push impulse (clients will filter by `to`)
+        this._broadcast("tg_push", { to: String(d.to||""), dx: Number(d.dx)||0, dy: Number(d.dy)||0, from: uid });
+        return;
+      }
+
+      if (t === "tg_floor"){
+        if (this.meta.mode !== "togester") return;
+        const id = String(d.id || "");
+        if (!id) return;
+        const owner = safeId(d.owner) || uid;
+        const pl = {
+          id,
+          owner,
+          x: Number(d.x)||0,
+          y: Number(d.y)||0,
+          width: Math.max(10, Number(d.width)||90),
+          height: Math.max(6, Number(d.height)||20),
+          color: String(d.color || '#2f3640').slice(0, 32)
+        };
+        this.tg.floors[id] = pl;
+        this._broadcast("tg_floor", pl);
+        return;
+      }
+
+      if (t === "tg_floor_remove"){
+        if (this.meta.mode !== "togester") return;
+        const owner = safeId(d.owner) || uid;
+        const ids = Array.isArray(d.ids) ? d.ids.map(x=>String(x||'')).filter(Boolean) : null;
+        if (ids && ids.length){
+          for (const fid of ids){
+            if (this.tg.floors && this.tg.floors[fid]) delete this.tg.floors[fid];
+          }
+          this._broadcast("tg_floor_remove", { ids });
+        } else {
+          const removed = [];
+          for (const [fid, pl] of Object.entries(this.tg.floors || {})){
+            if (pl && String(pl.owner||'') === String(owner)){
+              removed.push(fid);
+              delete this.tg.floors[fid];
+            }
+          }
+          if (removed.length){
+            this._broadcast("tg_floor_remove", { owner });
+          }
+        }
         return;
       }
       if (t === "tg_over"){
@@ -1043,6 +1110,20 @@ export class RoomDO{
         if (this.tg && this.tg.players && this.tg.players[uid]){
           delete this.tg.players[uid];
           this._scheduleTgBroadcast();
+        }
+      }catch(_){ }
+
+      // Remove any temporary Togester floors owned by the leaving player
+      try{
+        const removed = [];
+        for (const [fid, pl] of Object.entries((this.tg && this.tg.floors) ? this.tg.floors : {})){
+          if (pl && String(pl.owner||'') === String(uid)){
+            removed.push(fid);
+            delete this.tg.floors[fid];
+          }
+        }
+        if (removed.length){
+          this._broadcast("tg_floor_remove", { owner: uid });
         }
       }catch(_){ }
       try{
@@ -1373,6 +1454,13 @@ export class RoomDO{
       this.meta.phase = "lobby";
       this.meta.status = "waiting";
       this.tour = null;
+
+
+      // Clear transient per-game snapshots so leaving the room leaves no server-side residue
+      try{ this.tg.players = {}; this.tg.floors = {}; }catch(_){ }
+      if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
+      try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
+      if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
 
 
       // stop CPU + remove CPU user when returning to lobby

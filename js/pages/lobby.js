@@ -206,14 +206,33 @@ function statusDot(room){
         <td class="tdJoin"><button class="btn small">입장</button></td>
       `;
 
+      // Disable entry interactions for playing/full rooms
+      const joinBtn = tr.querySelector("button");
+      if (isPlaying || isFull){
+        if (joinBtn) joinBtn.disabled = true;
+        tr.classList.add("disabled");
+        tr.tabIndex = -1;
+      }
+
       const join = () => {
+        // No entry while the room is already in-game (no spectate)
+        if (isPlaying){
+          setStatus("게임중인 방은 입장할 수 없습니다.", "error");
+          return;
+        }
+        if (isFull){
+          setStatus("방이 꽉 찼습니다.", "error");
+          return;
+        }
         sessionStorage.setItem("pendingRoomId", r.roomId);
         location.href = `./room.html?roomId=${encodeURIComponent(r.roomId)}`;
       };
 
-      tr.querySelector("button")?.addEventListener("click", (e)=>{ e.stopPropagation(); join(); });
-      tr.addEventListener("click", join);
-      tr.addEventListener("keydown", (e)=>{ if (e.key === "Enter") join(); });
+      if (!(isPlaying || isFull)) {
+        tr.querySelector("button")?.addEventListener("click", (e)=>{ e.stopPropagation(); join(); });
+        tr.addEventListener("click", join);
+        tr.addEventListener("keydown", (e)=>{ if (e.key === "Enter") join(); });
+      }
       els.roomsBody.appendChild(tr);
     }
   }
