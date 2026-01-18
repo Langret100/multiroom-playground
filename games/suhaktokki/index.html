@@ -89,6 +89,8 @@
       button.ui.icon{width:28px;height:28px;border-radius:10px;}
     }
     #interactBtn.ready,#killBtn.ready,#saboBtnTouch.ready,#forceBtnTouch.ready{opacity:1;pointer-events:auto;}
+    /* When the nearest interactable is a door, make the button a bit bigger & clearer */
+    #interactBtn.doorHint{transform:scale(1.08);box-shadow:0 10px 28px rgba(0,0,0,.35),0 0 0 2px rgba(102,224,163,.35);}
 
     /* Modals */
     .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;align-items:center;justify-content:center;padding:18px;}
