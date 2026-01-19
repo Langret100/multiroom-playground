@@ -1,4 +1,4 @@
-/* 수학토끼 v0.1
+/* 학생토끼 v0.1
    로컬 멀티(같은 브라우저 탭/창): BroadcastChannel
    - 4~8명 (테스트용 봇 추가 가능)
    - 선생토끼(임포스터) 1명
@@ -96,6 +96,19 @@
   const joyKnob = document.getElementById('joyKnob');
   const interactBtn = document.getElementById('interactBtn');
   const killBtn = document.getElementById('killBtn');
+  // PC에서 선생토끼가 가까이 있는 학생을 0점(검은당근) 처리할 수 있는 버튼
+  let killBtnPc = document.getElementById('killBtnPc');
+  try{
+    if (!killBtnPc && rightHud){
+      killBtnPc = document.createElement('button');
+      killBtnPc.className = 'ui mini danger';
+      killBtnPc.id = 'killBtnPc';
+      killBtnPc.textContent = '0점(X)';
+      killBtnPc.style.display = 'none';
+      const fsb = document.getElementById('fullscreenBtn');
+      rightHud.insertBefore(killBtnPc, fsb || null);
+    }
+  }catch(_){ }
   const saboBtn = document.getElementById('saboBtn');
   const forceBtn = document.getElementById('forceBtn');
   const saboBtnTouch = document.getElementById('saboBtnTouch');
@@ -292,7 +305,7 @@
     rrPctx.fillStyle = 'rgba(255,255,255,.92)';
     rrPctx.font = '900 13px system-ui';
     rrPctx.textAlign = 'center';
-    const label = practice ? '연습 모드' : (role === 'teacher' ? '선생토끼' : '수학토끼');
+    const label = practice ? '연습 모드' : (role === 'teacher' ? '선생토끼' : '학생토끼');
     rrPctx.fillText(label, 110, 195);
 
     rrPctx.restore();
@@ -319,7 +332,7 @@
       bg = 'radial-gradient(900px 420px at 50% 0%, rgba(255,90,122,.45), rgba(18,26,46,.92))';
       border = 'rgba(255,90,122,.55)';
     } else {
-      title = '수학토끼';
+      title = '학생토끼';
       sub = '미션을 풀어 시간을 늘리자!\n(불 켜기 가능)';
       bg = 'radial-gradient(900px 420px at 50% 0%, rgba(102,224,163,.38), rgba(18,26,46,.92))';
       border = 'rgba(102,224,163,.45)';
@@ -2092,6 +2105,8 @@
       isBot: !!isBot,
 
       role: 'crew',
+      // Visual identity: 8 unique variants (clothes + hair accent)
+      color: (id - 1) % 8,
       alive: true,
       down: false,
 
@@ -2153,7 +2168,7 @@
     for (const pp of Object.values(G.state.players)) {
       const text = practice
         ? '연습 모드야! (선생토끼 없음) 마음껏 미션을 눌러봐!'
-        : ((pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터) 들키지 말고 빵점을 줘!' : '당신은 수학토끼야! 미션을 해결해서 시간을 늘려!');
+        : ((pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터) 들키지 말고 빵점을 줘!' : '당신은 학생토끼야! 미션을 해결해서 시간을 늘려!');
       sendToPlayer(pp.id, { t: 'toast', text });
 
       // Among-Us style: big role reveal overlay (per player)
@@ -2982,7 +2997,7 @@ function tileAtPixel(x, y) {
       spotId: nearDoor.id,
     };
 
-    // 물이 차오르는 순간, 수학토끼가 물길 위에 있었다면 옆으로 살짝 밀어내서 갇히지 않게
+    // 물이 차오르는 순간, 학생토끼가 물길 위에 있었다면 옆으로 살짝 밀어내서 갇히지 않게
     const flooded = new Set(tiles.map(tt => tt.x + ',' + tt.y));
     const isBlockedForCrew = (tx, ty) => {
       if (baseSolidAt(tx, ty)) return true;
@@ -3600,7 +3615,7 @@ function tileAtPixel(x, y) {
       roleText.textContent = '선생토끼';
       rolePill.style.borderColor = 'rgba(255,90,122,.6)';
     } else {
-      roleText.textContent = '수학토끼';
+      roleText.textContent = '학생토끼';
       rolePill.style.borderColor = 'rgba(102,224,163,.45)';
     }
   }
@@ -4323,6 +4338,11 @@ function tileAtPixel(x, y) {
     return ['#58a6ff','#58e58c','#ff76c8','#ffd24a','#a578ff','#ffa04a','#28d2dc','#ff5a5a'][colorIdx % 8];
   }
 
+  function hairHex(colorIdx) {
+    // 머리/포인트 색상(옷색과 다르게 8명 구분)
+    return ['#1e3a8a','#14532d','#9d174d','#854d0e','#4c1d95','#7c2d12','#0f766e','#7f1d1d'][colorIdx % 8];
+  }
+
   function roundRect(c, x, y, w, h, r) {
     const rr = Math.max(0, Math.min(r, Math.min(w, h) / 2));
     c.beginPath();
@@ -4864,11 +4884,20 @@ default:
     G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
   });
 
-  killBtn.addEventListener('click', () => {
+  function sendKill() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
+    // Host shortcut (solo/practice)
+    if (G.net.isHost && G.net.myPlayerId) {
+      hostHandleKill(G.net.myPlayerId);
+      broadcastState(true);
+      return;
+    }
     G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'kill' });
-  });
+  }
+
+  killBtn.addEventListener('click', () => sendKill());
+  try { if (killBtnPc) killBtnPc.addEventListener('click', () => sendKill()); } catch (_) {}
 
   function sendSabotage() {
     if (!G.net) return;
@@ -4891,6 +4920,11 @@ default:
     if (e.repeat) return;
     // keyboard actions (PC)
     if (!isMobile && G.phase === 'play' && !isTyping()) {
+      if (e.key === 'x' || e.key === 'X') {
+        e.preventDefault();
+        sendKill();
+        return;
+      }
       if (e.key === 'e' || e.key === 'E' || e.key === ' ') {
         e.preventDefault();
         if (G.net?.isHost && G.net.myPlayerId) {
@@ -5317,9 +5351,23 @@ default:
         interactBtn.classList.remove('doorHint');
       }
 
-      const showKill = (me.role === 'teacher') && near.canKill && !st.practice;
+      const showKill = (me.role === 'teacher') && near.canKill && !!near.killTarget && !st.practice;
       killBtn.style.display = showKill ? 'flex' : 'none';
       killBtn.classList.toggle('ready', showKill);
+
+      // PC에서도 0점(검은당근) 채점 버튼을 노출
+      try {
+        if (killBtnPc) {
+          killBtnPc.textContent = '0점(X)';
+          killBtnPc.style.display = (!isMobile && showKill) ? 'inline-flex' : 'none';
+          killBtnPc.classList.toggle('ready', showKill);
+        }
+      } catch (_) {}
+
+      // 근처 학생 머리 위에 검은당근 표시
+      if (showKill && near.killTarget) {
+        try { drawWorldKillPrompt(cam, near.killTarget); } catch (_) {}
+      }
 
       // 방 잠금(덧셈 페널티) 힌트
       if (st.lockedRoomUntil && now() < st.lockedRoomUntil) {
@@ -5406,7 +5454,7 @@ default:
       ctx.fillRect(0, 0, viewW, viewH);
       ctx.fillStyle = 'rgba(255,255,255,.95)';
       ctx.font = '900 28px system-ui';
-      const msg = st.winner === 'crew' ? '수학토끼 승리!' : '선생토끼 승리!';
+      const msg = st.winner === 'crew' ? '학생토끼 승리!' : '선생토끼 승리!';
       ctx.fillText(msg, 18, 48);
       ctx.font = '800 14px system-ui';
       ctx.fillText('새로고침하면 다시 시작할 수 있어요.', 18, 74);
@@ -6652,6 +6700,110 @@ default:
     ctx.restore();
   }
 
+  function drawHairAccentOnSprite(x, y, colorIdx, dir, facing) {
+    // Small pixel tuft overlay so 8 players differ by BOTH clothes(row) and hair.
+    const col = hairHex(colorIdx || 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(x, y);
+    // Match sprite mirroring logic (only side view mirrors)
+    if (dir === 2) ctx.scale(-facing, 1);
+
+    // Sprite is drawn at (-SPR_W/2, -60)
+    const ox = -SPR_W / 2;
+    const oy = -60;
+
+    ctx.fillStyle = col;
+    // top tuft
+    ctx.fillRect(ox + 28, oy + 8, 8, 3);
+    ctx.fillRect(ox + 30, oy + 5, 4, 3);
+    // side strands
+    ctx.fillRect(ox + 26, oy + 11, 3, 2);
+    ctx.fillRect(ox + 35, oy + 11, 3, 2);
+
+    // subtle outline for contrast
+    ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ox + 28, oy + 8, 8, 3);
+
+    ctx.restore();
+  }
+
+  function drawBlackCarrotIcon(x, y, scale = 1) {
+    // Cute '검은당근' marker (UI overlay), drawn in screen space.
+    const s = Math.max(0.6, scale);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(s, s);
+
+    // shadow
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.ellipse(0, 16, 10, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // carrot body
+    ctx.fillStyle = 'rgba(10,10,14,.96)';
+    ctx.beginPath();
+    roundRect(ctx, -6, -4, 12, 18, 6);
+    ctx.fill();
+
+    // highlight
+    ctx.fillStyle = 'rgba(255,255,255,.18)';
+    ctx.beginPath();
+    roundRect(ctx, -4.5, -2.5, 3.5, 14, 4);
+    ctx.fill();
+
+    // leaves
+    ctx.fillStyle = 'rgba(34,197,94,.95)';
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(-7, -16);
+    ctx.lineTo(-2, -18);
+    ctx.lineTo(0, -12);
+    ctx.lineTo(2, -18);
+    ctx.lineTo(7, -16);
+    ctx.lineTo(0, -6);
+    ctx.closePath();
+    ctx.fill();
+
+    // outline
+    ctx.strokeStyle = 'rgba(0,0,0,.45)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawWorldKillPrompt(cam, target) {
+    if (!target) return;
+    const sx = (target.wx - cam.x) * ZOOM;
+    const sy = (target.wy - cam.y) * ZOOM;
+
+    let x = sx;
+    let y = sy - 92;
+
+    // keep on screen
+    x = clamp(x, 28, viewW - 28);
+    y = clamp(y, 18, viewH - 18);
+
+    ctx.save();
+    ctx.globalAlpha = 0.96;
+    drawBlackCarrotIcon(x, y, 1.0);
+
+    // tiny hint text (PC readability). Mobile already has the button.
+    if (!isMobile) {
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.font = '900 12px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('X: 0점', x, y + 34);
+    }
+    ctx.restore();
+  }
+
+
 
   function drawPlayer(p, x, y) {
     // Sprite-sheet character (togester-like, bunny suit). We keep the old
@@ -6742,6 +6894,8 @@ default:
       // anchor: center-ish
       ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
       ctx.restore();
+      // Hair accent overlay (8-player distinction)
+      try { drawHairAccentOnSprite(x, y, p.color || 0, dir, facing); } catch (_) {}
     } else {
       // fallback (should rarely happen)
       const col = colorHex(p.color || 0);
@@ -6940,6 +7094,7 @@ default:
     const st = G.state;
     let canInteract = false;
     let canKill = false;
+    let killTarget = null;
     let target = null; // { type, id, label, wx, wy }
     let bestD2 = Infinity;
 
@@ -6991,17 +7146,26 @@ default:
         }
       }
     }
-
-    // kill hint
-    if (me.role === 'teacher' && now() >= me.killCdUntil) {
+    // kill hint (teacher only)
+    if (me.role === 'teacher' && !st.practice && now() >= (me.killCdUntil || 0)) {
+      let best = null;
+      let bestD2 = Infinity;
       for (const p of Object.values(st.players)) {
         if (!p.alive || p.down) continue;
         if (p.id === me.id) continue;
-        if (dist2(me.x, me.y, p.x, p.y) <= KILL_RANGE ** 2) { canKill = true; break; }
+        const d2 = dist2(me.x, me.y, p.x, p.y);
+        if (d2 <= KILL_RANGE ** 2 && d2 < bestD2) {
+          bestD2 = d2;
+          best = p;
+        }
+      }
+      if (best) {
+        canKill = true;
+        killTarget = { id: best.id, wx: best.x, wy: best.y };
       }
     }
 
-    return { canInteract, canKill, target };
+    return { canInteract, canKill, target, killTarget };
   }
 
 
@@ -7201,7 +7365,7 @@ default:
         st.maxTime = 180;
         hostAssignTeacher();
         for (const pp of Object.values(st.players)) {
-          sendToPlayer(pp.id, { t: 'toast', text: (pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터)' : '당신은 수학토끼야! 미션을 해결해!' });
+          sendToPlayer(pp.id, { t: 'toast', text: (pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터)' : '당신은 학생토끼야! 미션을 해결해!' });
         }
         broadcast({ t: 'toast', text: '인원이 모여서 본게임으로 전환! (선생토끼 배정)' });
       }

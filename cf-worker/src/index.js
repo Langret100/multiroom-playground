@@ -1813,6 +1813,9 @@ export class RoomDO{
     if (Array.isArray(this.da.used)) this.da.used.push(word);
     this.da.ops = [];
 
+    // Clear the shared canvas when a new round starts (so the next drawer begins fresh).
+    try{ this._broadcast('da_clear', {}); }catch(_){ }
+
     this.da.round = (Number(this.da.round)||0) + 1;
     this.da.endAt = now() + 120000;
 

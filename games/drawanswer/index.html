@@ -345,6 +345,7 @@
     let currentWord = '';
     let endAt = 0;
     let round = 0;
+    let lastRoundSeen = null;
     let maxRounds = 5;
 
     // draw state
@@ -657,7 +658,13 @@
       }
 
       if (d.type === 'da_state'){
-        round = Number(d.round||0);
+        const newRound = Number(d.round||0);
+        if (lastRoundSeen !== null && newRound && newRound !== lastRoundSeen){
+          // Fallback: if a client somehow misses the server's da_clear, clear when round advances.
+          clearLocal();
+        }
+        lastRoundSeen = newRound || lastRoundSeen;
+        round = newRound;
         maxRounds = Number(d.maxRounds||5);
         drawerNick = String(d.drawerNick||'-');
         endAt = Number(d.endAt||0);
