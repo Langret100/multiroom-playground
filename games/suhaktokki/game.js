@@ -4079,6 +4079,41 @@ function tileAtPixel(x, y) {
     return String(s || '').replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
   }
 
+  function createTokkiIcon(colorIdx){
+    // Small pixel avatar used in meeting roster/chat (no nicknames).
+    try{
+      if (!AS || !AS.charsImg) {
+        const sp = document.createElement('span');
+        sp.className = 'mDot';
+        sp.style.background = colorHex(colorIdx ?? 0);
+        sp.textContent = '🐰';
+        return sp;
+      }
+      const canvas = document.createElement('canvas');
+      const scale = 0.5; // 64x72 -> 32x36
+      canvas.width = Math.round(SPR_W * scale);
+      canvas.height = Math.round(SPR_H * scale);
+      canvas.className = 'mTokki';
+      const cx = canvas.getContext('2d');
+      cx.imageSmoothingEnabled = false;
+      const MOTION_ROWS = 5;
+      const DIR_ROWS = 3;
+      const motionWalk = 0;
+      const dirFront = 0;
+      const row = ((Number(colorIdx||0) % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS)) + (motionWalk * DIR_ROWS) + dirFront;
+      const sx = 0;
+      const sy = row * SPR_H;
+      cx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, 0, 0, canvas.width, canvas.height);
+      return canvas;
+    } catch (_) {
+      const sp = document.createElement('span');
+      sp.className = 'mDot';
+      sp.style.background = colorHex(colorIdx ?? 0);
+      sp.textContent = '🐰';
+      return sp;
+    }
+  }
+
   function renderMeetingRoster(){
     if (!meetingRoster) return;
     const st = G.state;
@@ -4087,14 +4122,14 @@ function tileAtPixel(x, y) {
     for (const p of players){
       const chip = document.createElement('div');
       chip.className = 'mAvatar' + ((p.alive && !p.down) ? '' : ' mDead');
-      const dot = document.createElement('span');
-      dot.className = 'mDot';
-      dot.style.background = colorHex(p.color ?? 0);
-      dot.textContent = '🐰';
-      const name = document.createElement('span');
-      name.textContent = String(p.nick || 'Player').slice(0, 10);
-      chip.appendChild(dot);
-      chip.appendChild(name);
+      const icon = createTokkiIcon(p.color ?? 0);
+      const label = document.createElement('span');
+      // Show only an id label (no nicknames) — avatar carries identity.
+      label.textContent = `#${p.id}`;
+      label.style.fontWeight = '1000';
+      label.style.fontSize = '12px';
+      chip.appendChild(icon);
+      chip.appendChild(label);
       meetingRoster.appendChild(chip);
     }
   }
@@ -4107,32 +4142,30 @@ function tileAtPixel(x, y) {
       const line = document.createElement('div');
       line.className = 'mLine';
 
-      const dot = document.createElement('span');
-      dot.className = 'mDot';
-      dot.style.background = colorHex(m.color ?? 0);
-      dot.textContent = '🐰';
+      const icon = createTokkiIcon(m.color ?? 0);
 
       const bubble = document.createElement('div');
       bubble.className = 'mBubble';
 
       const meta = document.createElement('div');
       meta.className = 'mMeta';
-      const nick = document.createElement('span');
-      nick.className = 'mNick';
-      nick.textContent = String(m.nick || 'Player').slice(0, 10);
+      const who = document.createElement('span');
+      who.className = 'mNick';
+      // No nickname: show id only.
+      who.textContent = `#${Number(m.pid||0)}`;
       const time = document.createElement('span');
       time.className = 'mTime';
       time.textContent = String(m.time || '');
-      meta.appendChild(nick);
+      meta.appendChild(who);
       meta.appendChild(time);
 
-      const text = document.createElement('div');
-      text.textContent = String(m.text || '');
+      const textEl = document.createElement('div');
+      textEl.textContent = String(m.text || '');
 
       bubble.appendChild(meta);
-      bubble.appendChild(text);
+      bubble.appendChild(textEl);
 
-      line.appendChild(dot);
+      line.appendChild(icon);
       line.appendChild(bubble);
       meetingChatLog.appendChild(line);
     }
@@ -4214,14 +4247,19 @@ function tileAtPixel(x, y) {
     // Keep roster in sync with current alive/down states
     renderMeetingRoster();
 
-    renderMeetingRoster();
-
     const alive = Object.values(st.players).filter(p => p.alive && !p.down);
     alive.forEach(p => {
       const row = document.createElement('div');
       row.className = 'item';
       const left = document.createElement('div');
-      left.innerHTML = `<b>${escapeHtml(p.nick)}</b> <small style="color:rgba(244,247,255,.65);font-weight:900">#${p.id}</small>`;
+      left.style.display = 'flex';
+      left.style.alignItems = 'center';
+      left.style.gap = '10px';
+      const icon = createTokkiIcon(p.color ?? 0);
+      const label = document.createElement('div');
+      label.innerHTML = `<b>#${p.id}</b>`;
+      left.appendChild(icon);
+      left.appendChild(label);
       const btn = document.createElement('button');
       btn.className = 'ui';
       btn.textContent = '투표';
@@ -5209,7 +5247,7 @@ default:
       if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
         const ex = G.netSmooth.players.get(p.id);
         if (ex) {
-          const a = clamp((now() - ex.t0) / 120, 0, 1);
+          const a = clamp((now() - ex.t0) / 180, 0, 1);
           wx = ex.px + (ex.tx - ex.px) * a;
           wy = ex.py + (ex.ty - ex.py) * a;
           pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
@@ -6989,7 +7027,7 @@ default:
       }
       // 스냅샷
       if (!G.host._lastBroadcast) G.host._lastBroadcast = 0;
-      if (t - G.host._lastBroadcast > 100) {
+      if (t - G.host._lastBroadcast > 66) {
         G.host._lastBroadcast = t;
         broadcastState();
       }
@@ -7263,7 +7301,7 @@ default:
               sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
               continue;
             }
-            const a = clamp((tNow - ex.t0) / 120, 0, 1);
+            const a = clamp((tNow - ex.t0) / 180, 0, 1);
             const cx = ex.px + (ex.tx - ex.px) * a;
             const cy = ex.py + (ex.ty - ex.py) * a;
             const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);

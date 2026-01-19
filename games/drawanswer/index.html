@@ -91,10 +91,21 @@
     .color{
       width:28px;
       height:28px;
-      border-radius:50%;
+      border-radius:14px;
       border:2px solid #fff;
       box-shadow:0 2px 6px rgba(0,0,0,.12);
       cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:13px;
+      font-weight:900;
+      color:rgba(0,0,0,.70);
+      user-select:none;
+    }
+    .color.eraser{
+      background:repeating-linear-gradient(45deg,#ffffff,#ffffff 6px,#f0f0f0 6px,#f0f0f0 12px);
+      border:2px solid rgba(0,0,0,.10);
     }
     .color.active{ outline:3px solid rgba(141,110,99,.55); }
     .btn{
@@ -234,6 +245,7 @@
         <div class="color" data-c="#3498db" style="background:#3498db;"></div>
         <div class="color" data-c="#2ecc71" style="background:#2ecc71;"></div>
         <div class="color" data-c="#f1c40f" style="background:#f1c40f;"></div>
+        <div class="color eraser" data-tool="eraser" title="지우개">🧽</div>
       </div>
     </div>
 
@@ -311,12 +323,23 @@
       const py1 = y1 * rect.height;
       const px2 = x2 * rect.width;
       const py2 = y2 * rect.height;
-      ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(1, w);
+
+      ctx.save();
+      if (color === '__erase__') {
+        // Eraser: punch holes in the canvas (transparent)
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.strokeStyle = 'rgba(0,0,0,1)';
+        ctx.lineWidth = Math.max(10, (w || 4) * 2.2);
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, w);
+      }
       ctx.beginPath();
       ctx.moveTo(px1, py1);
       ctx.lineTo(px2, py2);
       ctx.stroke();
+      ctx.restore();
     }
 
     function addChatLine(html){
@@ -330,16 +353,24 @@
       try{ window.parent.postMessage(obj, '*'); }catch(_){ }
     }
 
-    // colors
+    // colors (+ eraser)
     const colorBtns = Array.from(document.querySelectorAll('.color'));
-    function setColor(c){
-      strokeColor = c;
-      for(const b of colorBtns) b.classList.toggle('active', b.dataset.c === c);
+    function setColorOrTool(btn){
+      if (!btn) return;
+      if (btn.dataset.tool === 'eraser') strokeColor = '__erase__';
+      else strokeColor = btn.dataset.c || '#000000';
+
+      for(const b of colorBtns){
+        const isE = b.dataset.tool === 'eraser';
+        const active = isE ? (strokeColor === '__erase__') : (b.dataset.c === strokeColor);
+        b.classList.toggle('active', !!active);
+      }
     }
     for(const b of colorBtns){
-      b.addEventListener('click', ()=> setColor(b.dataset.c));
+      b.addEventListener('click', ()=> setColorOrTool(b));
     }
-    setColor(strokeColor);
+    // initial
+    setColorOrTool(colorBtns.find(b => (b.dataset.c === strokeColor)) || colorBtns[0]);
 
     function setDrawer(v){
       isDrawer = !!v;
