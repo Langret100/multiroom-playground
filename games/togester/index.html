@@ -492,7 +492,7 @@
 
         <div id="actionButtons" aria-label="액션 버튼">
             <button id="pushBtn" class="action-btn" type="button" title="앞에 있는 캐릭터를 밀기">밀기</button>
-            <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥</button>
+            <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥 0/2</button>
         </div>
         
         <div id="controls-hint">
@@ -612,6 +612,10 @@
         }
         let tgFloorSeq = 0;
         let lastFloorAt = 0;
+        // 발판 생성 제한: "라운드당 2개" -> "목숨(리스폰)당 2개"
+        const FLOOR_LIMIT_PER_LIFE = 2;
+        let floorUsedThisLife = 0;
+        let pendingFloorAcks = new Map(); // id -> timeoutId
         let lastPushAt = 0;
 
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
@@ -788,294 +792,288 @@
         
         
                // ==================== 모바일 세로 진행 레벨 ====================
-        // 한 손 플레이에서도 목적지가 화면 흐름(위/아래) 안에서 자연스럽게 보이도록
-        // 좁고 높은(세로) 스테이지로 구성.
-                const LEVELS = [
-            // 1) 기본 등반 (안전 간격)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 200, y: 120, width: 120, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+        // 25라운드: 맵 반복 없이, 라운드가 올라갈수록 함정/퍼즐 난이도가 증가하도록 구성
+        // (기존: 8개 맵 반복 -> 개선: 25개 맵을 결정론적으로 생성)
 
-                    { x: 70,  y: 2230, width: 180, height: 20, color: '#636e72' },
-                    { x: 270, y: 2070, width: 180, height: 20, color: '#636e72' },
-                    { x: 80,  y: 1910, width: 180, height: 20, color: '#636e72' },
-                    { x: 270, y: 1750, width: 180, height: 20, color: '#636e72' },
-                    { x: 110, y: 1590, width: 220, height: 20, color: '#636e72' },
-                    { x: 170, y: 1430, width: 220, height: 20, color: '#636e72' },
-                    { x: 120, y: 1270, width: 260, height: 20, color: '#636e72' },
-                    { x: 150, y: 1110, width: 220, height: 20, color: '#636e72' },
-                    { x: 120, y:  950, width: 260, height: 20, color: '#636e72' },
-                    { x: 150, y:  790, width: 220, height: 20, color: '#636e72' },
-                    { x: 120, y:  630, width: 260, height: 20, color: '#636e72' },
-                    { x: 150, y:  470, width: 220, height: 20, color: '#636e72' },
-                    { x: 120, y:  310, width: 260, height: 20, color: '#636e72' },
-                    { x: 140, y:  170, width: 240, height: 20, color: '#636e72' },
-                ],
-                buttons: [], doors: [], spikes: [], boxes: [], lifts: [], bridges: [],
+        const TG_STAGE_W = 520;
+        const TG_GROUND_Y = 2400;
+        const TG_TOP_GOAL_Y = 90;
+
+        function _lerp(a,b,t){ return a + (b-a)*t; }
+        function _mulberry32(a){
+            return function(){
+                let t = a += 0x6D2B79F5;
+                t = Math.imul(t ^ (t >>> 15), t | 1);
+                t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        }
+        function _rint(rng, a, b){
+            a = Math.floor(a); b = Math.floor(b);
+            return a + Math.floor(rng() * (b - a + 1));
+        }
+        function _rfloat(rng, a, b){ return a + rng() * (b - a); }
+        function _pick(rng, arr){ return arr[Math.floor(rng() * arr.length)]; }
+
+        function _addPlatform(platforms, x, y, w, h=20, color='#636e72'){
+            platforms.push({ x: Math.round(x), y: Math.round(y), width: Math.round(w), height: Math.round(h), color });
+        }
+
+        function _buttonOn(platformY){
+            // 버튼은 플랫폼 상단에 '올려놓는' 형태 (기존 맵과 동일한 방식)
+            return Math.round(platformY - 12);
+        }
+
+        function _chunkStairs({rng, platforms, y, step, wMin, wMax}){
+            // 3단 지그재그
+            const sides = [60, 260];
+            let side = rng() < 0.5 ? 0 : 1;
+            for (let i=0;i<3;i++){
+                const w = _rint(rng, wMin, wMax);
+                const x = sides[side] + _rint(rng, -15, 15);
+                _addPlatform(platforms, clamp(x, 20, TG_STAGE_W - w - 20), y - i*step, w, 20);
+                side = 1 - side;
+            }
+            return y - step*3;
+        }
+
+        function _chunkSpike({rng, platforms, spikes, y, step, wMin, wMax, diff}){
+            // 중앙 스파이크 + 좌/우 발판
+            const y1 = y - step;
+            const y2 = y - step*2;
+            const leftW = _rint(rng, wMin, wMax);
+            const rightW = _rint(rng, wMin, wMax);
+            _addPlatform(platforms, 35, y1, leftW, 20);
+            _addPlatform(platforms, TG_STAGE_W - 35 - rightW, y1, rightW, 20);
+            _addPlatform(platforms, 120 + _rint(rng,-25,25), y2, _rint(rng, wMin, wMax), 20);
+
+            const spikeW = Math.round(_lerp(160, 300, diff));
+            const spikeX = Math.round((TG_STAGE_W - spikeW)/2 + _rint(rng, -20, 20));
+            spikes.push({ x: clamp(spikeX, 30, TG_STAGE_W - spikeW - 30), y: y1 + 18, width: spikeW, height: 40 });
+            if (diff > 0.55 && rng() < 0.55){
+                const spikeW2 = Math.round(_lerp(120, 260, diff));
+                const spikeX2 = _rint(rng, 40, TG_STAGE_W - spikeW2 - 40);
+                spikes.push({ x: spikeX2, y: y2 + 18, width: spikeW2, height: 40 });
+            }
+            return y - step*3;
+        }
+
+        function _chunkDoor({rng, platforms, doors, buttons, y, step, wMin, wMax, diff}){
+            // 전체 폭 문 + 버튼(협동)
+            const yApproach = y - step;
+            const yDoor = y - step*2 + 10;
+            // 접근 발판
+            _addPlatform(platforms, 120 + _rint(rng,-25,25), yApproach, _rint(rng, wMin, wMax), 20);
+            // 문 (전체 폭)
+            doors.push({ x: 0, y: yDoor, width: TG_STAGE_W, height: 30, open: false, color: '#d63031' });
+            // 버튼 발판
+            const btnSideLeft = rng() < 0.5;
+            const btnPlatW = _rint(rng, 140, 190);
+            const btnPlatX = btnSideLeft ? 35 : (TG_STAGE_W - 35 - btnPlatW);
+            const btnPlatY = yApproach + _rint(rng, 70, 110);
+            _addPlatform(platforms, btnPlatX, btnPlatY, btnPlatW, 20);
+            buttons.push({ x: btnSideLeft ? 55 : (TG_STAGE_W - 55 - 70), y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#e17055' });
+
+            // 문 위쪽 진행 발판
+            const topW = _rint(rng, wMin, wMax);
+            _addPlatform(platforms, 120 + _rint(rng,-25,25), yDoor - 90, topW, 20);
+
+            // 후반 난이도: 2단 문
+            if (diff > 0.72 && rng() < 0.5){
+                const yDoor2 = yDoor - step - 10;
+                doors.push({ x: 0, y: yDoor2, width: TG_STAGE_W, height: 30, open: false, color: '#c0392b' });
+                const btnPlatY2 = yDoor - 40;
+                const btnPlatX2 = btnSideLeft ? (TG_STAGE_W - 35 - btnPlatW) : 35;
+                _addPlatform(platforms, btnPlatX2, btnPlatY2, btnPlatW, 20);
+                buttons.push({ x: btnSideLeft ? (TG_STAGE_W - 55 - 70) : 55, y: _buttonOn(btnPlatY2), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#fdcb6e' });
+                _addPlatform(platforms, 140, yDoor2 - 90, _rint(rng, wMin, wMax), 20);
+            }
+
+            return y - step*3;
+        }
+
+        function _chunkBridge({rng, platforms, bridges, buttons, spikes, y, step, diff}){
+            const yGap = y - step;
+            _addPlatform(platforms, 40, yGap, 160, 20);
+            _addPlatform(platforms, 320, yGap, 160, 20);
+            bridges.push({ x: 200, y: yGap, width: 120, height: 20, color: '#00cec9', active: false });
+
+            // 버튼은 아래쪽에
+            const btnPlatY = yGap + _rint(rng, 130, 170);
+            const btnPlatX = rng() < 0.5 ? 60 : 300;
+            _addPlatform(platforms, btnPlatX, btnPlatY, 160, 20);
+            buttons.push({ x: btnPlatX + 45, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
+
+            // 밑에 스파이크(중반 이후)
+            if (diff > 0.35){
+                spikes.push({ x: 150, y: yGap + 60, width: 220, height: 40 });
+            }
+
+            // 위쪽 진행 발판
+            _addPlatform(platforms, 140 + _rint(rng,-30,30), yGap - step, 240, 20);
+            return y - step*3;
+        }
+
+        function _chunkLift({rng, platforms, lifts, buttons, spikes, y, step, diff}){
+            // 버튼 누르는 동안만 올라가는 리프트
+            const bottomY = y - _rint(rng, 0, 10);
+            const topY = bottomY - Math.round(step * _lerp(2.1, 2.6, diff));
+            // 접근 발판
+            _addPlatform(platforms, 70 + _rint(rng,-15,15), bottomY - step, 200, 20);
+            // 리프트
+            lifts.push({ x: 360, y: bottomY, width: 120, height: 20, minY: topY, maxY: bottomY, speed: _lerp(2.6, 3.4, diff), color: '#6c5ce7' });
+            // 버튼 발판
+            const btnPlatY = bottomY + _rint(rng, 130, 170);
+            _addPlatform(platforms, 50, btnPlatY, 170, 20);
+            buttons.push({ x: 85, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
+            // 리프트 상단 하차 발판
+            _addPlatform(platforms, 250 + _rint(rng,-20,20), topY - 60, 220, 20);
+
+            // 후반: 리프트 아래에 스파이크 압박
+            if (diff > 0.6 && rng() < 0.65){
+                spikes.push({ x: 250, y: bottomY + 45, width: 220, height: 40 });
+            }
+
+            return y - step*3;
+        }
+
+        function _chunkBox({rng, platforms, doors, buttons, boxes, spikes, y, step, diff}){
+            // 상자(수단)로 버튼을 눌러 문을 열기
+            const yApproach = y - step;
+            _addPlatform(platforms, 120, yApproach, 260, 20);
+
+            const yDoor = yApproach - 110;
+            doors.push({ x: 0, y: yDoor, width: TG_STAGE_W, height: 30, open: false, color: '#d35400' });
+
+            // 버튼 포켓
+            const pocketLeft = rng() < 0.5;
+            const pocketX = pocketLeft ? 40 : 330;
+            const pocketY = yApproach + _rint(rng, 120, 150);
+            _addPlatform(platforms, pocketX, pocketY, 150, 20);
+            buttons.push({ x: pocketX + 40, y: _buttonOn(pocketY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#fdcb6e' });
+
+            // 상자 (접근 발판 위)
+            boxes.push({ x: 240 + _rint(rng,-40,40), y: yApproach - 40, width: 40, height: 40 });
+
+            // 함정: 상자 길목 스파이크
+            if (diff > 0.45){
+                spikes.push({ x: 120 + _rint(rng,-30,30), y: yApproach + 35, width: 280, height: 40 });
+            }
+
+            // 문 위 진행 발판
+            _addPlatform(platforms, 140 + _rint(rng,-25,25), yDoor - 90, 240, 20);
+            return y - step*3;
+        }
+
+        function _chunkGap({rng, platforms, spikes, y, step, diff}){
+            // 큰 갭: 점프만으로는 빡빡(바닥 1~2개 활용하면 쉬워짐)
+            const yGap = y - step;
+            _addPlatform(platforms, 40, yGap, 170, 20);
+            _addPlatform(platforms, 310, yGap, 170, 20);
+
+            // 갭 아래에 스파이크(중반 이후)
+            if (diff > 0.28){
+                spikes.push({ x: 160, y: yGap + 70, width: 220, height: 40 });
+            }
+
+            // 위쪽 연결 발판
+            _addPlatform(platforms, 140 + _rint(rng,-35,35), yGap - step, 240, 20);
+            return y - step*3;
+        }
+
+        function _seqForLevel(lv, rng){
+            const pick = (arr)=>_pick(rng, arr);
+            if (lv <= 3) return ['stairs','stairs','door','stairs','stairs'];
+            if (lv <= 6) return ['stairs', pick(['door','bridge']), 'stairs', pick(['spike','gap']), 'stairs'];
+            if (lv <= 10) return [pick(['door','bridge']), 'spike', pick(['lift','gap']), 'stairs', pick(['door','bridge'])];
+            if (lv <= 15) return ['spike', pick(['door','box']), pick(['lift','bridge']), 'gap', 'stairs'];
+            if (lv <= 20) return [pick(['door','box']), 'spike', pick(['lift','bridge']), pick(['door','gap']), 'spike'];
+            return [pick(['box','door']), 'spike', pick(['lift','bridge']), 'box', 'spike'];
+        }
+
+        function _genLevel(lv){
+            const rng = _mulberry32(0x51F15 + lv * 1337);
+            const diff = clamp((lv - 1) / 24, 0, 1);
+
+            const step = Math.round(_lerp(170, 135, diff));
+            const wMax = Math.round(_lerp(290, 175, diff));
+            const wMin = Math.round(_lerp(210, 120, diff));
+
+            const platforms = [];
+            const spikes = [];
+            const doors = [];
+            const buttons = [];
+            const boxes = [];
+            const lifts = [];
+            const bridges = [];
+
+            // 바닥
+            platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
+
+            // 시작 높이
+            let y = 2230;
+
+            // 초반 안정 발판 1~2개
+            for (let i=0;i<2;i++){
+                const w = _rint(rng, wMin+30, wMax);
+                const x = _rint(rng, 50, TG_STAGE_W - w - 50);
+                _addPlatform(platforms, x, y - i*step, w, 20);
+            }
+            y -= step*2;
+
+            const seq = _seqForLevel(lv, rng);
+            for (const t of seq){
+                if (t === 'stairs') y = _chunkStairs({rng, platforms, y, step, wMin, wMax});
+                else if (t === 'spike') y = _chunkSpike({rng, platforms, spikes, y, step, wMin, wMax, diff});
+                else if (t === 'door') y = _chunkDoor({rng, platforms, doors, buttons, y, step, wMin, wMax, diff});
+                else if (t === 'bridge') y = _chunkBridge({rng, platforms, bridges, buttons, spikes, y, step, diff});
+                else if (t === 'lift') y = _chunkLift({rng, platforms, lifts, buttons, spikes, y, step, diff});
+                else if (t === 'box') y = _chunkBox({rng, platforms, doors, buttons, boxes, spikes, y, step, diff});
+                else if (t === 'gap') y = _chunkGap({rng, platforms, spikes, y, step, diff});
+                else y = _chunkStairs({rng, platforms, y, step, wMin, wMax});
+
+                // 라운드가 높을수록 쉬는 구간이 짧아짐: 추가 발판을 덜 줌
+                if (diff < 0.25 && rng() < 0.35){
+                    const w = _rint(rng, wMin+40, wMax);
+                    const x = _rint(rng, 60, TG_STAGE_W - w - 60);
+                    _addPlatform(platforms, x, y, w, 20);
+                    y -= step;
+                }
+            }
+
+            // 상단 정리 발판
+            _addPlatform(platforms, 140, 220, 240, 20);
+            _addPlatform(platforms, 120, 140, 280, 20);
+
+            const spawn = { x: 120, y: 2320 };
+            const goal  = { x: 200, y: TG_TOP_GOAL_Y, width: 110, height: 90 };
+
+            return {
+                spawn, goal,
+                platforms,
+                buttons,
+                doors,
+                spikes,
+                boxes,
+                lifts,
+                bridges,
                 message: ""
-            },
+            };
+        }
 
-            // 2) 문(벽) + 버튼 (혼자도 박스로 가능)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 120, width: 110, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
+        const LEVELS = Array.from({ length: 25 }, (_, i) => _genLevel(i + 1));
 
-                    // 문 위로 올라가기 위한 발판들 (문이 열려야 통과)
-                    { x: 80,  y: 2120, width: 200, height: 20, color: '#636e72' },
-                    { x: 260, y: 1960, width: 200, height: 20, color: '#636e72' },
-                    { x: 90,  y: 1800, width: 200, height: 20, color: '#636e72' },
+// ==================== 라운드/맵 처리 ====================
+        // 25라운드 고정: 맵 반복 없이(LEVELS=25), 라운드 표기로 진행
+        const TG_MAP_COUNT = LEVELS.length;
+        const TG_MAX_ROUNDS = TG_MAP_COUNT;
+        const TG_ROUND_MODE = true;
+        function getLevelForRound(roundNum){
+            const n = Math.max(1, parseInt(roundNum, 10) || 1);
+            const idx = clamp(n - 1, 0, Math.max(0, TG_MAP_COUNT - 1));
+            return LEVELS[idx];
+        }
 
-                    { x: 140, y: 1560, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1400, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1240, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1080, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  920, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  760, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  600, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  440, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  280, width: 240, height: 20, color: '#636e72' },
-                ],
-                doors: [
-                    // 닫히면 위로 못 올라가게 막는 가로 벽
-                    { x: 0, y: 1680, width: 520, height: 30, open: false }
-                ],
-                buttons: [
-                    { x: 60, y: 2388, width: 70, height: 12, pressed: false, doorId: 0 }
-                ],
-                boxes: [
-                    { x: 170, y: 2340, width: 40, height: 40, color: '#b2bec3' }
-                ],
-                spikes: [], lifts: [], bridges: [],
-                message: ""
-            },
-
-            // 3) 다리 생성(브릿지) + 버튼 (박스로 고정)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 120, width: 110, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
-
-                    { x: 70,  y: 2210, width: 180, height: 20, color: '#636e72' },
-                    { x: 270, y: 2050, width: 180, height: 20, color: '#636e72' },
-
-                    // 큰 갭(가운데 다리 필요)
-                    { x: 60,  y: 1760, width: 160, height: 20, color: '#636e72' },
-                    { x: 300, y: 1760, width: 160, height: 20, color: '#636e72' },
-
-                    { x: 140, y: 1480, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1320, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1160, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1000, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  840, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  680, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  520, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  360, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  200, width: 240, height: 20, color: '#636e72' },
-                ],
-                bridges: [
-                    { x: 210, y: 1760, width: 100, height: 20, color: '#00cec9', active: false }
-                ],
-                buttons: [
-                    { x: 60, y: 2200, width: 70, height: 12, pressed: false, bridgeId: 0 }
-                ],
-                boxes: [
-                    { x: 160, y: 2340, width: 40, height: 40, color: '#b2bec3' }
-                ],
-                doors: [], spikes: [], lifts: [],
-                message: ""
-            },
-
-            // 4) 리프트(버튼을 누르고 타기) (박스로 고정 가능)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 120, width: 110, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
-
-                    // 리프트 없이 못 올라가게 벽 형태
-                    { x: 60,  y: 2060, width: 180, height: 20, color: '#636e72' },
-                    { x: 280, y: 1900, width: 180, height: 20, color: '#636e72' },
-                    { x: 140, y: 1640, width: 240, height: 20, color: '#636e72' },
-
-                    { x: 140, y: 1480, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1320, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1160, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1000, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  840, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  680, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  520, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  360, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  200, width: 240, height: 20, color: '#636e72' },
-                ],
-                lifts: [
-                    { x: 340, y: 2340, width: 120, height: 20, minY: 1800, maxY: 2340, speed: 3.0, color: '#6c5ce7' }
-                ],
-                buttons: [
-                    { x: 60, y: 2388, width: 70, height: 12, pressed: false, liftId: 0 }
-                ],
-                boxes: [
-                    { x: 170, y: 2340, width: 40, height: 40, color: '#b2bec3' }
-                ],
-                doors: [], spikes: [], bridges: [],
-                message: ""
-            },
-
-            // 5) 문 + 다리 2단계 (박스 2개)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 120, width: 110, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
-
-                    { x: 70,  y: 2210, width: 180, height: 20, color: '#636e72' },
-                    { x: 270, y: 2050, width: 180, height: 20, color: '#636e72' },
-
-                    // 갭: 브릿지 필요
-                    { x: 60,  y: 1760, width: 160, height: 20, color: '#636e72' },
-                    { x: 300, y: 1760, width: 160, height: 20, color: '#636e72' },
-
-                    // 문 위로 가는 통로
-                    { x: 140, y: 1500, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1340, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1180, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1020, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  860, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  700, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  540, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  380, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  220, width: 240, height: 20, color: '#636e72' },
-                ],
-                bridges: [
-                    { x: 210, y: 1760, width: 100, height: 20, color: '#00cec9', active: false }
-                ],
-                doors: [
-                    { x: 0, y: 1420, width: 520, height: 30, open: false }
-                ],
-                buttons: [
-                    // 브릿지 버튼(아래): 박스로 고정
-                    { x: 60, y: 2200, width: 70, height: 12, pressed: false, bridgeId: 0 },
-                    // 문 버튼(중간): 근처 박스로 고정
-                    { x: 360, y: 1490, width: 70, height: 12, pressed: false, doorId: 0 }
-                ],
-                boxes: [
-                    { x: 160, y: 2340, width: 40, height: 40, color: '#b2bec3' },
-                    { x: 320, y: 1460, width: 40, height: 40, color: '#b2bec3' },
-                ],
-                spikes: [], lifts: [],
-                message: ""
-            },
-
-            // 6) 스파이크 회피 (간격/난이도 합리화)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 120, width: 110, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
-
-                    { x: 80,  y: 2230, width: 170, height: 20, color: '#636e72' },
-                    { x: 270, y: 2070, width: 170, height: 20, color: '#636e72' },
-
-                    // 스파이크 구간 위/아래로 우회
-                    { x: 60,  y: 1910, width: 160, height: 20, color: '#636e72' },
-                    { x: 300, y: 1910, width: 160, height: 20, color: '#636e72' },
-
-                    { x: 140, y: 1650, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1490, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1330, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1170, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1010, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  850, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  690, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  530, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  370, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  210, width: 240, height: 20, color: '#636e72' },
-                ],
-                spikes: [
-                    { x: 160, y: 2360, width: 200, height: 40 },
-                    { x: 160, y: 1870, width: 200, height: 40 },
-                ],
-                doors: [], buttons: [], boxes: [], lifts: [], bridges: [],
-                message: ""
-            },
-
-            // 7) 박스를 발판처럼 써서 올라가기
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 120, width: 110, height: 80 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
-
-                    // 첫 발판은 낮게
-                    { x: 80,  y: 2230, width: 220, height: 20, color: '#636e72' },
-
-                    // 다음 발판이 살짝 높아서 박스 점프가 도움됨
-                    { x: 300, y: 1960, width: 160, height: 20, color: '#636e72' },
-
-                    { x: 140, y: 1700, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1540, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1380, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1220, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1060, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  900, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  740, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  580, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  420, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  260, width: 240, height: 20, color: '#636e72' },
-                ],
-                boxes: [
-                    { x: 150, y: 2340, width: 40, height: 40, color: '#b2bec3' }
-                ],
-                doors: [], buttons: [], spikes: [], lifts: [], bridges: [],
-                message: ""
-            },
-
-            // 8) 최종: 리프트 + 브릿지 연계 (박스 2개로 고정)
-            {
-                spawn: { x: 120, y: 2320 },
-                goal:  { x: 210, y: 90, width: 110, height: 90 },
-                platforms: [
-                    { x: 0,   y: 2400, width: 520, height: 70, color: '#2d3436' },
-
-                    { x: 70,  y: 2210, width: 180, height: 20, color: '#636e72' },
-                    { x: 270, y: 2050, width: 180, height: 20, color: '#636e72' },
-
-                    // 중간층 갭(브릿지로 연결)
-                    { x: 60,  y: 1700, width: 160, height: 20, color: '#636e72' },
-                    { x: 300, y: 1700, width: 160, height: 20, color: '#636e72' },
-
-                    { x: 140, y: 1440, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1280, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y: 1120, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  960, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  800, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  640, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  480, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  320, width: 240, height: 20, color: '#636e72' },
-                    { x: 140, y:  160, width: 240, height: 20, color: '#636e72' },
-                ],
-                lifts: [
-                    { x: 360, y: 2340, width: 120, height: 20, minY: 1860, maxY: 2340, speed: 3.2, color: '#6c5ce7' }
-                ],
-                bridges: [
-                    { x: 210, y: 1700, width: 100, height: 20, color: '#00cec9', active: false }
-                ],
-                buttons: [
-                    { x: 60, y: 2388, width: 70, height: 12, pressed: false, liftId: 0 },
-                    { x: 360, y: 2040, width: 70, height: 12, pressed: false, bridgeId: 0 }
-                ],
-                boxes: [
-                    { x: 170, y: 2340, width: 40, height: 40, color: '#b2bec3' },
-                    { x: 420, y: 2000, width: 40, height: 40, color: '#b2bec3' },
-                ],
-                doors: [], spikes: [],
-                message: ""
-            },
-        ];
         // ==================== 에러 표시 ====================
         function showError(msg, isError = true) {
             const el = document.getElementById('errorMsg');
@@ -1354,8 +1352,9 @@
         }
         
         function loadLevel(levelNum) {
-            const level = LEVELS[levelNum - 1];
-            if (!level) {
+            resetFloorQuotaLocal();
+            const lvNum = Math.max(1, parseInt(levelNum, 10) || 1);
+            if (lvNum > TG_MAX_ROUNDS) {
                 // 모든 레벨 클리어
                 document.getElementById('winScreen').querySelector('.win-text').textContent = '🎊 게임 클리어! 🎊';
                 document.getElementById('autoNextHint').style.display = 'none';
@@ -1365,10 +1364,22 @@
                 bridgeSendOver(true, "game_clear");
                 return;
             }
+            const level = getLevelForRound(lvNum);
+            if (!level) {
+                // 방어 코드: 레벨 데이터가 없으면 클리어 처리
+                document.getElementById('winScreen').querySelector('.win-text').textContent = '🎊 게임 클리어! 🎊';
+                document.getElementById('autoNextHint').style.display = 'none';
+                document.getElementById('winScreen').classList.add('show');
+                sfxGameClear();
+                bridgeSendOver(true, "game_clear");
+                return;
+            }
             
             document.getElementById('autoNextHint').style.display = 'block';
             document.getElementById('winScreen').querySelector('.win-text').textContent = '🎉 레벨 클리어! 🎉';
-            const label = isGuestMode ? `연습 · 레벨 ${levelNum}` : `레벨 ${levelNum}`;
+            const label = TG_ROUND_MODE
+                ? (isGuestMode ? `연습 · 라운드 ${lvNum}/${TG_MAX_ROUNDS}` : `라운드 ${lvNum}/${TG_MAX_ROUNDS}`)
+                : (isGuestMode ? `연습 · 레벨 ${lvNum}` : `레벨 ${lvNum}`);
             document.getElementById('levelInfo').textContent = label;
             document.getElementById('winScreen').classList.remove('show');
             levelClearLock = false;
@@ -1501,7 +1512,9 @@ cameraX = 0;
         }
 
         function respawnLocal(){
-            const level = LEVELS[currentLevel - 1];
+            // 목숨(리스폰)마다 발판 쿼터 리셋
+            resetFloorQuotaLocal();
+            const level = getLevelForRound(currentLevel);
             if (!level) return;
             const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
             localPlayer.x = level.spawn.x + (colorIndex * 50);
@@ -1518,10 +1531,34 @@ cameraX = 0;
             bridgeSendState(true);
         }
 
-        function setupActionButtons(){
+        
+        function updateFloorBtn(){
+            const btn = document.getElementById('floorBtn');
+            if (!btn) return;
+            const pending = pendingFloorAcks ? pendingFloorAcks.size : 0;
+            const usedDisplay = Math.min(FLOOR_LIMIT_PER_LIFE, (floorUsedThisLife||0) + pending);
+            btn.textContent = `바닥 ${usedDisplay}/${FLOOR_LIMIT_PER_LIFE}`;
+            const can = (usedDisplay < FLOOR_LIMIT_PER_LIFE) && !localPlayer.isDead;
+            btn.style.opacity = can ? '1' : '0.55';
+        }
+
+        function resetFloorQuotaLocal(){
+            floorUsedThisLife = 0;
+            if (pendingFloorAcks && pendingFloorAcks.size){
+                for (const [id, to] of pendingFloorAcks.entries()){
+                    try{ clearTimeout(to); }catch(_){ }
+                }
+            }
+            pendingFloorAcks = new Map();
+            updateFloorBtn();
+        }
+
+function setupActionButtons(){
             const pushBtn = document.getElementById('pushBtn');
             const floorBtn = document.getElementById('floorBtn');
             if (!pushBtn || !floorBtn) return;
+
+            updateFloorBtn();
 
             if (!pushBtn._bound){
                 pushBtn._bound = true;
@@ -1664,17 +1701,19 @@ cameraX = 0;
 
         function createFloorUnderFoot(){
             if (localPlayer.isDead) return;
+            updateFloorBtn();
+            const pending = pendingFloorAcks ? pendingFloorAcks.size : 0;
+            const usedDisplay = (floorUsedThisLife||0) + pending;
+            if (usedDisplay >= FLOOR_LIMIT_PER_LIFE){
+                showError(`이번 목숨 바닥은 ${FLOOR_LIMIT_PER_LIFE}개까지만!`, true);
+                return;
+            }
+
             const now = performance.now();
             if (now - lastFloorAt < FLOOR_COOLDOWN_MS) return;
             lastFloorAt = now;
 
-            // 최대 5개까지만(성능 보호). 초과 시 가장 오래된 것 제거
             const myOwner = (EMBED && mySessionId) ? mySessionId : (playerId || 'local');
-            const mine = Object.values(tgFloors).filter(p => String(p.owner||'') === String(myOwner));
-            if (mine.length >= 5){
-                mine.sort((a,b)=>String(a.id).localeCompare(String(b.id)));
-                removeFloorById(mine[0].id);
-            }
 
             const w = 90;
             const h = 20;
@@ -1683,11 +1722,27 @@ cameraX = 0;
             const id = `${myOwner}:${Date.now().toString(36)}:${(tgFloorSeq++ % 9999)}`;
 
             const pl = { id, owner: myOwner, x, y, width: w, height: h, color: '#2f3640' };
+
+            // Immediate local feel: place locally first.
             addFloorPlatform(pl);
 
+            // Multiplayer: wait for server echo; if denied, revert.
             if (EMBED && !isGuestMode){
+                // Mark as pending ack
+                const to = setTimeout(()=>{
+                    try{ removeFloorById(id); }catch(_){ }
+                    try{ pendingFloorAcks.delete(id); }catch(_){ }
+                    updateFloorBtn();
+                }, 700);
+                pendingFloorAcks.set(id, to);
+                updateFloorBtn();
                 bridgeSend('tg_floor', { id: pl.id, owner: pl.owner, x: pl.x, y: pl.y, width: pl.width, height: pl.height, color: pl.color });
+                return;
             }
+
+            // Guest/practice: local quota count
+            floorUsedThisLife += 1;
+            updateFloorBtn();
         }
 
 
@@ -2183,6 +2238,7 @@ cameraX = 0;
         }
         
         function resetMap() {
+            resetFloorQuotaLocal();
             // 맵 초기화 (버튼, 문 상태 리셋)
             loadLevel(currentLevel);
             localPlayer.isDead = false;
@@ -2200,7 +2256,7 @@ cameraX = 0;
         
         function respawn() {
             // 기존 respawn은 위치만 리셋 (사망 없이 위치 조정 필요시 사용)
-            const level = LEVELS[currentLevel - 1];
+            const level = getLevelForRound(currentLevel);
             const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
             localPlayer.x = level.spawn.x + (colorIndex * 50);
             localPlayer.y = level.spawn.y;
@@ -3135,12 +3191,33 @@ cameraX = 0;
                     return;
                 }
                 clearAllFloors();
+                // any pending floors that never got confirmed should be cleared
+                if (pendingFloorAcks && pendingFloorAcks.size){
+                    for (const [id, to] of pendingFloorAcks.entries()){
+                        try{ clearTimeout(to); }catch(_){ }
+                    }
+                    pendingFloorAcks = new Map();
+                    updateFloorBtn();
+                }
                 for (const pl of arr) addFloorPlatform(pl);
                 return;
             }
 
-            if (d.type === "tg_floor"){
+            if (d.type === "tg_floor") {
+                // server echo confirms a pending floor
+                const id = String(d.id||'');
+                if (id && pendingFloorAcks && pendingFloorAcks.has(id)) {
+                    try{ clearTimeout(pendingFloorAcks.get(id)); }catch(_){ }
+                    pendingFloorAcks.delete(id);
+                }
                 addFloorPlatform(d);
+                updateFloorBtn();
+                return;
+            }
+
+            if (d.type === "tg_floor_quota") {
+                floorUsedThisLife = Math.max(0, parseInt(d.used, 10) || 0);
+                updateFloorBtn();
                 return;
             }
 

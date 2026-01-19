@@ -521,13 +521,13 @@
     pixel: {},
   };
 
-  async function loadJSON(url) {
+  async function loadJSON(url, fallback=null) {
     // Prefer fetch() when served over http(s). If we are running under file://,
     // fetch() for JSON is often blocked by browser security. In that case we
     // fall back to inline JSON blobs injected by assets_inline.js.
     try{
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`fetch fail ${url}`);
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`fetch fail ${url} (${r.status})`);
       return await r.json();
     }catch(err){
       try{
@@ -540,17 +540,51 @@
           if (k === key || k.endsWith("/"+base)) return M[k];
         }
       }catch(_){ }
-      throw err;
+      // Last resort: return a safe fallback so the game can still boot.
+      if (fallback !== null && fallback !== undefined) return fallback;
+      return null;
     }
   }
 
-  function loadImage(url) {
+  function loadImage(url, fallbackSize=null) {
     const I = (window.__SUHAK_INLINE_IMG__ || {});
     const key = String(url || '').replace(/^\.\//, '').replace(/^\//, '');
     const base = key.split('/').pop();
     const inline = I[key] || I['assets/' + base] || I[base];
 
-    return new Promise((res, rej) => {
+    const guessSize = ()=>{
+      if (fallbackSize && typeof fallbackSize === 'object'){
+        const w = Number(fallbackSize.w||fallbackSize.width||0);
+        const h = Number(fallbackSize.h||fallbackSize.height||0);
+        if (w>0 && h>0) return {w,h};
+      }
+      const u = String(url||'');
+      if (u.includes('tiles_rabbithole')) return {w:256,h:256};
+      if (u.includes('objects_rabbithole')) return {w:256,h:128};
+      if (u.includes('chars_bunny')) return {w:384,h:384};
+      return {w:64,h:64};
+    };
+
+    const makePlaceholder = ()=>{
+      const {w,h} = guessSize();
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      g.fillStyle = 'rgba(255,0,255,0.22)';
+      g.fillRect(0,0,w,h);
+      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      g.lineWidth = 2;
+      for (let i=-h;i<w;i+=12){
+        g.beginPath();
+        g.moveTo(i,0);
+        g.lineTo(i+h,h);
+        g.stroke();
+      }
+      return c;
+    };
+
+    return new Promise((res) => {
       const im = new Image();
       let triedInline = false;
       im.onload = () => res(im);
@@ -560,9 +594,10 @@
           im.src = inline;
           return;
         }
-        rej(new Error('image failed: ' + url));
+        // Give up but keep booting.
+        res(makePlaceholder());
       };
-      im.src = url;
+      try{ im.src = url; }catch(_){ res(makePlaceholder()); }
     });
   }
 
@@ -923,9 +958,33 @@
   }
 
   async function loadAssets() {
-    AS.tilesMeta = await loadJSON('assets/tiles_rabbithole.json');
-    AS.objsMeta = await loadJSON('assets/objects_rabbithole.json');
-    AS.map = await loadJSON('assets/map_mathburrow_01.json');
+    // Ultra-defensive loading: Cloudflare Worker/PAGES routing or CSP can make asset fetch fail.
+    // We always fall back to inline blobs or a minimal built-in map so the game can still run.
+    const DEFAULT_TILES_META = { tileSize: 32, columns: 8, tiles: {} };
+    const DEFAULT_OBJS_META  = { tileSize: 32, columns: 8, objects: {} };
+    const makeFallbackMap = ()=>{
+      const W=20, H=20;
+      const ground=new Array(W*H).fill(0);
+      for (let y=H-2; y<H; y++) for (let x=0; x<W; x++) ground[y*W+x]=1;
+      return {
+        name: 'FallbackBurrow',
+        tileSize: 32,
+        width: W,
+        height: H,
+        layers: { ground, decor: new Array(W*H).fill(0) },
+        rooms: [],
+        objects: [],
+        spawnPoints: [{ x: 2, y: H-3 }]
+      };
+    };
+
+    AS.tilesMeta = await loadJSON('assets/tiles_rabbithole.json', DEFAULT_TILES_META);
+    AS.objsMeta  = await loadJSON('assets/objects_rabbithole.json', DEFAULT_OBJS_META);
+    AS.map       = await loadJSON('assets/map_mathburrow_01.json', makeFallbackMap());
+
+    if (!AS.tilesMeta) AS.tilesMeta = DEFAULT_TILES_META;
+    if (!AS.objsMeta) AS.objsMeta = DEFAULT_OBJS_META;
+    if (!AS.map || !AS.map.layers) AS.map = makeFallbackMap();
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
@@ -1032,8 +1091,13 @@
   let solid = null; // boolean grid
 
   function tileIsSolid(id) {
-    const t = AS.tilesMeta.tiles?.[String(id)];
-    return !!t?.solid;
+    const n = Number(id)||0;
+    const tm = AS.tilesMeta;
+    if (!tm || !tm.tiles) return n !== 0;
+    const t = tm.tiles?.[String(id)];
+    if (t && typeof t.solid !== 'undefined') return !!t.solid;
+    // Safe default: treat any non-zero tile id as solid.
+    return n !== 0;
   }
 
   // Cached pixel-decor placements (prevents \"invisible collision\" when we also mark decor tiles solid)
