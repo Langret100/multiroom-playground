@@ -314,13 +314,33 @@ function updatePreview(modeId){
   }catch(_){}
 
   // 요청사항: 방 화면 상단의 모바일 조작 안내를 게임별로 표시
+  // (투게스터는 하단에 PC/모바일 조작을 함께 표시)
   try{
     const sub = document.getElementById("gamePanelSub");
     if (sub){
+      const isTogester = (meta && meta.id) ? (meta.id === 'togester') : (modeId === 'togester');
       const hint = (meta && meta.mobileHint) ? String(meta.mobileHint).trim() : "";
-      sub.textContent = hint ? safeText(hint, 80) : "";
+      sub.textContent = (!isTogester && hint) ? safeText(hint, 80) : "";
     }
-  }catch(_){}
+  }catch(_){ }
+
+  // Preview 하단 조작 안내(투게스터 등)
+  try{
+    const el = document.getElementById('gameControlsHint');
+    if (el){
+      const isTogester = (meta && meta.id) ? (meta.id === 'togester') : (modeId === 'togester');
+      if (isTogester){
+        const m = (meta && meta.mobileHint) ? String(meta.mobileHint).trim() : '';
+        const pc = (meta && meta.pcHint) ? String(meta.pcHint).trim() : '';
+        const line = [m, pc].filter(Boolean).join(' · ');
+        el.textContent = line ? safeText(line, 100) : '';
+        el.style.display = line ? 'block' : 'none';
+      } else {
+        el.textContent = '';
+        el.style.display = 'none';
+      }
+    }
+  }catch(_){ }
 }
 
 
@@ -1269,11 +1289,17 @@ const isSuhakTokki = (modeId === "suhaktokki");
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
-  if ((isTogester || isSuhakTokki) && humanCount === 1){
-    // 협동 방에서 혼자일 때: 방 안 연습 모드(서버 시작 없이 iframe만 실행)
+  if (isTogester && humanCount === 1){
+    // 투게스터: 혼자일 때는 방 안 연습 모드(서버 시작 없이 iframe만 실행)
     canStart = true;
     startText = "연습 시작";
     startAction = "practice";
+  } else if (isSuhakTokki && humanCount === 1){
+    // 수학토끼: 혼자 시작해도 서버 매치를 시작(방 phase=playing)해서 이후 합류/동기화가 가능하도록 함
+    // 게임 내부에서 자동으로 연습 모드(선생토끼 없음)로 판정합니다.
+    canStart = true;
+    startText = "연습 시작";
+    startAction = "start";
   } else if (isSnakeTail && humanCount === 1){
     // SnakeTail은 혼자서도 정상 라운드를 시작할 수 있어요(먹이/타이머는 서버가 관리).
     canStart = true;

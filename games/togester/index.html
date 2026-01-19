@@ -495,9 +495,8 @@
             <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥 0/2</button>
         </div>
         
-        <div id="controls-hint">
-            모바일: 왼/오 터치 이동 | 양쪽 터치 점프 · PC: ←→ 이동 / Z 점프 / X 밀기 / C 바닥
-        </div>
+        <!-- 조작 안내는 멀티룸 방 화면(설명 패널)에서 표시. 게임 화면 내 중복 표시는 제거 -->
+        <div id="controls-hint" style="display:none"></div>
     </div>
     
     <!-- 승리 화면 -->
@@ -631,7 +630,7 @@
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
         let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
         // Slightly larger interpolation delay reduces visible jitter from packet timing variance.
-        const NET_INTERP_DELAY_MS = 120;
+        const NET_INTERP_DELAY_MS = 150;
         const NET_MAX_HISTORY_MS = 2000;
         let gameObjects = [];
         let canvas, ctx;
@@ -2766,12 +2765,27 @@ function setupActionButtons(){
                 if (dist > 220) {
                     sp.x = tx;
                     sp.y = ty;
+                    // also snap integer render cache to avoid a few frames of wobble after teleport
+                    sp.rx = Math.round(sp.x);
+                    sp.ry = Math.round(sp.y);
                 } else {
                     // 가까울수록 더 천천히 따라가서 미세한 흔들림을 흡수
                     const k = dist < 8 ? 0.22 : 0.45;
                     sp.x += dx * k;
                     sp.y += dy * k;
                 }
+
+                // When nearly idle, snap to target to eliminate micro jitter from packet timing.
+                try{
+                    const tvx = (typeof tp.vx === 'number') ? tp.vx : (p.vx || 0);
+                    const tvy = (typeof tp.vy === 'number') ? tp.vy : (p.vy || 0);
+                    if (dist < 0.85 && Math.abs(tvx) < 0.35 && Math.abs(tvy) < 0.35){
+                        sp.x = tx;
+                        sp.y = ty;
+                        sp.rx = Math.round(sp.x);
+                        sp.ry = Math.round(sp.y);
+                    }
+                }catch(_){ }
 
                 sp.color = tp.color || p.color;
                 sp.name = tp.name || p.name;
@@ -2783,11 +2797,14 @@ function setupActionButtons(){
 
                 if (!sp.facing) sp.facing = 1;
                 // 원격은 vx가 작은 구간에서 부호가 흔들리며 좌우반전이 깜빡일 수 있어 임계값을 올림
-                if (Math.abs(sp.vx) > 0.6) sp.facing = sp.vx < 0 ? -1 : 1;
-
-                // Render with stable pixel snap (rounding) to avoid left/right 1px wobble.
-                const rx = Math.round(sp.x);
-                const ry = Math.round(sp.y);
+                if (Math.abs(sp.vx) > 0.6) sp.facing = sp.vx < 0 ? -1 : 1;                // Render with stable pixel snap (hysteresis) to avoid 1px wobble.
+                if (typeof sp.rx !== 'number') sp.rx = Math.round(sp.x);
+                if (typeof sp.ry !== 'number') sp.ry = Math.round(sp.y);
+                const SNAP_H = 0.55;
+                if (Math.abs(sp.x - sp.rx) > SNAP_H) sp.rx = Math.round(sp.x);
+                if (Math.abs(sp.y - sp.ry) > SNAP_H) sp.ry = Math.round(sp.y);
+                const rx = sp.rx;
+                const ry = sp.ry;
 
                 drawHamster(rx, ry, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing, pushing: sp.pushing });
             });

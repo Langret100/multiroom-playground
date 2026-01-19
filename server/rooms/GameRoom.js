@@ -113,8 +113,10 @@ this.st = {
         this.recomputeReady();
         if (!this.state.allReady) return;
       } else {
-        // Coop requires at least 2 humans.
-        if (humanCount < 2) return;
+        // Coop default requires at least 2 humans.
+        // SuhakTokki supports solo start (practice mode inside the game).
+        const minHumans = (this.state.mode === "suhaktokki") ? 1 : 2;
+        if (humanCount < minHumans) return;
         this.recomputeReady();
         if (!this.state.allReady) return;
       }
@@ -758,7 +760,8 @@ try{
     if (this.state.modeType === "duel"){
       this.state.allReady = (humans >= 1) && nonHostHumansReady;
     } else {
-      this.state.allReady = (humans >= 2) && nonHostHumansReady;
+      const minHumans = (this.state.mode === "suhaktokki") ? 1 : 2;
+      this.state.allReady = (humans >= minHumans) && nonHostHumansReady;
     }
   }
 

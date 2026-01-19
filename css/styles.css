@@ -1096,3 +1096,15 @@ body.kb-open.in-game .duel-frame{
 /* System chat lines */
 .chatLine.sys{ color: var(--muted); }
 .chatLine.sys .sysMsg{ font-weight: 600; }
+
+
+/* Game controls hint shown in room preview (e.g., Togester) */
+.gameControlsHint{
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.25;
+  opacity: .9;
+}
+@media (max-width: 520px){
+  .gameControlsHint{ font-size: 12px; }
+}
