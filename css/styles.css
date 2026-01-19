@@ -198,7 +198,7 @@ thead th{
 }
 
 /* Room list column sizing (mobile-first) */
-.col-status{ width: 66px; }
+.col-status{ width: 92px; }
 .col-game{ width: 110px; }
 .col-count{ width: 56px; text-align:center; }
 .col-join{ width: 66px; }
@@ -590,11 +590,11 @@ body.tg-mode.in-game #duelFrame{
 .panelHeader .sub{ font-size: clamp(0.78rem, 2.8vw, 0.9rem); }
 
 tbody td{ padding: 10px 8px; }
-.tdState{ white-space:nowrap; }
+.tdState{ white-space:nowrap; overflow: visible; text-overflow: clip; }
 .tdState .dot{ margin-right:8px; }
 .tdState .stateTxt{ font-weight:700; font-size:0.92rem; }
 .tdCount{ width: 56px; text-align:right; white-space:nowrap; }
-.tdStatus{ width: 70px; white-space:nowrap; }
+.tdStatus{ width: 92px; white-space:nowrap; }
 .tdJoin{ width: 66px; text-align:right; }
 .tdMode{ width: 110px; }
 .tdTitle .title1{ font-weight: 800; font-size: 0.98rem; line-height: 1.1; }
@@ -612,6 +612,11 @@ tbody td{ padding: 10px 8px; }
 .modeTag.suika{ border-color: rgba(255,146,84,.55); }
 .modeTag.coop{ border-color: rgba(48,224,123,.55); }
 .modeTag.snake{ border-color: rgba(188, 109, 255, .60); }
+
+/* Room rows: entry-disabled visual */
+.roomRow.disabled{ opacity: 0.72; }
+.roomRow.playing{ opacity: 0.62; filter: saturate(0.65); background: rgba(255,255,255,.03); }
+.roomRow.playing:hover{ background: rgba(255,255,255,.03); }
 .btn.small{ padding: 7px 9px; font-size: 0.82rem; }
 
 /* Lobby table spacing tweaks */
@@ -686,7 +691,7 @@ tbody td{ padding: 10px 8px; }
   cursor:pointer;
 }
   /* mobile room table: make title wide, others narrow */
-  .col-status{ width:56px; }
+  .col-status{ width:74px; }
   .col-game{ width:66px; }
   .col-count{ width:48px; }
   .col-join{ width:62px; }

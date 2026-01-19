@@ -751,10 +751,42 @@ function updatePreview(modeId){
       return;
     }
 
+    // In-game "나가기" from embedded DrawAnswer iframe (return to room UI only)
+    if (d.type === "da_quit"){
+      if (!fromMain) return;
+      forceLobbyUI = true;
+      try{ exitGameFullscreen(); }catch(_){ }
+      try{ renderPlayers(); }catch(_){ }
+      return;
+    }
+
     // SuhakTokki iframe -> server relay (generic packet)
     if (d.type === "sk_msg"){
       if (!fromMain) return;
       try{ room.send("sk_msg", { msg: d.msg || {} }); }catch(_){ }
+      return;
+    }
+
+    // DrawAnswer iframe -> server relay
+    if (d.type === "da_sync"){
+      if (!fromMain) return;
+      try{ room.send("da_sync", {}); }catch(_){ }
+      return;
+    }
+    if (d.type === "da_draw"){
+      if (!fromMain) return;
+      try{ room.send("da_draw", { segs: d.segs || [], c: d.c, w: d.w }); }catch(_){ }
+      return;
+    }
+    if (d.type === "da_clear"){
+      if (!fromMain) return;
+      try{ room.send("da_clear", {}); }catch(_){ }
+      return;
+    }
+    if (d.type === "da_chat"){
+      if (!fromMain) return;
+      const text = (d && typeof d.text === "string") ? d.text : (d && typeof d.msg === "string" ? d.msg : "");
+      try{ room.send("da_chat", { text }); }catch(_){ }
       return;
     }
 
@@ -1814,6 +1846,29 @@ renderPlayers();
       room.onMessage("sk_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
         postToMain({ type:"sk_msg", msg: inner || {} });
+      });
+
+      // DrawAnswer (그림맞추기) relay: server -> iframe
+      room.onMessage("da_state", (msg)=>{
+        postToMain(Object.assign({ type:"da_state" }, msg || {}));
+      });
+      room.onMessage("da_word", (msg)=>{
+        postToMain({ type:"da_word", word: msg.word });
+      });
+      room.onMessage("da_draw", (msg)=>{
+        postToMain({ type:"da_draw", segs: msg.segs || [], c: msg.c, w: msg.w });
+      });
+      room.onMessage("da_clear", ()=>{
+        postToMain({ type:"da_clear" });
+      });
+      room.onMessage("da_replay", (msg)=>{
+        postToMain({ type:"da_replay", ops: msg.ops || [] });
+      });
+      room.onMessage("da_chat", (msg)=>{
+        postToMain(Object.assign({ type:"da_chat" }, msg || {}));
+      });
+      room.onMessage("da_over", (msg)=>{
+        postToMain(Object.assign({ type:"da_over" }, msg || {}));
       });
 
       // Togester (coop) relay: server -> iframe

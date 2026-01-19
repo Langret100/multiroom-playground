@@ -545,10 +545,23 @@
   }
 
   function loadImage(url) {
+    const I = (window.__SUHAK_INLINE_IMG__ || {});
+    const key = String(url || '').replace(/^\.\//, '').replace(/^\//, '');
+    const base = key.split('/').pop();
+    const inline = I[key] || I['assets/' + base] || I[base];
+
     return new Promise((res, rej) => {
       const im = new Image();
+      let triedInline = false;
       im.onload = () => res(im);
-      im.onerror = rej;
+      im.onerror = () => {
+        if (!triedInline && inline) {
+          triedInline = true;
+          im.src = inline;
+          return;
+        }
+        rej(new Error('image failed: ' + url));
+      };
       im.src = url;
     });
   }
@@ -7377,11 +7390,7 @@ net.on('uiMeetingOpen', (m) => {
       console.error(e);
       G.assetsReady = false;
       G.assetsError = e?.message || String(e);
-      const isFile = (location && location.protocol === 'file:');
-      const msg = isFile
-        ? '에셋을 불러오지 못했어. 더블클릭(file://) 실행은 막혀있어서 로컬 서버로 열어야 해요.\n예) 터미널에서 이 폴더로 이동 후:  python -m http.server 8000  →  http://localhost:8000'
-        : '에셋을 불러오지 못했어. 새로고침하거나 로컬 서버에서 실행해줘!';
-      setLobbyStatus(msg, 'danger');
+      setLobbyStatus('에셋을 불러오지 못했어. 새로고침하거나 잠시 후 다시 시도해줘!', 'danger');
       showToast('에셋 로딩 실패');
     }
     applyPhaseUI();

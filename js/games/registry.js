@@ -76,6 +76,20 @@
       badgeClass: "coop",
       maxClients: 8,
       embedPath: "games/suhaktokki/index.html"
+    },
+
+    {
+      id: "drawanswer",
+      name: "그림맞추기",
+      mobileHint: "모바일: 손가락으로 그림 · 채팅으로 정답 입력",
+      descLines: [
+        "그리는 사람만 제시어를 보고 그림으로 표현합니다.",
+        "나머지는 채팅으로 맞추기! 2연속 정답 또는 5문제 최다정답 승리",
+      ],
+      type: "coop",
+      badgeClass: "coop",
+      maxClients: 4,
+      embedPath: "games/drawanswer/index.html"
     }
   ];
 

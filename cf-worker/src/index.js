@@ -119,16 +119,13 @@ export class LobbyDO{
 
   async _loadRooms(){
     if (this.rooms) return;
-    const data = await this.state.storage.get("rooms");
-    this.rooms = data || {};
+    // 요청사항: 방 나가면 서버에 기록이 남지 않도록, 영구 저장을 하지 않습니다.
+    this.rooms = {};
   }
 
   _scheduleSaveRooms(delayMs=800){
-    if (this._saveTimer) return;
-    this._saveTimer = setTimeout(async ()=>{
-      this._saveTimer = null;
-      try{ await this.state.storage.put("rooms", this.rooms || {}); }catch(_){}
-    }, delayMs);
+    // no-op (no persistence)
+    return;
   }
 
   _broadcast(t, d){
@@ -401,7 +398,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -422,6 +419,41 @@ function buildRounds(players){
   if (p.length === 3) return [ [ [p[0], p[1]] ], [ [null, p[2]] ] ];
   if (p.length >= 4) return [ [ [p[0], p[3]], [p[1], p[2]] ], [ [null, null] ] ];
   return [];
+}
+
+// -------------------- DrawAnswer (그림맞추기) helpers --------------------
+// Korean-only word list (Hangul only)
+const DA_WORDS = [
+  "사과","바나나","딸기","포도","수박","귤","복숭아","참외","파인애플","감자",
+  "고구마","당근","오이","토마토","양파","마늘","버섯","브로콜리","상추","배추",
+  "김치","비빔밥","라면","떡볶이","순대","김밥","만두","삼겹살","불고기","치킨",
+  "피자","햄버거","초밥","우동","카레","빵","케이크","아이스크림","초콜릿","쿠키",
+  "커피","우유","주스","물","연필","지우개","가방","책상","의자","칠판",
+  "학교","교실","선생님","학생","버스","지하철","자동차","자전거","오토바이","비행기",
+  "기차","배","신호등","횡단보도","집","아파트","방","침대","베개","이불",
+  "냉장고","세탁기","텔레비전","리모컨","휴대폰","컴퓨터","키보드","마우스","시계","달력",
+  "모자","신발","양말","바지","셔츠","치마","코트","우산","가방","안경",
+  "강아지","고양이","토끼","호랑이","사자","곰","여우","코끼리","기린","원숭이",
+  "펭귄","돌고래","상어","고래","거북이","악어","새","비둘기","독수리","공룡",
+  "축구","농구","야구","테니스","수영","달리기","등산","스키","스케이트","배드민턴",
+  "노래","춤","피아노","기타","드럼","바이올린","마이크","스피커","카메라","사진",
+  "눈사람","눈송이","비","번개","구름","무지개","태양","달","별","바다",
+  "산","강","숲","나무","꽃","장미","해바라기","튤립","나비","벌",
+  "로봇","우주선","행성","우주","외계인","마법사","용","왕관","성","검",
+  "풍선","선물","생일","케이크","촛불","박수","편지","지도","보물","열쇠",
+  "경찰","소방관","의사","간호사","요리사","운동선수","가수","배우","화가","과학자",
+  "치약","칫솔","비누","샴푸","수건","거울","빗","헤어드라이어","물병","컵",
+  "안전모","장갑","마스크","약","주사","혈압계","온도계","돋보기","망원경","현미경",
+];
+
+function daNormalizeAnswer(s){
+  // keep Hangul only + remove spaces/punctuation
+  return String(s||"").trim().replace(/\s+/g,"").replace(/[^가-힣]/g,"");
+}
+
+function daPickWord(){
+  const idx = Math.floor(Math.random() * DA_WORDS.length);
+  return DA_WORDS[idx] || "사과";
 }
 
 export class RoomDO{
@@ -446,6 +478,21 @@ export class RoomDO{
     this.tour = null;              // tournament state for duel mode
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null }; // coop state aggregation
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
+
+    // DrawAnswer (Pictionary-like): minimal server = relays + round/timer/score authority
+    this.da = {
+      active:false,
+      round:0,
+      maxRounds:5,
+      order:[],
+      drawerIdx:0,
+      drawerUid:"",
+      word:"",
+      endAt:0,
+      timer:null,
+      scores:{},      // uid -> { score, streak }
+      ops:[],         // replay ops for current round (draw/clear)
+    };
 
     this._wired = new WeakSet();
     this._lobbyUpdateTimer = null;
@@ -726,6 +773,11 @@ export class RoomDO{
             this._send(ws, "tg_floors", { floors });
           }catch(_){ }
         }
+
+        // DrawAnswer: if a match is already running, sync current round state + replay ops
+        if (this.meta.phase === "playing" && this.meta.mode === "drawanswer"){
+          try{ this._sendDaSync(ws, wantUid); }catch(_){ }
+        }
         // Inform lobby presence list that this user is currently inside a room.
         // This allows the lobby's online list to include room occupants and show their room.
         await this._presenceSet(wantUid, nick, this.meta.roomId);
@@ -817,6 +869,21 @@ export class RoomDO{
           this.st.timer = null;
         }
 
+        // DrawAnswer transient state
+        try{
+          this.da.active = false;
+          this.da.round = 0;
+          this.da.order = [];
+          this.da.drawerIdx = 0;
+          this.da.drawerUid = "";
+          this.da.word = "";
+          this.da.endAt = 0;
+          this.da.ops = [];
+          if (this.da.timer){ try{ clearTimeout(this.da.timer); }catch(_){ }
+            this.da.timer = null;
+          }
+        }catch(_){ }
+
         this.meta.phase = "playing";
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
@@ -833,6 +900,11 @@ export class RoomDO{
           this.st.timer = setTimeout(()=>{
             try{ this._endSnakeTail("timeout"); }catch(_){ }
           }, this.st.durationMs + 200);
+        }
+
+        // DrawAnswer: start 5-question session (2 minutes each)
+        if (this.meta.mode === "drawanswer"){
+          try{ this._daStartGame(); }catch(_){ }
         }
 
         // Duel tournament is server-authoritative.
@@ -856,6 +928,60 @@ export class RoomDO{
           this._relayLimiter.set(uid, lim);
         }
         this._broadcast("sk_msg", { msg: inner });
+        return;
+      }
+
+      // ----- DrawAnswer (Pictionary-like) -----
+      if (t === "da_sync"){
+        if (this.meta.mode !== "drawanswer") return;
+        this._sendDaSync(ws, uid);
+        return;
+      }
+
+      if (t === "da_draw"){
+        if (this.meta.mode !== "drawanswer" || this.meta.phase !== "playing") return;
+        if (!this.da || uid !== this.da.drawerUid) return;
+        const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, daTs:0 };
+        const n = now();
+        if (n - (lim.daTs||0) < 35) return;
+        lim.daTs = n;
+        this._relayLimiter.set(uid, lim);
+
+        const segs = Array.isArray(d.segs) ? d.segs : [];
+        if (!segs.length) return;
+        const c = String(d.c || "#000000").slice(0, 20);
+        const w = Math.max(1, Math.min(24, Number(d.w||5)));
+
+        // store for late joiner replay (cap size)
+        try{
+          this.da.ops.push({ t:"draw", segs: segs.slice(0, 120), c, w });
+          if (this.da.ops.length > 450) this.da.ops.splice(0, this.da.ops.length - 450);
+        }catch(_){ }
+
+        this._broadcast("da_draw", { segs: segs.slice(0, 120), c, w });
+        return;
+      }
+
+      if (t === "da_clear"){
+        if (this.meta.mode !== "drawanswer" || this.meta.phase !== "playing") return;
+        if (!this.da || uid !== this.da.drawerUid) return;
+        try{
+          this.da.ops.push({ t:"clear" });
+          if (this.da.ops.length > 450) this.da.ops.splice(0, this.da.ops.length - 450);
+        }catch(_){ }
+        this._broadcast("da_clear", {});
+        return;
+      }
+
+      if (t === "da_chat"){
+        if (this.meta.mode !== "drawanswer" || this.meta.phase !== "playing") return;
+        const u = this.users.get(uid);
+        if (!u) return;
+        const text = String(d.text||"").slice(0, 120);
+        if (!text.trim()) return;
+        // broadcast chat first (UI responsiveness)
+        this._broadcast("da_chat", { nick: u.nick, text, ts: now() });
+        try{ this._daHandleGuess(uid, u.nick, text); }catch(_){ }
         return;
       }
 
@@ -1165,6 +1291,13 @@ export class RoomDO{
             this._broadcast("st_scores", { scores: this.st.scores || {} });
             try{ this._maybeEndSnakeTail(); }catch(_){ }
           }
+        }
+      }catch(_){ }
+
+      // DrawAnswer: remove leaver from order/score; if drawer left, advance round
+      try{
+        if (this.meta.mode === "drawanswer" && this.meta.phase === "playing"){
+          this._daOnLeave(uid);
         }
       }catch(_){ }
 
@@ -1478,6 +1611,272 @@ export class RoomDO{
     }
   }
 
+  // -------------------- DrawAnswer (그림맞추기) server logic --------------------
+
+  _daHangulOnly(s){
+    const t = String(s || '').trim();
+    if (!t) return false;
+    return /^[가-힣\s]+$/.test(t);
+  }
+
+  _daBuildOrder(){
+    const cpu = this._cpuUid();
+    return Array.from(this.users.entries())
+      .filter(([uid]) => uid !== cpu)
+      .sort((a,b) => (Number(a[1]?.seat ?? 99) - Number(b[1]?.seat ?? 99)))
+      .map(([uid]) => uid);
+  }
+
+  _daClearTimer(){
+    if (this.da && this.da.timer){
+      try{ clearTimeout(this.da.timer); }catch(_){ }
+      this.da.timer = null;
+    }
+  }
+
+  _daReset(){
+    try{ this._daClearTimer(); }catch(_){ }
+    try{
+      this.da.active = false;
+      this.da.round = 0;
+      this.da.maxRounds = 5;
+      this.da.order = [];
+      this.da.drawerIdx = 0;
+      this.da.drawerUid = '';
+      this.da.word = '';
+      this.da.endAt = 0;
+      this.da.ops = [];
+      this.da.scores = {};
+      this.da.used = [];
+      this.da._roundToken = 0;
+    }catch(_){ }
+  }
+
+  _daBroadcastState(announce){
+    const drawerNick = this.users.get(this.da.drawerUid)?.nick || '';
+    for (const [ws, uid] of this.sockets.entries()){
+      if (!uid) continue;
+      const youAreDrawer = (uid === this.da.drawerUid);
+      this._send(ws, 'da_state', {
+        round: this.da.round,
+        maxRounds: this.da.maxRounds,
+        drawerUid: this.da.drawerUid,
+        drawerNick,
+        endAt: this.da.endAt,
+        youAreDrawer,
+        announce: announce || ''
+      });
+    }
+  }
+
+  _sendDaSync(ws, uid){
+    if (!this.da || !this.da.active) return;
+    const drawerNick = this.users.get(this.da.drawerUid)?.nick || '';
+    const youAreDrawer = (uid === this.da.drawerUid);
+    this._send(ws, 'da_state', {
+      round: this.da.round,
+      maxRounds: this.da.maxRounds,
+      drawerUid: this.da.drawerUid,
+      drawerNick,
+      endAt: this.da.endAt,
+      youAreDrawer
+    });
+    this._send(ws, 'da_replay', { ops: Array.isArray(this.da.ops) ? this.da.ops : [] });
+    if (youAreDrawer){
+      this._send(ws, 'da_word', { word: this.da.word || '' });
+    }
+  }
+
+  _daPickUniqueWord(){
+    // Avoid repeats within this session when possible.
+    const used = Array.isArray(this.da.used) ? this.da.used : [];
+    const maxTry = 40;
+    for (let i=0; i<maxTry; i++){
+      const w = daPickWord();
+      if (!used.includes(w)) return w;
+    }
+    return daPickWord();
+  }
+
+  _daStartGame(){
+    if (this.meta.mode !== 'drawanswer' || this.meta.phase !== 'playing') return;
+    this._daReset();
+    this.da.active = true;
+    this.da.maxRounds = 5;
+    this.da.order = this._daBuildOrder();
+    this.da.drawerIdx = 0;
+    this.da.scores = {};
+    this.da.used = [];
+    for (const uid of this.da.order){
+      const nick = this.users.get(uid)?.nick || 'Player';
+      this.da.scores[uid] = { score:0, streak:0, nick };
+    }
+    this._broadcast('da_chat', { system:true, nick:'', text:'게임 시작! 그림은 스트로크만 전송(서버 부담 최소)', ts: now() });
+    this._daNextRound('start');
+  }
+
+  _daNextRound(reason){
+    if (!this.da || !this.da.active) return;
+    if (!Array.isArray(this.da.order) || this.da.order.length === 0){
+      this._daEndGame('empty');
+      return;
+    }
+    if (this.da.round >= (this.da.maxRounds || 5)){
+      this._daEndGame('rounds');
+      return;
+    }
+
+    // rotate drawer
+    this.da.drawerIdx = (Number(this.da.drawerIdx)||0) % this.da.order.length;
+    this.da.drawerUid = this.da.order[this.da.drawerIdx] || this.da.order[0];
+
+    // new word & timer
+    const word = this._daPickUniqueWord();
+    this.da.word = word;
+    if (Array.isArray(this.da.used)) this.da.used.push(word);
+    this.da.ops = [];
+
+    this.da.round = (Number(this.da.round)||0) + 1;
+    this.da.endAt = now() + 120000;
+
+    // Reset streaks for non-drawer is NOT desired; streak depends on correct answers only.
+    // (We reset non-winners streak on each round change after a correct/timeout in handlers.)
+
+    // timer token
+    const token = (Number(this.da._roundToken)||0) + 1;
+    this.da._roundToken = token;
+    this._daClearTimer();
+    this.da.timer = setTimeout(()=>{
+      try{ this._daOnTimeout(token); }catch(_){ }
+    }, 120000 + 120);
+
+    const drawerNick = this.users.get(this.da.drawerUid)?.nick || '';
+    const announce = reason === 'start'
+      ? `라운드 ${this.da.round} 시작! (${drawerNick} 차례)`
+      : `다음 라운드! (${drawerNick} 차례)`;
+
+    this._daBroadcastState(announce);
+
+    // send secret word only to drawer
+    const drawerWs = this.userSockets.get(this.da.drawerUid);
+    if (drawerWs){
+      this._send(drawerWs, 'da_word', { word });
+    }
+  }
+
+  _daOnTimeout(token){
+    if (!this.da || !this.da.active) return;
+    if (Number(this.da._roundToken) !== Number(token)) return;
+    const ans = this.da.word || '';
+    this._broadcast('da_chat', { system:true, text:`시간초과! 정답: ${ans}`, ts: now() });
+
+    // Everyone who didn't answer correctly this round loses streak.
+    for (const uid of Object.keys(this.da.scores || {})){
+      const s = this.da.scores[uid];
+      if (s) s.streak = 0;
+    }
+
+    // advance drawer
+    this.da.drawerIdx = (this.da.drawerIdx + 1) % this.da.order.length;
+    this._daNextRound('timeout');
+  }
+
+  _daHandleGuess(uid, nick, text){
+    if (!this.da || !this.da.active) return;
+    if (uid === this.da.drawerUid) return;
+
+    const guessRaw = String(text || '').slice(0, 30);
+    if (!this._daHangulOnly(guessRaw)) return;
+
+    const guess = daNormalizeAnswer(guessRaw);
+    const answer = daNormalizeAnswer(this.da.word || '');
+    if (!guess || !answer) return;
+
+    if (guess === answer){
+      // score
+      if (!this.da.scores[uid]) this.da.scores[uid] = { score:0, streak:0, nick: nick || 'Player' };
+      const rec = this.da.scores[uid];
+      rec.score = (Number(rec.score)||0) + 1;
+      rec.streak = (Number(rec.streak)||0) + 1;
+      rec.nick = nick || rec.nick || 'Player';
+
+      // others streak reset (they failed this round)
+      for (const [k, v] of Object.entries(this.da.scores || {})){
+        if (!v) continue;
+        if (k !== uid) v.streak = 0;
+      }
+
+      const ans = this.da.word || '';
+      this._broadcast('da_chat', { system:true, correct:true, nick, text:`정답! (${ans})`, ts: now() });
+
+      // win condition: 2-streak
+      if (rec.streak >= 2){
+        this._daEndGame('streak', uid);
+        return;
+      }
+
+      // next drawer + round
+      this.da.drawerIdx = (this.da.drawerIdx + 1) % this.da.order.length;
+      this._daNextRound('correct');
+    }
+  }
+
+  _daPickWinnerUid(){
+    const entries = Object.entries(this.da.scores || {});
+    if (!entries.length) return '';
+    // sort by score desc, then seat asc
+    entries.sort((a,b)=>{
+      const sa = Number(a[1]?.score||0);
+      const sb = Number(b[1]?.score||0);
+      if (sb != sa) return sb - sa;
+      const sea = Number(this.users.get(a[0])?.seat ?? 99);
+      const seb = Number(this.users.get(b[0])?.seat ?? 99);
+      return sea - seb;
+    });
+    return entries[0][0] || '';
+  }
+
+  _daEndGame(reason, winnerUid){
+    if (!this.da || !this.da.active) return;
+    this.da.active = false;
+    this._daClearTimer();
+
+    const winUid = winnerUid || this._daPickWinnerUid();
+    const winNick = this.users.get(winUid)?.nick || (this.da.scores?.[winUid]?.nick) || '승자';
+
+    this._broadcast('da_over', { winnerUid: winUid, winnerNick: winNick, reason: String(reason||'') });
+    this._broadcast('result', { mode:'drawanswer', done:true, winnerNick: winNick, reason: String(reason||'') });
+
+    // return to lobby after a moment
+    this._endAndBackToLobby(2500);
+  }
+
+  _daOnLeave(uid){
+    if (!this.da || !this.da.active) return;
+    // remove from order
+    const idx = (this.da.order || []).indexOf(uid);
+    if (idx >= 0){
+      this.da.order.splice(idx, 1);
+      // adjust drawerIdx if needed
+      if (idx < this.da.drawerIdx) this.da.drawerIdx = Math.max(0, this.da.drawerIdx - 1);
+      if (this.da.drawerIdx >= this.da.order.length) this.da.drawerIdx = 0;
+    }
+    // remove score record
+    try{ if (this.da.scores && this.da.scores[uid]) delete this.da.scores[uid]; }catch(_){ }
+
+    if (!this.da.order || this.da.order.length === 0){
+      this._daEndGame('empty');
+      return;
+    }
+
+    if (uid === this.da.drawerUid){
+      this._broadcast('da_chat', { system:true, text:'그리는 사람이 나갔어요. 다음 라운드로 넘어갑니다.', ts: now() });
+      // move to next drawer (current index already points to next after removal)
+      this._daNextRound('leave');
+    }
+  }
+
+
   _endAndBackToLobby(delayMs){
     const d = Number(delayMs || 0);
     setTimeout(()=>{
@@ -1491,6 +1890,8 @@ export class RoomDO{
       if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
       try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
       if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
+
+      try{ this.da && this._daReset(); }catch(_){ }
 
 
       // stop CPU + remove CPU user when returning to lobby

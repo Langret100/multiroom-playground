@@ -130,7 +130,8 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const isCoop = (this.state.mode === "togester");
+const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer"]);
+const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
 
 if (isDuel && humans.length === 1){
@@ -182,8 +183,10 @@ if (isDuel && humans.length === 1){
       // relay game messages as-is
       const passthrough = new Set([
         "duel_state","duel_event","duel_over",
+        // DrawAnswer
+        "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over","da_sync",
         // Togester
-        "tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_over",
+        "tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_floors","tg_floor","tg_floor_remove","tg_over",
         // SnakeTail
         "st_state","st_timer","st_foods","st_spawn","st_eat","st_eaten","st_players","st_scores","st_event","st_over",
         // misc
@@ -217,8 +220,10 @@ if (isDuel && humans.length === 1){
       // relay game events
       const passthrough = new Set([
         "duel_state","duel_event",
+        // DrawAnswer
+        "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over",
         // Togester
-        "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push",
+        "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_floors","tg_floor","tg_floor_remove",
         // SnakeTail
         "st_timer","st_foods","st_spawn","st_eaten","st_players","st_scores","st_event",
         // SuhakTokki (coop)

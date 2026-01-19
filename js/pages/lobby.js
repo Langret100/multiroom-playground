@@ -195,6 +195,7 @@ function statusDot(room){
       const title = safeText(r.title || "방", 30);
       const mode = safeText(modeLabel(r.mode), 16);
       const isPlaying = (r.status === "playing");
+      if (isPlaying) tr.classList.add("playing");
       const isFull = (r.clients >= r.maxClients);
       const stateText = isPlaying ? "게임중" : (isFull ? "만석" : "대기");
       const people = `${r.clients}/${r.maxClients}`;
