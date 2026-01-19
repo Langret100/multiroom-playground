@@ -1329,6 +1329,11 @@ export class RoomDO{
       // DrawAnswer: remove leaver from order/score; if drawer left, advance round
       try{
         if (this.meta.mode === "drawanswer" && this.meta.phase === "playing"){
+          // In-game chat: announce leaving (so players see it in the drawanswer chat UI)
+          try{
+            const nn = (u && u.nick) ? u.nick : '누군가';
+            this._broadcast('da_chat', { system:true, text: `${nn} 나감`, ts: now() });
+          }catch(_){ }
           this._daOnLeave(uid);
         }
       }catch(_){ }
@@ -1896,10 +1901,19 @@ export class RoomDO{
     // remove score record
     try{ if (this.da.scores && this.da.scores[uid]) delete this.da.scores[uid]; }catch(_){ }
 
-    if (!this.da.order || this.da.order.length === 0){
+    const remainCount = (this.da.order || []).length;
+    if (remainCount === 0){
       this._daEndGame('empty');
       return;
     }
+    // If only one player remains, end immediately (auto-exit for the last player)
+    if (remainCount === 1){
+      const last = (this.da.order || [])[0];
+      this._broadcast('da_chat', { system:true, text:'혼자 남아서 게임이 종료됩니다.', ts: now() });
+      this._daEndGame('alone', last);
+      return;
+    }
+
 
     if (uid === this.da.drawerUid){
       this._broadcast('da_chat', { system:true, text:'그리는 사람이 나갔어요. 다음 라운드로 넘어갑니다.', ts: now() });

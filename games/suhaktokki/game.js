@@ -6753,10 +6753,13 @@ default:
 
     if (p.crown) drawCrown(x, y - 56);
 
-    // 선생토끼(임포스터) 표시는 '내 화면'에서만: 얼굴에 뱅글 안경 오버레이
+    // 선생토끼(임포스터) 표시는 '내 화면'에서만: 정면(dir=0)에서 얼굴 위치에 안경 오버레이
     if (isLocal && p.role === 'teacher' && !G.state.practice) {
       const shining = (p.glassesUntil && now() < p.glassesUntil);
-      drawGlasses(x, y - 12, shining ? 1.0 : 0.7);
+      if (dir === 0) {
+        // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다
+        drawGlasses(x, y - 46, shining ? 1.0 : 0.7);
+      }
     }
 
     if (p.down) {
@@ -7001,6 +7004,53 @@ default:
     return { canInteract, canKill, target };
   }
 
+
+
+  // ---------- Client-side prediction (non-host) ----------
+  // When I'm not the host, waiting for host snapshots (15~30fps) makes my OWN
+  // movement look choppy. Predict locally each frame, then let host snapshots
+  // softly correct us (see state handler).
+  function clientPredictLocalMove(dt) {
+    const net = G.net;
+    if (!net || net.isHost) return;
+    if (G.phase !== 'play') return;
+    const myId = Number(net.myPlayerId || 0);
+    if (!myId) return;
+    const st = G.state;
+    const me = st.players && st.players[myId];
+    if (!me || !me.alive || me.down) return;
+    if (me.vent) return;
+
+    const frozen = now() < (me.frozenUntil || 0);
+    let mvx = frozen ? 0 : clamp(G.local.mvx || 0, -1, 1);
+    let mvy = frozen ? 0 : clamp(G.local.mvy || 0, -1, 1);
+    if (now() < (me.invertUntil || 0)) { mvx = -mvx; mvy = -mvy; }
+
+    // direction/facing (match host logic)
+    const ilen = Math.hypot(mvx, mvy);
+    if (ilen > 0.12) {
+      const avx = Math.abs(mvx), avy = Math.abs(mvy);
+      if (avx >= avy * 0.85) {
+        me.dir = 2;
+        me.facing = (mvx < 0 ? -1 : 1);
+      } else if (avy >= avx * 1.10) {
+        me.dir = (mvy < 0 ? 1 : 0);
+      }
+    }
+
+    let spd = SPEED;
+    if (now() < (me.slowUntil || 0)) spd *= 0.6;
+    const len = Math.hypot(mvx, mvy);
+    const tvx = len > 1e-6 ? (mvx / len) * spd : 0;
+    const tvy = len > 1e-6 ? (mvy / len) * spd : 0;
+    const a = 1 - Math.exp(-dt * 12);
+    me.vx = (me.vx || 0) + (tvx - (me.vx || 0)) * a;
+    me.vy = (me.vy || 0) + (tvy - (me.vy || 0)) * a;
+
+    const nx = me.x + me.vx * dt;
+    const ny = me.y + me.vy * dt;
+    moveWithCollision(me, nx, ny);
+  }
   // ---------- Main loop ----------
   let lastFrame = now();
   function frame() {
@@ -7027,7 +7077,7 @@ default:
       }
       // 스냅샷
       if (!G.host._lastBroadcast) G.host._lastBroadcast = 0;
-      if (t - G.host._lastBroadcast > 66) {
+      if (t - G.host._lastBroadcast > 33) {
         G.host._lastBroadcast = t;
         broadcastState();
       }
@@ -7041,12 +7091,15 @@ default:
         G.host.inputs.set(Number(G.net.myPlayerId || 0), { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
       } else {
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
-        if (t - G.local._lastInputAt > 66) {
+        if (t - G.local._lastInputAt > 33) {
           G.local._lastInputAt = t;
           G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), mvx: G.local.mvx, mvy: G.local.mvy });
         }
       }
     }
+
+    // predict my movement locally when I'm not the host (prevents choppy self-move)
+    try { clientPredictLocalMove(dt); } catch (_) {}
 
     // graph penalty: reopen mission UI after lock ends (if player stayed near)
     if (G.ui.reopenMission && !G.ui.mission && G.net && G.net.myPlayerId) {
@@ -7266,7 +7319,31 @@ default:
       G.state.solved = m.solved;
       G.state.total = m.total;
       G.state.practice = !!m.practice;
-      G.state.players = m.players;
+
+      // Apply authoritative state, but keep my locally-predicted position to avoid
+      // making my own movement look choppy when I'm not the host.
+      const incomingPlayers = m.players || {};
+      const myPid = (!net.isHost && net.myPlayerId) ? String(net.myPlayerId) : null;
+      if (myPid && G.state.players && G.state.players[myPid] && incomingPlayers[myPid]) {
+        const prev = G.state.players[myPid];
+        const inc = incomingPlayers[myPid];
+        const dx = (inc.x || 0) - (prev.x || 0);
+        const dy = (inc.y || 0) - (prev.y || 0);
+        const err = Math.hypot(dx, dy);
+        const snap = err > 48 || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || !!inc.vent;
+        if (!snap) {
+          incomingPlayers[myPid] = {
+            ...inc,
+            x: prev.x,
+            y: prev.y,
+            vx: prev.vx,
+            vy: prev.vy,
+            dir: (typeof prev.dir === 'number') ? prev.dir : inc.dir,
+            facing: (typeof prev.facing === 'number') ? prev.facing : inc.facing,
+          };
+        }
+      }
+      G.state.players = incomingPlayers;
 
       // If joinAck was missed, recover myPlayerId by matching clientId.
       if (!net.myPlayerId && m.players) {
