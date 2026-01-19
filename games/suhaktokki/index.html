@@ -336,6 +336,56 @@
   })();
   </script>
   <!-- Pixel character data (generated from the user's 3-view sprite) -->
+  <script>
+  (function(){
+    const url = 'assets/mathrabbit.mp3';
+    let bgm = null;
+    let muted = false;
+
+    function ensure(){
+      if (bgm) return;
+      try{
+        bgm = new Audio(url);
+        bgm.loop = true;
+        bgm.preload = 'auto';
+        bgm.volume = 0.35;
+      }catch(_){ bgm = null; }
+    }
+
+    function start(){
+      if (muted) return;
+      ensure();
+      if (!bgm) return;
+      try{
+        if (bgm.paused){
+          const p = bgm.play();
+          if (p && typeof p.catch === 'function') p.catch(()=>{});
+        }
+      }catch(_){ }
+    }
+
+    function pause(){
+      try{ if(bgm) bgm.pause(); }catch(_){ }
+    }
+
+    const once = ()=>{ start(); };
+    window.addEventListener('pointerdown', once, { once:true, passive:true });
+    window.addEventListener('touchstart', once, { once:true, passive:true });
+    window.addEventListener('mousedown', once, { once:true, passive:true });
+    window.addEventListener('keydown', once, { once:true });
+
+    document.addEventListener('visibilitychange', ()=>{ if(document.hidden) pause(); else start(); });
+    window.addEventListener('pagehide', pause);
+
+    // optional toggle hook
+    window.__toggleBgmMuted__ = function(){
+      muted = !muted;
+      if (bgm) bgm.volume = muted ? 0 : 0.35;
+      if (!muted) start();
+      return muted;
+    };
+  })();
+  </script>
   <script src="assets_inline.js"></script>
   <script src="tokki_data.js"></script>
   <script src="game.js"></script>

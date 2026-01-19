@@ -26,7 +26,7 @@
     header{
       width:100%;
       /* PC에서 캔버스/좌우 패널이 조금 더 커지도록 */
-      max-width:1180px;
+      max-width:1420px;
       margin:0 auto 10px auto;
       display:flex;
       align-items:flex-end;
@@ -57,14 +57,14 @@
     }
     .game{
       width:100%;
-      max-width:1180px;
+      max-width:1420px;
       margin:0 auto;
       display:flex;
       gap:12px;
       align-items:stretch;
     }
     .toolbar{
-      width:84px;
+      width:96px;
       background:rgba(255,255,255,.55);
       border:2px solid var(--accent);
       border-radius:14px;
@@ -125,13 +125,14 @@
     }
     .btn:disabled{ opacity:.4; cursor:not-allowed; }
     .canvasWrap{
-      flex: 1.2;
+      flex: 1.35;
       background:var(--paper);
       border:1px solid rgba(0,0,0,.12);
       border-radius:10px;
       box-shadow: 4px 4px 14px rgba(0,0,0,.08);
       position:relative;
-      min-height:580px;
+      min-height:650px;
+      height: min(820px, calc(100vh - 150px));
       overflow:hidden;
     }
     canvas{
@@ -142,13 +143,13 @@
       cursor:crosshair;
     }
     .side{
-      flex: .8;
+      flex: .75;
       min-width:280px;
-      max-width:400px;
+      max-width:460px;
       display:flex;
       flex-direction:column;
       gap:10px;
-      height:580px;
+      height: min(820px, calc(100vh - 150px));
     }
     .chat{
       flex:1;
@@ -215,7 +216,7 @@
       .palette{ padding-top:10px; }
       .mobileWordBar{ display:block; }
       .side{ max-width:none; min-width:unset; height:320px; }
-      .canvasWrap{ min-height:360px; height:360px; }
+      .canvasWrap{ width:100%; aspect-ratio:1/1; height:auto; min-height:unset; }
     }
   </style>
 </head>
@@ -301,59 +302,47 @@
     let sendBuf = [];
     let lastSendAt = 0;
 
-    function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+    // BGM (mobile autoplay: starts after first user gesture)
+    const __BGM_URL__ = "assets/catchpicture.mp3";
+    let __bgm = null;
+    let __bgmMuted = false;
 
-    function resizeCanvas(){
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const w = Math.max(280, Math.floor(rect.width));
-      const h = Math.max(240, Math.floor(rect.height));
-      canvas.width = Math.floor(w * dpr);
-      canvas.height = Math.floor(h * dpr);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
+    function __ensureBgm(){
+      if (__bgm || !__BGM_URL__) return;
+      try{
+        __bgm = new Audio(__BGM_URL__);
+        __bgm.loop = true;
+        __bgm.preload = "auto";
+        __bgm.volume = 0.35;
+      }catch(_){ __bgm = null; }
     }
 
-    function clearLocal(){
-      ctx.clearRect(0,0, canvas.width, canvas.height);
+    function __startBgm(){
+      if (__bgmMuted) return;
+      __ensureBgm();
+      if (!__bgm) return;
+      try{
+        if (__bgm.paused){
+          const p = __bgm.play();
+          if (p && typeof p.catch === "function") p.catch(()=>{});
+        }
+      }catch(_){ }
     }
 
-    function drawSeg(x1,y1,x2,y2,color,w){
-      const rect = canvas.getBoundingClientRect();
-      const px1 = x1 * rect.width;
-      const py1 = y1 * rect.height;
-      const px2 = x2 * rect.width;
-      const py2 = y2 * rect.height;
-
-      ctx.save();
-      if (color === '__erase__') {
-        // Eraser: punch holes in the canvas (transparent)
-        ctx.globalCompositeOperation = 'destination-out';
-        ctx.strokeStyle = 'rgba(0,0,0,1)';
-        ctx.lineWidth = Math.max(10, (w || 4) * 2.2);
-      } else {
-        ctx.globalCompositeOperation = 'source-over';
-        ctx.strokeStyle = color;
-        ctx.lineWidth = Math.max(1, w);
-      }
-      ctx.beginPath();
-      ctx.moveTo(px1, py1);
-      ctx.lineTo(px2, py2);
-      ctx.stroke();
-      ctx.restore();
+    function __pauseBgm(){
+      try{ if(__bgm) __bgm.pause(); }catch(_){ }
     }
 
-    function addChatLine(html){
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      chatEl.appendChild(div);
-      chatEl.scrollTop = chatEl.scrollHeight;
+    function __hookBgmGesture(){
+      const once = ()=>{ __startBgm(); };
+      window.addEventListener("pointerdown", once, { once:true, passive:true });
+      window.addEventListener("touchstart", once, { once:true, passive:true });
+      window.addEventListener("mousedown", once, { once:true, passive:true });
+      window.addEventListener("keydown", once, { once:true });
     }
 
-    function sendToParent(obj){
-      try{ window.parent.postMessage(obj, '*'); }catch(_){ }
-    }
+    document.addEventListener("visibilitychange", ()=>{ if(document.hidden) __pauseBgm(); else __startBgm(); });
+    window.addEventListener("pagehide", __pauseBgm);
 
     // colors (+ eraser)
     const colorBtns = Array.from(document.querySelectorAll('.color'));
@@ -575,6 +564,7 @@
 
     // iframe이 닫히거나 숨겨질 때도 "게임에서 나감"을 best-effort로 전송
     function notifyExit(){
+      try{ __pauseBgm(); }catch(_){ }
       try{ sendToParent({ type:'da_exit' }); }catch(_){ }
     }
     window.addEventListener('pagehide', notifyExit);
@@ -588,6 +578,7 @@
     addChatLine(`<span class="sys">시스템:</span> 로딩...`);
     window.addEventListener('resize', ()=>{ try{ resizeCanvas(); }catch(_){ } });
     resizeCanvas();
+    __hookBgmGesture();
 
     // standalone fallback (dev)
     if (window.parent === window){
