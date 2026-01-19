@@ -2048,6 +2048,54 @@
     }
   }
 
+
+
+  function hostAddPlayer(nick, isBot = false, clientId = null) {
+    const st = G.state;
+    if (!st.players) st.players = {};
+
+    if (!G.host.nextPlayerId) G.host.nextPlayerId = 1;
+    const id = G.host.nextPlayerId++;
+
+    const sps = (AS.map && Array.isArray(AS.map.spawnPoints) && AS.map.spawnPoints.length)
+      ? AS.map.spawnPoints
+      : [{ x: 2, y: 2 }];
+    const sp = sps[(id - 1) % sps.length] || sps[0];
+    const px = (Number(sp.x) + 0.5) * TS;
+    const py = (Number(sp.y) + 0.5) * TS;
+
+    st.players[id] = {
+      id,
+      nick: String(nick || (isBot ? '봇' : '토끼')).slice(0, 16),
+      clientId: clientId ? String(clientId) : null,
+      isBot: !!isBot,
+
+      role: 'crew',
+      alive: true,
+      down: false,
+
+      x: px,
+      y: py,
+      vx: 0,
+      vy: 0,
+      facing: 1,
+
+      // status effects
+      slowUntil: 0,
+      frozenUntil: 0,
+      invertUntil: 0,
+      vent: null,
+
+      // action/emote/cooldowns
+      emoteKind: null,
+      emoteUntil: 0,
+      killCdUntil: 0,
+      saboCdUntil: 0,
+    };
+
+    return id;
+  }
+
   function hostAssignTeacher() {
     const st = G.state;
     if (st.practice) {

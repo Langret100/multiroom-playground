@@ -538,15 +538,21 @@
         // 기본 슈퍼마리오 느낌(스르륵 멈춤/부드러운 가속, 공중제어는 약간 약하게)
         // (단위: px/frame @60fps)
         const PHYS_SCALE = 1.0;
-        const GRAVITY = 0.27 * PHYS_SCALE;
-        const MAX_FALL_SPEED = 7.8 * PHYS_SCALE;
-        const MOVE_MAX_SPEED = 3.6 * PHYS_SCALE;
-        const MOVE_ACCEL_GROUND = 0.35 * PHYS_SCALE;
-        const MOVE_ACCEL_AIR = 0.22 * PHYS_SCALE;
-        const MOVE_FRICTION_GROUND = 0.22 * PHYS_SCALE;
-        const MOVE_FRICTION_AIR = 0.05 * PHYS_SCALE;
-        const MOVE_SKID_DECEL = 0.55 * PHYS_SCALE;
-        const JUMP_VELOCITY = -9.6 * PHYS_SCALE;
+        // 기본 슈퍼마리오(SMB1) 느낌: 과속 방지 + 살짝 미끄러짐(스키드) + 낙하/점프 완만
+        // (단위: px/frame @60fps)
+        const GRAVITY = 0.32 * PHYS_SCALE;
+        const MAX_FALL_SPEED = 6.9 * PHYS_SCALE;
+        const MOVE_MAX_SPEED = 3.0 * PHYS_SCALE;
+        const MOVE_ACCEL_GROUND = 0.30 * PHYS_SCALE;
+        const MOVE_ACCEL_AIR = 0.20 * PHYS_SCALE;
+        const MOVE_FRICTION_GROUND = 0.14 * PHYS_SCALE;
+        const MOVE_FRICTION_AIR = 0.04 * PHYS_SCALE;
+        const MOVE_SKID_DECEL = 0.60 * PHYS_SCALE;
+        const JUMP_VELOCITY = -8.4 * PHYS_SCALE;
+        // 가변 점프(짧게 누르면 낮게, 길게 누르면 높게)
+        const JUMP_HOLD_MAX_MS = 150;
+        const JUMP_HOLD_GRAVITY_MULT = 0.55;
+        const JUMP_CUT_VY = -2.8 * PHYS_SCALE;
         const RESPAWN_COOLDOWN_MS = 1500; // 1.5초
         const PUSH_IMPULSE_X = 16;
         const PUSH_IMPULSE_Y = -14;
@@ -620,7 +626,6 @@
         // 발판 생성 제한: "라운드당 2개" -> "목숨(리스폰)당 2개"
         const FLOOR_LIMIT_PER_LIFE = 2;
         let floorUsedThisLife = 0;
-        let pendingFloorAcks = new Map(); // id -> timeoutId
         let lastPushAt = 0;
 
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
@@ -638,6 +643,21 @@
         
         // 터치 상태
         let touches = {};
+
+        // 가변 점프 입력 상태
+        let jumpKeyDown = false;
+        let jumpTouchDown = false;
+        function isJumpHeldNow(){ return !!jumpKeyDown || !!jumpTouchDown; }
+        function handleJumpRelease(){
+            try{
+                if (!localPlayer) return;
+                // early-release jump cut (SMB1 느낌)
+                if ((localPlayer.vy || 0) < 0 && (localPlayer.vy || 0) < JUMP_CUT_VY){
+                    localPlayer.vy = JUMP_CUT_VY;
+                }
+                localPlayer.jumpHolding = false;
+            }catch(_){ }
+        }
         let moveDirection = 0; // -1: 왼쪽, 0: 정지, 1: 오른쪽
         
         // ==================== 사운드 시스템 ====================
@@ -1473,6 +1493,8 @@ cameraX = 0;
             if (!canJump()) return;
             const now = performance.now();
             localPlayer.vy = JUMP_VELOCITY;
+            localPlayer.jumpHolding = true;
+            localPlayer.jumpStartAt = performance.now();
             localPlayer.onGround = false;
             localPlayer.jumpUsed = true;
             sfxJump();
@@ -1546,21 +1568,17 @@ cameraX = 0;
         function updateFloorBtn(){
             const btn = document.getElementById('floorBtn');
             if (!btn) return;
-            const pending = pendingFloorAcks ? pendingFloorAcks.size : 0;
-            const usedDisplay = Math.min(FLOOR_LIMIT_PER_LIFE, (floorUsedThisLife||0) + pending);
-            btn.textContent = `바닥 ${usedDisplay}/${FLOOR_LIMIT_PER_LIFE}`;
-            const can = (usedDisplay < FLOOR_LIMIT_PER_LIFE) && !localPlayer.isDead;
-            btn.style.opacity = can ? '1' : '0.55';
+            const used = Math.max(0, floorUsedThisLife|0);
+            const can = (used < FLOOR_LIMIT_PER_LIFE) && !localPlayer.isDead;
+            btn.textContent = `바닥 ${Math.min(used, FLOOR_LIMIT_PER_LIFE)}/${FLOOR_LIMIT_PER_LIFE}`;
+            // UX: 2번 쓰면 다음 라운드/리스폰까지 버튼 자체를 비활성화
+            btn.disabled = !can;
+            btn.style.pointerEvents = can ? 'auto' : 'none';
+            btn.style.opacity = can ? '1' : '0.45';
         }
 
         function resetFloorQuotaLocal(){
             floorUsedThisLife = 0;
-            if (pendingFloorAcks && pendingFloorAcks.size){
-                for (const [id, to] of pendingFloorAcks.entries()){
-                    try{ clearTimeout(to); }catch(_){ }
-                }
-            }
-            pendingFloorAcks = new Map();
             updateFloorBtn();
         }
 
@@ -1723,10 +1741,10 @@ function setupActionButtons(){
 
         function createFloorUnderFoot(){
             if (localPlayer.isDead) return;
-            updateFloorBtn();
-            const pending = pendingFloorAcks ? pendingFloorAcks.size : 0;
-            const usedDisplay = (floorUsedThisLife||0) + pending;
-            if (usedDisplay >= FLOOR_LIMIT_PER_LIFE){
+
+            // Hard gate: 2번 사용 후엔 다음 라운드/리스폰 전까지 입력 자체를 막는다.
+            if ((floorUsedThisLife|0) >= FLOOR_LIMIT_PER_LIFE){
+                updateFloorBtn();
                 showError(`이번 목숨 바닥은 ${FLOOR_LIMIT_PER_LIFE}개까지만!`, true);
                 return;
             }
@@ -1736,7 +1754,6 @@ function setupActionButtons(){
             lastFloorAt = now;
 
             const myOwner = (EMBED && mySessionId) ? mySessionId : (playerId || 'local');
-
             const w = 90;
             const h = 20;
             const x = (localPlayer.x + 20) - w/2;
@@ -1745,28 +1762,18 @@ function setupActionButtons(){
 
             const pl = { id, owner: myOwner, x, y, width: w, height: h, color: '#2f3640' };
 
-            // Immediate local feel: place locally first.
+            // Place locally immediately. If we receive the same id back from server, addFloorPlatform ignores duplicates.
             addFloorPlatform(pl);
 
-            // Multiplayer: wait for server echo; if denied, revert.
-            if (EMBED && !isGuestMode){
-                // Mark as pending ack
-                const to = setTimeout(()=>{
-                    try{ removeFloorById(id); }catch(_){ }
-                    try{ pendingFloorAcks.delete(id); }catch(_){ }
-                    updateFloorBtn();
-                }, 700);
-                pendingFloorAcks.set(id, to);
-                updateFloorBtn();
-                bridgeSend('tg_floor', { id: pl.id, owner: pl.owner, x: pl.x, y: pl.y, width: pl.width, height: pl.height, color: pl.color });
-                return;
-            }
-
-            // Guest/practice: local quota count
-            floorUsedThisLife += 1;
+            // Local quota count + UI lock
+            floorUsedThisLife = (floorUsedThisLife|0) + 1;
             updateFloorBtn();
-        }
 
+            // Multiplayer: broadcast the floor (quota is purely local lock)
+            if (EMBED && !isGuestMode){
+                try{ bridgeSend('tg_floor', { id: pl.id, owner: pl.owner, x: pl.x, y: pl.y, width: pl.width, height: pl.height, color: pl.color }); }catch(_){ }
+            }
+        }
 
         // ==================== 터치 컨트롤 ====================
         function setupControls() {
@@ -1782,10 +1789,15 @@ function setupActionButtons(){
                     };
                 }
                 
-                // 두 개 이상 터치 = 점프
+                // 두 개 이상 터치 = 점프(길게 유지하면 더 높게)
                 if (Object.keys(touches).length >= 2) {
-                    doJump();
+                    if (!jumpTouchDown) {
+                        jumpTouchDown = true;
+                        doJump();
+                    }
                 } else {
+                    jumpTouchDown = false;
+                    
                     // 단일 터치 = 이동 방향 결정
                     updateMoveDirection();
                 }
@@ -1810,12 +1822,18 @@ function setupActionButtons(){
             // 터치 종료
             canvas.addEventListener('touchend', (e) => {
                 e.preventDefault();
-                
+
+                const before = Object.keys(touches).length;
                 for (let touch of e.changedTouches) {
                     delete touches[touch.identifier];
                 }
-                
-                if (Object.keys(touches).length === 0) {
+                const after = Object.keys(touches).length;
+                if (before >= 2 && after < 2) {
+                    jumpTouchDown = false;
+                    handleJumpRelease();
+                }
+
+                if (after === 0) {
                     moveDirection = 0;
                 } else if (Object.keys(touches).length === 1) {
                     updateMoveDirection();
@@ -1824,10 +1842,16 @@ function setupActionButtons(){
             
             canvas.addEventListener('touchcancel', (e) => {
                 e.preventDefault();
+                const before = Object.keys(touches).length;
                 for (let touch of e.changedTouches) {
                     delete touches[touch.identifier];
                 }
-                if (Object.keys(touches).length === 0) {
+                const after = Object.keys(touches).length;
+                if (before >= 2 && after < 2) {
+                    jumpTouchDown = false;
+                    handleJumpRelease();
+                }
+                if (after === 0) {
                     moveDirection = 0;
                 }
             });
@@ -1844,10 +1868,15 @@ function setupActionButtons(){
                     touches['mouseRight'] = { x: e.clientX, y: e.clientY };
                 }
                 
-                // 두 개 이상 = 점프 (터치와 동일)
+                // 두 개 이상 = 점프 (우클릭 유지 시 더 높게)
                 if (Object.keys(touches).length >= 2) {
-                    doJump();
+                    if (!jumpTouchDown) {
+                        jumpTouchDown = true;
+                        doJump();
+                    }
                 } else {
+                    jumpTouchDown = false;
+                    
                     updateMoveDirection();
                 }
             });
@@ -1866,22 +1895,34 @@ function setupActionButtons(){
             });
             
             canvas.addEventListener('mouseup', (e) => {
+                const before = Object.keys(touches).length;
                 if (e.button === 0) {
                     delete touches['mouseLeft'];
                 } else if (e.button === 2) {
                     delete touches['mouseRight'];
                 }
+                const after = Object.keys(touches).length;
+                if (before >= 2 && after < 2) {
+                    jumpTouchDown = false;
+                    handleJumpRelease();
+                }
                 
-                if (Object.keys(touches).length === 0) {
+                if (after === 0) {
                     moveDirection = 0;
-                } else if (Object.keys(touches).length === 1) {
+                } else if (after === 1) {
                     updateMoveDirection();
                 }
             });
             
             canvas.addEventListener('mouseleave', () => {
+                const before = Object.keys(touches).length;
                 delete touches['mouseLeft'];
                 delete touches['mouseRight'];
+                const after = Object.keys(touches).length;
+                if (before >= 2 && after < 2) {
+                    jumpTouchDown = false;
+                    handleJumpRelease();
+                }
                 moveDirection = 0;
             });
             
@@ -1910,6 +1951,7 @@ function setupActionButtons(){
 
                 if (code === 'KeyZ') {
                     e.preventDefault();
+                    jumpKeyDown = true;
                     if (!e.repeat) { initAudio(); doJump(); }
                 }
                 if (code === 'KeyX') {
@@ -1927,6 +1969,10 @@ function setupActionButtons(){
                 const code = e.code || '';
                 if (code === 'ArrowLeft' && moveDirection === -1) moveDirection = 0;
                 if (code === 'ArrowRight' && moveDirection === 1) moveDirection = 0;
+                if (code === 'KeyZ') {
+                    jumpKeyDown = false;
+                    handleJumpRelease();
+                }
             });
         }
         
@@ -2000,9 +2046,22 @@ function setupActionButtons(){
                 sfxStep();
             }
             
-            // 중력
-            // 점프 높이를 2/3로 낮추기 위해(체감 높이 기준), 중력도 함께 2/3로 조정
-            localPlayer.vy += GRAVITY;
+            // 중력 (+ 가변 점프)
+            // 점프 중(상승 중) 점프를 계속 누르고 있으면 중력을 약하게 해서 더 높이 뜨게 함
+            // (SMB1 느낌: 짧게 누르면 낮게, 길게 누르면 높게)
+            let g = GRAVITY;
+            if (localPlayer.vy < 0) {
+                const held = isJumpHeldNow();
+                const jt = (performance.now() - (localPlayer.jumpStartAt || 0));
+                if (localPlayer.jumpHolding && held && jt <= JUMP_HOLD_MAX_MS) {
+                    g = GRAVITY * JUMP_HOLD_GRAVITY_MULT;
+                } else {
+                    localPlayer.jumpHolding = false;
+                }
+            } else {
+                localPlayer.jumpHolding = false;
+            }
+            localPlayer.vy += g;
             if (localPlayer.vy > MAX_FALL_SPEED) localPlayer.vy = MAX_FALL_SPEED;
             
             // 위치 업데이트
@@ -2045,7 +2104,7 @@ function setupActionButtons(){
             }
 
             // 착지하면 점프 사용권 복구 (공중에서 아직 점프 안했으면 1회 가능)
-            if (localPlayer.onGround) localPlayer.jumpUsed = false;
+            if (localPlayer.onGround) { localPlayer.jumpUsed = false; localPlayer.jumpHolding = false; }
             
             // 박스 물리
             for (let box of gameObjects.boxes) {
@@ -3226,33 +3285,13 @@ function setupActionButtons(){
                     return;
                 }
                 clearAllFloors();
-                // any pending floors that never got confirmed should be cleared
-                if (pendingFloorAcks && pendingFloorAcks.size){
-                    for (const [id, to] of pendingFloorAcks.entries()){
-                        try{ clearTimeout(to); }catch(_){ }
-                    }
-                    pendingFloorAcks = new Map();
-                    updateFloorBtn();
-                }
                 for (const pl of arr) addFloorPlatform(pl);
                 return;
             }
 
             if (d.type === "tg_floor") {
-                // server echo confirms a pending floor
-                const id = String(d.id||'');
-                if (id && pendingFloorAcks && pendingFloorAcks.has(id)) {
-                    try{ clearTimeout(pendingFloorAcks.get(id)); }catch(_){ }
-                    pendingFloorAcks.delete(id);
-                }
+                // Floor broadcast (server may echo our own floor). Duplicates are ignored by addFloorPlatform.
                 addFloorPlatform(d);
-                updateFloorBtn();
-                return;
-            }
-
-            if (d.type === "tg_floor_quota") {
-                floorUsedThisLife = Math.max(0, parseInt(d.used, 10) || 0);
-                updateFloorBtn();
                 return;
             }
 
