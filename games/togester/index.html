@@ -535,13 +535,18 @@
         let levelClearLock = false; // 레벨 클리어 중복 트리거 방지
         
         const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
-        // 요청사항: 전체 체감 속도 20% 감속
+        // 기본 슈퍼마리오 느낌(스르륵 멈춤/부드러운 가속, 공중제어는 약간 약하게)
+        // (단위: px/frame @60fps)
         const PHYS_SCALE = 1.0;
-        const SPEED_SCALE = 0.8; // 전체 속도 20% 감속
-        const GRAVITY = 0.4 * PHYS_SCALE * SPEED_SCALE;
-        const MAX_FALL_SPEED = 10 * PHYS_SCALE * SPEED_SCALE;
-        const MOVE_SPEED = 5 * PHYS_SCALE * SPEED_SCALE;
-        const JUMP_VELOCITY = -13.3334 * PHYS_SCALE * SPEED_SCALE; // 점프 속도 감속
+        const GRAVITY = 0.27 * PHYS_SCALE;
+        const MAX_FALL_SPEED = 7.8 * PHYS_SCALE;
+        const MOVE_MAX_SPEED = 3.6 * PHYS_SCALE;
+        const MOVE_ACCEL_GROUND = 0.35 * PHYS_SCALE;
+        const MOVE_ACCEL_AIR = 0.22 * PHYS_SCALE;
+        const MOVE_FRICTION_GROUND = 0.22 * PHYS_SCALE;
+        const MOVE_FRICTION_AIR = 0.05 * PHYS_SCALE;
+        const MOVE_SKID_DECEL = 0.55 * PHYS_SCALE;
+        const JUMP_VELOCITY = -9.6 * PHYS_SCALE;
         const RESPAWN_COOLDOWN_MS = 1500; // 1.5초
         const PUSH_IMPULSE_X = 16;
         const PUSH_IMPULSE_Y = -14;
@@ -620,7 +625,7 @@
 
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
         let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
-        const NET_INTERP_DELAY_MS = 120; // 약간의 지연을 두고 보간 (지터/끊김 완화)
+        const NET_INTERP_DELAY_MS = 70; // 지연을 줄여 밀기/충돌 반응이 더 즉각적으로 보이게
         const NET_MAX_HISTORY_MS = 2000;
         let gameObjects = [];
         let canvas, ctx;
@@ -1232,6 +1237,12 @@
             return Math.max(min, Math.min(v, max));
         }
 
+        // Move value `v` towards `target` by at most `delta`.
+        function approach(v, target, delta){
+            if (v < target) return Math.min(target, v + delta);
+            return Math.max(target, v - delta);
+        }
+
         function computeStageBounds() {
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             const objs = gameObjects || {};
@@ -1634,6 +1645,17 @@ function setupActionButtons(){
                 const remoteRect = { x: px + PVP_PAD_X, y: py, width: PVP_W, height: PVP_H };
 
                 if (rectsOverlap(remoteRect, hitbox)) {
+                    // Local prediction: show the pushed player moving immediately
+                    // (network interpolation makes the real response arrive ~tens of ms later)
+                    try{
+                        if (!smoothedPlayers[sid]) smoothedPlayers[sid] = { x: px, y: py, vx: 0, vy: 0 };
+                        smoothedPlayers[sid].x = px + dx * 0.7;
+                        smoothedPlayers[sid].y = py + PUSH_IMPULSE_Y * 0.18;
+                        const h = remoteHistory[sid];
+                        if (h && Array.isArray(h)){
+                            h.push({ t: performance.now(), x: smoothedPlayers[sid].x, y: smoothedPlayers[sid].y, vx: dx * 0.3, vy: 0 });
+                        }
+                    }catch(_){ }
                     bridgeSendPush(sid, dx, PUSH_IMPULSE_Y);
                     anyHit = true;
                 }
@@ -1939,10 +1961,23 @@ function setupActionButtons(){
             updateLifts();
             updateBridges();
             // 이동
-            const speed = MOVE_SPEED;
             const _now = performance.now();
-            let vx = moveDirection * speed;
-            if (moveDirection !== 0) localPlayer.facing = moveDirection < 0 ? -1 : 1;
+            const wasOnGround = !!localPlayer.onGround;
+            let vx = (typeof localPlayer.vx === 'number') ? localPlayer.vx : 0;
+
+            // Input acceleration / friction (Mario-like)
+            if (moveDirection !== 0) {
+                const desired = moveDirection * MOVE_MAX_SPEED;
+                // skidding when reversing direction on ground
+                const reversing = wasOnGround && (Math.sign(desired) !== Math.sign(vx)) && Math.abs(vx) > 0.5;
+                const accel = reversing ? MOVE_SKID_DECEL : (wasOnGround ? MOVE_ACCEL_GROUND : MOVE_ACCEL_AIR);
+                vx = approach(vx, desired, accel);
+            } else {
+                const fric = wasOnGround ? MOVE_FRICTION_GROUND : MOVE_FRICTION_AIR;
+                vx = approach(vx, 0, fric);
+            }
+
+            if (Math.abs(vx) > 0.25) localPlayer.facing = vx < 0 ? -1 : 1;
 
             // Knockback window: pushed players keep their momentum briefly (enables chain pushing)
             if (_now < (localPlayer.knockbackUntil || 0)) {
@@ -1961,7 +1996,7 @@ function setupActionButtons(){
                         localPlayer.pushing = (_now < (localPlayer.pushAnimUntil || 0));
             
             // 걷기 효과음 (땅에서 이동 중일 때만)
-            if (moveDirection !== 0 && localPlayer.onGround) {
+            if (Math.abs(vx) > 0.25 && wasOnGround) {
                 sfxStep();
             }
             
@@ -2664,7 +2699,7 @@ function setupActionButtons(){
                     sp.x = tx;
                     sp.y = ty;
                 } else {
-                    const k = 0.35;
+                    const k = 0.45;
                     sp.x += dx * k;
                     sp.y += dy * k;
                 }
@@ -3172,7 +3207,7 @@ function setupActionButtons(){
                 }
                 if (dy){
                     localPlayer.y += dy * 0.25;
-                    localPlayer.vy = clamp((localPlayer.vy || 0) + dy * 0.55, -13.5 * PHYS_SCALE * SPEED_SCALE, MAX_FALL_SPEED);
+                    localPlayer.vy = clamp((localPlayer.vy || 0) + dy * 0.55, JUMP_VELOCITY * 1.4, MAX_FALL_SPEED);
                     if (dy < 0) localPlayer.onGround = false;
                 }
                 try{ sfxPush(); }catch(_){ }

@@ -1986,7 +1986,66 @@
       }
     };
 
-    return nextId;
+    // --- Map objects ---
+    const objs = Array.isArray(AS.map.objects) ? AS.map.objects : [];
+    for (const o0 of objs) {
+      if (!o0 || !o0.id || !o0.type) continue;
+      const id = String(o0.id);
+      const type = String(o0.type);
+      const o = { ...o0 };
+      o.id = id;
+      o.type = type;
+      o.x = (o.x | 0);
+      o.y = (o.y | 0);
+      if (typeof o.w === 'number') o.w = (o.w | 0);
+      if (typeof o.h === 'number') o.h = (o.h | 0);
+      if (o.links && !Array.isArray(o.links)) o.links = [];
+
+      if (type === 'root_door') {
+        // Ensure doors live on the corridor side and have a consistent outward direction.
+        pushDoorOutward(o);
+        st.doors[id] = { closed: false, closedUntil: 0 };
+      }
+
+      if (type === 'mission') {
+        st.missions[id] = {
+          kind: String(o.kind || 'add'),
+          state: 'idle',
+          expiresAt: 0,
+        };
+      }
+
+      // Store all interactive objects
+      st.objects[id] = o;
+    }
+
+    // Total missions count
+    const missionCount = Object.keys(st.missions).length;
+    if (missionCount > 0) st.total = missionCount;
+
+    // --- Dynamic lamps (placed as decor but networked so they can be sabotaged/fixed) ---
+    try {
+      const dec = getPixelDecorPlacements();
+      for (const d of dec) {
+        if (!d || !d.key) continue;
+        const key = String(d.key);
+        const isLamp = /street_lamp|floor_lamp/i.test(key);
+        if (!isLamp) continue;
+        const lid = `lamp_${key}_${d.tx|0}_${d.ty|0}`;
+        if (st.objects[lid]) continue;
+        st.objects[lid] = {
+          id: lid,
+          type: 'lamp',
+          kind: key,
+          x: d.tx | 0,
+          y: d.ty | 0,
+          roomId: d.roomId || null,
+        };
+        st.lamps[lid] = { on: true, kind: key };
+      }
+    } catch (_) {
+      // non-fatal
+    }
   }
 
   function hostAssignTeacher() {
