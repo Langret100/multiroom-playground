@@ -875,19 +875,49 @@ export class RoomDO{
       }
 
       if (t === "tg_button"){
+        if (this.meta.mode === "togester"){
+          if (!this.tg.buttons) this.tg.buttons = {};
+          this.tg.buttons[String(d.idx)] = !!d.pressed;
+        }
         this._broadcast("tg_button", { idx: d.idx, pressed: !!d.pressed });
         return;
       }
       if (t === "tg_buttons"){
+        if (this.meta.mode === "togester"){
+          this.tg.buttons = d.buttons || {};
+        }
         this._broadcast("tg_buttons", { buttons: d.buttons || {} });
         return;
       }
       if (t === "tg_level"){
+        if (this.meta.mode === "togester"){
+          this.tg.level = d.level;
+          // Level change: clear transient state (floors/buttons) so everyone stays in sync
+          this.tg.floors = {};
+          this.tg.buttons = {};
+          this._broadcast("tg_floors", { floors: [] });
+          this._broadcast("tg_buttons", { buttons: {} });
+        }
         this._broadcast("tg_level", { level: d.level });
         return;
       }
       if (t === "tg_reset"){
+        if (this.meta.mode === "togester"){
+          this.tg.floors = {};
+          this._broadcast("tg_floors", { floors: [] });
+        }
         this._broadcast("tg_reset", { t: d.t || now() });
+        return;
+      }
+
+      if (t === "tg_sync"){
+        if (this.meta.mode !== "togester") return;
+        try{
+          const floors = Object.values(this.tg.floors || {});
+          this._send(ws, "tg_floors", { floors });
+        }catch(_){ }
+        try{ this._send(ws, "tg_level", { level: this.tg.level || 1 }); }catch(_){ }
+        try{ this._send(ws, "tg_buttons", { buttons: this.tg.buttons || {} }); }catch(_){ }
         return;
       }
 

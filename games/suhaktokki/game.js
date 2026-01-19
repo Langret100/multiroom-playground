@@ -522,9 +522,26 @@
   };
 
   async function loadJSON(url) {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`fetch fail ${url}`);
-    return await r.json();
+    // Prefer fetch() when served over http(s). If we are running under file://,
+    // fetch() for JSON is often blocked by browser security. In that case we
+    // fall back to inline JSON blobs injected by assets_inline.js.
+    try{
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`fetch fail ${url}`);
+      return await r.json();
+    }catch(err){
+      try{
+        const M = (window.__SUHAK_INLINE_JSON__||{});
+        const key = String(url||"" ).replace(/^\.\//, "").replace(/^\//,"");
+        if (M[key]) return M[key];
+        const base = key.split("/").pop();
+        if (M[base]) return M[base];
+        for (const k in M){
+          if (k === key || k.endsWith("/"+base)) return M[k];
+        }
+      }catch(_){ }
+      throw err;
+    }
   }
 
   function loadImage(url) {

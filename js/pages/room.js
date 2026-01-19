@@ -816,6 +816,11 @@ function updatePreview(modeId){
       }catch(_){ }
       return;
     }
+    if (d.type === "tg_sync"){
+      if (!fromMain) return;
+      try{ room.send("tg_sync", {}); }catch(_){ }
+      return;
+    }
     if (d.type === "tg_over"){
       if (!fromMain) return;
       room.send("tg_over", {

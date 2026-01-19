@@ -264,6 +264,18 @@ this.st = {
       });
     });
 
+    // Togester: snapshot resync (prevents missing early broadcasts during iframe boot)
+    this.onMessage("tg_sync", (client) => {
+      if (this.state.mode !== "togester") return;
+      if (this.state.phase !== "playing") return;
+      if (this.tg.over) return;
+      try{
+        client.send("tg_level", { level: this.tg.level });
+        client.send("tg_buttons", { buttons: this.tg.buttons });
+        client.send("tg_floors", { floors: Array.from(this.tg.floors.values()) });
+      }catch(_){ }
+    });
+
 
 
     // Temporary floor spawn ("바닥" 버튼)
