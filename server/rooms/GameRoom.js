@@ -26,10 +26,12 @@ export class GameRoom extends Room {
     const inferred = ["stackga","suika"].includes(this.state.mode) ? "duel" : "coop";
     this.state.modeType = String(options?.modeType || inferred).slice(0, 10);
 
-// maxClients: duel games are capped at 4; snaketail supports up to 8; others default to 4
+// maxClients: duel games are capped at 4; coop rooms can be up to 8 (per-game UI can request less)
 const requestedMax = parseInt(options?.maxClients || "4", 10) || 4;
-const cap = (this.state.mode === "snaketail") ? 8 : 4;
-this.maxClients = clamp(requestedMax, 2, (this.state.modeType === "duel" ? 4 : cap));
+const cap = (this.state.modeType === "duel") ? 4 : 8;
+this.maxClients = clamp(requestedMax, 2, cap);
+this.state.maxClients = this.maxClients;
+
 
     // Metadata used by getAvailableRooms()
     this.setMetadata({

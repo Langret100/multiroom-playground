@@ -311,7 +311,15 @@ function updatePreview(modeId){
   try{
     if (previewEls.thumb){
       previewEls.thumb.dataset.game = meta?.id || modeId || "";
-      previewEls.thumb.dataset.label = (label || "").slice(0, 6);
+      // Mobile: make "그림맞추기" fit by splitting into two lines.
+      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 520px)").matches;
+      if ((meta?.id || modeId) === "drawanswer" && isMobileNarrow){
+        previewEls.thumb.classList.add("label-drawanswer-mobile");
+        previewEls.thumb.dataset.label = "그림맞추기";
+      } else {
+        previewEls.thumb.classList.remove("label-drawanswer-mobile");
+        previewEls.thumb.dataset.label = (label || "").slice(0, 6);
+      }
     }
   }catch(_){}
 
@@ -1216,6 +1224,10 @@ function updatePreview(modeId){
     if (!room) return;
     const state = room.state;
 
+    // Reset cached flags (prevents stale host/ready state when schema updates lag)
+    isHost = false;
+    isReady = false;
+
     // If the match is truly back in the lobby, clear any local override.
     if (state.phase === "lobby") forceLobbyUI = false;
 
@@ -1286,6 +1298,15 @@ function updatePreview(modeId){
 const CPU_SID = "__cpu__";
 const modeId = state.mode || "";
 const gmeta = (window.gameById ? window.gameById(modeId) : null);
+	// Update capacity badge (matches server room maxClients when available)
+	try{
+		const badge = document.getElementById("maxBadge");
+		if (badge){
+			const cap = Number(state.maxClients || (gmeta && gmeta.maxClients) || 4);
+			badge.innerHTML = `<span class="dot ok"></span>최대 ${cap}인`;
+		}
+	}catch(_){ }
+
 const isCoop = (gmeta && gmeta.type === "coop") || modeId === "togester";
 const isDuel = (gmeta && gmeta.type === "duel") || (!isCoop);
 
@@ -1536,7 +1557,7 @@ function sendCoopBridgeInit(){
   })();
   // Some coop games allow solo practice. If you are alone, treat yourself as host
   // for the embedded game even if the host flag hasn't arrived yet.
-  const effectiveIsHost = isHostFromState || !!isHost || (solo && (coop.meta.id === "suhaktokki"));
+  const effectiveIsHost = isHostFromState || (solo && (coop.meta.id === "suhaktokki"));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
@@ -1547,7 +1568,23 @@ function sendCoopBridgeInit(){
     solo,
     roomCode: roomId,
     level: coop.level || 1,
-    practice: !!coop.practice
+    practice: (() => {
+      // Explicit local practice mode (togester only)
+      if (coop.practice) return true;
+      // SuhakTokki: treat 1~3 humans as practice, 4+ as real game (matches game internal rules)
+      if (coop.meta && coop.meta.id === "suhaktokki"){
+        let humans = 0;
+        try{
+          const CPU_SID = "__cpu__";
+          room?.state?.players?.forEach?.((p, sid)=>{
+            if (String(sid) === CPU_SID) return;
+            humans++;
+          });
+        }catch(_){ }
+        return (humans > 0 && humans < 4);
+      }
+      return false;
+    })()
   });
   
   // SnakeTail: ensure we don't miss initial food/timer messages due to iframe load timing

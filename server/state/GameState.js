@@ -21,6 +21,8 @@ export class GameState extends Schema {
     this.mode = "stackga";
     this.modeType = "duel"; // duel | coop
     this.phase = "lobby"; // lobby | playing
+    this.maxClients = 4;
+
     this.players = new MapSchema();
     this.allReady = false;
     this.playerCount = 0;
@@ -30,6 +32,7 @@ export class GameState extends Schema {
 defineTypes(GameState, {
   title: "string",
   mode: "string",
+  maxClients: "number",
   modeType: "string",
   phase: "string",
   players: { map: PlayerState },

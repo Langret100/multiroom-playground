@@ -980,6 +980,16 @@ body::after{
   letter-spacing: -0.2px;
   color: rgba(255,255,255,.92);
   text-shadow: 0 2px 10px rgba(0,0,0,.35);
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.05;
+  padding: 0 6px;
+
+}
+
+.gamePreview .gpThumb.label-drawanswer-mobile::after{
+  content: "그림\A맞추기";
+  white-space: pre;
 }
 .gamePreview .gpThumb::before{
   content:"";

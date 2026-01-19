@@ -29,7 +29,7 @@
       max-width:1560px;
       margin:0 auto 10px auto;
       display:flex;
-      align-items:flex-end;
+      align-items:center;
       justify-content:space-between;
       gap:10px;
       flex-wrap:wrap;
@@ -49,7 +49,7 @@
       color:var(--muted);
     }
     .timer{
-      font-size:18px;
+      font-size: 22px;
       font-weight:800;
       color:var(--danger);
       min-width:76px;
@@ -150,6 +150,7 @@
       flex-direction:column;
       gap:10px;
       height: min(900px, calc(100vh - 140px));
+      min-height:0;
     }
     .chat{
       flex:1;
@@ -157,7 +158,11 @@
       border:2px solid var(--accent);
       border-radius:12px;
       padding:10px;
-      overflow:auto;
+      overflow-y:auto;
+      overflow-x:hidden;
+      min-height:0;
+      -webkit-overflow-scrolling:touch;
+      overscroll-behavior:contain;
       font-size:13px;
       line-height:1.35;
     }
@@ -206,22 +211,60 @@
       font-weight:900;
       letter-spacing:-0.3px;
       color:var(--text);
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .mobileTimer{
+      font-size:18px;
+      font-weight:900;
+      color:var(--danger);
+      flex:0 0 auto;
+    }
+    .centerInfo{
+      flex:1;
+      min-width:240px;
+      text-align:center;
+      padding:8px 12px;
+      border-radius:14px;
+      border:2px solid var(--accent);
+      background:rgba(255,255,255,.72);
+      font-weight:900;
+      letter-spacing:-0.3px;
+      color:var(--text);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
     }
     @media (max-width: 860px){
-      .game{ flex-direction:column; }
+      html, body{ height:100%; }
+      body{
+        padding:10px;
+        display:flex;
+        flex-direction:column;
+        overflow:hidden;
+      }
+      header{ flex:0 0 auto; margin-bottom:6px; }
+      .centerInfo{ display:none; }
+      .timer{ display:none; }
+
+      .mobileWordBar{ display:flex; flex:0 0 auto; }
+
+      .game{ flex:1 1 auto; min-height:0; flex-direction:column; overflow:hidden; }
+
       /* Mobile: buttons on top, palette below (horizontal) */
-      .toolbar{ flex-direction:column; width:100%; align-items:stretch; }
+      .toolbar{ flex:0 0 auto; flex-direction:column; width:100%; align-items:stretch; }
       .toolbarBtns{ flex-direction:row; gap:10px; }
       .btn{ width:50%; }
       .palette{ padding-top:10px; }
-      .mobileWordBar{ display:block; }
-      .side{ max-width:none; min-width:unset; height:320px; }
-      .canvasWrap{ width:100%; aspect-ratio:1/1; height:auto; min-height:unset; }
+
+      .canvasWrap{ flex:0 0 auto; width:100%; aspect-ratio:1/1; height:auto; min-height:unset; }
+      .side{ flex:1 1 auto; max-width:none; min-width:unset; height:auto; min-height:0; }
     }
   </style>
 </head>
 <body>
-  <header>
+    <header>
     <div class="title">
       <h1>🖌️ 그림맞추기</h1>
       <div class="meta">
@@ -230,10 +273,18 @@
         <span class="pill" id="wordPill">제시어: ???</span>
       </div>
     </div>
+
+    <!-- PC: 상단 중앙에 "지금 그릴 것/차례" 표시 -->
+    <div class="centerInfo" id="centerInfo">차례: -</div>
+
+    <!-- PC: 우측에 제한시간 (모바일에서는 아래 bar 우측으로 이동) -->
     <div class="timer" id="timer">02:00</div>
   </header>
 
-  <div class="mobileWordBar" id="mobileWordBar">제시어: ???</div>
+    <div class="mobileWordBar" id="mobileWordBar">
+    <span id="mobileWordText">차례: -</span>
+    <span class="mobileTimer" id="mobileTimer">02:00</span>
+  </div>
 
   <div class="game">
     <div class="toolbar">
@@ -280,6 +331,9 @@
     const timerEl   = document.getElementById('timer');
     const hintEl    = document.getElementById('hint');
     const mobileWordBar = document.getElementById('mobileWordBar');
+    const centerInfoEl = document.getElementById('centerInfo');
+    const mobileWordTextEl = document.getElementById('mobileWordText');
+    const mobileTimerEl = document.getElementById('mobileTimer');
 
     const BASE_W = 900;
     const BASE_H = 650;
@@ -304,6 +358,62 @@
 
     // ===== Helpers (누락되면 바로 먹통이 됨) =====
     function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+    // ===== UI (상단/모바일 bar) =====
+    function updateTopInfo(){
+      const txt = (isDrawer && currentWord) ? `지금 그릴 것: ${currentWord}` : `차례: ${drawerNick || '-'}`;
+      if (centerInfoEl) centerInfoEl.textContent = txt;
+      if (mobileWordTextEl) mobileWordTextEl.textContent = txt;
+    }
+
+    // ===== SFX (코드로 생성: WebAudio) =====
+    let __sfxCtx = null;
+    function __ensureSfxCtx(){
+      if (__sfxCtx) return __sfxCtx;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try{ __sfxCtx = new AC(); }catch(_){ __sfxCtx = null; }
+      return __sfxCtx;
+    }
+    function __resumeSfx(){
+      const ctx = __ensureSfxCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') { try{ ctx.resume(); }catch(_){ } }
+    }
+    function __tone(freq, t0, dur, type='sine', gain=0.12){
+      const ctx = __ensureSfxCtx();
+      if (!ctx) return;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(t0);
+      o.stop(t0 + dur + 0.03);
+    }
+    function playSfx(kind){
+      __resumeSfx();
+      const ctx = __ensureSfxCtx();
+      if (!ctx) return;
+      const t = ctx.currentTime + 0.02;
+      if (kind === 'correct'){
+        // 통통 튀는 상승 아르페지오
+        __tone(523.25, t, 0.12, 'triangle', 0.14);
+        __tone(659.25, t + 0.12, 0.12, 'triangle', 0.14);
+        __tone(783.99, t + 0.24, 0.14, 'triangle', 0.15);
+      } else if (kind === 'timeup'){
+        // 귀여운 삑삑-띵 (시간 종료)
+        __tone(880, t, 0.10, 'sine', 0.12);
+        __tone(660, t + 0.10, 0.10, 'sine', 0.12);
+        __tone(990, t + 0.20, 0.14, 'sine', 0.11);
+      }
+    }
+
+    let __timeupPlayedFor = 0;
 
     function resizeCanvas(){
       const dpr = window.devicePixelRatio || 1;
@@ -406,7 +516,7 @@
     }
 
     function __hookBgmGesture(){
-      const once = ()=>{ __startBgm(); };
+      const once = ()=>{ __startBgm(); __resumeSfx(); };
       window.addEventListener("pointerdown", once, { once:true, passive:true });
       window.addEventListener("touchstart", once, { once:true, passive:true });
       window.addEventListener("mousedown", once, { once:true, passive:true });
@@ -440,12 +550,9 @@
       clearBtn.disabled = !isDrawer;
       hintEl.textContent = isDrawer ? '당신 차례! (그리기 가능)' : '그리는 사람만 그림을 그릴 수 있어요.';
       if (!isDrawer) currentWord = '';
-      wordPill.textContent = isDrawer && currentWord ? `제시어: ${currentWord}` : '제시어: ???';
-      if (mobileWordBar){
-        mobileWordBar.textContent = isDrawer && currentWord
-          ? `지금 그릴 것: ${currentWord}`
-          : `차례: ${drawerNick || '-'}`;
-      }
+
+      wordPill.textContent = (isDrawer && currentWord) ? `제시어: ${currentWord}` : '제시어: ???';
+      updateTopInfo();
     }
 
     // input/send
@@ -523,7 +630,15 @@
     }
     setInterval(()=>{
       const left = endAt ? (endAt - Date.now()) : 120000;
-      timerEl.textContent = fmt(left);
+      const t = fmt(left);
+      timerEl.textContent = t;
+      if (mobileTimerEl) mobileTimerEl.textContent = t;
+
+      // 시간 종료 시 한 번만 효과음
+      if (endAt && left <= 0 && __timeupPlayedFor !== endAt){
+        __timeupPlayedFor = endAt;
+        playSfx('timeup');
+      }
     }, 250);
 
     // bridge messages
@@ -534,6 +649,7 @@
         mySid = String(d.sessionId || d.mySid || '');
         myNick = String(d.nick || d.myNick || 'Player');
         addChatLine(`<span class="sys">시스템:</span> 연결됨 (${myNick})`);
+        updateTopInfo();
         // 게임 참여 시작 신호 (방에는 남아있을 수 있으므로 별도)
         sendToParent({ type:'da_enter' });
         sendToParent({ type:'da_sync' });
@@ -549,11 +665,7 @@
         setDrawer(youAreDrawer);
         roundPill.textContent = `라운드 ${round}/${maxRounds}`;
         turnPill.textContent = `차례: ${drawerNick}`;
-        if (mobileWordBar){
-          mobileWordBar.textContent = youAreDrawer && currentWord
-            ? `지금 그릴 것: ${currentWord}`
-            : `차례: ${drawerNick}`;
-        }
+        updateTopInfo();
         // scores (optional)
         if (d.announce){
           addChatLine(`<span class="sys">시스템:</span> ${escapeHtml(String(d.announce))}`);
@@ -566,11 +678,7 @@
         if (isDrawer){
           wordPill.textContent = currentWord ? `제시어: ${currentWord}` : '제시어: ???';
         }
-        if (mobileWordBar){
-          mobileWordBar.textContent = isDrawer && currentWord
-            ? `지금 그릴 것: ${currentWord}`
-            : `차례: ${drawerNick || '-'}`;
-        }
+        updateTopInfo();
         return;
       }
 
@@ -619,6 +727,7 @@
           addChatLine(`<span class="sys">시스템:</span> ${text}`);
         } else if (d.correct){
           addChatLine(`<span class="sys">정답!</span> <b>${nick}</b> : ${text}`);
+          playSfx('correct');
         } else {
           addChatLine(`<b>${nick}</b>: ${text}`);
         }
@@ -663,6 +772,7 @@
       wordPill.textContent = '제시어: 사과';
       endAt = Date.now() + 120000;
       addChatLine(`<span class="sys">시스템:</span> 로컬 미리보기 모드`);
+      updateTopInfo();
     }
   </script>
 </body>
