@@ -7119,6 +7119,10 @@ default:
     net.on('joinAck', (m) => {
       if (m.toClient !== net.clientId) return;
       net.myPlayerId = Number(m.playerId || 0);
+
+      // stop join retry loop
+      try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
+
       G.phase = 'lobby';
       setRolePill();
       setHUD();
@@ -7446,6 +7450,20 @@ net.on('uiMeetingOpen', (m) => {
     } else {
       // join 요청
       net.post({ t: 'join', nick, clientId: net.clientId });
+
+      // If the first join packet is dropped (common when the iframe loads before the room
+      // starts relaying packets), keep retrying until we get joinAck.
+      try{
+        if (!net._joinRetry){
+          net._joinRetry = setInterval(()=>{
+            try{
+              if (!G.net || G.net !== net) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
+              if (net.isHost || net.myPlayerId) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
+              net.post({ t: 'join', nick, clientId: net.clientId, retry: true });
+            }catch(_){ }
+          }, 900);
+        }
+      }catch(_){ }
     }
   }
 

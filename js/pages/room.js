@@ -47,6 +47,8 @@
   // the server match can continue for others, but this client should return
   // to the room lobby UI (ready list/button visible).
   let forceLobbyUI = false;
+  // DrawAnswer: if you are left alone mid-game, auto-return to lobby UI.
+  let _daAutoLeftSolo = false;
 
   function isTogesterActive(){
     try{
@@ -1807,7 +1809,27 @@ function startSim(){
             prevPhase = ph;
           }
         }catch(_){}
-renderPlayers();
+		// DrawAnswer: if everyone else left, automatically return to lobby UI.
+		// (We keep the room connection; only exit the embedded gameplay screen.)
+		try{
+			if (room.state.mode === "drawanswer" && room.state.phase === "playing"){
+				const cnt = (room.state.players && typeof room.state.players.size === "number") ? room.state.players.size : 0;
+				if (cnt <= 1){
+					if (!_daAutoLeftSolo && document.body.classList.contains("in-game")){
+						_daAutoLeftSolo = true;
+						forceLobbyUI = true;
+						try{ exitGameFullscreen(); }catch(_){ }
+						try{ appendRoomChat({ system:true, text: "다른 플레이어가 없어 게임을 종료했어요." }); }catch(_){ }
+					}
+				} else {
+					_daAutoLeftSolo = false;
+				}
+			} else {
+				_daAutoLeftSolo = false;
+			}
+		}catch(_){ }
+
+		renderPlayers();
       };
       room.state.players.onAdd = renderPlayers;
       room.state.players.onRemove = renderPlayers;

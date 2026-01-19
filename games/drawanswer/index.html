@@ -70,8 +70,23 @@
       padding:10px;
       display:flex;
       flex-direction:column;
-      gap:10px;
+      gap:12px;
       align-items:center;
+    }
+    .toolbarBtns{
+      width:100%;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:stretch;
+    }
+    .palette{
+      width:100%;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      justify-content:center;
+      padding-top:4px;
     }
     .color{
       width:28px;
@@ -90,6 +105,10 @@
       background:rgba(141,110,99,.14);
       color:var(--text);
       font-weight:700;
+      font-size:14px;
+      letter-spacing:-0.2px;
+      line-height:1.2;
+      white-space:nowrap;
       cursor:pointer;
     }
     .btn:disabled{ opacity:.4; cursor:not-allowed; }
@@ -162,9 +181,27 @@
     .sys{ color:#2b5; font-weight:800; }
     .warn{ color:var(--danger); font-weight:800; }
     .hint{ color:var(--muted); }
+    .mobileWordBar{
+      display:none;
+      width:100%;
+      max-width:1020px;
+      margin:0 auto 10px auto;
+      padding:10px 12px;
+      border-radius:14px;
+      border:2px solid var(--accent);
+      background:rgba(255,255,255,.72);
+      font-weight:900;
+      letter-spacing:-0.3px;
+      color:var(--text);
+    }
     @media (max-width: 860px){
       .game{ flex-direction:column; }
-      .toolbar{ flex-direction:row; width:100%; justify-content:space-between; }
+      /* Mobile: buttons on top, palette below (horizontal) */
+      .toolbar{ flex-direction:column; width:100%; align-items:stretch; }
+      .toolbarBtns{ flex-direction:row; gap:10px; }
+      .btn{ width:50%; }
+      .palette{ padding-top:10px; }
+      .mobileWordBar{ display:block; }
       .side{ max-width:none; min-width:unset; height:320px; }
       .canvasWrap{ min-height:360px; height:360px; }
     }
@@ -183,17 +220,21 @@
     <div class="timer" id="timer">02:00</div>
   </header>
 
+  <div class="mobileWordBar" id="mobileWordBar">제시어: ???</div>
+
   <div class="game">
     <div class="toolbar">
-      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:center;">
+      <div class="toolbarBtns">
+        <button class="btn" id="clearBtn" disabled>지우기</button>
+        <button class="btn" id="quitBtn">나가기</button>
+      </div>
+      <div class="palette" aria-label="색상 선택">
         <div class="color" data-c="#000000" style="background:#000000;"></div>
         <div class="color" data-c="#e74c3c" style="background:#e74c3c;"></div>
         <div class="color" data-c="#3498db" style="background:#3498db;"></div>
         <div class="color" data-c="#2ecc71" style="background:#2ecc71;"></div>
         <div class="color" data-c="#f1c40f" style="background:#f1c40f;"></div>
       </div>
-      <button class="btn" id="clearBtn" disabled>🧹 지우기</button>
-      <button class="btn" id="quitBtn">⤴︎ 나가기</button>
     </div>
 
     <div class="canvasWrap">
@@ -224,6 +265,7 @@
     const wordPill  = document.getElementById('wordPill');
     const timerEl   = document.getElementById('timer');
     const hintEl    = document.getElementById('hint');
+    const mobileWordBar = document.getElementById('mobileWordBar');
 
     const BASE_W = 900;
     const BASE_H = 650;
@@ -305,6 +347,11 @@
       hintEl.textContent = isDrawer ? '당신 차례! (그리기 가능)' : '그리는 사람만 그림을 그릴 수 있어요.';
       if (!isDrawer) currentWord = '';
       wordPill.textContent = isDrawer && currentWord ? `제시어: ${currentWord}` : '제시어: ???';
+      if (mobileWordBar){
+        mobileWordBar.textContent = isDrawer && currentWord
+          ? `지금 그릴 것: ${currentWord}`
+          : `차례: ${drawerNick || '-'}`;
+      }
     }
 
     // input/send
@@ -403,6 +450,11 @@
         setDrawer(youAreDrawer);
         roundPill.textContent = `라운드 ${round}/${maxRounds}`;
         turnPill.textContent = `차례: ${drawerNick}`;
+        if (mobileWordBar){
+          mobileWordBar.textContent = youAreDrawer && currentWord
+            ? `지금 그릴 것: ${currentWord}`
+            : `차례: ${drawerNick}`;
+        }
         // scores (optional)
         if (d.announce){
           addChatLine(`<span class="sys">시스템:</span> ${escapeHtml(String(d.announce))}`);
@@ -414,6 +466,11 @@
         currentWord = String(d.word || '');
         if (isDrawer){
           wordPill.textContent = currentWord ? `제시어: ${currentWord}` : '제시어: ???';
+        }
+        if (mobileWordBar){
+          mobileWordBar.textContent = isDrawer && currentWord
+            ? `지금 그릴 것: ${currentWord}`
+            : `차례: ${drawerNick || '-'}`;
         }
         return;
       }

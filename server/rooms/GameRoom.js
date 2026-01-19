@@ -170,11 +170,11 @@ this.st = {
     // (This enables emergency meeting, voting, and meeting chat.)
     this.onMessage("sk_msg", (client, payload) => {
       if (this.state.mode !== "suhaktokki") return;
-      // Allow relay in both lobby and playing.
-      // SuhakTokki (embedded) uses this channel for join/discover/state sync.
-      // Blocking in lobby prevents non-host players from appearing.
-      const p = this.state.players.get(client.sessionId);
-      if (!p) return;
+      // IMPORTANT:
+      // SuhakTokki's embedded networking uses sk_msg for peer discovery/join/state.
+      // If we only relay during "playing", guests who load the iframe while the room
+      // is still in "lobby" can miss their initial join packet and end up seeing only
+      // the host forever. So we relay in both lobby and playing.
       const inner = payload?.msg || payload;
       if (!inner || typeof inner !== "object") return;
       const t = String(inner.t || "").slice(0, 32);

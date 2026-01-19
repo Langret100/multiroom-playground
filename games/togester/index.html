@@ -254,23 +254,7 @@
             border-radius: 50%;
         }
         
-        #controls-hint {
-            position: absolute;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0,0,0,0.7);
-            color: white;
-            padding: 10px 20px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            text-align: center;
-            z-index: 100;
-            opacity: 0.8;
-            max-width: 90%;
-            white-space: nowrap;
-        }
-        
+        /* #controls-hint removed (controls shown in room creation UI) */
         #winScreen {
             position: fixed;
             top: 0;
@@ -495,8 +479,7 @@
             <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥 0/2</button>
         </div>
         
-        <!-- 조작 안내는 멀티룸 방 화면(설명 패널)에서 표시. 게임 화면 내 중복 표시는 제거 -->
-        <div id="controls-hint" style="display:none"></div>
+        <!-- in-game controls hint removed (shown in room UI instead) -->
     </div>
     
     <!-- 승리 화면 -->
