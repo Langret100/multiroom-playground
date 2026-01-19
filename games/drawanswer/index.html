@@ -26,7 +26,7 @@
     header{
       width:100%;
       /* PC에서 캔버스/좌우 패널이 조금 더 커지도록 */
-      max-width:1420px;
+      max-width:1560px;
       margin:0 auto 10px auto;
       display:flex;
       align-items:flex-end;
@@ -57,7 +57,7 @@
     }
     .game{
       width:100%;
-      max-width:1420px;
+      max-width:1560px;
       margin:0 auto;
       display:flex;
       gap:12px;
@@ -131,8 +131,8 @@
       border-radius:10px;
       box-shadow: 4px 4px 14px rgba(0,0,0,.08);
       position:relative;
-      min-height:650px;
-      height: min(820px, calc(100vh - 150px));
+      min-height:720px;
+      height: min(900px, calc(100vh - 140px));
       overflow:hidden;
     }
     canvas{
@@ -149,7 +149,7 @@
       display:flex;
       flex-direction:column;
       gap:10px;
-      height: min(820px, calc(100vh - 150px));
+      height: min(900px, calc(100vh - 140px));
     }
     .chat{
       flex:1;
@@ -301,6 +301,78 @@
     let lastX = 0, lastY = 0;
     let sendBuf = [];
     let lastSendAt = 0;
+
+    // ===== Helpers (누락되면 바로 먹통이 됨) =====
+    function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+    function resizeCanvas(){
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      let w = Math.max(280, Math.floor(rect.width));
+      let h = Math.max(240, Math.floor(rect.height));
+
+      // Mobile: 항상 정사각형 캔버스(그려지는 영역도 동일)
+      const isMobile = window.matchMedia('(max-width: 860px)').matches;
+      if (isMobile) {
+        const s = Math.min(w, h);
+        w = s; h = s;
+        const wrap = canvas.closest('.canvasWrap');
+        if (wrap) {
+          wrap.style.height = `${s}px`;
+        }
+      }
+
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      // user space = CSS pixels
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
+
+    function clearLocal(){
+      // transform 여부와 상관없이 전체 제거
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    function drawSeg(x1,y1,x2,y2,color,w){
+      const rect = canvas.getBoundingClientRect();
+      const px1 = x1 * rect.width;
+      const py1 = y1 * rect.height;
+      const px2 = x2 * rect.width;
+      const py2 = y2 * rect.height;
+
+      ctx.save();
+      if (color === '__erase__') {
+        // Eraser: punch holes in the canvas (transparent)
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.strokeStyle = 'rgba(0,0,0,1)';
+        ctx.lineWidth = Math.max(10, (w || 4) * 2.2);
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, w);
+      }
+      ctx.beginPath();
+      ctx.moveTo(px1, py1);
+      ctx.lineTo(px2, py2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function addChatLine(html){
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function sendToParent(obj){
+      try{ window.parent.postMessage(obj, '*'); }catch(_){ }
+    }
 
     // BGM (mobile autoplay: starts after first user gesture)
     const __BGM_URL__ = "assets/catchpicture.mp3";
