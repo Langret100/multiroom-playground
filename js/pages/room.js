@@ -776,6 +776,8 @@ function updatePreview(modeId){
     // In-game "나가기" from embedded DrawAnswer iframe (return to room UI only)
     if (d.type === "da_quit"){
       if (!fromMain) return;
+      // 방에는 남아있더라도 "게임"에서 나간 것으로 처리 (혼자 남았을 때 즉시 종료 기준)
+      try{ room.send("da_exit", {}); }catch(_){ }
       forceLobbyUI = true;
       try{ exitGameFullscreen(); }catch(_){ }
       try{ renderPlayers(); }catch(_){ }
@@ -790,6 +792,16 @@ function updatePreview(modeId){
     }
 
     // DrawAnswer iframe -> server relay
+    if (d.type === "da_enter"){
+      if (!fromMain) return;
+      try{ room.send("da_enter", {}); }catch(_){ }
+      return;
+    }
+    if (d.type === "da_exit"){
+      if (!fromMain) return;
+      try{ room.send("da_exit", {}); }catch(_){ }
+      return;
+    }
     if (d.type === "da_sync"){
       if (!fromMain) return;
       try{ room.send("da_sync", {}); }catch(_){ }
@@ -809,6 +821,18 @@ function updatePreview(modeId){
       if (!fromMain) return;
       const text = (d && typeof d.text === "string") ? d.text : (d && typeof d.msg === "string" ? d.msg : "");
       try{ room.send("da_chat", { text }); }catch(_){ }
+      return;
+    }
+
+    // DrawAnswer: game enter/exit (staying in room)
+    if (d.type === "da_enter"){
+      if (!fromMain) return;
+      try{ room.send("da_enter", {}); }catch(_){ }
+      return;
+    }
+    if (d.type === "da_exit"){
+      if (!fromMain) return;
+      try{ room.send("da_exit", {}); }catch(_){ }
       return;
     }
 

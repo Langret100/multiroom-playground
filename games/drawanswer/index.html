@@ -25,7 +25,8 @@
     }
     header{
       width:100%;
-      max-width:1020px;
+      /* PC에서 캔버스/좌우 패널이 조금 더 커지도록 */
+      max-width:1180px;
       margin:0 auto 10px auto;
       display:flex;
       align-items:flex-end;
@@ -56,14 +57,14 @@
     }
     .game{
       width:100%;
-      max-width:1020px;
+      max-width:1180px;
       margin:0 auto;
       display:flex;
       gap:12px;
       align-items:stretch;
     }
     .toolbar{
-      width:74px;
+      width:84px;
       background:rgba(255,255,255,.55);
       border:2px solid var(--accent);
       border-radius:14px;
@@ -130,7 +131,7 @@
       border-radius:10px;
       box-shadow: 4px 4px 14px rgba(0,0,0,.08);
       position:relative;
-      min-height:520px;
+      min-height:580px;
       overflow:hidden;
     }
     canvas{
@@ -142,12 +143,12 @@
     }
     .side{
       flex: .8;
-      min-width:260px;
-      max-width:360px;
+      min-width:280px;
+      max-width:400px;
       display:flex;
       flex-direction:column;
       gap:10px;
-      height:520px;
+      height:580px;
     }
     .chat{
       flex:1;
@@ -293,7 +294,8 @@
 
     // draw state
     let strokeColor = '#000000';
-    let strokeWidth = 5;
+    // 요청: 선 두께를 기존의 2/3 정도로
+    let strokeWidth = 5 * (2/3);
     let painting = false;
     let lastX = 0, lastY = 0;
     let sendBuf = [];
@@ -402,6 +404,9 @@
     });
 
     quitBtn.addEventListener('click', ()=>{
+      // 방은 유지하고 게임 화면만 나갈 수 있으므로 서버에도 "게임에서 나감"을 알려
+      // 남은 사람 혼자일 때 즉시 종료되도록 한다.
+      sendToParent({ type:'da_exit' });
       sendToParent({ type:'da_quit' });
     });
 
@@ -468,6 +473,8 @@
         mySid = String(d.sessionId || d.mySid || '');
         myNick = String(d.nick || d.myNick || 'Player');
         addChatLine(`<span class="sys">시스템:</span> 연결됨 (${myNick})`);
+        // 게임 참여 시작 신호 (방에는 남아있을 수 있으므로 별도)
+        sendToParent({ type:'da_enter' });
         sendToParent({ type:'da_sync' });
         return;
       }
@@ -565,6 +572,13 @@
         return;
       }
     });
+
+    // iframe이 닫히거나 숨겨질 때도 "게임에서 나감"을 best-effort로 전송
+    function notifyExit(){
+      try{ sendToParent({ type:'da_exit' }); }catch(_){ }
+    }
+    window.addEventListener('pagehide', notifyExit);
+    window.addEventListener('beforeunload', notifyExit);
 
     function escapeHtml(s){
       return s.replace(/[&<>"']/g, (c)=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));

@@ -50,21 +50,20 @@
       embedPath: "games/togester/index.html"
     },
 
-    // SnakeTail (shape snake) - free-for-all up to 8 players
     {
-      id: "snaketail",
-      name: "꼬리잡기",
-      mobileHint: "모바일: 화면을 누른 방향으로 단계 각도만큼 회전 이동",
+      id: "drawanswer",
+      name: "그림맞추기",
+      mobileHint: "모바일: 손가락으로 그림 · 채팅으로 정답 입력",
       descLines: [
-        "먹이를 먹어 커지고, 작은 뱀을 먹을 수 있습니다.",
-        "3분 동안 가장 크게(또는 최후 1인) 되면 승리!",
+        "그리는 사람만 제시어를 보고 그림으로 표현합니다.",
+        "나머지는 채팅으로 맞추기! 2연속 정답 또는 5문제 최다정답 승리",
       ],
       type: "coop",
-      badgeClass: "snake",
-      maxClients: 8,
-      embedPath: "games/snaketail/index.html"
+      badgeClass: "coop",
+      maxClients: 4,
+      embedPath: "games/drawanswer/index.html"
     },
-    
+
     {
       id: "suhaktokki",
       name: "수학토끼",
@@ -79,18 +78,19 @@
       embedPath: "games/suhaktokki/index.html"
     },
 
+    // SnakeTail (shape snake) - free-for-all up to 8 players
     {
-      id: "drawanswer",
-      name: "그림맞추기",
-      mobileHint: "모바일: 손가락으로 그림 · 채팅으로 정답 입력",
+      id: "snaketail",
+      name: "꼬리잡기",
+      mobileHint: "모바일: 화면을 누른 방향으로 단계 각도만큼 회전 이동",
       descLines: [
-        "그리는 사람만 제시어를 보고 그림으로 표현합니다.",
-        "나머지는 채팅으로 맞추기! 2연속 정답 또는 5문제 최다정답 승리",
+        "먹이를 먹어 커지고, 작은 뱀을 먹을 수 있습니다.",
+        "3분 동안 가장 크게(또는 최후 1인) 되면 승리!",
       ],
       type: "coop",
-      badgeClass: "coop",
-      maxClients: 4,
-      embedPath: "games/drawanswer/index.html"
+      badgeClass: "snake",
+      maxClients: 8,
+      embedPath: "games/snaketail/index.html"
     }
   ];
 

@@ -932,6 +932,43 @@ export class RoomDO{
       }
 
       // ----- DrawAnswer (Pictionary-like) -----
+      if (t === "da_enter"){
+        if (this.meta.mode !== "drawanswer" || this.meta.phase !== "playing") return;
+        if (!this.da || !this.da.active) return;
+        if (!this.da.inGame) this.da.inGame = {};
+        this.da.inGame[uid] = true;
+        // (선택) 사용자가 게임 화면을 다시 열었을 때, 진행중인 세션에 복귀할 수 있게 order/score에 추가
+        try{
+          if (Array.isArray(this.da.order) && !this.da.order.includes(uid)){
+            this.da.order.push(uid);
+          }
+          if (!this.da.scores) this.da.scores = {};
+          if (!this.da.scores[uid]){
+            const nn = this.users.get(uid)?.nick || 'Player';
+            this.da.scores[uid] = { score:0, streak:0, nick: nn };
+          }
+        }catch(_){ }
+        return;
+      }
+
+      if (t === "da_exit"){
+        if (this.meta.mode !== "drawanswer" || this.meta.phase !== "playing") return;
+        if (!this.da || !this.da.active) return;
+        if (!this.da.inGame) this.da.inGame = {};
+        if (this.da.inGame[uid] === false) return;
+        this.da.inGame[uid] = false;
+
+        // 채팅에 "나감" 표기 (요청)
+        try{
+          const nn = this.users.get(uid)?.nick || 'Player';
+          this._broadcast('da_chat', { system:true, text: `${nn} 나감`, ts: now() });
+        }catch(_){ }
+
+        // 방을 나가지 않았더라도 "게임"에서는 이탈로 처리
+        try{ this._daOnLeave(uid); }catch(_){ }
+        return;
+      }
+
       if (t === "da_sync"){
         if (this.meta.mode !== "drawanswer") return;
         this._sendDaSync(ws, uid);
@@ -1741,6 +1778,9 @@ export class RoomDO{
     this.da.active = true;
     this.da.maxRounds = 5;
     this.da.order = this._daBuildOrder();
+    // "게임 참여" 인원(방에 남아있어도 게임 화면에서 나가면 제외)
+    this.da.inGame = {};
+    for (const uid of this.da.order){ this.da.inGame[uid] = true; }
     this.da.drawerIdx = 0;
     this.da.scores = {};
     this.da.used = [];
