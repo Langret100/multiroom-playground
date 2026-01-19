@@ -10,6 +10,22 @@
 (() => {
   'use strict';
 
+  // ---------- Pixel-art crisp rendering ----------
+  // Bitmap sprites may look blurry if canvas smoothing is enabled (common in iframes / CSS scaling).
+  // Force nearest-neighbor for the main canvases.
+  function setCrisp(canvasEl, g){
+    if (!canvasEl || !g) return;
+    try{
+      g.imageSmoothingEnabled = false;
+      g.mozImageSmoothingEnabled = false;
+      g.webkitImageSmoothingEnabled = false;
+      g.msImageSmoothingEnabled = false;
+    }catch(_){ }
+    try{
+      canvasEl.style.imageRendering = 'pixelated';
+    }catch(_){ }
+  }
+
   // embed (multiroom iframe)
   const QS = new URLSearchParams(location.search);
   const EMBED = QS.get("embed") === "1";
@@ -20,6 +36,7 @@
   // ---------- DOM ----------
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
+  setCrisp(canvas, ctx);
 
   // Ensure keyboard controls work reliably inside an iframe (multiroom embed):
   // make canvas focusable and focus it on interaction.
@@ -54,6 +71,7 @@
   const closeMap = document.getElementById('closeMap');
   const mapUiCanvas = document.getElementById('mapUiCanvas');
   const mapUiCtx = mapUiCanvas ? mapUiCanvas.getContext('2d') : null;
+  setCrisp(mapUiCanvas, mapUiCtx);
 
   const lobbyStatus = document.getElementById('lobbyStatus');
   const roster = document.getElementById('roster');
@@ -91,6 +109,10 @@
 
   const meetingModal = document.getElementById('meetingModal');
   const meetingInfo = document.getElementById('meetingInfo');
+  const meetingRoster = document.getElementById('meetingRoster');
+  const meetingChatLog = document.getElementById('meetingChatLog');
+  const meetingChatText = document.getElementById('meetingChatText');
+  const meetingChatSend = document.getElementById('meetingChatSend');
   const voteList = document.getElementById('voteList');
   const skipVote = document.getElementById('skipVote');
 
@@ -100,6 +122,238 @@
   const sceneOk = document.getElementById('sceneOk');
   const sceneCanvas = document.getElementById('sceneCanvas');
   const sceneCtx = sceneCanvas.getContext('2d');
+  setCrisp(sceneCanvas, sceneCtx);
+
+  // ---------- Role reveal (Among Us style) ----------
+  // Build overlay dynamically so it works in both standalone and embedded modes.
+  const roleReveal = document.createElement('div');
+  roleReveal.id = 'roleReveal';
+  roleReveal.style.position = 'fixed';
+  roleReveal.style.inset = '0';
+  roleReveal.style.zIndex = '80';
+  roleReveal.style.display = 'none';
+  roleReveal.style.alignItems = 'center';
+  roleReveal.style.justifyContent = 'center';
+  roleReveal.style.background = 'rgba(0,0,0,.78)';
+  roleReveal.style.padding = '18px';
+  roleReveal.style.backdropFilter = 'blur(2px)';
+  roleReveal.style.pointerEvents = 'auto';
+
+  const rrCard = document.createElement('div');
+  rrCard.style.width = 'min(560px, 92vw)';
+  rrCard.style.borderRadius = '22px';
+  rrCard.style.border = '2px solid rgba(255,255,255,.12)';
+  rrCard.style.boxShadow = '0 40px 120px rgba(0,0,0,.65)';
+  rrCard.style.padding = '18px 18px 16px';
+  rrCard.style.textAlign = 'center';
+  rrCard.style.color = 'rgba(244,247,255,.98)';
+  rrCard.style.transform = 'scale(.96)';
+  rrCard.style.transition = 'transform .18s ease, opacity .18s ease';
+  rrCard.style.opacity = '0';
+
+  const rrLine = document.createElement('div');
+  rrLine.style.fontWeight = '1000';
+  rrLine.style.letterSpacing = '-.3px';
+  rrLine.style.fontSize = '14px';
+  rrLine.style.opacity = '.92';
+  rrLine.textContent = '역할';
+
+  const rrBig = document.createElement('div');
+  rrBig.style.marginTop = '8px';
+  rrBig.style.fontWeight = '1100';
+  rrBig.style.letterSpacing = '-.8px';
+  rrBig.style.fontSize = '44px';
+  rrBig.style.lineHeight = '1.05';
+  rrBig.textContent = '...';
+
+  const rrPortraitWrap = document.createElement('div');
+  rrPortraitWrap.style.marginTop = '10px';
+  rrPortraitWrap.style.display = 'flex';
+  rrPortraitWrap.style.justifyContent = 'center';
+  rrPortraitWrap.style.alignItems = 'center';
+
+  const rrPortrait = document.createElement('canvas');
+  rrPortrait.width = 220;
+  rrPortrait.height = 220;
+  rrPortrait.style.width = '220px';
+  rrPortrait.style.height = '220px';
+  rrPortrait.style.imageRendering = 'pixelated';
+  rrPortrait.style.borderRadius = '18px';
+  rrPortrait.style.border = '1px solid rgba(255,255,255,.10)';
+  rrPortrait.style.background = 'rgba(0,0,0,.18)';
+  rrPortrait.style.boxShadow = 'inset 0 0 0 1px rgba(0,0,0,.25)';
+  const rrPctx = rrPortrait.getContext('2d');
+  setCrisp(rrPortrait, rrPctx);
+
+  rrPortraitWrap.appendChild(rrPortrait);
+
+  const rrSub = document.createElement('div');
+  rrSub.style.marginTop = '10px';
+  rrSub.style.fontWeight = '850';
+  rrSub.style.fontSize = '14px';
+  rrSub.style.color = 'rgba(244,247,255,.82)';
+  rrSub.style.lineHeight = '1.35';
+  rrSub.style.whiteSpace = 'pre-line';
+
+  const rrHint = document.createElement('div');
+  rrHint.style.marginTop = '12px';
+  rrHint.style.fontWeight = '900';
+  rrHint.style.fontSize = '12px';
+  rrHint.style.color = 'rgba(244,247,255,.62)';
+  rrHint.textContent = '탭/클릭하면 닫혀요';
+
+  rrCard.appendChild(rrLine);
+  rrCard.appendChild(rrBig);
+  rrCard.appendChild(rrPortraitWrap);
+  rrCard.appendChild(rrSub);
+  rrCard.appendChild(rrHint);
+  roleReveal.appendChild(rrCard);
+  document.body.appendChild(roleReveal);
+
+  function drawGlassesOn(_ctx, x, y, intensity = 0.65, tNow = now()) {
+    const t = tNow * 0.01;
+    const shine = (Math.sin(t) * 0.5 + 0.5) * (0.14 + 0.22 * intensity);
+    _ctx.save();
+    _ctx.translate(x, y);
+    _ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.40 * intensity})`;
+    _ctx.shadowColor = `rgba(255,255,255,${0.18 * intensity})`;
+    _ctx.shadowBlur = 4 * intensity;
+    _ctx.lineWidth = 2;
+    _ctx.beginPath();
+    _ctx.arc(-10, 0, 7.4, 0, Math.PI*2);
+    _ctx.arc(10, 0, 7.4, 0, Math.PI*2);
+    _ctx.moveTo(-2, 0);
+    _ctx.lineTo(2, 0);
+    _ctx.stroke();
+    _ctx.fillStyle = `rgba(255,255,255,${0.06 + shine})`;
+    _ctx.beginPath();
+    _ctx.ellipse(-13, -3, 3.4, 1.8, -0.4, 0, Math.PI*2);
+    _ctx.fill();
+    _ctx.beginPath();
+    _ctx.ellipse(7, -4, 3.8, 2.0, -0.4, 0, Math.PI*2);
+    _ctx.fill();
+    _ctx.restore();
+  }
+
+  function renderRolePortrait(role, practice) {
+    // Draw the local player's sprite as a portrait inside the role reveal card.
+    // Teacher shows glasses (local-only), crew shows normal.
+    const tNow = now();
+    rrPctx.save();
+    rrPctx.clearRect(0, 0, rrPortrait.width, rrPortrait.height);
+
+    // soft vignette
+    const g = rrPctx.createRadialGradient(110, 78, 30, 110, 120, 160);
+    g.addColorStop(0, 'rgba(255,255,255,.10)');
+    g.addColorStop(1, 'rgba(0,0,0,.30)');
+    rrPctx.fillStyle = g;
+    rrPctx.fillRect(0, 0, rrPortrait.width, rrPortrait.height);
+
+    // Choose a stable frame: front view, idle.
+    const me = G.state?.players?.[G.net?.myPlayerId];
+    const color = (me && typeof me.color === 'number') ? me.color : 0;
+
+    if (AS.charsImg) {
+      rrPctx.imageSmoothingEnabled = false;
+      const MOTION_ROWS = 5;
+      const DIR_ROWS = 3;
+      const motionWalk = 0;
+      const dirFront = 0;
+      const row = ((color % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS)) + (motionWalk * DIR_ROWS) + dirFront;
+      const sx = 0;
+      const sy = row * SPR_H;
+
+      // draw big (pixelated)
+      const scale = 2.6;
+      const dw = SPR_W * scale;
+      const dh = SPR_H * scale;
+      const dx = (rrPortrait.width - dw) / 2;
+      const dy = 18;
+      rrPctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, dx, dy, dw, dh);
+
+      // teacher glasses overlay (face position on portrait)
+      if (!practice && role === 'teacher') {
+        // glasses are local-only by nature (this overlay is local UI)
+        const gx = rrPortrait.width / 2;
+        const gy = dy + dh * 0.40;
+        drawGlassesOn(rrPctx, gx, gy, 0.9, tNow);
+      }
+    } else {
+      // Fallback portrait
+      rrPctx.fillStyle = 'rgba(255,255,255,.9)';
+      rrPctx.font = '900 16px system-ui';
+      rrPctx.textAlign = 'center';
+      rrPctx.fillText('로딩중...', 110, 112);
+    }
+
+    // role badge bottom
+    rrPctx.fillStyle = 'rgba(0,0,0,.35)';
+    rrPctx.fillRect(18, 176, 184, 28);
+    rrPctx.fillStyle = 'rgba(255,255,255,.92)';
+    rrPctx.font = '900 13px system-ui';
+    rrPctx.textAlign = 'center';
+    const label = practice ? '연습 모드' : (role === 'teacher' ? '선생토끼' : '수학토끼');
+    rrPctx.fillText(label, 110, 195);
+
+    rrPctx.restore();
+  }
+
+  function showRoleReveal(role, practice) {
+    try { closeMissionUI(); } catch (_) {}
+    try { closeMeetingUI(); } catch (_) {}
+    // role: 'teacher' | 'crew'
+    const isPractice = !!practice;
+    let title = '';
+    let sub = '';
+    let bg = '';
+    let border = 'rgba(255,255,255,.12)';
+
+    if (isPractice) {
+      title = '연습 모드';
+      sub = '1~3명일 때는 연습 모드야!\n(선생토끼 없음)';
+      bg = 'radial-gradient(900px 420px at 50% 0%, rgba(125,211,252,.35), rgba(18,26,46,.92))';
+      border = 'rgba(125,211,252,.45)';
+    } else if (role === 'teacher') {
+      title = '선생토끼';
+      sub = '들키지 말고 검은당근으로 빵점을 줘!\n(불 끄기/물막기/강제미션 가능)';
+      bg = 'radial-gradient(900px 420px at 50% 0%, rgba(255,90,122,.45), rgba(18,26,46,.92))';
+      border = 'rgba(255,90,122,.55)';
+    } else {
+      title = '수학토끼';
+      sub = '미션을 풀어 시간을 늘리자!\n(불 켜기 가능)';
+      bg = 'radial-gradient(900px 420px at 50% 0%, rgba(102,224,163,.38), rgba(18,26,46,.92))';
+      border = 'rgba(102,224,163,.45)';
+    }
+
+    rrBig.textContent = title;
+    rrSub.textContent = sub;
+    rrCard.style.background = bg;
+    rrCard.style.borderColor = border;
+
+    // portrait
+    try { renderRolePortrait(role, isPractice); } catch (_) {}
+
+    roleReveal.style.display = 'flex';
+    // animate in
+    requestAnimationFrame(() => {
+      rrCard.style.opacity = '1';
+      rrCard.style.transform = 'scale(1)';
+    });
+
+    // auto hide
+    const until = now() + 1800;
+    G.ui.roleRevealUntil = until;
+  }
+
+  function hideRoleReveal() {
+    if (roleReveal.style.display === 'none') return;
+    rrCard.style.opacity = '0';
+    rrCard.style.transform = 'scale(.96)';
+    setTimeout(() => { roleReveal.style.display = 'none'; }, 180);
+    G.ui.roleRevealUntil = 0;
+  }
+
+  roleReveal.addEventListener('pointerdown', () => hideRoleReveal());
 
   // ---------- Helpers ----------
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -206,13 +460,17 @@
   }
 
   function applyPhaseUI() {
-    const inGame = EMBED ? !!G.net : !!(G.net && G.phase !== 'lobby');
+    const inGame = EMBED ? !!(G.net && G.phase !== 'lobby') : !!(G.net && G.phase !== 'lobby');
     // lobby vs game
     if (EMBED) {
-      // multiroom(부모)에서 이미 로비/룸 UI를 제공하므로
-      // iframe 내부 로비는 어떤 경우에도 보이지 않게 한다.
-      lobby?.classList.add('hidden');
-      if (hud) hud.style.display = inGame ? 'flex' : 'none';
+      // Embed: show lobby while still waiting/ready in the in-game lobby (prevents blank screen).
+      if (inGame) {
+        lobby?.classList.add('hidden');
+        if (hud) hud.style.display = 'flex';
+      } else {
+        lobby?.classList.remove('hidden');
+        if (hud) hud.style.display = 'none';
+      }
     } else {
       if (inGame) {
         lobby?.classList.add('hidden');
@@ -280,21 +538,111 @@
     objsMeta: null,
     map: null,
     charsImg: null,
+    pixel: {},
   };
 
-  async function loadJSON(url) {
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`fetch fail ${url}`);
-    return await r.json();
+  async function loadJSON(url, fallback=null) {
+    // Prefer fetch() when served over http(s). If we are running under file://,
+    // fetch() for JSON is often blocked by browser security. In that case we
+    // fall back to inline JSON blobs injected by assets_inline.js.
+    try{
+      const r = await fetch(url, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`fetch fail ${url} (${r.status})`);
+      return await r.json();
+    }catch(err){
+      try{
+        const M = (window.__SUHAK_INLINE_JSON__||{});
+        const key = String(url||"" ).replace(/^\.\//, "").replace(/^\//,"");
+        if (M[key]) return M[key];
+        const base = key.split("/").pop();
+        if (M[base]) return M[base];
+        for (const k in M){
+          if (k === key || k.endsWith("/"+base)) return M[k];
+        }
+      }catch(_){ }
+      // Last resort: return a safe fallback so the game can still boot.
+      if (fallback !== null && fallback !== undefined) return fallback;
+      return null;
+    }
   }
 
-  function loadImage(url) {
-    return new Promise((res, rej) => {
+  function loadImage(url, fallbackSize=null) {
+    const I = (window.__SUHAK_INLINE_IMG__ || {});
+    const key = String(url || '').replace(/^\.\//, '').replace(/^\//, '');
+    const base = key.split('/').pop();
+    const inline = I[key] || I['assets/' + base] || I[base];
+
+    const guessSize = ()=>{
+      if (fallbackSize && typeof fallbackSize === 'object'){
+        const w = Number(fallbackSize.w||fallbackSize.width||0);
+        const h = Number(fallbackSize.h||fallbackSize.height||0);
+        if (w>0 && h>0) return {w,h};
+      }
+      const u = String(url||'');
+      if (u.includes('tiles_rabbithole')) return {w:256,h:256};
+      if (u.includes('objects_rabbithole')) return {w:256,h:128};
+      if (u.includes('chars_bunny')) return {w:384,h:384};
+      return {w:64,h:64};
+    };
+
+    const makePlaceholder = ()=>{
+      const {w,h} = guessSize();
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const g = c.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      g.fillStyle = 'rgba(255,0,255,0.22)';
+      g.fillRect(0,0,w,h);
+      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      g.lineWidth = 2;
+      for (let i=-h;i<w;i+=12){
+        g.beginPath();
+        g.moveTo(i,0);
+        g.lineTo(i+h,h);
+        g.stroke();
+      }
+      return c;
+    };
+
+    return new Promise((res) => {
       const im = new Image();
+      let triedInline = false;
       im.onload = () => res(im);
-      im.onerror = rej;
-      im.src = url;
+      im.onerror = () => {
+        if (!triedInline && inline) {
+          triedInline = true;
+          im.src = inline;
+          return;
+        }
+        // Give up but keep booting.
+        res(makePlaceholder());
+      };
+      try{ im.src = url; }catch(_){ res(makePlaceholder()); }
     });
+  }
+
+  // Green-screen keying (EXACT): only RGB(0,255,0) becomes transparent.
+  // This prevents accidental holes in the sprite caused by HSV/threshold keying.
+  function greenKeyExact(src) {
+    try {
+      const c = document.createElement('canvas');
+      c.width = src.width | 0;
+      c.height = src.height | 0;
+      const cctx = c.getContext('2d');
+      cctx.imageSmoothingEnabled = false;
+      cctx.drawImage(src, 0, 0);
+      const id = cctx.getImageData(0, 0, c.width, c.height);
+      const d = id.data;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i] === 0 && d[i + 1] === 255 && d[i + 2] === 0 && d[i + 3] === 255) {
+          d[i + 3] = 0;
+        }
+      }
+      cctx.putImageData(id, 0, 0);
+      return c;
+    } catch (_) {
+      return src;
+    }
   }
 
   // ---------- Tokki pixel sprite generator ----------
@@ -630,35 +978,101 @@
   }
 
   async function loadAssets() {
-    AS.tilesMeta = await loadJSON('assets/tiles_rabbithole.json');
-    AS.objsMeta = await loadJSON('assets/objects_rabbithole.json');
-    AS.map = await loadJSON('assets/map_mathburrow_01.json');
+    // Ultra-defensive loading: Cloudflare Worker/PAGES routing or CSP can make asset fetch fail.
+    // We always fall back to inline blobs or a minimal built-in map so the game can still run.
+    const DEFAULT_TILES_META = { tileSize: 32, columns: 8, tiles: {} };
+    const DEFAULT_OBJS_META  = { tileSize: 32, columns: 8, objects: {} };
+    const makeFallbackMap = ()=>{
+      const W=20, H=20;
+      const ground=new Array(W*H).fill(0);
+      for (let y=H-2; y<H; y++) for (let x=0; x<W; x++) ground[y*W+x]=1;
+      return {
+        name: 'FallbackBurrow',
+        tileSize: 32,
+        width: W,
+        height: H,
+        layers: { ground, decor: new Array(W*H).fill(0) },
+        rooms: [],
+        objects: [],
+        spawnPoints: [{ x: 2, y: H-3 }]
+      };
+    };
+
+    AS.tilesMeta = await loadJSON('assets/tiles_rabbithole.json', DEFAULT_TILES_META);
+    AS.objsMeta  = await loadJSON('assets/objects_rabbithole.json', DEFAULT_OBJS_META);
+    AS.map       = await loadJSON('assets/map_mathburrow_01.json', makeFallbackMap());
+
+    if (!AS.tilesMeta) AS.tilesMeta = DEFAULT_TILES_META;
+    if (!AS.objsMeta) AS.objsMeta = DEFAULT_OBJS_META;
+    if (!AS.map || !AS.map.layers) AS.map = makeFallbackMap();
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
-    // Character sprites are now generated in-code from pixel data (tokki_data.js)
-    // to keep assets small and make animation tweaks easier.
+    // Character sprites: prefer the tokki_data-based generator (3-pose) for deterministic layout.
+    // Fallback to PNG only if generator fails (e.g., tokki_data missing).
     try {
       AS.charsImg = buildTokkiSpriteSheet();
     } catch (e) {
-      console.warn('[tokki] sprite build failed, fallback to png sheet', e);
-      AS.charsImg = await loadImage('assets/chars_bunny_v3.png');
+      console.warn('[tokki] sprite build failed; falling back to chars_bunny_v3.png', e);
+      try {
+        AS.charsImg = greenKeyExact(await loadImage('assets/chars_bunny_v3.png'));
+      } catch (e2) {
+        console.warn('[tokki] chars png load failed', e2);
+        AS.charsImg = null;
+      }
     }
+
+    // Custom pixel-art pack (user provided)
+    // (All images are optional; game falls back to default rendering if missing.)
+    AS.pixel = {};
+    const px = [
+      ['floor_tile', 'assets/pixel/floor_tile.png'],
+      ['corridor_dirt_tile', 'assets/pixel/corridor_dirt_tile.png'],
+      ['wall', 'assets/pixel/wall.png'],
+      ['wall_alt', 'assets/pixel/wall_alt.png'],
+      ['vent', 'assets/pixel/vent.png'],
+      ['water_overflow_sheet', 'assets/pixel/water_overflow_sheet.png'],
+      ['rock_1', 'assets/pixel/rock_1.png'],
+      ['rock_2', 'assets/pixel/rock_2.png'],
+      ['round_table', 'assets/pixel/round_table.png'],
+      ['diamond_table', 'assets/pixel/diamond_table.png'],
+      ['megaphone', 'assets/pixel/megaphone.png'],
+      ['street_lamp', 'assets/pixel/street_lamp.png'],
+      ['floor_lamp', 'assets/pixel/floor_lamp.png'],
+      // clearer ON/OFF lamp sprites (OFF is visibly dimmer)
+      ['street_lamp_off', 'assets/pixel/street_lamp_off.png'],
+      ['floor_lamp_off', 'assets/pixel/floor_lamp_off.png'],
+      ['rock_diamond_decor', 'assets/pixel/rock_diamond_decor.png'],
+      ['vine_door_closed', 'assets/pixel/vine_door_closed.png'],
+      ['vine_door_side', 'assets/pixel/vine_door_side.png'],
+      ['vine_door_open', 'assets/pixel/vine_door_open.png'],
+      ['teacher_basic_sheet', 'assets/pixel/teacher_basic_sheet.png'],
+      ['teacher_kill0_sheet', 'assets/pixel/teacher_kill0_sheet.png'],
+      ['teacher_tch_sheet', 'assets/pixel/teacher_tch_sheet.png'],
+    ];
+    await Promise.all(px.map(async ([k, url]) => {
+      try { AS.pixel[k] = greenKeyExact(await loadImage(url)); }
+      catch (e) { AS.pixel[k] = null; }
+    }));
   }
 
   // ---------- Render sizing ----------
-  let DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+  let DPR = Math.max(1, (window.devicePixelRatio || 1));
   let viewW = 0, viewH = 0;
 
+  // Snap a CSS-pixel coordinate to the nearest device pixel (keeps pixel art crisp
+  // even on fractional DPR like 1.25/1.5).
+  const snapPx = (v) => Math.round(v * DPR) / DPR;
+
   function resize() {
-    DPR = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    DPR = Math.max(1, (window.devicePixelRatio || 1));
     const w = window.innerWidth;
     const h = window.innerHeight;
     // canvas는 화면을 꽉 쓰되, 둥근 모서리 유지
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
-    canvas.width = Math.floor(w * DPR);
-    canvas.height = Math.floor(h * DPR);
+    canvas.width = Math.round(w * DPR);
+    canvas.height = Math.round(h * DPR);
     viewW = w;
     viewH = h;
   }
@@ -672,7 +1086,7 @@
   const PLAYER_R = 14;
   const SPEED = 184; // px/s
   const KILL_RANGE = 52;
-  const INTERACT_RANGE = 56;
+  const INTERACT_RANGE = 112;
   const VENT_TRAVEL_MS = 850;
   const VENT_COOLDOWN_MS = 4500;
   const FORCE_COOLDOWN_MS = 40_000;
@@ -697,8 +1111,244 @@
   let solid = null; // boolean grid
 
   function tileIsSolid(id) {
-    const t = AS.tilesMeta.tiles?.[String(id)];
-    return !!t?.solid;
+    const n = Number(id)||0;
+    const tm = AS.tilesMeta;
+    if (!tm || !tm.tiles) return n !== 0;
+    const t = tm.tiles?.[String(id)];
+    if (t && typeof t.solid !== 'undefined') return !!t.solid;
+    // Safe default: treat any non-zero tile id as solid.
+    return n !== 0;
+  }
+
+  // Cached pixel-decor placements (prevents \"invisible collision\" when we also mark decor tiles solid)
+  let PIXEL_DECOR_CACHE = null;
+
+    function getPixelDecorPlacements(solidRef) {
+    if (PIXEL_DECOR_CACHE) return PIXEL_DECOR_CACHE;
+    const solidGrid = solidRef || solid;
+    // Static, non-networked decorations to make the burrow feel more "Among-Us".
+    // We keep these out of the network/state to avoid desync.
+    const out = [];
+    if (!AS.map || !AS.pixel) return out;
+
+    const W = AS.map.width | 0;
+    const H = AS.map.height | 0;
+
+    // Avoid placing decor on top of interactive objects.
+    const occ = new Set();
+    for (const o of (AS.map.objects || [])) {
+      occ.add(`${o.x|0},${o.y|0}`);
+    }
+
+    const roomRect = (id) => (AS.map.rooms || []).find(r => r.id === id)?.rect || null;
+    const inAnyRoom = (tx, ty) => {
+      for (const r of (AS.map.rooms || [])) {
+        const rect = r && r.rect;
+        if (!rect) continue;
+        const [rx, ry, rw, rh] = rect;
+        if (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh) return true;
+      }
+      return false;
+    };
+    const roomIdAt = (tx, ty) => {
+      for (const r of (AS.map.rooms || [])) {
+        const rect = r && r.rect;
+        if (!rect) continue;
+        const [rx, ry, rw, rh] = rect;
+        if (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh) return r.id || null;
+      }
+      return null;
+    };
+    const okTile = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+      if (occ.has(`${tx|0},${ty|0}`)) return false;
+      // If collision map already exists, don't place on blocked tiles.
+      if (solidGrid && solidGrid[ty * W + tx]) return false;
+      return true;
+    };
+
+    const add = (key, tx, ty, w = 64, h = 64, solidFlag = true) => {
+      if (!AS.pixel[key]) return;
+      if (!okTile(tx, ty)) return;
+      out.push({ key, tx, ty, w, h, solid: !!solidFlag, roomId: roomIdAt(tx, ty) });
+    };
+
+    // Useful map layer helpers (for corridor/edge decoration).
+    const ground = (AS.map.layers && AS.map.layers.ground) ? AS.map.layers.ground : [];
+    const walls = (AS.map.layers && AS.map.layers.walls) ? AS.map.layers.walls : [];
+    const hasAny = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+      const i = ty * W + tx;
+      return !!(ground[i] || walls[i]);
+    };
+    const isWall = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return true;
+      return !!walls[ty * W + tx];
+    };
+    const nearWallEdge = (tx, ty) => {
+      // walkable tile with at least one adjacent wall
+      if (!hasAny(tx, ty)) return false;
+      if (isWall(tx, ty)) return false;
+      return isWall(tx+1, ty) || isWall(tx-1, ty) || isWall(tx, ty+1) || isWall(tx, ty-1);
+    };
+
+    // Helper: place 4 corner lamps in a room (keeps middle open)
+    const lampCorners = (rr) => {
+      if (!rr) return;
+      const [rx, ry, rw, rh] = rr;
+      add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
+      add('floor_lamp', rx + rw - 3, ry + 2, 32, 32, true);
+      add('floor_lamp', rx + 2, ry + rh - 3, 32, 32, true);
+      add('floor_lamp', rx + rw - 3, ry + rh - 3, 32, 32, true);
+    };
+
+    // Admin: meeting-like table + lamps + small crystal
+    {
+      const rr = roomRect('admin');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('diamond_table', rx + Math.floor(rw / 2), ry + Math.floor(rh / 2), 64, 64, true);
+        add('rock_diamond_decor', rx + 3, ry + 3, 32, 32, true);
+        // more obvious lamps
+        add('street_lamp', rx + 3, ry + rh - 4, 64, 64, true);
+        add('street_lamp', rx + rw - 4, ry + 3, 64, 64, true);
+      }
+    }
+
+    // Security: monitors vibe (lamps + rocks)
+    {
+      const rr = roomRect('security');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('floor_lamp', rx + 2, ry + rh - 3, 32, 32, true);
+        add('floor_lamp', rx + rw - 3, ry + 2, 32, 32, true);
+        add('rock_1', rx + Math.floor(rw / 2), ry + 3, 64, 64, true);
+        add('rock_2', rx + 3, ry + 3, 64, 64, true);
+      }
+    }
+
+    // Lab: table-heavy (different feel) + lamps
+    {
+      const rr = roomRect('lab');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('diamond_table', rx + Math.floor(rw / 2), ry + 4, 64, 64, true);
+        add('round_table', rx + 3, ry + rh - 4, 64, 64, true);
+        add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
+        add('floor_lamp', rx + rw - 3, ry + rh - 3, 32, 32, true);
+      }
+    }
+
+    // Reactor: big crystal + rocks + lamps
+    {
+      const rr = roomRect('reactor');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('rock_diamond_decor', rx + Math.floor(rw / 2), ry + Math.floor(rh / 2), 64, 64, true);
+        add('rock_2', rx + 3, ry + rh - 4, 64, 64, true);
+        add('rock_1', rx + rw - 5, ry + 3, 64, 64, true);
+        add('street_lamp', rx + 2, ry + 2, 64, 64, true);
+      }
+    }
+
+    // Warren hall: street lamps + rocks along edges (wide hall)
+    {
+      const rr = roomRect('warren');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('street_lamp', rx + 3, ry + 2, 64, 64, true);
+        add('street_lamp', rx + rw - 4, ry + 2, 64, 64, true);
+        add('rock_1', rx + 4, ry + rh - 3, 64, 64, true);
+        add('rock_2', rx + rw - 5, ry + rh - 3, 64, 64, true);
+        add('round_table', rx + Math.floor(rw/2), ry + Math.floor(rh/2), 64, 64, true);
+      }
+    }
+
+    // Rootworks: cluttered workshop feel
+    {
+      const rr = roomRect('rootworks');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('diamond_table', rx + 6, ry + 4, 64, 64, true);
+        add('rock_2', rx + rw - 7, ry + 4, 64, 64, true);
+        add('floor_lamp', rx + 2, ry + rh - 3, 32, 32, true);
+        add('floor_lamp', rx + rw - 3, ry + rh - 3, 32, 32, true);
+        add('rock_1', rx + Math.floor(rw/2), ry + Math.floor(rh/2), 64, 64, true);
+      }
+    }
+
+    // Mushroom grove: decorative crystals/rocks, keep path open
+    {
+      const rr = roomRect('mushroom');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('rock_diamond_decor', rx + 5, ry + 5, 32, 32, true);
+        add('rock_diamond_decor', rx + rw - 6, ry + 6, 32, 32, true);
+        add('rock_1', rx + 6, ry + rh - 5, 64, 64, true);
+        add('rock_2', rx + rw - 7, ry + rh - 5, 64, 64, true);
+        add('street_lamp', rx + Math.floor(rw/2), ry + 2, 64, 64, true);
+      }
+    }
+
+    // Med nook / Storage: smaller props
+    {
+      const rr = roomRect('med');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
+        add('rock_diamond_decor', rx + rw - 4, ry + rh - 4, 32, 32, true);
+        add('round_table', rx + Math.floor(rw/2), ry + Math.floor(rh/2), 64, 64, true);
+      }
+    }
+    {
+      const rr = roomRect('storage');
+      if (rr) {
+        const [rx, ry, rw, rh] = rr;
+        // storage: rocks pile
+        add('rock_1', rx + Math.floor(rw / 2), ry + Math.floor(rh / 2), 64, 64, true);
+        add('rock_2', rx + 3, ry + 3, 64, 64, true);
+        add('rock_2', rx + rw - 4, ry + rh - 4, 64, 64, true);
+        add('floor_lamp', rx + 2, ry + 2, 32, 32, true);
+        add('floor_lamp', rx + rw - 3, ry + 2, 32, 32, true);
+      }
+    }
+
+    // Meeting bell room: a small megaphone prop (non-solid)
+    {
+      const rr = roomRect('meeting');
+      if (rr && AS.pixel.megaphone) {
+        const [rx, ry, rw, rh] = rr;
+        add('megaphone', rx + Math.max(2, Math.floor(rw/2)-1), ry + 2, 32, 32, false);
+      }
+    }
+
+    // Scatter tiny "crystal pebbles" around corridor edges (non-solid, purely visual)
+    // This makes the burrow feel less empty while avoiding invisible collision.
+    const seed = strHash(AS.map.name || 'map');
+    const hash2 = (x, y) => {
+      // cheap deterministic hash
+      let h = (seed ^ (x*374761393) ^ (y*668265263)) | 0;
+      h = Math.imul(h ^ (h >>> 13), 1274126177);
+      return (h ^ (h >>> 16)) >>> 0;
+    };
+    for (let ty = 2; ty < H-2; ty++) {
+      for (let tx = 2; tx < W-2; tx++) {
+        if (!okTile(tx, ty)) continue;
+        // skip rooms; focus on corridors to add life
+        if (inAnyRoom(tx, ty)) continue;
+        if (!nearWallEdge(tx, ty)) continue;
+        const r = hash2(tx, ty) / 0xFFFFFFFF;
+        if (r < 0.028) {
+          // small pebble/crystal (visual only)
+          add('rock_diamond_decor', tx, ty, 24, 24, false);
+        } else if (r < 0.040) {
+          add('rock_2', tx, ty, 48, 48, false);
+        }
+      }
+    }
+
+    PIXEL_DECOR_CACHE = out;
+    return out;
   }
 
   function buildCollision() {
@@ -727,6 +1377,20 @@
         solid[i] = 1;
       }
     }
+
+    // Make the emergency meeting table tile solid (players stand around it, not on it)
+    for (const o of (AS.map.objects || [])) {
+      if (o.type !== 'meeting_bell') continue;
+      const tx = o.x | 0, ty = o.y | 0;
+      if (tx >= 0 && ty >= 0 && tx < W && ty < H) solid[ty * W + tx] = 1;
+    }
+
+    // Static decor collisions
+    for (const d of getPixelDecorPlacements()) {
+      if (!d.solid) continue;
+      const tx = d.tx | 0, ty = d.ty | 0;
+      if (tx >= 0 && ty >= 0 && tx < W && ty < H) solid[ty * W + tx] = 1;
+    }
   }
 
   function buildMapPrerender() {
@@ -737,22 +1401,137 @@
     const mctx = mapCanvas.getContext('2d');
     mctx.imageSmoothingEnabled = false;
 
-    const cols = AS.tilesMeta.columns;
-    const drawLayer = (layerArr) => {
-      for (let y = 0; y < H; y++) {
-        for (let x = 0; x < W; x++) {
-          const id = layerArr[y * W + x];
-          if (!id) continue;
-          const sx = (id % cols) * TS;
-          const sy = Math.floor(id / cols) * TS;
-          mctx.drawImage(AS.tilesImg, sx, sy, TS, TS, x * TS, y * TS, TS, TS);
-        }
+    const ground = AS.map.layers.ground || [];
+    const walls = AS.map.layers.walls || [];
+    const deco = AS.map.layers.deco || [];
+
+    // If the custom pack is available, draw the map using it.
+    const floorImg = AS.pixel?.floor_tile;
+    const corrImg = AS.pixel?.corridor_dirt_tile || floorImg;
+    const wallImg = AS.pixel?.wall;
+    const wallAltImg = AS.pixel?.wall_alt || wallImg;
+
+    // dark void
+    mctx.fillStyle = 'rgb(12,16,26)';
+    mctx.fillRect(0, 0, W * TS, H * TS);
+
+    const inAnyRoom = (tx, ty) => {
+      for (const r of (AS.map.rooms || [])) {
+        const [rx, ry, rw, rh] = r.rect;
+        if (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh) return true;
       }
+      return false;
     };
 
-    drawLayer(AS.map.layers.ground);
-    drawLayer(AS.map.layers.walls);
-    drawLayer(AS.map.layers.deco);
+    if (floorImg) {
+      // floors
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const has = (ground[i] || walls[i] || deco[i]);
+          if (!has) continue;
+          const use = inAnyRoom(x, y) ? floorImg : corrImg;
+          if (use) mctx.drawImage(use, 0, 0, use.width, use.height, x * TS, y * TS, TS, TS);
+
+          // subtle floor variation (deterministic) so large areas don't look flat
+          const h = ((x * 92837111) ^ (y * 689287499)) >>> 0;
+          const r = (h % 97) / 97;
+          if (r < 0.06) {
+            mctx.save();
+            mctx.fillStyle = 'rgba(0,0,0,.06)';
+            mctx.fillRect(x * TS + 6, y * TS + 22, 10, 4);
+            mctx.restore();
+          } else if (r < 0.09) {
+            mctx.save();
+            mctx.fillStyle = 'rgba(255,255,255,.05)';
+            mctx.fillRect(x * TS + 18, y * TS + 10, 8, 3);
+            mctx.restore();
+          }
+        }
+      }
+
+      // walls (+ solid deco tiles). Some maps use the "deco" layer for solid blockers.
+      // When we render with the custom pixel pack, those blockers could become invisible
+      // unless we draw them as walls too.
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          const i = y * W + x;
+          const solidDeco = !!(deco[i] && tileIsSolid(deco[i]));
+          if (!walls[i] && !solidDeco) continue;
+          const use = ((x + y) % 2 === 0) ? wallImg : wallAltImg;
+          if (use) mctx.drawImage(use, 0, 0, use.width, use.height, x * TS, y * TS, TS, TS);
+        }
+      }
+
+      // ambient occlusion-ish shadows to make walls readable (prevents "invisible" blockers)
+      const isWallTile = (x, y) => {
+        if (x < 0 || y < 0 || x >= W || y >= H) return false;
+        const i = y * W + x;
+        return !!walls[i] || !!(deco[i] && tileIsSolid(deco[i]));
+      };
+      const isWalkableTile = (x, y) => {
+        if (x < 0 || y < 0 || x >= W || y >= H) return false;
+        const i = y * W + x;
+        // treat solid deco tiles as non-walkable
+        return !!(ground[i] || deco[i] || walls[i]) && !walls[i] && !(deco[i] && tileIsSolid(deco[i]));
+      };
+      mctx.save();
+      mctx.fillStyle = 'rgba(0,0,0,.22)';
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (!isWallTile(x, y)) continue;
+          // shadow onto the tile below
+          if (isWalkableTile(x, y + 1)) {
+            mctx.fillRect(x * TS, (y + 1) * TS, TS, 6);
+          }
+          // shadow onto the tile to the right
+          if (isWalkableTile(x + 1, y)) {
+            mctx.fillRect((x + 1) * TS, y * TS, 6, TS);
+          }
+        }
+      }
+      mctx.restore();
+    } else {
+      // fallback to original tilesheet
+      const cols = AS.tilesMeta.columns;
+      const drawLayer = (layerArr) => {
+        for (let y = 0; y < H; y++) {
+          for (let x = 0; x < W; x++) {
+            const id = layerArr[y * W + x];
+            if (!id) continue;
+            const sx = (id % cols) * TS;
+            const sy = Math.floor(id / cols) * TS;
+            mctx.drawImage(AS.tilesImg, sx, sy, TS, TS, x * TS, y * TS, TS, TS);
+          }
+        }
+      };
+      drawLayer(ground);
+      drawLayer(walls);
+      drawLayer(deco);
+    }
+    // static decorations (with shadows)
+    for (const d of getPixelDecorPlacements()) {
+      const isLamp = /lamp|street_lamp|floor_lamp/i.test(d.key);
+      if (isLamp) continue; // lamps are dynamic (can be turned on/off)
+      const im = AS.pixel[d.key];
+      if (!im) continue;
+      const px = (d.tx + 0.5) * TS - d.w / 2;
+      const py = (d.ty + 0.5) * TS - d.h / 2;
+
+      // drop shadow (depth)
+      const cx = Math.floor(px + d.w / 2);
+      const sy = Math.floor(py + d.h * 0.72);
+      mctx.save();
+      mctx.fillStyle = 'rgba(0,0,0,.30)';
+      mctx.beginPath();
+      mctx.ellipse(cx, sy, d.w * 0.28, d.h * 0.10, 0, 0, Math.PI * 2);
+      mctx.fill();
+      mctx.restore();
+
+      // draw sprite
+      mctx.drawImage(im, 0, 0, im.width, im.height, Math.floor(px), Math.floor(py), d.w, d.h);
+
+    }
   }
 
   // ---------- Networking: BroadcastChannel ----------
@@ -766,14 +1545,50 @@
       this.myPlayerId = null;
       this.handlers = new Map();
       this.lastHostSeen = 0;
+      // Track peers for deterministic leader election (fixes "2명만 보임/연습모드" split-host issue)
+      this.peers = new Map(); // id -> lastSeen(ms)
+      this._helloTimer = null;
+      this._watchTimer = null;
 
       this.bc.onmessage = (ev) => {
         const msg = ev.data;
-        if (!msg || msg.room !== this.room) return;
-        if (msg.t === 'host') this.lastHostSeen = Date.now();
+        if (!msg || (msg.room && msg.room !== this.room)) return;
+        const tNow = Date.now();
+        if (msg.from) this.peers.set(String(msg.from), tNow);
+        if (msg.t === 'hello') {
+          // peer discovery
+          if (msg.from) this.peers.set(String(msg.from), tNow);
+        }
+        if (msg.t === 'host') {
+          this.lastHostSeen = tNow;
+          if (msg.hostId) {
+            // Always converge to the smallest known hostId
+            const hid = String(msg.hostId);
+            if (!this.hostId || hid < this.hostId) this.hostId = hid;
+            // If I'm host but another smaller host exists, step down.
+            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+              this.isHost = false;
+            }
+          }
+        }
+        if (msg.t === 'discover') {
+          // Reply to discovery with a hello (and host ping if I'm host)
+          this._sendHello();
+          if (this.isHost) this.post({ t: 'host', hostId: this.hostId, at: tNow });
+        }
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
       };
+
+      // Periodic hello helps cross-tab stability.
+      this._sendHello();
+      this._helloTimer = setInterval(() => this._sendHello(), 1200);
+      // Host watchdog: if host disappears, re-elect.
+      this._watchTimer = setInterval(() => {
+        if (this.isHost) return;
+        if (this.hostId && (Date.now() - this.lastHostSeen) <= 3500) return;
+        this._electHost();
+      }, 1000);
     }
 
     on(type, fn) { this.handlers.set(type, fn); }
@@ -784,13 +1599,45 @@
       this.bc.postMessage(msg);
     }
 
-    async discoverHost() {
-      this.post({ t: 'discover', at: Date.now() });
-      await new Promise(r => setTimeout(r, 250));
-      if (!this.hostId) {
-        // host가 없다면 내가 host
-        this.becomeHost();
+    _sendHello() {
+      try {
+        this.post({ t: 'hello', at: Date.now() });
+      } catch (_) {}
+    }
+
+    _electHost() {
+      const tNow = Date.now();
+      // Keep peers fresh for ~3.5s
+      const live = new Set([String(this.clientId)]);
+      for (const [id, seen] of this.peers.entries()) {
+        if ((tNow - (seen || 0)) <= 3500) live.add(String(id));
       }
+      // If we already have a fresh host ping, prefer that.
+      if (this.hostId && (tNow - this.lastHostSeen) <= 3500) {
+        this.isHost = (this.hostId === this.clientId);
+        return;
+      }
+      // Deterministic: smallest id becomes host
+      let best = null;
+      for (const id of live) {
+        if (!best || id < best) best = id;
+      }
+      if (!best) best = String(this.clientId);
+      this.hostId = best;
+      if (best === String(this.clientId)) {
+        this.becomeHost();
+      } else {
+        this.isHost = false;
+      }
+    }
+
+    async discoverHost() {
+      // Handshake + deterministic leader election.
+      this._sendHello();
+      this.post({ t: 'discover', at: Date.now() });
+      // Slightly longer window so different browsers/devices join reliably.
+      await new Promise(r => setTimeout(r, 650));
+      this._electHost();
     }
 
     becomeHost() {
@@ -800,6 +1647,8 @@
     }
 
     close() {
+      try { if (this._helloTimer) clearInterval(this._helloTimer); } catch (_) {}
+      try { if (this._watchTimer) clearInterval(this._watchTimer); } catch (_) {}
       try { this.bc.close(); } catch (_) {}
     }
   }
@@ -817,14 +1666,35 @@
       this.handlers = new Map();
       this.wsBase = wsBase;
       this.lastHostSeen = 0;
+      this.peers = new Map(); // id -> lastSeen(ms)
+      this._helloTimer = null;
+      this._watchTimer = null;
 
       const url = this._makeWsUrl(wsBase, roomCode);
       this.ws = new WebSocket(url);
       this.ws.addEventListener('message', (ev) => {
         let msg = null;
         try { msg = JSON.parse(ev.data); } catch (_) { return; }
-        if (!msg || msg.room !== this.room) return;
-        if (msg.t === 'host') this.lastHostSeen = Date.now();
+        if (!msg || (msg.room && msg.room !== this.room)) return;
+        const tNow = Date.now();
+        if (msg.from) this.peers.set(String(msg.from), tNow);
+        if (msg.t === 'hello') {
+          if (msg.from) this.peers.set(String(msg.from), tNow);
+        }
+        if (msg.t === 'host') {
+          this.lastHostSeen = tNow;
+          if (msg.hostId) {
+            const hid = String(msg.hostId);
+            if (!this.hostId || hid < this.hostId) this.hostId = hid;
+            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+              this.isHost = false;
+            }
+          }
+        }
+        if (msg.t === 'discover') {
+          this._sendHello();
+          if (this.isHost) this.post({ t: 'host', hostId: this.hostId, at: tNow });
+        }
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
       });
@@ -833,6 +1703,15 @@
         // 연결이 끊기면 로컬로 자동 복귀하지는 않고, 토스트만
         showToast('온라인 연결이 끊겼어. 새로고침해줘!');
       });
+
+      // Periodic hello helps stable peer discovery across devices.
+      this._sendHello();
+      this._helloTimer = setInterval(() => this._sendHello(), 1500);
+      this._watchTimer = setInterval(() => {
+        if (this.isHost) return;
+        if (this.hostId && (Date.now() - this.lastHostSeen) <= 4000) return;
+        this._electHost();
+      }, 1100);
     }
 
     _makeWsUrl(wsBase, room) {
@@ -856,11 +1735,37 @@
       try { this.ws.send(JSON.stringify(msg)); } catch (_) {}
     }
 
+    _sendHello() {
+      if (!this.ws || this.ws.readyState !== 1) return;
+      this.post({ t: 'hello', at: Date.now() });
+    }
+
+    _electHost() {
+      const tNow = Date.now();
+      const live = new Set([String(this.clientId)]);
+      for (const [id, seen] of this.peers.entries()) {
+        if ((tNow - (seen || 0)) <= 4000) live.add(String(id));
+      }
+      if (this.hostId && (tNow - this.lastHostSeen) <= 4000) {
+        this.isHost = (this.hostId === this.clientId);
+        return;
+      }
+      let best = null;
+      for (const id of live) {
+        if (!best || id < best) best = id;
+      }
+      if (!best) best = String(this.clientId);
+      this.hostId = best;
+      if (best === String(this.clientId)) this.becomeHost();
+      else this.isHost = false;
+    }
+
     async discoverHost() {
-      // 기존 로직(클라이언트 호스트 선출)을 그대로 사용
+      // Deterministic leader election (fixes split-host on multi-device joins)
+      this._sendHello();
       this.post({ t: 'discover', at: Date.now() });
-      await new Promise(r => setTimeout(r, 250));
-      if (!this.hostId) this.becomeHost();
+      await new Promise(r => setTimeout(r, 800));
+      this._electHost();
     }
 
     becomeHost() {
@@ -870,6 +1775,8 @@
     }
 
     close() {
+      try { if (this._helloTimer) clearInterval(this._helloTimer); } catch (_) {}
+      try { if (this._watchTimer) clearInterval(this._watchTimer); } catch (_) {}
       try { this.ws.close(); } catch (_) {}
     }
   }
@@ -891,7 +1798,7 @@
         if (!data || typeof data !== "object") return;
         if (data.type !== "sk_msg") return;
         const msg = data.msg;
-        if (!msg || msg.room !== this.room) return;
+        if (!msg || (msg.room && msg.room !== this.room)) return;
         if (msg.t === "host") this.lastHostSeen = Date.now();
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
@@ -955,6 +1862,7 @@
       lockedRoomId: null,
       lockedRoomUntil: 0,
       waterBlocks: {}, // id -> {x,y,until}
+      lamps: {}, // id -> {on, kind}
       teacherId: null,
       winner: null,
       lastUpdateAt: 0,
@@ -964,7 +1872,12 @@
       mission: null, // {siteId, kind, correct, practice}
       reopenMission: null, // {siteId, at} (graph penalty)
       meeting: { voted: false },
+      meetingChat: { id: 0, msgs: [], lastSentAt: 0 },
+      meetingAlarmUntil: 0,
+      meetingAlarmFlashUntil: 0,
       mapOpen: false,
+      debugCollision: false,
+      roleRevealUntil: 0,
     },
 
     fx: [], // {kind, x, y, bornAt, extra}
@@ -987,73 +1900,220 @@
     st.missions = {};
     st.doors = {};
     st.waterBlocks = {};
+    st.lamps = {};
     st.leaks = {};
     st.leakLevel = 0;
     st.lockedRoomId = null;
     st.lockedRoomUntil = 0;
 
-    for (const o of AS.map.objects) {
-      st.objects[o.id] = { ...o };
-      if (o.type === 'mission') {
-        st.missions[o.id] = { kind: o.kind, state: 'idle', expiresAt: 0 };
-      }
-      if (o.type === 'root_door') {
-        st.doors[o.id] = { closed: false, closedUntil: 0, roomId: o.roomId };
-      }
-    }
-
-    st.total = Object.keys(st.missions).length;
-    st.solved = 0;
-    st.timeLeft = 180;
-    st.maxTime = 180;
-    st.practice = false;
-    st.teacherId = null;
-    st.winner = null;
-    st.lastUpdateAt = now();
-
-    G.host.missionDisabledUntil = 0;
-    G.host.revealUntil = 0;
-    G.host.alarmUntil = 0;
-    G.host.alarmText = '';
-  }
-
-  function hostAddPlayer(nick, isBot = false) {
-    const st = G.state;
-    const ids = Object.keys(st.players).map(n => parseInt(n, 10)).filter(n => !Number.isNaN(n));
-    const nextId = ids.length ? Math.max(...ids) + 1 : 1;
-
-    const sp = AS.map.spawnPoints[(nextId - 1) % AS.map.spawnPoints.length];
-    const color = (nextId - 1) % COLORS.length;
-
-    st.players[nextId] = {
-      id: nextId,
-      nick: nick.slice(0, 10),
-      color,
-      x: (sp.x + 0.5) * TS,
-      y: (sp.y + 0.5) * TS,
-      vx: 0,
-      vy: 0,
-      alive: true,
-      down: false,
-      role: 'crew',
-      frozenUntil: 0,
-      slowUntil: 0,
-      killCdUntil: 0,
-      saboCdUntil: 0,
-      forceCdUntil: 0,
-      glassesUntil: 0,
-      invertUntil: 0,
-      darkUntil: 0,
-      crown: false,
-      ventCdUntil: 0,
-      vent: null, // {fromX,fromY,toX,toY,start,end,fromVent,toVent}
-      isBot,
-      botBrain: isBot ? { t: 0, target: null } : null,
-      emoteKind: null,
-      emoteUntil: 0,
+    const roomById = new Map((AS.map.rooms || []).map(r => [r.id, r]));
+    const W = AS.map.width | 0;
+    const H = AS.map.height | 0;
+    const canWalk = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+      if (!solid) return true;
+      return solid[ty * W + tx] ? false : true;
     };
 
-    return nextId;
+    const pushDoorOutward = (o) => {
+      // Place doors on the room-corridor boundary (Among Us style).
+      // This prevents doors from ending up in the middle of a room or mis-sized vs corridor width.
+      const r = roomById.get(o.roomId);
+      if (!r || !r.rect) return;
+      const [rx, ry, rw, rh] = r.rect;
+
+      const ox0 = o.x | 0, oy0 = o.y | 0;
+      const inRoomRect = (tx, ty) => (tx >= rx && ty >= ry && tx < rx + rw && ty < ry + rh);
+      const dirs = [
+        { dx: 1, dy: 0 },
+        { dx: -1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: 0, dy: -1 },
+      ];
+
+      // Prefer doorway candidates near the room boundary (stable + fast)
+      let best = null;
+      const band = 3;
+      for (let ty = ry; ty < ry + rh; ty++) {
+        for (let tx = rx; tx < rx + rw; tx++) {
+          const nearEdge = (tx - rx < band) || (rx + rw - 1 - tx < band) || (ty - ry < band) || (ry + rh - 1 - ty < band);
+          if (!nearEdge) continue;
+          if (!canWalk(tx, ty)) continue;
+          for (const d of dirs) {
+            const nx = tx + d.dx;
+            const ny = ty + d.dy;
+            if (inRoomRect(nx, ny)) continue;
+            if (!canWalk(nx, ny)) continue;
+            const dist = Math.abs(tx - ox0) + Math.abs(ty - oy0);
+            if (!best || dist < best.dist) {
+              best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, dist };
+            }
+          }
+        }
+      }
+
+      // Full scan fallback (handles slightly-off room rect metadata)
+      if (!best) {
+        for (let ty = ry; ty < ry + rh; ty++) {
+          for (let tx = rx; tx < rx + rw; tx++) {
+            if (!canWalk(tx, ty)) continue;
+            for (const d of dirs) {
+              const nx = tx + d.dx;
+              const ny = ty + d.dy;
+              if (inRoomRect(nx, ny)) continue;
+              if (!canWalk(nx, ny)) continue;
+              const dist = Math.abs(tx - ox0) + Math.abs(ty - oy0);
+              if (!best || dist < best.dist) {
+                best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, dist };
+              }
+            }
+          }
+        }
+      }
+
+      if (best) {
+        // Place the door on the corridor side; store outward (room -> corridor) direction.
+        o.x = best.outX;
+        o.y = best.outY;
+        o._doorDx = best.dx;
+        o._doorDy = best.dy;
+        return;
+      }
+
+      // Last resort: never push into room interior.
+      const ix = ox0, iy = oy0;
+      const dTop = Math.abs(iy - ry);
+      const dBot = Math.abs((ry + rh - 1) - iy);
+      const dL = Math.abs(ix - rx);
+      const dR = Math.abs((rx + rw - 1) - ix);
+      const m = Math.min(dTop, dBot, dL, dR);
+      let dx = 0, dy = 0;
+      if (m === dTop) dy = -1;
+      else if (m === dBot) dy = 1;
+      else if (m === dL) dx = -1;
+      else dx = 1;
+      o._doorDx = dx;
+      o._doorDy = dy;
+      for (let s = 1; s <= 10; s++) {
+        const tx = ix + dx * s;
+        const ty = iy + dy * s;
+        if (inRoomRect(tx, ty)) continue;
+        if (canWalk(tx, ty)) {
+          o.x = tx;
+          o.y = ty;
+          return;
+        }
+      }
+    };
+
+    // --- Map objects ---
+    const objs = Array.isArray(AS.map.objects) ? AS.map.objects : [];
+    for (const o0 of objs) {
+      if (!o0 || !o0.id || !o0.type) continue;
+      const id = String(o0.id);
+      const type = String(o0.type);
+      const o = { ...o0 };
+      o.id = id;
+      o.type = type;
+      o.x = (o.x | 0);
+      o.y = (o.y | 0);
+      if (typeof o.w === 'number') o.w = (o.w | 0);
+      if (typeof o.h === 'number') o.h = (o.h | 0);
+      if (o.links && !Array.isArray(o.links)) o.links = [];
+
+      if (type === 'root_door') {
+        // Ensure doors live on the corridor side and have a consistent outward direction.
+        pushDoorOutward(o);
+        st.doors[id] = { closed: false, closedUntil: 0 };
+      }
+
+      if (type === 'mission') {
+        st.missions[id] = {
+          kind: String(o.kind || 'add'),
+          state: 'idle',
+          expiresAt: 0,
+        };
+      }
+
+      // Store all interactive objects
+      st.objects[id] = o;
+    }
+
+    // Total missions count
+    const missionCount = Object.keys(st.missions).length;
+    if (missionCount > 0) st.total = missionCount;
+
+    // --- Dynamic lamps (placed as decor but networked so they can be sabotaged/fixed) ---
+    try {
+      const dec = getPixelDecorPlacements();
+      for (const d of dec) {
+        if (!d || !d.key) continue;
+        const key = String(d.key);
+        const isLamp = /street_lamp|floor_lamp/i.test(key);
+        if (!isLamp) continue;
+        const lid = `lamp_${key}_${d.tx|0}_${d.ty|0}`;
+        if (st.objects[lid]) continue;
+        st.objects[lid] = {
+          id: lid,
+          type: 'lamp',
+          kind: key,
+          x: d.tx | 0,
+          y: d.ty | 0,
+          roomId: d.roomId || null,
+        };
+        st.lamps[lid] = { on: true, kind: key };
+      }
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+
+
+  function hostAddPlayer(nick, isBot = false, clientId = null) {
+    const st = G.state;
+    if (!st.players) st.players = {};
+
+    if (!G.host.nextPlayerId) G.host.nextPlayerId = 1;
+    const id = G.host.nextPlayerId++;
+
+    const sps = (AS.map && Array.isArray(AS.map.spawnPoints) && AS.map.spawnPoints.length)
+      ? AS.map.spawnPoints
+      : [{ x: 2, y: 2 }];
+    const sp = sps[(id - 1) % sps.length] || sps[0];
+    const px = (Number(sp.x) + 0.5) * TS;
+    const py = (Number(sp.y) + 0.5) * TS;
+
+    st.players[id] = {
+      id,
+      nick: String(nick || (isBot ? '봇' : '토끼')).slice(0, 16),
+      clientId: clientId ? String(clientId) : null,
+      isBot: !!isBot,
+
+      role: 'crew',
+      alive: true,
+      down: false,
+
+      x: px,
+      y: py,
+      vx: 0,
+      vy: 0,
+      facing: 1,
+
+      // status effects
+      slowUntil: 0,
+      frozenUntil: 0,
+      invertUntil: 0,
+      vent: null,
+
+      // action/emote/cooldowns
+      emoteKind: null,
+      emoteUntil: 0,
+      killCdUntil: 0,
+      saboCdUntil: 0,
+    };
+
+    return id;
   }
 
   function hostAssignTeacher() {
@@ -1064,7 +2124,7 @@
       return;
     }
     const aliveIds = Object.values(st.players).filter(p => p.alive).map(p => p.id);
-    if (aliveIds.length < 4) return;
+    if (aliveIds.length < 2) return;
     const idx = Math.floor(Math.random() * aliveIds.length);
     const tid = aliveIds[idx];
     st.teacherId = tid;
@@ -1085,6 +2145,20 @@
 
     // 첫 미션 2개 활성화
     for (let i = 0; i < 2; i++) hostActivateRandomMission();
+
+    
+
+    // 각자 역할 안내(내가 선생토끼인지 바로 알 수 있게)
+    for (const pp of Object.values(G.state.players)) {
+      const text = practice
+        ? '연습 모드야! (선생토끼 없음) 마음껏 미션을 눌러봐!'
+        : ((pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터) 들키지 말고 빵점을 줘!' : '당신은 수학토끼야! 미션을 해결해서 시간을 늘려!');
+      sendToPlayer(pp.id, { t: 'toast', text });
+
+      // Among-Us style: big role reveal overlay (per player)
+      sendToPlayer(pp.id, { t: 'uiRoleReveal', role: pp.role, practice });
+    }
+
 
     broadcastState(true);
   }
@@ -1245,6 +2319,19 @@
       let mvy = frozen ? 0 : (inp.mvy || 0);
       if (now() < (p.invertUntil || 0)) { mvx = -mvx; mvy = -mvy; }
 
+      // Save intended direction for rendering (prevents left/right input showing as back/front).
+      const ilen = Math.hypot(mvx, mvy);
+      if (ilen > 0.12) {
+        const avx = Math.abs(mvx), avy = Math.abs(mvy);
+        // Prefer side view unless vertical is clearly dominant (helps joystick noise).
+        if (avx >= avy * 0.85) {
+          p.dir = 2;
+          p.facing = (mvx < 0 ? -1 : 1);
+        } else if (avy >= avx * 1.10) {
+          p.dir = (mvy < 0 ? 1 : 0);
+        }
+      }
+
       let spd = SPEED;
       if (now() < p.slowUntil) spd *= 0.6;
 
@@ -1375,17 +2462,123 @@ function tileAtPixel(x, y) {
     return { tx, ty, solid: s };
   }
 
-  function doorSolidAt(tx, ty) {
+  // Door geometry helper: estimate corridor axis/width around a door tile.
+  // We keep this lightweight and deterministic so rendering + collision + vision agree.
+  function _isSolidTile(tx, ty) {
+    const W = AS.map.width|0, H = AS.map.height|0;
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H) return true;
+    return !!(solid && solid[ty*W + tx] === 1);
+  }
+
+  function _openRun(tx, ty, dx, dy, maxSteps) {
+    let n = 0;
+    const m = Math.max(1, maxSteps|0);
+    for (let i = 1; i <= m; i++) {
+      const x = tx + dx * i;
+      const y = ty + dy * i;
+      if (_isSolidTile(x, y)) break;
+      n++;
+    }
+    return n;
+  }
+
+  function doorCrossInfoAt(tx, ty, hintObj = null) {
+    // Scan only a short range so doors in wide rooms don't explode in size.
+    const max = 4;
+    const spanX = 1 + _openRun(tx, ty, -1, 0, max) + _openRun(tx, ty, 1, 0, max);
+    const spanY = 1 + _openRun(tx, ty, 0, -1, max) + _openRun(tx, ty, 0, 1, max);
+
+    // Corridor axis: whichever span is larger. If ambiguous, prefer the original door push direction.
+    let corridorVertical = false;
+    if (spanY > spanX + 1) corridorVertical = true;
+    else if (spanX > spanY + 1) corridorVertical = false;
+    else if (hintObj && typeof hintObj._doorDx === 'number' && typeof hintObj._doorDy === 'number') {
+      // If the door was pushed outward vertically, it's likely on a horizontal wall,
+      // meaning the corridor runs horizontally -> door should be vertical.
+      // But for our cross-width estimation, we only need corridor axis.
+      corridorVertical = (Math.abs(hintObj._doorDy) === 1);
+    } else {
+      // Default: vertical corridors are the common case in this map.
+      corridorVertical = true;
+    }
+
+    const crossTiles = clamp(corridorVertical ? spanX : spanY, 2, 4);
+    return { corridorVertical, crossTiles };
+  }
+
+  // Door boundary blocking (Among Us-style): a closed door blocks the *edge* between two tiles
+  // (corridor <-> room) rather than making a whole tile solid. This avoids invisible solid-tile
+  // artifacts and makes vision/collision more accurate.
+  function doorEdgeBlockedBetween(tx0, ty0, tx1, ty1) {
     const st = G.state;
+    if (!st || !st.objects || !st.doors) return false;
+    const dx = (tx1 - tx0) | 0;
+    const dy = (ty1 - ty0) | 0;
+    if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
+
     for (const obj of Object.values(st.objects)) {
-      if (obj.type !== 'root_door') continue;
-      if (obj.x === tx && obj.y === ty) {
-        const d = st.doors[obj.id];
-        if (d?.closed) return true;
+      if (!obj || obj.type !== 'root_door') continue;
+      const d = st.doors[obj.id];
+      if (!d || !d.closed) continue;
+
+      const ox = obj.x | 0;
+      const oy = obj.y | 0;
+      const info = doorCrossInfoAt(ox, oy, obj);
+      const half = Math.floor((info.crossTiles - 1) / 2);
+
+      if (info.corridorVertical) {
+        // Corridor runs vertically, doorway spans along X, door plane is horizontal.
+        const ody = (obj._doorDy | 0) || 1; // outward (room->corridor)
+        for (let off = -half; off <= half; off++) {
+          const ax = ox + off;
+          const ay = oy;         // corridor side tile
+          const bx = ox + off;
+          const by = oy - ody;   // room side tile
+          if ((tx0 === ax && ty0 === ay && tx1 === bx && ty1 === by) ||
+              (tx1 === ax && ty1 === ay && tx0 === bx && ty0 === by)) return true;
+        }
+      } else {
+        // Corridor runs horizontally, doorway spans along Y, door plane is vertical.
+        const odx = (obj._doorDx | 0) || 1; // outward (room->corridor)
+        for (let off = -half; off <= half; off++) {
+          const ax = ox;
+          const ay = oy + off;   // corridor side tile
+          const bx = ox - odx;   // room side tile
+          const by = oy + off;
+          if ((tx0 === ax && ty0 === ay && tx1 === bx && ty1 === by) ||
+              (tx1 === ax && ty1 === ay && tx0 === bx && ty0 === by)) return true;
+        }
       }
     }
     return false;
   }
+
+  function doorEdgeBlockedSegment(x0, y0, x1, y1) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.5) return false;
+    const step = Math.max(4, TS * 0.25);
+    const n = Math.ceil(dist / step);
+
+    let ptx = Math.floor(x0 / TS);
+    let pty = Math.floor(y0 / TS);
+
+    for (let i = 1; i <= n; i++) {
+      const t = i / n;
+      const x = x0 + dx * t;
+      const y = y0 + dy * t;
+      const tx = Math.floor(x / TS);
+      const ty = Math.floor(y / TS);
+      if (tx !== ptx || ty !== pty) {
+        if (doorEdgeBlockedBetween(ptx, pty, tx, ty)) return true;
+        ptx = tx; pty = ty;
+      }
+    }
+    return false;
+  }
+
+  // Legacy stub (kept for compatibility): closed doors no longer mark tiles solid.
+  function doorSolidAt(tx, ty) { return false; }
 
   function waterAtTile(tx, ty) {
     const st = G.state;
@@ -1412,26 +2605,32 @@ function tileAtPixel(x, y) {
   function isSolidPixelFor(player, x, y) {
     const t = tileAtPixel(x, y);
     if (t.solid) return true;
-    if (doorSolidAt(t.tx, t.ty)) return true;
     if (waterBlockSolidAt(t.tx, t.ty, player)) return true;
     return false;
   }
 
+  
   function moveWithCollision(p, nx, ny) {
-    // 축별 분리
+    // axis-separated resolution + door-edge boundary blocking
     let x = nx;
     let y = p.y;
-    if (collidesCircle(p, x, y, PLAYER_R)) {
+
+    // door boundary check on X move (center segment)
+    if (doorEdgeBlockedSegment(p.x, p.y, x, y) || collidesCircle(p, x, y, PLAYER_R)) {
       x = p.x;
-      // 실제 이동이 막혔는데 속도가 남아있으면(특히 복도에서 대각 입력)
-      // 스프라이트 방향이 엉뚱하게(옆으로 가는데 뒷모습 등) 잡히는 문제가 생긴다.
       p.vx = 0;
     }
+
     y = ny;
-    if (collidesCircle(p, x, y, PLAYER_R)) {
+    // door boundary check on Y move
+    if (doorEdgeBlockedSegment(x, p.y, x, y)) {
+      y = p.y;
+      p.vy = 0;
+    } else if (collidesCircle(p, x, y, PLAYER_R)) {
       y = p.y;
       p.vy = 0;
     }
+
     p.x = x;
     p.y = y;
   }
@@ -1459,9 +2658,15 @@ function tileAtPixel(x, y) {
 
     for (const obj of Object.values(st.objects)) {
       // meeting, mission, door, report
-      if (!['meeting_bell', 'mission', 'root_door', 'body_report', 'vent_hole'].includes(obj.type)) continue;
+      if (!['meeting_bell', 'mission', 'root_door', 'body_report', 'vent_hole', 'lamp'].includes(obj.type)) continue;
       if (obj.type === 'vent_hole' && player.role !== 'teacher') continue;
       if (obj.type === 'vent_hole' && G.state.practice) continue;
+      if (obj.type === 'lamp') {
+        const lp = st.lamps && st.lamps[obj.id];
+        if (!lp) continue;
+        if (player.role === 'teacher' && !lp.on) continue;
+        if (player.role !== 'teacher' && lp.on) continue;
+      }
       const ox = (obj.x + 0.5) * TS;
       const oy = (obj.y + 0.5) * TS;
       const d2 = dist2(player.x, player.y, ox, oy);
@@ -1557,13 +2762,44 @@ function tileAtPixel(x, y) {
       broadcastState(true);
       return;
     }
+    if (obj.type === 'lamp') {
+      const lp = st.lamps && st.lamps[obj.id];
+      if (!lp) return;
+      // Teacher can only turn OFF; crew can only turn ON (Among Us style).
+      if (p.role === 'teacher') {
+        if (lp.on) {
+          lp.on = false;
+          broadcast({ t: 'lightNotice', text: '누군가 불을 껐어요.', until: now() + 1500 });
+        }
+      } else {
+        if (!lp.on) {
+          lp.on = true;
+          broadcast({ t: 'lightNotice', text: '누군가 불을 켰어요.', until: now() + 1500 });
+        }
+      }
+      broadcastState(true);
+      return;
+    }
+
 
     if (obj.type === 'root_door') {
       const d = st.doors[obj.id];
       if (!d) return;
       // 잠금 중이면 토글 불가
       if (d.closedUntil && now() < d.closedUntil) return;
-      d.closed = !d.closed;
+
+      const wasClosed = !!d.closed;
+      d.closed = !wasClosed;
+
+      // Among-Us style quick door animation (vines spill down/up)
+      const t0 = now();
+      d.anim = { k: d.closed ? 'close' : 'open', s: t0, e: t0 + (d.closed ? 260 : 200) };
+
+      if (d.closed) {
+        broadcast({ t: 'fx', kind: 'doorClose', x: obj.x, y: obj.y, bornAt: t0, id: obj.id });
+      }
+
+      broadcastState(true);
       return;
     }
 
@@ -1624,6 +2860,11 @@ function tileAtPixel(x, y) {
     if (bestD2 > KILL_RANGE ** 2) return;
 
     target.down = true;
+
+    // brief kill animation (shown to everyone)
+    killer.emoteKind = 'kill0';
+    killer.emoteUntil = now() + 900;
+
     killer.killCdUntil = now() + 18_000;
     broadcastState();
   }
@@ -1668,6 +2909,18 @@ function tileAtPixel(x, y) {
       return solid[ty * W + tx] === 1;
     };
 
+
+    const isClosedDoorTile = (tx, ty) => {
+      const st2 = G.state;
+      for (const o of Object.values(st2.objects || {})) {
+        if (!o || o.type !== 'root_door') continue;
+        const dd = st2.doors && st2.doors[o.id];
+        if (dd && dd.closed && (o.x|0) === (tx|0) && (o.y|0) === (ty|0)) return true;
+      }
+      return false;
+    };
+
+
     // 방향별로 "열린 통로" 길이를 재서 물이 길을 따라 차오르는 느낌
     const dirs = [
       [1, 0], [-1, 0], [0, 1], [0, -1],
@@ -1679,7 +2932,7 @@ function tileAtPixel(x, y) {
         const ty = nearDoor.y + dy * i;
         if (baseSolidAt(tx, ty)) break;
         // 닫힌 문 타일은 통로로 보지 않음
-        if (doorSolidAt(tx, ty)) break;
+        if (isClosedDoorTile(tx, ty)) break;
         n++;
       }
       return n;
@@ -1732,7 +2985,6 @@ function tileAtPixel(x, y) {
     const flooded = new Set(tiles.map(tt => tt.x + ',' + tt.y));
     const isBlockedForCrew = (tx, ty) => {
       if (baseSolidAt(tx, ty)) return true;
-      if (doorSolidAt(tx, ty)) return true;
       if (flooded.has(tx + ',' + ty)) return true;
       return false;
     };
@@ -2141,13 +3393,14 @@ function tileAtPixel(x, y) {
 
       m.state = 'solved';
       m.expiresAt = 0;
+      m.sealedAt = now();
       st.solved += 1;
       st.timeLeft += 30;
       st.timeLeft = Math.min(st.timeLeft, 999);
       sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: '+30초! 해결!' });
 
       const siteObj = st.objects[siteId];
-      if (siteObj) broadcast({ t: 'fx', kind: 'carrotPop', x: siteObj.x, y: siteObj.y, bornAt: now() });
+      if (siteObj) broadcast({ t: 'fx', kind: 'seal', x: siteObj.x, y: siteObj.y, bornAt: now() });
 
       // 누수(압박) 완화: 미션을 해결하면 누수 레벨 1 감소 + 가장 오래된 물샘 흔적 1개 제거
       if ((st.leakLevel || 0) > 0) {
@@ -2309,6 +3562,7 @@ function tileAtPixel(x, y) {
       doors: st.doors,
       waterBlocks: st.waterBlocks,
       leaks: st.leaks,
+      lamps: st.lamps,
       leakLevel: st.leakLevel || 0,
       lockedRoomId: st.lockedRoomId,
       lockedRoomUntil: st.lockedRoomUntil,
@@ -2502,6 +3756,82 @@ function tileAtPixel(x, y) {
     gain.connect(ac.destination);
     osc.start(t0);
     osc.stop(t0 + Math.max(0.03, dur) + 0.02);
+  }
+
+  
+
+  function playThunk() {
+    const ac = ensureAudio();
+    if (!ac || ac.state !== 'running') return;
+    const t0 = ac.currentTime;
+
+    // low thump
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    const filt = ac.createBiquadFilter();
+
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(140, t0);
+    osc.frequency.exponentialRampToValueAtTime(70, t0 + 0.08);
+
+    filt.type = 'lowpass';
+    filt.frequency.setValueAtTime(800, t0);
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.08, t0 + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+
+    osc.connect(filt);
+    filt.connect(gain);
+    gain.connect(ac.destination);
+
+    osc.start(t0);
+    osc.stop(t0 + 0.16);
+  }
+
+  // Emergency siren (Among-Us style). Pure WebAudio so we don't need external files.
+  function playSiren(durSec = 3.2) {
+    const ac = ensureAudio();
+    if (!ac || ac.state !== 'running') return;
+
+    const t0 = ac.currentTime;
+    const t1 = t0 + Math.max(0.4, durSec);
+
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    const filt = ac.createBiquadFilter();
+
+    // Siren sweep using an LFO
+    const lfo = ac.createOscillator();
+    const lfoGain = ac.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(640, t0);
+
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(1.6, t0);
+    lfoGain.gain.setValueAtTime(240, t0);
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    filt.type = 'lowpass';
+    filt.frequency.setValueAtTime(1400, t0);
+    filt.Q.setValueAtTime(0.8, t0);
+
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.06, t0 + 0.05);
+    gain.gain.setValueAtTime(0.06, t1 - 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t1);
+
+    osc.connect(filt);
+    filt.connect(gain);
+    gain.connect(ac.destination);
+
+    lfo.start(t0);
+    osc.start(t0);
+    osc.stop(t1 + 0.02);
+    lfo.stop(t1 + 0.02);
   }
 
   function tryVibrate(pattern) {
@@ -2723,7 +4053,7 @@ function tileAtPixel(x, y) {
     if (!ui || !G.net) return;
     const payload = {
       t: 'missionSubmit',
-      playerId: G.net.myPlayerId,
+      playerId: Number(G.net.myPlayerId || 0),
       siteId: ui.siteId,
       kind: ui.kind,
       practice: ui.practice,
@@ -2736,13 +4066,128 @@ function tileAtPixel(x, y) {
 
   closeMission.addEventListener('click', () => closeMissionUI());
 
+  // ---------- Meeting chat (Among-Us style) ----------
+  function nowHHMM(){
+    const d = new Date();
+    const hh = String(d.getHours()).padStart(2,'0');
+    const mm = String(d.getMinutes()).padStart(2,'0');
+    return `${hh}:${mm}`;
+  }
+
+  function sanitizeMeetingText(s){
+    return String(s || '').replace(/[\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+  }
+
+  function renderMeetingRoster(){
+    if (!meetingRoster) return;
+    const st = G.state;
+    meetingRoster.innerHTML = '';
+    const players = Object.values(st.players || {}).slice().sort((a,b)=> (a.id||0) - (b.id||0));
+    for (const p of players){
+      const chip = document.createElement('div');
+      chip.className = 'mAvatar' + ((p.alive && !p.down) ? '' : ' mDead');
+      const dot = document.createElement('span');
+      dot.className = 'mDot';
+      dot.style.background = colorHex(p.color ?? 0);
+      dot.textContent = '🐰';
+      const name = document.createElement('span');
+      name.textContent = String(p.nick || 'Player').slice(0, 10);
+      chip.appendChild(dot);
+      chip.appendChild(name);
+      meetingRoster.appendChild(chip);
+    }
+  }
+
+  function renderMeetingChat(){
+    if (!meetingChatLog) return;
+    const msgs = (G.ui.meetingChat?.msgs || []).slice(-80);
+    meetingChatLog.innerHTML = '';
+    for (const m of msgs){
+      const line = document.createElement('div');
+      line.className = 'mLine';
+
+      const dot = document.createElement('span');
+      dot.className = 'mDot';
+      dot.style.background = colorHex(m.color ?? 0);
+      dot.textContent = '🐰';
+
+      const bubble = document.createElement('div');
+      bubble.className = 'mBubble';
+
+      const meta = document.createElement('div');
+      meta.className = 'mMeta';
+      const nick = document.createElement('span');
+      nick.className = 'mNick';
+      nick.textContent = String(m.nick || 'Player').slice(0, 10);
+      const time = document.createElement('span');
+      time.className = 'mTime';
+      time.textContent = String(m.time || '');
+      meta.appendChild(nick);
+      meta.appendChild(time);
+
+      const text = document.createElement('div');
+      text.textContent = String(m.text || '');
+
+      bubble.appendChild(meta);
+      bubble.appendChild(text);
+
+      line.appendChild(dot);
+      line.appendChild(bubble);
+      meetingChatLog.appendChild(line);
+    }
+    // always scroll to bottom on update
+    try{ meetingChatLog.scrollTop = meetingChatLog.scrollHeight; }catch(_){ }
+  }
+
+  function sendMeetingChat(){
+    if (!G.net) return;
+    if (G.phase !== 'meeting') return;
+    const text = sanitizeMeetingText(meetingChatText?.value || '');
+    if (!text) return;
+    const tNow = now();
+    if (tNow - (G.ui.meetingChat?.lastSentAt || 0) < 350) return;
+    G.ui.meetingChat.lastSentAt = tNow;
+    const meetingId = G.ui.meetingChat?.id || 0;
+    const meId = Number(G.net.myPlayerId || 0);
+    G.net.post({ t:'meetingChat', meetingId, playerId: meId, text });
+    if (meetingChatText) meetingChatText.value = '';
+  }
+
+  if (meetingChatSend) meetingChatSend.addEventListener('click', () => sendMeetingChat());
+  if (meetingChatText) meetingChatText.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); sendMeetingChat(); }
+  });
+
   function openMeetingUI(kind, reason, endsAt) {
     meetingModal.classList.add('show');
+
+    // Initialize meeting chat (new meeting instance id)
+    G.ui.meetingChat.id = Number(endsAt || 0);
+    G.ui.meetingChat.msgs = [];
+
+    // Emergency bell: flash + siren
+    if (kind === 'emergency') {
+      G.ui.meetingAlarmUntil = now() + 3500;
+      G.ui.meetingAlarmFlashUntil = now() + 3500;
+      playSiren(3.5);
+      tryVibrate([120, 60, 120, 60, 180]);
+    } else {
+      G.ui.meetingAlarmUntil = now() + 1400;
+      G.ui.meetingAlarmFlashUntil = now() + 1400;
+      playBeep(520, 0.08);
+      playBeep(640, 0.08);
+      tryVibrate([90, 40, 90]);
+    }
     const tag = (kind === 'report') ? '🚨 신고' : '🔔 긴급회의';
     meetingInfo.textContent = `${tag} · ${reason}`;
     G.ui.meeting.voted = false;
 
+    renderMeetingRoster();
+    renderMeetingChat();
     renderVoteList();
+
+    // focus chat box (best-effort)
+    try{ setTimeout(()=> meetingChatText && meetingChatText.focus(), 80); }catch(_){ }
 
     // 타이머 업데이트
     const tick = () => {
@@ -2756,12 +4201,19 @@ function tileAtPixel(x, y) {
 
   function closeMeetingUI() {
     meetingModal.classList.remove('show');
+    // clear chat input (keep history cleared on next open)
+    try{ if (meetingChatText) meetingChatText.value = ''; }catch(_){ }
   }
 
   function renderVoteList() {
     voteList.innerHTML = '';
     const st = G.state;
     const meId = G.net?.myPlayerId;
+
+    // Keep roster in sync with current alive/down states
+    renderMeetingRoster();
+
+    renderMeetingRoster();
 
     const alive = Object.values(st.players).filter(p => p.alive && !p.down);
     alive.forEach(p => {
@@ -2788,7 +4240,7 @@ function tileAtPixel(x, y) {
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
     G.ui.meeting.voted = true;
-    G.net.post({ t: 'vote', playerId: G.net.myPlayerId, target: null });
+    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
     renderVoteList();
   });
 
@@ -2811,8 +4263,8 @@ function tileAtPixel(x, y) {
     const rect = sceneCanvas.getBoundingClientRect();
     const w = Math.max(10, rect.width);
     const h = Math.max(10, rect.height);
-    sceneCanvas.width = Math.floor(w * DPR);
-    sceneCanvas.height = Math.floor(h * DPR);
+    sceneCanvas.width = Math.round(w * DPR);
+    sceneCanvas.height = Math.round(h * DPR);
   }
 
   function initRain() {
@@ -3003,7 +4455,15 @@ function tileAtPixel(x, y) {
       if (payload?.kind === 'eject' && p) {
         const mood = p.isTeacher ? 'teacher' : 'cry';
         const wob = p.isTeacher ? 0 : Math.sin(t * 0.01) * 4;
-        drawBunny(W * 0.5 + wob, H * 0.62, 2.4 * DPR, p.color ?? 0, t - SCENE.startAt, mood);
+        const cx = W * 0.5 + wob;
+        const cy = H * 0.62;
+        if (p.isTeacher) {
+          // teacher is known in this scene: show the provided pixel-art 'TCH' pose if available
+          const ok = drawTeacherSceneSheet('teacher_tch_sheet', cx, cy, 1.05 * DPR, t, 'teacher');
+          if (!ok) drawBunny(cx, cy, 2.4 * DPR, p.color ?? 0, t - SCENE.startAt, mood);
+        } else {
+          drawBunny(cx, cy, 2.4 * DPR, p.color ?? 0, t - SCENE.startAt, mood);
+        }
 
         // 말풍선
         const msg = p.isTeacher ? '칫!' : '으앙…';
@@ -3016,6 +4476,29 @@ function tileAtPixel(x, y) {
       SCENE.raf = requestAnimationFrame(loop);
     };
     SCENE.raf = requestAnimationFrame(loop);
+  }
+
+  function drawTeacherSceneSheet(sheetKey, x, y, scale, t, mood) {
+    const sheet = AS.pixel?.[sheetKey];
+    if (!sheet) return false;
+    const bob = (mood === 'teacher') ? 0 : Math.sin(t * 0.01) * 1.5;
+    const sw = 64, sh = 72;
+    const viewX = 64; // front view
+    const dw = Math.round(sw * scale);
+    const dh = Math.round(sh * scale);
+    sceneCtx.save();
+    sceneCtx.imageSmoothingEnabled = false;
+    // soft shadow
+    sceneCtx.globalAlpha = 0.22;
+    sceneCtx.fillStyle = '#000';
+    sceneCtx.beginPath();
+    sceneCtx.ellipse(x, y + dh * 0.22, dw * 0.28, dh * 0.09, 0, 0, Math.PI * 2);
+    sceneCtx.fill();
+    sceneCtx.globalAlpha = 1;
+
+    sceneCtx.drawImage(sheet, viewX, 0, sw, sh, Math.round(x - dw/2), Math.round(y - dh*0.70 + bob), dw, dh);
+    sceneCtx.restore();
+    return true;
   }
 
   function bubble(cx, cy, text) {
@@ -3085,11 +4568,81 @@ function tileAtPixel(x, y) {
     G.local.mvy = dy / d;
   }
 
+  // PC: click-to-interact helper
+  // If the user clicks an interactive thing (mission hole, lamp, door, bell, vent, body)
+  // and they are already within interact range, trigger interact instead of steering.
+  function tryInteractFromPointer(px, py){
+    try {
+      if (!G.net) return false;
+      const st = G.state;
+      const me = st.players[G.net?.myPlayerId];
+      if (!me || !me.alive || me.down) return false;
+      const cam = getCamera(me);
+      const wx = cam.x + px;
+      const wy = cam.y + py;
+
+      // candidate objects
+      let best = null;
+      let bestD2 = Infinity;
+      for (const obj of Object.values(st.objects || {})) {
+        if (!['meeting_bell', 'mission', 'root_door', 'vent_hole', 'lamp'].includes(obj.type)) continue;
+        if (obj.type === 'vent_hole' && (me.role !== 'teacher' || st.practice)) continue;
+        if (obj.type === 'lamp') {
+          const lp = st.lamps && st.lamps[obj.id];
+          if (!lp) continue;
+          if (me.role === 'teacher' && !lp.on) continue;
+          if (me.role !== 'teacher' && lp.on) continue;
+        }
+        const ox = (obj.x + 0.5) * TS;
+        const oy = (obj.y + 0.5) * TS;
+        const clickD2 = dist2(wx, wy, ox, oy);
+        if (clickD2 > (TS * 0.9) ** 2) continue; // must click near the thing
+        const meD2 = dist2(me.x, me.y, ox, oy);
+        if (meD2 > INTERACT_RANGE ** 2) continue; // must be close enough
+        if (clickD2 < bestD2) { bestD2 = clickD2; best = obj; }
+      }
+
+      // body report (click near a downed player)
+      if (!best && !st.practice && st.teacherId) {
+        for (const p of Object.values(st.players || {})) {
+          if (!p.alive || !p.down) continue;
+          if (p.id === me.id) continue;
+          const clickD2 = dist2(wx, wy, p.x, p.y);
+          if (clickD2 > (TS * 0.9) ** 2) continue;
+          const meD2 = dist2(me.x, me.y, p.x, p.y);
+          if (meD2 > (INTERACT_RANGE + 10) ** 2) continue;
+          best = { type: 'body_report' };
+          break;
+        }
+      }
+
+      if (!best) return false;
+
+      // Trigger interact immediately.
+      if (G.net.isHost && G.net.myPlayerId) {
+        hostHandleInteract(G.net.myPlayerId);
+        broadcastState(true);
+      } else {
+        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   canvas.addEventListener('pointerdown', (ev) => {
     if (isMobile) return; // 모바일은 조이스틱
     if (G.phase !== 'play') return;
     G.local.mouseDown = true;
     const p = canvasPoint(ev);
+    // If the click is on an interactable and I'm in range, interact instead of moving.
+    if (tryInteractFromPointer(p.x, p.y)) {
+      G.local.mouseDown = false;
+      G.local.mvx = 0;
+      G.local.mvy = 0;
+      return;
+    }
     setMoveFromPointer(p.x, p.y);
   });
 
@@ -3159,10 +4712,16 @@ function tileAtPixel(x, y) {
       case 'D':
         G.local.keys.right = true; break;
             case '1':
-        if (G.net) G.net.post({ t: 'emote', playerId: G.net.myPlayerId, kind: 'cry' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'cry' });
         handled = true; break;
       case '2':
-        if (G.net) G.net.post({ t: 'emote', playerId: G.net.myPlayerId, kind: 'tsk' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'tsk' });
+        handled = true; break;
+      case 'c':
+      case 'C':
+        // debug: visualize collision tiles (helps diagnose "invisible" blockers)
+        G.ui.debugCollision = !G.ui.debugCollision;
+        showToast(G.ui.debugCollision ? '디버그: 충돌 타일 표시 ON' : '디버그: 충돌 타일 표시 OFF');
         handled = true; break;
 default:
         handled = false;
@@ -3263,25 +4822,25 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
   });
 
   killBtn.addEventListener('click', () => {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'kill' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'kill' });
   });
 
   function sendSabotage() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'sabotage' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'sabotage' });
   }
 
   function sendForceMission() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'forceMission' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'forceMission' });
   }
 
   saboBtn?.addEventListener('click', () => sendSabotage());
@@ -3299,7 +4858,7 @@ default:
           hostHandleInteract(G.net.myPlayerId);
           broadcastState(true);
         } else if (G.net) {
-          G.net.post({ t: 'act', playerId: G.net.myPlayerId, kind: 'interact' });
+          G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
         }
         return;
       }
@@ -3315,10 +4874,177 @@ default:
     const H = AS.map.height * TS;
     const vw = viewW / ZOOM;
     const vh = viewH / ZOOM;
-    const x = clamp(me.x - vw / 2, 0, Math.max(0, W - vw));
-    const y = clamp(me.y - vh / 2, 0, Math.max(0, H - vh));
+    // Snap camera to CSS-pixel grid to avoid sub-pixel sampling blur when drawing the cached map.
+    const x = snapPx(clamp(me.x - vw / 2, 0, Math.max(0, W - vw)));
+    const y = snapPx(clamp(me.y - vh / 2, 0, Math.max(0, H - vh)));
     return { x, y, vw, vh };
   }
+  // ---------- Lighting / Vision (Among Us-like) ----------
+  function _angDiff(a, b){
+    let d = a - b;
+    while (d > Math.PI) d -= Math.PI*2;
+    while (d < -Math.PI) d += Math.PI*2;
+    return Math.abs(d);
+  }
+
+  function opaqueAtTile(tx, ty){
+    const W = AS.map.width|0, H = AS.map.height|0;
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H) return true;
+    if (solid && solid[ty*W + tx] === 1) return true;
+    return false;
+  }
+
+  
+  
+  function castRay(px, py, ang, maxDist){
+    const step = 6;
+    const c = Math.cos(ang), s = Math.sin(ang);
+    let lastX = px, lastY = py;
+    let ptx = Math.floor(px / TS);
+    let pty = Math.floor(py / TS);
+    for (let d = 0; d <= maxDist; d += step){
+      const x = px + c*d;
+      const y = py + s*d;
+      const tx = Math.floor(x / TS);
+      const ty = Math.floor(y / TS);
+      if (tx !== ptx || ty !== pty) {
+        if (doorEdgeBlockedBetween(ptx, pty, tx, ty)) return { x: lastX, y: lastY };
+        ptx = tx; pty = ty;
+      }
+      if (opaqueAtTile(tx, ty)) return { x: lastX, y: lastY };
+      lastX = x; lastY = y;
+    }
+    return { x: px + c*maxDist, y: py + s*maxDist };
+  }
+
+  function lineOfSight(px, py, tx, ty){
+    // sample along the segment; stop at walls or closed door boundaries
+    const dx = tx - px, dy = ty - py;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1) return true;
+    const step = 8;
+    const n = Math.ceil(dist / step);
+
+    let ptx = Math.floor(px / TS);
+    let pty = Math.floor(py / TS);
+
+    for (let i = 0; i <= n; i++){
+      const t = i / n;
+      const x = px + dx * t;
+      const y = py + dy * t;
+      const gx = Math.floor(x / TS);
+      const gy = Math.floor(y / TS);
+
+      if (gx !== ptx || gy !== pty) {
+        if (doorEdgeBlockedBetween(ptx, pty, gx, gy)) return false;
+        ptx = gx; pty = gy;
+      }
+
+      if (opaqueAtTile(gx, gy)) return false;
+    }
+    return true;
+  }
+
+  function getGlobalDarkness01(st){
+    const lamps = st.lamps || {};
+    const ids = Object.keys(lamps);
+    const total = ids.length;
+    if (!total) return 0;
+    let off = 0;
+    for (const id of ids){ if (!lamps[id]?.on) off++; }
+    return clamp(off / total, 0, 1);
+  }
+
+  function getLookAngle(me){
+    // prefer current input direction; fallback to last stored
+    const mvx = G.local.mvx || 0;
+    const mvy = G.local.mvy || 0;
+    const mag = Math.hypot(mvx, mvy);
+    if (!G.ui._lookAng && G.ui._lookAng !== 0) G.ui._lookAng = 0;
+    if (mag > 0.15){
+      G.ui._lookAng = Math.atan2(mvy, mvx);
+    } else {
+      // use sprite dir/facing
+      if (Math.abs(me.vx || 0) > Math.abs(me.vy || 0)) {
+        if ((me.vx || 0) > 0.2) G.ui._lookAng = 0;
+        else if ((me.vx || 0) < -0.2) G.ui._lookAng = Math.PI;
+      } else {
+        if ((me.vy || 0) > 0.2) G.ui._lookAng = Math.PI/2;
+        else if ((me.vy || 0) < -0.2) G.ui._lookAng = -Math.PI/2;
+      }
+    }
+    return G.ui._lookAng || 0;
+  }
+
+  function drawLightMask(cam, me, st){
+    if (!me || me.role === 'teacher' || st.practice) return;
+    const dark01 = getGlobalDarkness01(st);
+    if (dark01 <= 0) return;
+
+    // Intensity curves
+    const a = clamp(dark01, 0, 1);
+    const overlayA = 0.28 + 0.62 * a;
+    const look = getLookAngle(me);
+    const half = (Math.PI/180) * (150 - 80 * a); // 150deg -> 70deg
+    const maxDist = 520 - 220 * a; // 520px -> 300px
+    const nearR = 110 - 45 * a; // small circle for close-by side vision
+    const rays = Math.round(70 - 10 * a);
+
+    // darkness overlay
+    ctx.save();
+    ctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+    ctx.fillRect(0, 0, viewW, viewH);
+
+    // punch visible areas
+    ctx.globalCompositeOperation = 'destination-out';
+
+    // near circle
+    const cx = me.x - cam.x;
+    const cy = me.y - cam.y;
+    ctx.beginPath();
+    ctx.arc(cx, cy, nearR, 0, Math.PI*2);
+    ctx.fill();
+
+    // wedge polygon via ray casting
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    for (let i = 0; i <= rays; i++){
+      const t = i / rays;
+      const ang = look - half + (2*half) * t;
+      const hit = castRay(me.x, me.y, ang, maxDist);
+      const sx = hit.x - cam.x;
+      const sy = hit.y - cam.y;
+      ctx.lineTo(sx, sy);
+    }
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+
+    // When all lamps are off, show faint lamp positions so players can find them.
+    const lamps = st.lamps || {};
+    const ids = Object.keys(lamps);
+    let onCount = 0;
+    for (const id of ids){ if (lamps[id]?.on) onCount++; }
+    if (ids.length && onCount === 0){
+      ctx.save();
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = 'rgba(255,225,140,1)';
+      for (const id of ids){
+        const o = st.objects && st.objects[id];
+        if (!o) continue;
+        const lx = (o.x + 0.5) * TS - cam.x;
+        const ly = (o.y + 0.5) * TS - cam.y;
+        if (lx < -40 || ly < -40 || lx > viewW + 40 || ly > viewH + 40) continue;
+        ctx.beginPath();
+        ctx.arc(lx, ly - 18, 6, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
+
 
   function draw() {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -3346,17 +5072,51 @@ default:
       };
     }
 
+    // door close shake (tiny 1~2px)
+    if (G.ui.shakeUntil && now() < G.ui.shakeUntil) {
+      const rem = (G.ui.shakeUntil - now());
+      const dur = (G.ui.shakeDur || 160);
+      const p = Math.max(0, Math.min(1, rem / dur));
+      const amp = (G.ui.shakeAmp || 2) * p;
+      cam = { ...cam,
+        x: cam.x + (Math.random() * 2 - 1) * amp,
+        y: cam.y + (Math.random() * 2 - 1) * amp,
+      };
+    }
+
     // world render (pixel-perfect zoom)
     ctx.save();
     ctx.scale(ZOOM, ZOOM);
 
     // 정수 픽셀 스냅(가로/세로 한 줄이 투명해 보이는 현상 방지)
-    cam = { ...cam, x: Math.round(cam.x), y: Math.round(cam.y) };
+    cam = { ...cam, x: snapPx(cam.x), y: snapPx(cam.y) };
 
     // map
     const vw = (cam.vw || (viewW / ZOOM));
     const vh = (cam.vh || (viewH / ZOOM));
     ctx.drawImage(mapCanvas, cam.x, cam.y, vw, vh, 0, 0, vw, vh);
+
+    // debug: show collision tiles as a translucent red overlay
+    if (G.ui.debugCollision && solid && AS.map) {
+      const W = AS.map.width | 0;
+      const H = AS.map.height | 0;
+      const tx0 = Math.max(0, Math.floor(cam.x / TS) - 1);
+      const ty0 = Math.max(0, Math.floor(cam.y / TS) - 1);
+      const tx1 = Math.min(W - 1, Math.floor((cam.x + vw) / TS) + 1);
+      const ty1 = Math.min(H - 1, Math.floor((cam.y + vh) / TS) + 1);
+      ctx.save();
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = 'rgb(255,0,80)';
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          if (!solid[ty * W + tx]) continue;
+          const sx = tx * TS - cam.x;
+          const sy = ty * TS - cam.y;
+          ctx.fillRect(sx, sy, TS, TS);
+        }
+      }
+      ctx.restore();
+    }
 
     // locked room overlay (add-penalty)
     drawLockedRoomOverlay(cam, st);
@@ -3398,21 +5158,36 @@ default:
       if (obj.type === 'root_door') {
         const d = st.doors[obj.id];
         const blocked = !!waterAtTile(obj.x, obj.y);
-        drawDoor(x, y, d?.closed, blocked, obj.id);
+        const dx = (obj._doorDx|0)||0; const dy = (obj._doorDy|0)||0;
+        const sx = x + (-dx) * TS * 0.5;
+        const sy = y + (-dy) * TS * 0.5;
+        drawDoor(sx, sy, d, blocked, obj.id, obj.x, obj.y, dx, dy);
         if (st.lockedRoomId && st.lockedRoomUntil && now() < st.lockedRoomUntil && obj.roomId === st.lockedRoomId) {
-          drawLockedDoorOverlay(x, y, st.lockedRoomUntil - now());
+          drawLockedDoorOverlay(sx, sy, st.lockedRoomUntil - now());
         }
       } else if (obj.type === 'mission') {
         const m = st.missions[obj.id];
         drawMissionSpot(x, y, m);
       } else if (obj.type === 'meeting_bell') {
-        drawObjSprite('meeting_bell', x, y);
+        drawEmergencyMeeting(x, y);
       } else if (obj.type === 'admin_board') {
         drawObjSprite('admin_board', x, y);
       } else if (obj.type === 'camera_monitor') {
         drawObjSprite('camera_monitor', x, y);
+      } else if (obj.type === 'lamp') {
+        drawLamp(obj, x, y);
       } else if (obj.type === 'vent_hole') {
-        drawObjSprite('vent_hole', x, y);
+        // Vents should only be visible/usable to the teacher (imposter).
+        if (me && me.role === 'teacher' && !st.practice) {
+          if (AS.pixel?.vent) {
+            const im = AS.pixel.vent;
+            const dw = TS * 2;
+            const dh = TS * 2;
+            ctx.drawImage(im, 0, 0, im.width, im.height, Math.round(x - dw / 2), Math.round(y - dh / 2), dw, dh);
+          } else {
+            drawObjSprite('vent_hole', x, y);
+          }
+        }
       }
     }
 
@@ -3426,12 +5201,65 @@ default:
 
     for (const p of players) {
       if (!p.alive) continue;
-      const px = p.x - cam.x;
-      const py = p.y - cam.y;
-      drawPlayer(p, px, py);
+
+      let wx = p.x, wy = p.y;
+      let pDraw = p;
+      // Client-side smoothing for remote players (render-only)
+      if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
+        const ex = G.netSmooth.players.get(p.id);
+        if (ex) {
+          const a = clamp((now() - ex.t0) / 120, 0, 1);
+          wx = ex.px + (ex.tx - ex.px) * a;
+          wy = ex.py + (ex.ty - ex.py) * a;
+          pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
+        }
+      }
+
+      const px = wx - cam.x;
+      const py = wy - cam.y;
+      drawPlayer(pDraw, px, py);
     }
 
     ctx.restore();
+
+    // global lighting / vision mask (crew only)
+    if (G.phase === 'play') {
+      try { drawLightMask(cam, me, st); } catch (_) {}
+    }
+
+    // Emergency meeting screen flash
+    if (now() < (G.ui.meetingAlarmFlashUntil || 0)) {
+      const tt = now() * 0.02;
+      const pulse = (Math.sin(tt) * 0.5 + 0.5);
+      ctx.fillStyle = `rgba(255,90,122,${0.08 + pulse * 0.14})`;
+      ctx.fillRect(0, 0, viewW, viewH);
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      ctx.font = '900 18px system-ui';
+      ctx.fillText('비상 소집!', 18, 58);
+    }
+
+    // Light notice (top message)
+    if (now() < (G.ui.lightNoticeUntil || 0)) {
+      const msg = G.ui.lightNoticeText || '누군가 불을 껐어요.';
+      const alpha = clamp(((G.ui.lightNoticeUntil - now()) / 1500), 0, 1);
+      ctx.save();
+      ctx.globalAlpha = 0.88 * alpha;
+      ctx.font = '900 16px system-ui';
+      ctx.textAlign = 'center';
+      const w = ctx.measureText(msg).width + 26;
+      const x = viewW * 0.5;
+      const y = 28;
+      ctx.fillStyle = 'rgba(10,14,26,.72)';
+      ctx.strokeStyle = 'rgba(255,255,255,.22)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x - w/2, y - 18, w, 28, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.95)';
+      ctx.fillText(msg, x, y);
+      ctx.restore();
+    }
 
     // UI hints
     if (G.phase === 'play' && me) {
@@ -3439,6 +5267,16 @@ default:
       const canI = near.canInteract;
       interactBtn.style.display = canI ? 'flex' : 'none';
       interactBtn.classList.toggle('ready', canI);
+
+      // Bigger, clearer door prompt ("열기/닫기")
+      if (canI && near.target) {
+        interactBtn.textContent = near.target.label || '조작';
+        interactBtn.classList.toggle('doorHint', near.target.type === 'root_door');
+        try { drawWorldInteractPrompt(cam, near.target); } catch (_) {}
+      } else {
+        interactBtn.textContent = '조작';
+        interactBtn.classList.remove('doorHint');
+      }
 
       const showKill = (me.role === 'teacher') && near.canKill && !st.practice;
       killBtn.style.display = showKill ? 'flex' : 'none';
@@ -3581,6 +5419,12 @@ default:
         ctx.lineWidth = 2;
         ctx.stroke();
       }
+
+      // small puddle to visually "attach" water to the hole
+      ctx.fillStyle = active ? 'rgba(125,211,252,.28)' : 'rgba(125,211,252,.18)';
+      ctx.beginPath();
+      ctx.ellipse(0, 16, 13, 6.5, 0, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.fillStyle = 'rgba(244,247,255,.85)';
@@ -3595,7 +5439,7 @@ default:
     if (!G.ui.mapOpen || !mapUiCanvas || !mapUiCtx) return;
     if (!AS.map || !mapCanvas) return;
 
-    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const dpr = Math.round(Math.max(1, Math.min(2, window.devicePixelRatio || 1)));
     const cw = mapUiCanvas.clientWidth || 520;
     const ch = mapUiCanvas.clientHeight || 420;
     const w = Math.max(200, Math.floor(cw));
@@ -3672,13 +5516,13 @@ default:
       mapUiCtx.strokeStyle = 'rgba(0,0,0,.35)';
       mapUiCtx.lineWidth = 2;
       mapUiCtx.beginPath();
-      mapUiCtx.arc(mx, my, (m?.state === 'active') ? 6 : 5, 0, Math.PI * 2);
+      mapUiCtx.arc(mx, my, (m?.state === 'active') ? 18 : 15, 0, Math.PI * 2);
       mapUiCtx.fill();
       mapUiCtx.stroke();
 
       if (m?.state === 'active') {
         mapUiCtx.fillStyle = 'rgba(0,0,0,.75)';
-        mapUiCtx.font = '900 10px system-ui';
+        mapUiCtx.font = '900 32px system-ui';
         mapUiCtx.textAlign = 'center';
         mapUiCtx.textBaseline = 'middle';
         mapUiCtx.fillText('!', mx, my - 0.5);
@@ -3709,6 +5553,54 @@ default:
     ctx.drawImage(AS.objsImg, sx, sy, TS, TS, x - TS / 2, y - TS / 2, TS, TS);
   }
 
+  function drawLamp(obj, x, y) {
+    const st = G.state;
+    const lp = st.lamps && st.lamps[obj.id];
+    const on = !!(lp && lp.on);
+    const kind = (lp && lp.kind) || obj.kind || 'floor_lamp';
+    const imOn = AS.pixel?.[kind] || AS.pixel?.floor_lamp || AS.pixel?.street_lamp;
+    const imOff = AS.pixel?.[`${kind}_off`] || null;
+    const im = on ? imOn : (imOff || imOn);
+    if (!im) return;
+
+    // size: lamps are drawn 2x tile like other big props
+    const dw = TS * 2;
+    const dh = TS * 2;
+    const px = x - dw / 2;
+    const py = y - dh / 2;
+
+    // shadow
+    ctx.save();
+    ctx.fillStyle = on ? 'rgba(0,0,0,.26)' : 'rgba(0,0,0,.34)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + dh * 0.18, dw * 0.28, dh * 0.10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // sprite
+    ctx.save();
+    // If we have a dedicated OFF sprite, don't additionally fade it.
+    ctx.globalAlpha = on ? 1.0 : (imOff ? 1.0 : 0.55);
+    ctx.drawImage(im, 0, 0, im.width, im.height, Math.round(px), Math.round(py), dw, dh);
+    ctx.restore();
+
+    // glow when ON
+    if (on) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const gx = x;
+      const gy = y - dh * 0.20;
+      const r = Math.max(dw, dh) * 0.95;
+      const g = ctx.createRadialGradient(gx, gy, 0, gx, gy, r);
+      g.addColorStop(0, 'rgba(255,244,214,.22)');
+      g.addColorStop(0.35, 'rgba(255,220,160,.10)');
+      g.addColorStop(1, 'rgba(255,220,160,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(gx - r, gy - r, r * 2, r * 2);
+      ctx.restore();
+    }
+  }
+
   function drawLockedDoorOverlay(x, y, remMs) {
     const p = clamp(remMs / 10_000, 0, 1);
     const pulse = (Math.sin(now() * 0.02) * 0.5 + 0.5);
@@ -3729,18 +5621,390 @@ default:
     ctx.restore();
   }
 
-  function drawDoor(x, y, closed, blocked, seedKey) {
-    // 뿌리 문(덩굴): 살짝 꿈틀 + 물막기면 물결
-    const w = TS * 0.95;
-    const h = TS * 0.9;
+    function drawEmergencyMeeting(x, y) {
+    const table = AS.pixel?.round_table;
+    const mega = AS.pixel?.megaphone;
+
+    if (!table) {
+      drawObjSprite('meeting_bell', x, y);
+      return;
+    }
+
     const tNow = now();
-    const seed = (strHash(seedKey || '') % 1000) * 0.01;
-    const wig = Math.sin(tNow * 0.012 + seed * 7) * (closed ? 0.9 : 0.55);
-    const sway = Math.sin(tNow * 0.006 + seed * 11) * (closed ? 0.35 : 0.22);
+    const alarm = (tNow < (G.ui.meetingAlarmUntil || 0)) || (G.phase === 'meeting' && (G.host.meetingKind === 'emergency'));
+    const pulse = (Math.sin(tNow * 0.02) * 0.5 + 0.5);
 
     ctx.save();
     ctx.translate(x, y);
-    ctx.rotate(sway * 0.05);
+
+    // Neutral drop shadow (table sprite had a green-ish ground tint; this overrides it)
+    ctx.fillStyle = 'rgba(0,0,0,.30)';
+    ctx.beginPath();
+    ctx.ellipse(0, 22, 26, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // subtle glow
+    if (alarm) {
+      ctx.fillStyle = `rgba(255,90,122,${0.10 + pulse * 0.10})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 10, 44, 26, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // table (64x64)
+    const tw = 64, th = 64;
+    ctx.drawImage(table, 0, 0, table.width, table.height, Math.round(-tw / 2), Math.round(-th / 2), tw, th);
+
+    // Extra bottom shading to avoid any greenish-looking ground pixels in the table asset
+    ctx.fillStyle = 'rgba(0,0,0,.14)';
+    ctx.fillRect(-tw/2, 10, tw, 22);
+
+    // megaphone on top (bob + shake)
+    if (mega) {
+      const mw = 32, mh = 32;
+      const bob = Math.sin(tNow * 0.012) * 1.4;
+      const shake = alarm ? (Math.sin(tNow * 0.08) * 1.8) : 0;
+      ctx.save();
+      ctx.translate(shake, -14 + bob);
+      ctx.rotate(alarm ? (Math.sin(tNow * 0.06) * 0.12) : 0);
+      // blink highlight
+      if (alarm && pulse > 0.6) {
+        ctx.globalAlpha = 0.92;
+      }
+      ctx.drawImage(mega, 0, 0, mega.width, mega.height, Math.round(-mw / 2), Math.round(-mh / 2), mw, mh);
+      ctx.restore();
+    }
+
+    // Alarm waves (Among-Us style)
+    if (alarm) {
+      const r = 16 + pulse * 14;
+      ctx.strokeStyle = `rgba(255,255,255,${0.20 + pulse * 0.25})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.ellipse(0, 8, r * 1.55, r * 0.85, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // rays
+      ctx.strokeStyle = `rgba(255,90,122,${0.30 + pulse * 0.25})`;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 6; i++) {
+        const ang = (i / 6) * Math.PI * 2 + tNow * 0.002;
+        const x1 = Math.cos(ang) * (22 + pulse * 4);
+        const y1 = 6 + Math.sin(ang) * (14 + pulse * 3);
+        const x2 = Math.cos(ang) * (30 + pulse * 6);
+        const y2 = 6 + Math.sin(ang) * (20 + pulse * 5);
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
+    }
+
+    ctx.restore();
+  }
+
+
+  function drawDoor(x, y, door, blocked, seedKey, tileX, tileY, doorDx=0, doorDy=0) {
+    // Prefer user provided vine-door sprites (pixel art)
+    const imClosed = AS.pixel?.vine_door_closed;
+    const imSide = AS.pixel?.vine_door_side;
+    const imOpen = AS.pixel?.vine_door_open;
+    const wallIm = AS.pixel?.wall || AS.pixel?.wall_alt || null;
+
+    const tNow = now();
+    const closed = !!(door && door.closed);
+    const anim = door && door.anim;
+    let animK = null;
+    let animP = 1;
+    if (anim && typeof anim.s === 'number' && typeof anim.e === 'number' && anim.e > anim.s) {
+      if (tNow >= anim.s && tNow < anim.e) {
+        animK = anim.k || null;
+        animP = clamp((tNow - anim.s) / (anim.e - anim.s), 0, 1);
+      }
+    }
+
+    const seed = (strHash(seedKey || '') % 1000) * 0.01;
+    const sway = Math.sin(tNow * 0.006 + seed * 11) * (closed ? 0.030 : 0.012);
+    const wig  = Math.sin(tNow * 0.012 + seed * 7) * (closed ? 0.75 : 0.35);
+
+    // Helper: draw the closed door composed to arbitrary width (no scaling mush)
+    function drawClosedComposite(info, w, h) {
+      ctx.globalAlpha = 0.98;
+      if (info.corridorVertical) {
+        // spans X
+        const leftX = Math.round(-w/2);
+        const topY = Math.round(-h/2);
+        if (imSide) {
+          ctx.drawImage(imSide, 0, 0, 32, 64, leftX, topY, TS, h);
+          ctx.drawImage(imSide, 32, 0, 32, 64, leftX + w - TS, topY, TS, h);
+        }
+        const midW = Math.max(0, w - 2*TS);
+        if (midW > 0) {
+          ctx.drawImage(imClosed, 0, 0, 64, 64, leftX + TS, topY, midW, h);
+        }
+      } else {
+        // spans Y (rotate 90deg)
+        const leftX = Math.round(-h/2);
+        const topY = Math.round(-w/2);
+        ctx.save();
+        ctx.rotate(Math.PI/2);
+        if (imSide) {
+          ctx.drawImage(imSide, 0, 0, 32, 64, topY, leftX, TS, h);
+          ctx.drawImage(imSide, 32, 0, 32, 64, topY + w - TS, leftX, TS, h);
+        }
+        const midW = Math.max(0, w - 2*TS);
+        if (midW > 0) {
+          ctx.drawImage(imClosed, 0, 0, 64, 64, topY + TS, leftX, midW, h);
+        }
+        ctx.restore();
+      }
+    }
+
+    // Helper: a tiny dust/spark burst while closing
+    function drawCloseDust(p, info, w, h) {
+      const a = (1 - p) * 0.55;
+      if (a <= 0) return;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.fillStyle = 'rgba(165,120,78,1)';
+      const base = (strHash(String(seedKey||'')) % 997) * 0.01;
+      for (let i = 0; i < 10; i++) {
+        const r = ((strHash(String(seedKey||'') + ':' + i) % 1000) / 1000);
+        const ang = (i / 10) * Math.PI * 2 + base;
+        const rr = 6 + 22 * p + r * 6;
+        const px = Math.cos(ang) * rr;
+        const py = (h * 0.22) + Math.sin(ang) * rr * 0.55 + (r * 10 * (1 - p));
+        ctx.beginPath();
+        ctx.ellipse(px, py, 2.2, 1.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // a couple of vine flecks
+      ctx.strokeStyle = `rgba(110,196,150,${0.55 * a})`;
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 4; i++) {
+        const r = ((strHash(String(seedKey||'') + ':v' + i) % 1000) / 1000);
+        const x0 = -w/2 + 8 + r * (w - 16);
+        const y0 = -h/2 + 8 + r * 10;
+        const x1 = x0 + (Math.sin(tNow * 0.03 + r * 9) * 6);
+        const y1 = y0 + 10 + r * 12;
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // Extra visual fix: blend door edges into adjacent wall tiles so a closed door
+    // doesn't look like a transparent flat plane.
+    function drawDoorWallMask(info, w, h, alpha = 0.90) {
+      if (!wallIm) return;
+      const strip = Math.max(6, Math.round(TS * 0.20));
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      // Make the mask follow the same orientation as drawClosedComposite
+      if (!info.corridorVertical) ctx.rotate(Math.PI / 2);
+      const leftX = Math.round(-w / 2);
+      const topY = Math.round(-h / 2);
+      // Left and right edge strips
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height,
+        leftX - strip + 2, topY, strip, h);
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height,
+        leftX + w - 2, topY, strip, h);
+      // Small corner caps (hide tile seams)
+      ctx.globalAlpha = alpha * 0.75;
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height,
+        leftX - strip + 2, topY - 4, strip, 8);
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height,
+        leftX + w - 2, topY - 4, strip, 8);
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height,
+        leftX - strip + 2, topY + h - 4, strip, 8);
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height,
+        leftX + w - 2, topY + h - 4, strip, 8);
+      ctx.restore();
+    }
+
+    // Helper: connect door edges to wall tiles a bit more naturally (edge masking)
+    function drawDoorEdgeMask(info, w, h, alpha=0.85) {
+      if (!wallIm) return;
+      const strip = Math.max(6, Math.round(TS * 0.22));
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      // make sure masking follows door orientation
+      if (!info.corridorVertical) ctx.rotate(Math.PI / 2);
+      const leftX = Math.round(-w / 2);
+      const topY = Math.round(-h / 2);
+      // Slight overlap into the doorway so gaps/seams are hidden
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height, leftX - strip + 2, topY, strip, h);
+      ctx.drawImage(wallIm, 0, 0, wallIm.width, wallIm.height, leftX + w - 2, topY, strip, h);
+      // Dark crease on the boundary to emphasize "depth"
+      ctx.fillStyle = 'rgba(0,0,0,.22)';
+      ctx.fillRect(leftX + 1, topY + 2, 3, h - 4);
+      ctx.fillRect(leftX + w - 4, topY + 2, 3, h - 4);
+      ctx.restore();
+    }
+
+    if (imClosed && imOpen) {
+      const tx = tileX | 0;
+      const ty = tileY | 0;
+      const hint = { _doorDx: doorDx|0, _doorDy: doorDy|0 };
+      const info = doorCrossInfoAt(tx, ty, hint);
+      const w = TS * info.crossTiles;
+      const h = TS * 2; // 64px tall -> 2 tiles
+
+      // Door plane size (thin barrier) – boundary-like
+      const planeW = info.corridorVertical ? w : TS * 0.9;
+      const planeH = info.corridorVertical ? TS * 0.9 : w;
+
+      ctx.save();
+      ctx.translate(x, y);
+
+      // subtle sway / wiggle so closed doors feel "alive"
+      if (closed || animK === 'close') {
+        ctx.rotate(sway);
+        ctx.translate(wig * 0.25, 0);
+      }
+
+      // Occlusion/thickness: stronger "pushing out" feeling on both room/corridor sides
+      const roomShiftX = (doorDx ? -Math.sign(doorDx) : 0) * (TS * 0.38);
+      const roomShiftY = (doorDy ? -Math.sign(doorDy) : 0) * (TS * 0.38);
+      const occl = (sx, sy, a1, a2) => {
+        ctx.save();
+        ctx.translate(sx, sy);
+        ctx.fillStyle = `rgba(0,0,0,${a1})`;
+        ctx.beginPath();
+        ctx.roundRect(-planeW/2 - 2, -planeH/2 - 1, planeW + 4, planeH + 2, 12);
+        ctx.fill();
+        // deeper extrusion
+        ctx.translate(sx * 0.55, sy * 0.55);
+        ctx.fillStyle = `rgba(0,0,0,${a2})`;
+        ctx.beginPath();
+        ctx.roundRect(-planeW/2 - 1, -planeH/2, planeW + 2, planeH, 10);
+        ctx.fill();
+        ctx.restore();
+      };
+      if (closed || animK === 'close') {
+        occl(roomShiftX, roomShiftY, 0.26, 0.14);
+        occl(-roomShiftX, -roomShiftY, 0.18, 0.10);
+      } else {
+        // even when open, keep a faint depth hint so it doesn't look like a "transparent wall"
+        occl(roomShiftX * 0.55, roomShiftY * 0.55, 0.10, 0.05);
+      }
+
+      // Render states (support close/open animation)
+      const drawOpen = (alpha=0.95) => {
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(imOpen, 0, 0, imOpen.width, imOpen.height, Math.round(-w/2), Math.round(-h/2), w, h);
+      };
+
+      const drawClosed = () => {
+        drawClosedComposite(info, w, h);
+      };
+
+      if (!closed && animK !== 'close') {
+        // fully open
+        drawOpen(0.95);
+      } else if (closed && animK !== 'open') {
+        // fully closed
+        drawClosed();
+      } else if (animK === 'close') {
+        // Among Us-ish close: vines spill down to cover the doorway in ~0.26s
+        drawOpen(0.75);
+        const p = animP;
+        const drop = (1 - p) * TS * 0.55;
+        ctx.save();
+        ctx.translate(0, -drop);
+        ctx.beginPath();
+        ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * p));
+        ctx.clip();
+        drawClosed();
+        ctx.restore();
+        drawCloseDust(p, info, w, h);
+      } else if (animK === 'open') {
+        // retract upward
+        const p = animP;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * (1 - p)));
+        ctx.clip();
+        drawClosed();
+        ctx.restore();
+        drawOpen(0.55 + 0.40 * p);
+      }
+
+      // Tile-edge masking: connect vine door edges to surrounding wall tiles.
+      // (Prevents the "transparent wall" feel when closed.)
+      try {
+        const a = (closed || animK === 'close') ? 0.92 : 0.55;
+        drawDoorEdgeMask(info, w, h, a);
+      } catch (_) {}
+
+      // Closed-door ambient rustle: tiny dust specks near the base edge
+      if (closed && animK !== 'open') {
+        const dustA = 0.14 + (Math.sin(tNow * 0.004 + seed * 13) * 0.5 + 0.5) * 0.10;
+        ctx.save();
+        ctx.globalAlpha = dustA;
+        ctx.fillStyle = 'rgba(255,255,255,1)';
+        for (let i = 0; i < 4; i++) {
+          const r = ((strHash(String(seedKey||'') + ':d' + i) % 1000) / 1000);
+          const px = -w*0.35 + r * (w*0.70);
+          const py = h*0.18 + (Math.sin(tNow * 0.006 + r * 9) * 4);
+          ctx.beginPath();
+          ctx.ellipse(px, py, 1.4, 1.0, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // subtle vine wiggle lines
+        ctx.globalAlpha = 0.18;
+        ctx.strokeStyle = 'rgba(110,196,150,1)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 3; i++) {
+          const r = ((strHash(String(seedKey||'') + ':l' + i) % 1000) / 1000);
+          const x0 = -w/2 + 10 + r * (w - 20);
+          const y0 = -h/2 + 8;
+          const x1 = x0 + Math.sin(tNow * 0.004 + r * 12) * 10;
+          const y1 = y0 + 18 + r * 8;
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x1, y1);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // highlight outline to make it readable
+      if (closed || animK === 'close') {
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(-planeW/2, -planeH/2, planeW, planeH, 10);
+        ctx.stroke();
+      }
+
+      // water-blocked pulse overlay
+      if (blocked) {
+        const pulse = (Math.sin(tNow * 0.015 + (strHash(seedKey || '') % 999) * 0.01) * 0.5 + 0.5);
+        ctx.strokeStyle = `rgba(125,211,252,${0.25 + pulse * 0.25})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.roundRect(-planeW * 0.55, -planeH * 0.48, planeW * 1.1, planeH * 0.96, 12);
+        ctx.stroke();
+      }
+
+      ctx.restore();
+      return;
+    }
+
+    // Fallback procedural vine door
+    const w = TS * 0.95;
+    const h = TS * 0.9;
+    const seed2 = (strHash(seedKey || '') % 1000) * 0.01;
+    const wig2 = Math.sin(tNow * 0.012 + seed2 * 7) * (closed ? 0.9 : 0.55);
+    const sway2 = Math.sin(tNow * 0.006 + seed2 * 11) * (closed ? 0.35 : 0.22);
+
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(sway2 * 0.05);
 
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(255,255,255,.35)';
@@ -3754,14 +6018,13 @@ default:
     ctx.fill();
     ctx.stroke();
 
-    // 뿌리 줄(살짝 꿈틀)
     ctx.strokeStyle = blocked ? 'rgba(125,211,252,.72)' : 'rgba(255,255,255,.6)';
     ctx.lineWidth = closed ? 5 : 2.5;
 
-    const c1x = -8 + wig;
-    const c1y = -6 - wig * 0.35;
-    const c2x = 8 - wig;
-    const c2y = 6 + wig * 0.28;
+    const c1x = -8 + wig2;
+    const c1y = -6 - wig2 * 0.35;
+    const c2x = 8 - wig2;
+    const c2y = 6 + wig2 * 0.28;
 
     for (let i = -2; i <= 2; i++) {
       ctx.beginPath();
@@ -3771,7 +6034,7 @@ default:
     }
 
     if (blocked) {
-      const r = (Math.sin(tNow * 0.01 + seed * 3) * 0.5 + 0.5);
+      const r = (Math.sin(tNow * 0.01 + seed2 * 3) * 0.5 + 0.5);
       ctx.strokeStyle = `rgba(255,255,255,${0.22 + r * 0.18})`;
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -3782,55 +6045,151 @@ default:
     ctx.restore();
   }
 
-  function drawMissionSpot(x, y, m) {
+    function drawMissionSpot(x, y, m) {
     if (!m) return;
+    const sheet = AS.pixel?.water_overflow_sheet;
+    const rock = AS.pixel?.rock_2 || AS.pixel?.rock_1;
+
+    const tNow = now();
+
     ctx.save();
     ctx.translate(x, y);
 
-    // 구멍
-    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    // Missions are intentionally drawn at 2x tile size (64x64) for readability.
+    const DW = TS * 2;
+
+    // Grounded hole (stronger contact + rim so it doesn't look like it's floating)
+    ctx.fillStyle = 'rgba(0,0,0,.40)';
     ctx.beginPath();
-    ctx.ellipse(0, 6, 10, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 20, 24, 14, 0, 0, Math.PI * 2);
     ctx.fill();
+    // muddy rim
+    ctx.fillStyle = 'rgba(92,62,42,.95)';
+    ctx.beginPath();
+    ctx.ellipse(0, 16, 22, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // hole depth
+    ctx.fillStyle = 'rgba(24,18,16,.95)';
+    ctx.beginPath();
+    ctx.ellipse(0, 16, 14, 7.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // rim highlight
+    ctx.strokeStyle = 'rgba(255,255,255,.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 14, 18, 9.5, 0, 0, Math.PI * 2);
+    ctx.stroke();
 
     if (m.state === 'solved') {
-      // 당근으로 막힘
-      ctx.fillStyle = 'rgba(255,152,84,.9)';
-      ctx.strokeStyle = 'rgba(255,255,255,.8)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(-5, -8, 10, 18, 6);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = 'rgba(102,224,163,.85)';
-      ctx.beginPath();
-      ctx.ellipse(-6, -10, 6, 4, -0.6, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(6, -10, 6, 4, 0.6, 0, Math.PI * 2);
-      ctx.fill();
+      // Mission solved: carrot plug seals the hole (clear contrast)
+      const sealedAt = m.sealedAt || 0;
+      const age = sealedAt ? (tNow - sealedAt) : 9999;
+      const p = clamp(age / 520, 0, 1);
+      const drop = (1 - p);
+      const bounce = Math.sin(p * Math.PI) * 5.0 * (1 - p * 0.35);
+      const yOff = -DW * 0.35 * drop + bounce;
+      const sc = 0.80 + 0.20 * p;
+
+      {
+        const rw = DW * sc;
+        const rh = DW * sc;
+        const cx = 0;
+        const cy = 10 + yOff;
+        // carrot body
+        ctx.fillStyle = 'rgba(255,152,84,.98)';
+        ctx.beginPath();
+        ctx.roundRect(cx - rw*0.18, cy - rh*0.22, rw*0.36, rh*0.46, 10);
+        ctx.fill();
+        // carrot shading
+        ctx.fillStyle = 'rgba(0,0,0,.12)';
+        ctx.beginPath();
+        ctx.roundRect(cx - rw*0.18, cy - rh*0.02, rw*0.36, rh*0.26, 10);
+        ctx.fill();
+        // carrot highlight
+        ctx.fillStyle = 'rgba(255,255,255,.18)';
+        ctx.beginPath();
+        ctx.roundRect(cx - rw*0.14, cy - rh*0.18, rw*0.08, rh*0.32, 8);
+        ctx.fill();
+        // leaves
+        ctx.fillStyle = 'rgba(74,222,128,.95)';
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - rh*0.24);
+        ctx.lineTo(cx - rw*0.10, cy - rh*0.40);
+        ctx.lineTo(cx - rw*0.02, cy - rh*0.42);
+        ctx.lineTo(cx + rw*0.02, cy - rh*0.34);
+        ctx.lineTo(cx + rw*0.10, cy - rh*0.40);
+        ctx.lineTo(cx + rw*0.06, cy - rh*0.26);
+        ctx.closePath();
+        ctx.fill();
+        // outline for contrast
+        ctx.strokeStyle = 'rgba(0,0,0,.30)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      // sealing dust + ring for the first ~1.2s
+      if (age < 1200) {
+        const a = clamp(1 - age / 1200, 0, 1);
+        const pulse = (Math.sin(tNow * 0.03) * 0.5 + 0.5);
+
+        ctx.strokeStyle = `rgba(255,255,255,${0.25 * a + pulse * 0.10 * a})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(0, 12, (18 + 22 * (1 - a)) * 1.5, (10 + 12 * (1 - a)), 0, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = `rgba(165,120,78,${0.22 * a})`;
+        for (let i = 0; i < 9; i++) {
+          const ang = (i / 9) * Math.PI * 2;
+          const r = 10 + 26 * (1 - a);
+          const px = Math.cos(ang) * r;
+          const py = 12 + Math.sin(ang) * r * 0.55;
+          ctx.beginPath();
+          ctx.ellipse(px, py, 3.2, 2.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
     } else {
-      // 물 솟음
+      // Unsolved: water is overflowing (animated)
       const active = (m.state === 'active');
-      const t = now() / 300;
-      const amp = active ? 6 : 3;
-      ctx.strokeStyle = (() => {
-        const forced = !!(m.forceFailAt || m.forcedBy);
-        if (forced) return active ? 'rgba(255,90,122,.95)' : 'rgba(255,90,122,.70)';
-        return active ? 'rgba(125,211,252,.95)' : 'rgba(125,211,252,.70)';
-      })();
-      ctx.lineWidth = active ? 4 : 3;
-      ctx.beginPath();
-      ctx.moveTo(0, 2);
-      ctx.bezierCurveTo(-3, -8 - Math.sin(t)*amp, 3, -12 - Math.cos(t)*amp, 0, -18 - Math.sin(t*1.3)*amp);
-      ctx.stroke();
+
+      if (sheet) {
+        const frame = (Math.floor(tNow / 160) % 2);
+        const bob = Math.sin(tNow * 0.012) * (active ? 4.0 : 2.0);
+        const sx = frame * 32;
+        // Place water closer to the ground hole (no floating feel)
+        ctx.drawImage(sheet, sx, 0, 32, 32, Math.round(-DW / 2), Math.round(-DW/2 + 6 + bob), DW, DW);
+      } else {
+        // fallback simple water jet
+        const t = tNow / 300;
+        const amp = active ? 6 : 3;
+        ctx.strokeStyle = active ? 'rgba(125,211,252,.95)' : 'rgba(125,211,252,.70)';
+        ctx.lineWidth = active ? 4 : 3;
+        ctx.beginPath();
+        ctx.moveTo(0, 4);
+        ctx.bezierCurveTo(-3, -8 - Math.sin(t) * amp, 3, -12 - Math.cos(t) * amp, 0, -18 - Math.sin(t * 1.3) * amp);
+        ctx.stroke();
+      }
+
+      // extra droplets (makes "not solved" super readable)
+      const base = tNow * 0.006 + (strHash(String(m.kind || '')) % 997);
+      for (let i = 0; i < 4; i++) {
+        const tt = base + i * 1.7;
+        const px = Math.sin(tt) * (10 + i * 2);
+        const py = 20 + ((tt * 22) % 26);
+        const a = clamp(0.75 - (py / 70), 0, 1) * (active ? 0.95 : 0.70);
+        ctx.fillStyle = `rgba(125,211,252,${a})`;
+        ctx.beginPath();
+        ctx.ellipse(px, py, 1.8, 2.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
       if (active) {
-        // 느낌표
         ctx.fillStyle = 'rgba(255,255,255,.95)';
-        ctx.font = '900 14px system-ui';
+        ctx.font = '900 26px system-ui';
         ctx.textAlign = 'center';
-        ctx.fillText('!', 0, -22);
+        ctx.fillText('!', 0, -DW * 0.75);
       }
     }
 
@@ -3840,7 +6199,7 @@ default:
   function drawFx(cam) {
     const tNow = now();
     // 오래된 효과 정리
-    G.fx = G.fx.filter(f => tNow - (f.bornAt || tNow) < 1600);
+    G.fx = G.fx.filter(f => tNow - (f.bornAt || tNow) < 1800);
 
     for (const f of G.fx) {
       if (f.kind === 'carrotPop') {
@@ -3872,6 +6231,44 @@ default:
         ctx.restore();
       }
 
+      if (f.kind === 'seal') {
+        const age = (tNow - f.bornAt) / 1000;
+        const p = clamp(age / 0.9, 0, 1);
+        const x = (f.x + 0.5) * TS - cam.x;
+        const y = (f.y + 0.5) * TS - cam.y;
+        const a = 1 - p;
+
+        ctx.save();
+        ctx.translate(x, y);
+
+        // dust burst
+        ctx.fillStyle = `rgba(165,120,78,${0.26 * a})`;
+        for (let i = 0; i < 10; i++) {
+          const ang = (i / 10) * Math.PI * 2;
+          const r = 8 + 30 * p;
+          const px = Math.cos(ang) * r;
+          const py = 10 + Math.sin(ang) * r * 0.55;
+          ctx.beginPath();
+          ctx.ellipse(px, py, 3.2, 2.2, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // sparkle ticks
+        ctx.strokeStyle = `rgba(255,255,255,${0.55 * a})`;
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 5; i++) {
+          const ang = (i / 5) * Math.PI * 2 + 0.6;
+          const r1 = 10 + 18 * p;
+          const r2 = r1 + 8;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang) * r1, 4 + Math.sin(ang) * r1 * 0.6);
+          ctx.lineTo(Math.cos(ang) * r2, 4 + Math.sin(ang) * r2 * 0.6);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+
       if (f.kind === 'vent') {
         const age = (tNow - f.bornAt) / 1000;
         const p = clamp(age / 0.7, 0, 1);
@@ -3892,8 +6289,47 @@ default:
           ctx.restore();
         }
       }
+
+      if (f.kind === 'doorClose') {
+        const age = (tNow - f.bornAt) / 1000;
+        const p = clamp(age / 0.55, 0, 1);
+        const x = (f.x + 0.5) * TS - cam.x;
+        const y = (f.y + 0.5) * TS - cam.y;
+        const a = 1 - p;
+
+        ctx.save();
+        ctx.translate(x, y);
+
+        // dusty thud burst
+        ctx.fillStyle = `rgba(165,120,78,${0.28 * a})`;
+        for (let i = 0; i < 12; i++) {
+          const ang = (i / 12) * Math.PI * 2;
+          const r = 6 + 26 * p;
+          const px = Math.cos(ang) * r;
+          const py = 10 + Math.sin(ang) * r * 0.55;
+          ctx.beginPath();
+          ctx.ellipse(px, py, 3.0, 2.1, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // vine bits
+        ctx.strokeStyle = `rgba(140,255,190,${0.35 * a})`;
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 6; i++) {
+          const ang = (i / 6) * Math.PI * 2 + 0.6;
+          const r1 = 8 + 10 * p;
+          const r2 = r1 + 10;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang) * r1, 2 + Math.sin(ang) * r1 * 0.6);
+          ctx.lineTo(Math.cos(ang) * r2, 2 + Math.sin(ang) * r2 * 0.6);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
     }
   }
+
 
   function drawWaterBlock(x, y, wb) {
     const tNow = now();
@@ -4003,12 +6439,14 @@ default:
     ctx.restore();
   }
 
-  function drawGlasses(x, y) {
+  function drawGlasses(x, y, intensity = 0.65) {
     const t = now() * 0.01;
-    const shine = (Math.sin(t) * 0.5 + 0.5) * 0.25;
+    const shine = (Math.sin(t) * 0.5 + 0.5) * (0.14 + 0.22 * intensity);
     ctx.save();
     ctx.translate(x, y);
-    ctx.strokeStyle = 'rgba(255,255,255,.92)';
+    ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.40 * intensity})`;
+    ctx.shadowColor = `rgba(255,255,255,${0.18 * intensity})`;
+    ctx.shadowBlur = 4 * intensity;
     ctx.lineWidth = 2;
     // 테두리
     ctx.beginPath();
@@ -4018,7 +6456,7 @@ default:
     ctx.lineTo(1, 0);
     ctx.stroke();
     // 반짝
-    ctx.fillStyle = `rgba(255,255,255,${0.10 + shine})`;
+    ctx.fillStyle = `rgba(255,255,255,${0.06 + shine})`;
     ctx.beginPath();
     ctx.ellipse(-8, -2, 2.2, 1.2, -0.4, 0, Math.PI*2);
     ctx.fill();
@@ -4204,7 +6642,7 @@ default:
 
     const speed = Math.hypot(p.vx || 0, p.vy || 0);
     const moving = speed > 4.5;
-    const facing = (p.vx < -0.2 ? -1 : 1);
+    const facing = (typeof p.facing === 'number') ? p.facing : (p.vx < -0.2 ? -1 : 1);
 
     // Motion selection (v3 sheet): walk / swim / faint / cry / tsk
     const MOTION_ROWS = 5;
@@ -4226,35 +6664,44 @@ default:
 
     // 픽셀 퍼펙트: 서브픽셀 렌더링은 얇은 투명 줄/떨림을 만든다.
     // (특히 스프라이트시트에서 한 줄이 투명해 보이는 현상)
-    x = Math.round(x);
-    y = Math.round(y);
+    x = snapPx(x);
+    y = snapPx(y);
 
     // direction row (only affects sprite selection; movement/physics unchanged)
     const avx = p.vx || 0, avy = p.vy || 0;
-    let dir = 0;
-    if (Math.abs(avy) > Math.abs(avx)) dir = (avy < -0.2 ? 1 : 0);
-    else if (Math.abs(avx) > 0.2) dir = 2;
+    let dir = (typeof p.dir === 'number') ? p.dir : 0;
+    if (typeof p.dir !== 'number') {
+      if (Math.abs(avy) > Math.abs(avx)) dir = (avy < -0.2 ? 1 : 0);
+      else if (Math.abs(avx) > 0.2) dir = 2;
+    }
 
     const row = ((p.color || 0) % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS) + motionMap[motion] * DIR_ROWS + dir;
 
-    if (AS.charsImg) {
+    // Kill pose: shown to everyone (requested). This reveals the teacher during the action.
+    const killPose = p.role === 'teacher' && p.emoteUntil && now() < p.emoteUntil && p.emoteKind === 'kill0' && AS.pixel?.teacher_kill0_sheet;
+
+    if (killPose) {
+      const sheet = AS.pixel.teacher_kill0_sheet;
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      ctx.translate(x, y);
+      if (dir === 2) ctx.scale(-facing, 1);
+      else ctx.scale(1, 1);
+      // choose view based on dir: 0(front) 1(back) 2(side
+      const viewX = (dir === 1) ? 128 : (dir === 2 ? 0 : 64);
+      ctx.drawImage(sheet, viewX, 0, 64, 72, -SPR_W / 2, -60, SPR_W, SPR_H);
+      ctx.restore();
+    } else     if (AS.charsImg) {
       ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.translate(x, y);
       // Mirror only for side sprites; front/back stay facing camera
-      if (dir === 2) ctx.scale(facing, 1);
+      if (dir === 2) ctx.scale(-facing, 1);
       else ctx.scale(1, 1);
       const sx = frame * SPR_W;
       const sy = row * SPR_H;
       // anchor: center-ish
       ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
-      // outline for local player
-      if (isLocal && !p.down) {
-        ctx.globalAlpha = 0.35;
-        ctx.strokeStyle = 'rgba(125,211,252,.95)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(-SPR_W / 2 - 2, -60 - 2, SPR_W + 4, SPR_H + 4);
-      }
       ctx.restore();
     } else {
       // fallback (should rarely happen)
@@ -4266,7 +6713,12 @@ default:
     if (swimming) drawSwimOverlay(x, y);
 
     if (p.crown) drawCrown(x, y - 56);
-    if (p.glassesUntil && now() < p.glassesUntil) drawGlasses(x, y - 10);
+
+    // 선생토끼(임포스터) 표시는 '내 화면'에서만: 얼굴에 뱅글 안경 오버레이
+    if (isLocal && p.role === 'teacher' && !G.state.practice) {
+      const shining = (p.glassesUntil && now() < p.glassesUntil);
+      drawGlasses(x, y - 12, shining ? 1.0 : 0.7);
+    }
 
     if (p.down) {
       ctx.fillStyle = 'rgba(0,0,0,.45)';
@@ -4298,8 +6750,11 @@ default:
     ctx.lineWidth = 4;
     ctx.font = '900 13px system-ui';
     ctx.textAlign = 'center';
-    ctx.strokeText(p.nick, x, y - 36);
-    ctx.fillText(p.nick, x, y - 36);
+    // Slightly higher so it doesn't overlap ears/glasses on small screens.
+    // Requested: raise nickname a bit more for readability.
+    // Raise nickname a bit more (requested: ~7px)
+    ctx.strokeText(p.nick, x, y - 64);
+    ctx.fillText(p.nick, x, y - 64);
 
     // teacher-only cooldown hint (keep)
     const me = G.state.players[G.net?.myPlayerId];
@@ -4379,24 +6834,119 @@ default:
     }
   }
 
+  // World-space prompt (bigger "열기/닫기" near doors, etc.)
+  function drawWorldInteractPrompt(cam, target){
+    if (!target) return;
+    const sx0 = (target.wx - cam.x) * ZOOM;
+    const sy0 = (target.wy - cam.y) * ZOOM;
+    const label = target.label || '조작';
+
+    // place above the target
+    let x = sx0;
+    let y = sy0 - 66;
+
+    ctx.save();
+    ctx.globalAlpha = 0.92;
+    ctx.font = '1100 20px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Larger prompt for door open/close on mobile.
+    const iconW = 40;
+    const padX = 18;
+    const padY = 12;
+    const textW = ctx.measureText(label).width;
+    const w = Math.max(76, textW + padX * 2 + iconW);
+    const h = 44;
+
+    // keep on screen
+    x = clamp(x, w/2 + 10, viewW - w/2 - 10);
+    y = clamp(y, 16, viewH - 16);
+
+    // background
+    ctx.fillStyle = 'rgba(10,14,26,.78)';
+    ctx.strokeStyle = 'rgba(255,255,255,.22)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - w/2, y - h/2, w, h, 14);
+    ctx.fill();
+    ctx.stroke();
+
+    // icon
+    ctx.save();
+    ctx.translate(x - w/2 + 20, y);
+    ctx.fillStyle = (target.type === 'root_door') ? 'rgba(102,224,163,.95)' : 'rgba(255,255,255,.85)';
+    ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 14, 0, Math.PI*2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(8,16,34,.95)';
+    ctx.font = '1100 18px system-ui';
+    ctx.fillText((target.type === 'root_door') ? (label === '열기' ? '↗' : '↘') : 'E', 0, 0);
+    ctx.restore();
+
+    // label
+    ctx.fillStyle = 'rgba(255,255,255,.96)';
+    ctx.font = '1100 20px system-ui';
+    ctx.fillText(label, x + iconW*0.15, y);
+    ctx.restore();
+  }
+
   function nearestHint(me) {
     const st = G.state;
     let canInteract = false;
     let canKill = false;
+    let target = null; // { type, id, label, wx, wy }
+    let bestD2 = Infinity;
 
-    // interactable
+    // interactable (pick the closest target for better UI/label)
     for (const obj of Object.values(st.objects)) {
-      if (!['meeting_bell', 'mission', 'root_door', 'vent_hole'].includes(obj.type)) continue;
-      if (obj.type === 'vent_hole' && me.role !== 'teacher') continue;
-      if (obj.type === 'vent_hole' && st.practice) continue;
+      if (!obj || !['meeting_bell', 'mission', 'root_door', 'vent_hole', 'lamp'].includes(obj.type)) continue;
+      if (obj.type === 'vent_hole' && (me.role !== 'teacher' || st.practice)) continue;
+
+      // Lamp rules: teacher can ONLY turn OFF, students can ONLY turn ON
+      if (obj.type === 'lamp') {
+        const lp = st.lamps && st.lamps[obj.id];
+        if (!lp) continue;
+        if (me.role === 'teacher' && !lp.on) continue;
+        if (me.role !== 'teacher' && lp.on) continue;
+      }
+
       const ox = (obj.x + 0.5) * TS;
       const oy = (obj.y + 0.5) * TS;
-      if (dist2(me.x, me.y, ox, oy) <= INTERACT_RANGE ** 2) { canInteract = true; break; }
+      const d2 = dist2(me.x, me.y, ox, oy);
+      if (d2 > INTERACT_RANGE ** 2) continue;
+      canInteract = true;
+
+      if (d2 < bestD2) {
+        bestD2 = d2;
+        let label = '조작';
+        if (obj.type === 'mission') label = '미션';
+        else if (obj.type === 'meeting_bell') label = '회의';
+        else if (obj.type === 'vent_hole') label = '땅굴';
+        else if (obj.type === 'root_door') {
+          const dd = st.doors && st.doors[obj.id];
+          label = (dd && dd.closed) ? '열기' : '닫기';
+        }
+        else if (obj.type === 'lamp') {
+          const lp = st.lamps && st.lamps[obj.id];
+          label = (lp && lp.on) ? '끄기' : '켜기';
+        }
+        target = { type: obj.type, id: obj.id, label, wx: ox, wy: oy };
+      }
     }
-    // bodies
+    // bodies (report)
     for (const p of Object.values(st.players)) {
-      if (p.down && p.alive) {
-        if (dist2(me.x, me.y, p.x, p.y) <= (INTERACT_RANGE + 10) ** 2) { canInteract = true; break; }
+      if (!p || !p.down || !p.alive) continue;
+      const d2 = dist2(me.x, me.y, p.x, p.y);
+      if (d2 <= (INTERACT_RANGE + 10) ** 2) {
+        canInteract = true;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          target = { type: 'body', id: p.id, label: '신고', wx: p.x, wy: p.y };
+        }
       }
     }
 
@@ -4409,7 +6959,7 @@ default:
       }
     }
 
-    return { canInteract, canKill };
+    return { canInteract, canKill, target };
   }
 
   // ---------- Main loop ----------
@@ -4449,12 +6999,12 @@ default:
       // If I'm the host, apply my input locally (do NOT rely on server echo)
       // so solo/practice play always responds.
       if (G.net.isHost && G.net.myPlayerId){
-        G.host.inputs.set(G.net.myPlayerId, { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
+        G.host.inputs.set(Number(G.net.myPlayerId || 0), { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
       } else {
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
         if (t - G.local._lastInputAt > 66) {
           G.local._lastInputAt = t;
-          G.net.post({ t: 'input', playerId: G.net.myPlayerId, mvx: G.local.mvx, mvy: G.local.mvy });
+          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), mvx: G.local.mvx, mvy: G.local.mvy });
         }
       }
     }
@@ -4470,7 +7020,7 @@ default:
           const ox = (obj.x + 0.5) * TS;
           const oy = (obj.y + 0.5) * TS;
           if (dist2(me.x, me.y, ox, oy) <= INTERACT_RANGE ** 2) {
-            G.net.post({ t: 'openMission', playerId: G.net.myPlayerId, siteId: rm.siteId });
+            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), siteId: rm.siteId });
           }
         }
         // attempt only once
@@ -4481,6 +7031,11 @@ default:
     // UI
     setHUD();
 
+    // auto-hide role reveal
+    if (G.ui.roleRevealUntil && now() >= G.ui.roleRevealUntil) {
+      hideRoleReveal();
+    }
+
     draw();
     renderMapUI();
     requestAnimationFrame(frame);
@@ -4490,7 +7045,7 @@ default:
   async function joinRoom() {
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); applyPhaseUI(); return; }
     const nick = (nickEl.value || '토끼').trim().slice(0, 10);
-    const room = (roomEl.value || '1234').trim().slice(0, 8);
+    const room = (roomEl.value || '1234').trim().slice(0, 64);
 
     const wsBase = (window.__ONLINE_WS_BASE__ || '').trim();
     let net;
@@ -4516,22 +7071,53 @@ default:
     net.on('join', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
-      if (playersCount >= 8) {
-        net.post({ t: 'joinDenied', toClient: m.from, reason: '방이 가득 찼어!' });
+      const from = (m && m.from != null) ? String(m.from) : '';
+      if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
+
+      // Dedupe: some environments resend 'join' (or re-run embed init), which used to
+      // create a second player for the same client and break input syncing.
+      if (from && G.host._clientToPlayer.has(from)) {
+        const pid = Number(G.host._clientToPlayer.get(from) || 0);
+        const p = st.players[pid];
+        if (p) {
+          p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
+          p.clientId = from;
+          p.isBot = false;
+          p.alive = true;
+        }
+        net.post({ t: 'joinAck', toClient: from, playerId: pid, isHost: false });
+        broadcastState(true);
         return;
       }
-      const pid = hostAddPlayer(m.nick || '토끼', false);
-      // clientId -> playerId 매핑
-      if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
-      G.host._clientToPlayer.set(m.from, pid);
-      net.post({ t: 'joinAck', toClient: m.from, playerId: pid, isHost: false });
+
+      const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
+      if (playersCount >= 8) {
+        net.post({ t: 'joinDenied', toClient: from || m.from, reason: '방이 가득 찼어!' });
+        return;
+      }
+      const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
+      if (from) G.host._clientToPlayer.set(from, pid);
+      net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false });
       broadcastState(true);
+
+      // If we started in practice (e.g., embed auto-start) and now have enough players,
+      // switch to the real game by assigning a teacher and notifying roles.
+      const humanCountNow = Object.values(st.players).filter(p => !p.isBot).length;
+      if (G.host.started && st.practice && humanCountNow >= 4) {
+        st.practice = false;
+        st.timeLeft = 180;
+        st.maxTime = 180;
+        hostAssignTeacher();
+        for (const pp of Object.values(st.players)) {
+          sendToPlayer(pp.id, { t: 'toast', text: (pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터)' : '당신은 수학토끼야! 미션을 해결해!' });
+        }
+        broadcast({ t: 'toast', text: '인원이 모여서 본게임으로 전환! (선생토끼 배정)' });
+      }
     });
 
     net.on('joinAck', (m) => {
       if (m.toClient !== net.clientId) return;
-      net.myPlayerId = m.playerId;
+      net.myPlayerId = Number(m.playerId || 0);
       G.phase = 'lobby';
       setRolePill();
       setHUD();
@@ -4552,13 +7138,15 @@ default:
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
-      if (!m.playerId) return;
-      G.host.inputs.set(m.playerId, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      G.host.inputs.set(pid, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
     });
 
     net.on('emote', (m) => {
       if (!net.isHost) return;
-      const p = G.state.players[m.playerId];
+      const pid = Number(m.playerId || 0);
+      const p = G.state.players[pid];
       if (!p || !p.alive) return;
       const kind = (m.kind === 'cry' || m.kind === 'tsk') ? m.kind : null;
       if (!kind) return;
@@ -4569,15 +7157,18 @@ default:
 
     net.on('act', (m) => {
       if (!net.isHost) return;
-      if (m.kind === 'interact') hostHandleInteract(m.playerId);
-      if (m.kind === 'kill') hostHandleKill(m.playerId);
-      if (m.kind === 'sabotage') hostHandleSabotage(m.playerId);
-      if (m.kind === 'forceMission') hostHandleForceMission(m.playerId);
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      if (m.kind === 'interact') hostHandleInteract(pid);
+      if (m.kind === 'kill') hostHandleKill(pid);
+      if (m.kind === 'sabotage') hostHandleSabotage(pid);
+      if (m.kind === 'forceMission') hostHandleForceMission(pid);
     });
     net.on('openMission', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const p = st.players[m.playerId];
+      const pid = Number(m.playerId || 0);
+      const p = st.players[pid];
       if (!p || !p.alive || p.down) return;
       const obj = st.objects[m.siteId];
       if (!obj || obj.type !== 'mission') return;
@@ -4587,33 +7178,37 @@ default:
 
       // reuse the same logic as interact-mission block
       if (now() < G.host.missionDisabledUntil) {
-        sendToPlayer(m.playerId, { t: 'toast', text: '지금은 미션을 풀 수 없어!' });
+        sendToPlayer(pid, { t: 'toast', text: '지금은 미션을 풀 수 없어!' });
         return;
       }
       const mm = st.missions[obj.id];
       if (!mm || mm.state === 'solved') {
-        sendToPlayer(m.playerId, { t: 'toast', text: '이미 당근으로 막았어!' });
+        sendToPlayer(pid, { t: 'toast', text: '이미 당근으로 막았어!' });
         return;
       }
       const practice = mm.state !== 'active';
       const ui = buildMissionUI(obj.id, mm.kind, practice);
-      let prog = hostGetMissionProg(m.playerId, obj.id);
+      let prog = hostGetMissionProg(pid, obj.id);
       if (!prog || prog.practice !== !!practice) {
-        hostInitMissionProg(m.playerId, obj.id, mm.kind, practice);
-        prog = hostGetMissionProg(m.playerId, obj.id);
+        hostInitMissionProg(pid, obj.id, mm.kind, practice);
+        prog = hostGetMissionProg(pid, obj.id);
       }
-      sendToPlayer(m.playerId, { t: 'uiMissionOpen', ...ui, correct: prog?.correct || 0 });
+      sendToPlayer(pid, { t: 'uiMissionOpen', ...ui, correct: prog?.correct || 0 });
     });
 
 
     net.on('missionSubmit', (m) => {
       if (!net.isHost) return;
-      hostMissionSubmit(m.playerId, m);
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      hostMissionSubmit(pid, { ...m, playerId: pid });
     });
 
     net.on('vote', (m) => {
       if (!net.isHost) return;
-      hostSubmitVote(m.playerId, m.target);
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      hostSubmitVote(pid, m.target);
     });
 
     // state (all clients)
@@ -4629,9 +7224,60 @@ default:
       G.state.total = m.total;
       G.state.practice = !!m.practice;
       G.state.players = m.players;
+
+      // If joinAck was missed, recover myPlayerId by matching clientId.
+      if (!net.myPlayerId && m.players) {
+        for (const [pid, pp] of Object.entries(m.players)) {
+          if (pp && pp.clientId && String(pp.clientId) === String(net.clientId)) {
+            net.myPlayerId = parseInt(pid, 10);
+            break;
+          }
+        }
+      }
+      
+
+      // Smooth remote players on clients so other players look less 'choppy'.
+      try {
+        if (!net.isHost) {
+          if (!G.netSmooth) G.netSmooth = { players: new Map() };
+          const sm = G.netSmooth.players;
+          const tNow = now();
+          const myId = Number(net.myPlayerId || 0);
+          const playersObj = m.players || {};
+
+          // prune missing players
+          for (const pid of Array.from(sm.keys())) {
+            if (!playersObj[String(pid)]) sm.delete(pid);
+          }
+
+          for (const [pidStr, pp] of Object.entries(playersObj)) {
+            const pid = Number(pidStr || 0);
+            if (!pid || pid === myId || !pp) continue;
+            const ex = sm.get(pid);
+            if (!ex) {
+              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
+              continue;
+            }
+            const a = clamp((tNow - ex.t0) / 120, 0, 1);
+            const cx = ex.px + (ex.tx - ex.px) * a;
+            const cy = ex.py + (ex.ty - ex.py) * a;
+            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);
+            if (jump) {
+              ex.px = pp.x; ex.py = pp.y; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
+            } else {
+              ex.px = cx; ex.py = cy; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
+            }
+            ex.down = !!pp.down;
+            ex.alive = !!pp.alive;
+            ex.vent = !!pp.vent;
+          }
+        }
+      } catch (_) {}
+
       G.state.missions = m.missions;
       G.state.doors = m.doors;
       G.state.waterBlocks = m.waterBlocks;
+      G.state.lamps = m.lamps || {};
       G.state.leaks = m.leaks || {};
       G.state.leakLevel = m.leakLevel || 0;
       G.state.lockedRoomId = m.lockedRoomId || null;
@@ -4661,25 +7307,25 @@ default:
       startBtn.disabled = !(net.isHost && Object.keys(G.state.players).length >= 1 && !G.host.started);
       if (net.isHost && !G.host.started) {
         const n = Object.keys(G.state.players).length;
-        startBtn.textContent = n >= 4 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
+        startBtn.textContent = n >= 2 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
       }
       applyPhaseUI();
     });
 
     // UI events
     net.on('uiMissionOpen', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       openMissionUI(m);
     });
 
     net.on('uiMissionResult', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       if (!G.ui.mission) return;
       renderQuestion(m.text);
     });
 
     net.on('uiMissionNext', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       if (!G.ui.mission) return;
       if (typeof m.correct === 'number') G.ui.mission.correct = m.correct;
       G.ui.mission.question = m.question;
@@ -4696,8 +7342,35 @@ default:
       showToast('미션이 잠겼어!');
     });
 
-    net.on('uiMeetingOpen', (m) => {
+    
+    net.on('lightNotice', (m) => {
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
+      G.ui.lightNoticeUntil = m.until || (now() + 1500);
+      G.ui.lightNoticeText = m.text || '누군가 불을 껐어요.';
+    });
+net.on('uiMeetingOpen', (m) => {
       openMeetingUI(m.kind || 'emergency', m.reason || '회의!', m.endsAt || (now() + 20_000));
+    });
+
+    // Meeting chat packets (Among-Us style)
+    net.on('meetingChat', (m) => {
+      const mid = Number(m.meetingId || 0);
+      // If we already have an active meeting id, ignore messages from other meetings
+      if (G.ui.meetingChat?.id && mid && mid !== Number(G.ui.meetingChat.id)) return;
+
+      const pid = Number(m.playerId || 0);
+      const p = (G.state && G.state.players) ? G.state.players[pid] : null;
+      const nick = String(m.nick || p?.nick || `#${pid}`).
+        replace(/[\r\n\t]/g,' ').slice(0, 12);
+      const color = (typeof m.color === 'number') ? m.color : (p?.color ?? 0);
+      const text = sanitizeMeetingText(m.text || '');
+      if (!text) return;
+
+      const time = nowHHMM();
+      G.ui.meetingChat.msgs.push({ pid, nick, color, text, time });
+      if (G.ui.meetingChat.msgs.length > 140) G.ui.meetingChat.msgs.splice(0, 30);
+      // Render if meeting UI is visible
+      if (G.phase === 'meeting') renderMeetingChat();
     });
 
     net.on('uiScene', (m) => {
@@ -4707,16 +7380,50 @@ default:
     });
 
     net.on('toast', (m) => {
-      if (m.to && m.to !== net.myPlayerId) return;
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       showToast(m.text || '');
+    });
+
+    net.on('uiRoleReveal', (m) => {
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
+      // role reveal is per-player; keep it deterministic even if state arrives slightly later.
+      showRoleReveal(m.role, m.practice);
     });
 
     net.on('fx', (m) => {
       // 간단 파티클/연출 (상태 스냅샷에 넣지 않는 1회성 효과)
       if (m.kind === 'carrotPop') {
         G.fx.push({ kind: 'carrotPop', x: m.x, y: m.y, bornAt: m.bornAt || now() });
+      } else if (m.kind === 'seal') {
+        G.fx.push({ kind: 'seal', x: m.x, y: m.y, bornAt: m.bornAt || now() });
+        playThunk();
+        tryVibrate([70, 40, 90]);
       } else if (m.kind === 'vent') {
         G.fx.push({ kind: 'vent', from: m.from, to: m.to, bornAt: m.bornAt || now() });
+      } else if (m.kind === 'doorClose') {
+        // door close: dust + tiny camera shake (Among Us feel)
+        G.fx.push({ kind: 'doorClose', x: m.x, y: m.y, bornAt: m.bornAt || now() });
+
+        // shake only if it's near my view (so far-away doors don't shake the whole screen)
+        let doShake = true;
+        try {
+          const me = G.state && G.net && G.state.players && G.state.players[G.net.myPlayerId];
+          if (me && typeof m.x === 'number' && typeof m.y === 'number') {
+            const ox = (m.x + 0.5) * TS;
+            const oy = (m.y + 0.5) * TS;
+            const dx = (me.x - ox);
+            const dy = (me.y - oy);
+            doShake = (dx*dx + dy*dy) <= (TS * 9) * (TS * 9);
+          }
+        } catch (_) {}
+
+        if (doShake) {
+          G.ui.shakeUntil = now() + 160;
+          G.ui.shakeDur = 160;
+          G.ui.shakeAmp = 2;
+          playThunk();
+          tryVibrate([25, 30, 25]);
+        }
       }
     });
 
@@ -4727,12 +7434,12 @@ default:
     if (net.isHost) {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
-      const pid = hostAddPlayer(nick, false);
+      const pid = hostAddPlayer(nick, false, net.clientId);
       net.myPlayerId = pid;
       G.phase = 'lobby';
       setRolePill();
       setHUD();
-      setLobbyStatus('대기실: 플레이어를 추가하고 시작하세요. (4명 미만이면 연습 모드)', null);
+      setLobbyStatus('대기실: 플레이어를 추가하고 시작하세요. (1명일 때 연습 모드)', null);
       broadcastState(true);
       applyPhaseUI();
     } else {
@@ -4797,7 +7504,7 @@ default:
     window.__EMBED_IS_HOST__ = !!init.isHost || !!init.solo;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
-    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,8); }catch(_){ }
+    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,64); }catch(_){ }
 
     // hide local lobby controls (room UI is handled by parent)
     try{ joinBtn.style.display = 'none'; }catch(_){ }
@@ -4806,9 +7513,29 @@ default:
 
     await joinRoom();
 
-    // host: auto start immediately (practice if <4 players)
+    // In embed mode, once we successfully joined via the parent bridge, hide the internal lobby
+    // so players only see the main room UI outside the iframe.
+    // Embedded: do not hide lobby UI; otherwise only the background/canvas remains visible.
+    // (The server will switch phase to play and applyPhaseUI() will hide/show the right panels.)
+    try{ /* keep lobby visible */ }catch(_){ }
+
+    // host: auto-start only after enough players join (prevents starting practice by accident)
     if (window.__EMBED_IS_HOST__){
-      setTimeout(()=>{ try{ startBtn.click(); }catch(_){ } }, 300);
+      if (init.solo){
+        setTimeout(()=>{ try{ startBtn.click(); }catch(_){ } }, 300);
+      } else {
+        const deadline = Date.now() + 12_000;
+        const timer = setInterval(()=>{
+          try {
+            if (G.host.started) { clearInterval(timer); return; }
+            const humans = Object.values(G.state.players || {}).filter(p=>!p.isBot).length;
+            if (humans >= 4 || Date.now() > deadline){
+              clearInterval(timer);
+              startBtn.click();
+            }
+          } catch(_){ }
+        }, 250);
+      }
     }
   }
 
@@ -4822,7 +7549,10 @@ default:
       const pending = window.__PENDING_BRIDGE_INIT__;
       if (pending && typeof pending === 'object' && pending.type === 'bridge_init'){
         window.__PENDING_BRIDGE_INIT__ = null;
-        startEmbedded(pending).catch(()=>{});
+        startEmbedded(pending).catch((e)=>{
+          try{ console.error(e); }catch(_){ }
+          try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
+        });
       }
     }catch(_){ }
 
@@ -4830,7 +7560,10 @@ default:
       const d = ev.data || {};
       if (!d || typeof d !== 'object') return;
       if (d.type === 'bridge_init'){
-        startEmbedded(d).catch(()=>{});
+        startEmbedded(d).catch((e)=>{
+          try{ console.error(e); }catch(_){ }
+          try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
+        });
       }
     });
   }
@@ -4849,11 +7582,7 @@ default:
       console.error(e);
       G.assetsReady = false;
       G.assetsError = e?.message || String(e);
-      const isFile = (location && location.protocol === 'file:');
-      const msg = isFile
-        ? '에셋을 불러오지 못했어. 더블클릭(file://) 실행은 막혀있어서 로컬 서버로 열어야 해요.\n예) 터미널에서 이 폴더로 이동 후:  python -m http.server 8000  →  http://localhost:8000'
-        : '에셋을 불러오지 못했어. 새로고침하거나 로컬 서버에서 실행해줘!';
-      setLobbyStatus(msg, 'danger');
+      setLobbyStatus('에셋을 불러오지 못했어. 새로고침하거나 잠시 후 다시 시도해줘!', 'danger');
       showToast('에셋 로딩 실패');
     }
     applyPhaseUI();
