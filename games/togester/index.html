@@ -630,7 +630,8 @@
 
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
         let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
-        const NET_INTERP_DELAY_MS = 70; // 지연을 줄여 밀기/충돌 반응이 더 즉각적으로 보이게
+        // Slightly larger interpolation delay reduces visible jitter from packet timing variance.
+        const NET_INTERP_DELAY_MS = 120;
         const NET_MAX_HISTORY_MS = 2000;
         let gameObjects = [];
         let canvas, ctx;
@@ -2585,12 +2586,15 @@ function setupActionButtons(){
             cameraX = clamp(cameraX, stageBounds.minX, stageBounds.maxX - canvas.width);
             cameraY = clamp(cameraY, stageBounds.minY, stageBounds.maxY - canvas.height);
 
+            // Pixel-art stability: snap camera to integer pixels to avoid shimmer.
+            const camRx = Math.round(cameraX);
+            const camRy = Math.round(cameraY);
             ctx.save();
-            ctx.translate(-cameraX, -cameraY);
+            ctx.translate(-camRx, -camRy);
 // 배경 별
             for (let i = 0; i < 50; i++) {
-                const x = (i * 73 + cameraX * 0.1) % 2500 + cameraX;
-                const y = (i * 47 + cameraY * 0.1) % 2500 + cameraY;
+                const x = (i * 73 + camRx * 0.1) % 2500 + camRx;
+                const y = (i * 47 + camRy * 0.1) % 2500 + camRy;
                 ctx.fillStyle = `rgba(255,255,255,${0.3 + Math.sin(Date.now() / 1000 + i) * 0.2})`;
                 ctx.beginPath();
                 ctx.arc(x, y, 1 + Math.random(), 0, Math.PI * 2);
@@ -2749,16 +2753,22 @@ function setupActionButtons(){
 
                 const tx = (typeof tp.x === 'number') ? tp.x : 0;
                 const ty = (typeof tp.y === 'number') ? tp.y : 0;
-                const dx = tx - sp.x;
-                const dy = ty - sp.y;
+                let dx = tx - sp.x;
+                let dy = ty - sp.y;
                 const dist = Math.hypot(dx, dy);
+
+                // 아주 작은 보정(패킷 지터/서버 미세 교정)로 인한 덜덜 떨림 방지
+                const DEAD = 0.18;
+                if (Math.abs(dx) < DEAD) dx = 0;
+                if (Math.abs(dy) < DEAD) dy = 0;
 
                 // 순간이동급 차이는 바로 스냅 (심한 끊김/튀는 느낌 방지)
                 if (dist > 220) {
                     sp.x = tx;
                     sp.y = ty;
                 } else {
-                    const k = 0.45;
+                    // 가까울수록 더 천천히 따라가서 미세한 흔들림을 흡수
+                    const k = dist < 8 ? 0.22 : 0.45;
                     sp.x += dx * k;
                     sp.y += dy * k;
                 }
@@ -2772,9 +2782,14 @@ function setupActionButtons(){
                 sp.pushing = !!tp.pushing;
 
                 if (!sp.facing) sp.facing = 1;
-                if (Math.abs(sp.vx) > 0.3) sp.facing = sp.vx < 0 ? -1 : 1;
+                // 원격은 vx가 작은 구간에서 부호가 흔들리며 좌우반전이 깜빡일 수 있어 임계값을 올림
+                if (Math.abs(sp.vx) > 0.6) sp.facing = sp.vx < 0 ? -1 : 1;
 
-                drawHamster(sp.x, sp.y, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing, pushing: sp.pushing });
+                // Render with stable pixel snap (rounding) to avoid left/right 1px wobble.
+                const rx = Math.round(sp.x);
+                const ry = Math.round(sp.y);
+
+                drawHamster(rx, ry, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing, pushing: sp.pushing });
             });
 // 로컬 플레이어
             drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead, localPlayer);

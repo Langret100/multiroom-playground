@@ -1901,6 +1901,9 @@ renderPlayers();
       room.onMessage("tg_floor_remove", (msg)=>{
         postToMain({ type:"tg_floor_remove", ids: msg.ids || null, owner: msg.owner || null });
       });
+      room.onMessage("tg_floor_quota", (msg)=>{
+        postToMain({ type:"tg_floor_quota", used: msg.used, limit: msg.limit });
+      });
 
       // SnakeTail relay: server -> iframe
       room.onMessage("st_timer", (msg)=>{

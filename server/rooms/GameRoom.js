@@ -55,6 +55,7 @@ this.maxClients = clamp(requestedMax, 2, (this.state.modeType === "duel" ? 4 : c
       players: new Map(),   // sessionId -> last state snapshot
       buttons: {},          // idx -> pressed
       floors: new Map(),    // id -> {id, owner, x, y, width, height, color, t}
+      floorUsed: new Map(), // sessionId -> used count (per-life quota)
       level: 1,
       lastBroadcastAt: 0,
       over: false,
@@ -206,6 +207,16 @@ this.st = {
       };
       this.tg.players.set(client.sessionId, snap);
 
+      // Per-life floor quota reset: when a player dies OR respawns, they get 2 floors again.
+      try{
+        const prevDead = !!prev?.isDead;
+        const nextDead = !!snap.isDead;
+        if ((nextDead && !prevDead) || (!nextDead && prevDead)){
+          this.tg.floorUsed.set(client.sessionId, 0);
+          client.send("tg_floor_quota", { used: 0, limit: 2 });
+        }
+      }catch(_){ }
+
       // If this player just died, remove their temporary floors ("바닥" 버튼)
       if (snap.isDead && !prev?.isDead){
         try{
@@ -273,6 +284,8 @@ this.st = {
         client.send("tg_level", { level: this.tg.level });
         client.send("tg_buttons", { buttons: this.tg.buttons });
         client.send("tg_floors", { floors: Array.from(this.tg.floors.values()) });
+        const used = Number(this.tg.floorUsed?.get(client.sessionId) || 0);
+        client.send("tg_floor_quota", { used, limit: 2 });
       }catch(_){ }
     });
 
@@ -285,6 +298,14 @@ this.st = {
       if (this.tg.over) return;
       const p = this.state.players.get(client.sessionId);
       if (!p) return;
+
+      // Per-life floor quota ("목숨당 2개")
+      const LIMIT = 2;
+      const used = Number(this.tg.floorUsed?.get(client.sessionId) || 0);
+      if (used >= LIMIT){
+        try{ client.send("tg_floor_quota", { used, limit: LIMIT }); }catch(_){ }
+        return;
+      }
 
       const now = Date.now();
       const rawId = String(payload?.id || "");
@@ -302,27 +323,9 @@ this.st = {
         t: now,
       };
 
-      // Enforce per-owner floor limit (keep latest 5)
-      try{
-        const owned = [];
-        for (const [fid, fl] of this.tg.floors.entries()){
-          if (fl?.owner === client.sessionId) owned.push(fl);
-        }
-        if (owned.length >= 5){
-          owned.sort((a,b)=>(a.t||0)-(b.t||0));
-          const removeCount = owned.length - 4;
-          const removedIds = [];
-          for (let i=0;i<removeCount;i++){
-            const rid = owned[i].id;
-            if (this.tg.floors.delete(rid)) removedIds.push(rid);
-          }
-          if (removedIds.length){
-            this.broadcast("tg_floor_remove", { owner: client.sessionId, ids: removedIds });
-          }
-        }
-      }catch(_){ }
-
       this.tg.floors.set(id, floor);
+      try{ this.tg.floorUsed.set(client.sessionId, used + 1); }catch(_){ }
+      try{ client.send("tg_floor_quota", { used: used + 1, limit: LIMIT }); }catch(_){ }
       this.broadcast("tg_floor", floor);
     });
     this.onMessage("tg_level", (client, { level }) => {
@@ -647,6 +650,9 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
         client.send("tg_level", { level: this.tg.level });
         client.send("tg_buttons", { buttons: this.tg.buttons });
         client.send("tg_floors", { floors: Array.from(this.tg.floors.values()) });
+        // per-life floor quota info
+        const used = Number(this.tg.floorUsed?.get(client.sessionId) || 0);
+        client.send("tg_floor_quota", { used, limit: 2 });
       }
     }catch(_){ }
 
@@ -661,6 +667,7 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     // Togester transient state cleanup (no persistence)
     try{
       if (this.tg?.players) this.tg.players.delete(client.sessionId);
+      try{ if (this.tg?.floorUsed) this.tg.floorUsed.delete(client.sessionId); }catch(_){ }
       try{
         if (this.tg?.floors){
           const removed = [];

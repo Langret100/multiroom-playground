@@ -995,7 +995,21 @@ export class RoomDO{
         this._relayLimiter.set(uid, lim);
 
         // store per-player state, broadcast aggregated snapshot at ~8fps
-        this.tg.players[uid] = d.state || {};
+        // + 요청사항: 발판 생성 제한을 "라운드당"이 아니라 "목숨(사망/리스폰)당"으로 처리
+        const prev = (this.tg.players && this.tg.players[uid]) ? this.tg.players[uid] : {};
+        const prevDead = !!prev.isDead;
+        const nextState = d.state || {};
+        const nextDead = !!nextState.isDead;
+        this.tg.players[uid] = nextState;
+
+        // Death/respawn => reset this player's floor quota on the server
+        if (this.meta.mode === "togester"){
+          if (!this.tg.floorUsed) this.tg.floorUsed = {};
+          if ((nextDead && !prevDead) || (!nextDead && prevDead)){
+            this.tg.floorUsed[uid] = 0;
+            try{ this._send(ws, "tg_floor_quota", { used: 0, limit: 2 }); }catch(_){ }
+          }
+        }
         this._scheduleTgBroadcast();
         return;
       }
@@ -1021,6 +1035,7 @@ export class RoomDO{
           // Level change: clear transient state (floors/buttons) so everyone stays in sync
           this.tg.floors = {};
           this.tg.buttons = {};
+          this.tg.floorUsed = {};
           this._broadcast("tg_floors", { floors: [] });
           this._broadcast("tg_buttons", { buttons: {} });
         }
@@ -1030,6 +1045,7 @@ export class RoomDO{
       if (t === "tg_reset"){
         if (this.meta.mode === "togester"){
           this.tg.floors = {};
+          this.tg.floorUsed = {};
           this._broadcast("tg_floors", { floors: [] });
         }
         this._broadcast("tg_reset", { t: d.t || now() });
@@ -1044,6 +1060,10 @@ export class RoomDO{
         }catch(_){ }
         try{ this._send(ws, "tg_level", { level: this.tg.level || 1 }); }catch(_){ }
         try{ this._send(ws, "tg_buttons", { buttons: this.tg.buttons || {} }); }catch(_){ }
+        try{
+          const used = (this.tg.floorUsed && this.tg.floorUsed[uid]) ? this.tg.floorUsed[uid] : 0;
+          this._send(ws, "tg_floor_quota", { used, limit: 2 });
+        }catch(_){ }
         return;
       }
 
@@ -1058,7 +1078,17 @@ export class RoomDO{
         if (this.meta.mode !== "togester") return;
         const id = String(d.id || "");
         if (!id) return;
-        const owner = safeId(d.owner) || uid;
+        const owner = uid; // do not allow spoofing
+
+        const LIMIT = 2;
+        if (!this.tg.floorUsed) this.tg.floorUsed = {};
+        const used = Number(this.tg.floorUsed[owner] || 0);
+        if (used >= LIMIT){
+          // Deny but inform the requester so UI can update.
+          try{ this._send(ws, "tg_floor_quota", { used, limit: LIMIT }); }catch(_){ }
+          return;
+        }
+
         const pl = {
           id,
           owner,
@@ -1069,6 +1099,8 @@ export class RoomDO{
           color: String(d.color || '#2f3640').slice(0, 32)
         };
         this.tg.floors[id] = pl;
+        this.tg.floorUsed[owner] = used + 1;
+        try{ this._send(ws, "tg_floor_quota", { used: used + 1, limit: LIMIT }); }catch(_){ }
         this._broadcast("tg_floor", pl);
         return;
       }

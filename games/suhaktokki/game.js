@@ -10,6 +10,22 @@
 (() => {
   'use strict';
 
+  // ---------- Pixel-art crisp rendering ----------
+  // Bitmap sprites may look blurry if canvas smoothing is enabled (common in iframes / CSS scaling).
+  // Force nearest-neighbor for the main canvases.
+  function setCrisp(canvasEl, g){
+    if (!canvasEl || !g) return;
+    try{
+      g.imageSmoothingEnabled = false;
+      g.mozImageSmoothingEnabled = false;
+      g.webkitImageSmoothingEnabled = false;
+      g.msImageSmoothingEnabled = false;
+    }catch(_){ }
+    try{
+      canvasEl.style.imageRendering = 'pixelated';
+    }catch(_){ }
+  }
+
   // embed (multiroom iframe)
   const QS = new URLSearchParams(location.search);
   const EMBED = QS.get("embed") === "1";
@@ -20,6 +36,7 @@
   // ---------- DOM ----------
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
+  setCrisp(canvas, ctx);
 
   // Ensure keyboard controls work reliably inside an iframe (multiroom embed):
   // make canvas focusable and focus it on interaction.
@@ -54,6 +71,7 @@
   const closeMap = document.getElementById('closeMap');
   const mapUiCanvas = document.getElementById('mapUiCanvas');
   const mapUiCtx = mapUiCanvas ? mapUiCanvas.getContext('2d') : null;
+  setCrisp(mapUiCanvas, mapUiCtx);
 
   const lobbyStatus = document.getElementById('lobbyStatus');
   const roster = document.getElementById('roster');
@@ -104,6 +122,7 @@
   const sceneOk = document.getElementById('sceneOk');
   const sceneCanvas = document.getElementById('sceneCanvas');
   const sceneCtx = sceneCanvas.getContext('2d');
+  setCrisp(sceneCanvas, sceneCtx);
 
   // ---------- Role reveal (Among Us style) ----------
   // Build overlay dynamically so it works in both standalone and embedded modes.
@@ -164,6 +183,7 @@
   rrPortrait.style.background = 'rgba(0,0,0,.18)';
   rrPortrait.style.boxShadow = 'inset 0 0 0 1px rgba(0,0,0,.25)';
   const rrPctx = rrPortrait.getContext('2d');
+  setCrisp(rrPortrait, rrPctx);
 
   rrPortraitWrap.appendChild(rrPortrait);
 
@@ -440,11 +460,12 @@
   }
 
   function applyPhaseUI() {
-    const inGame = EMBED ? !!(G.net && G.phase !== 'lobby') : !!(G.net && G.phase !== 'lobby');
+    const inGame = !!(G.net && G.phase !== 'lobby');
     // lobby vs game
     if (EMBED) {
-      // Embed: show lobby while still waiting/ready in the in-game lobby (prevents blank screen).
-      if (inGame) {
+      // Embedded: never show the internal lobby overlay once we've joined.
+      const joined = !!G.net || !!G.ui?.embedJoined;
+      if (joined || inGame) {
         lobby?.classList.add('hidden');
         if (hud) hud.style.display = 'flex';
       } else {
@@ -4854,8 +4875,9 @@ default:
     const H = AS.map.height * TS;
     const vw = viewW / ZOOM;
     const vh = viewH / ZOOM;
-    const x = clamp(me.x - vw / 2, 0, Math.max(0, W - vw));
-    const y = clamp(me.y - vh / 2, 0, Math.max(0, H - vh));
+    // Snap camera to CSS-pixel grid to avoid sub-pixel sampling blur when drawing the cached map.
+    const x = snapPx(clamp(me.x - vw / 2, 0, Math.max(0, W - vw)));
+    const y = snapPx(clamp(me.y - vh / 2, 0, Math.max(0, H - vh)));
     return { x, y, vw, vh };
   }
   // ---------- Lighting / Vision (Among Us-like) ----------
@@ -7458,7 +7480,9 @@ net.on('uiMeetingOpen', (m) => {
     if (G.host.started) return;
     G.phase = 'play';
     const n = Object.values(G.state.players).length;
-    const practice = n < 4;
+    // In embedded mode, let the parent decide practice/duel when available.
+    const forced = (EMBED && typeof window.__EMBED_PRACTICE__ === 'boolean') ? window.__EMBED_PRACTICE__ : null;
+    const practice = (forced !== null) ? forced : (n < 4);
     hostStartGame(practice);
     broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
     applyPhaseUI();
@@ -7481,6 +7505,8 @@ net.on('uiMeetingOpen', (m) => {
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
     // If parent says solo=true, force host so single-player practice can simulate locally.
     window.__EMBED_IS_HOST__ = !!init.isHost || !!init.solo;
+    // Parent can precompute whether this should be practice.
+    if (typeof init.practice === 'boolean') window.__EMBED_PRACTICE__ = init.practice;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,64); }catch(_){ }
@@ -7492,29 +7518,16 @@ net.on('uiMeetingOpen', (m) => {
 
     await joinRoom();
 
-    // In embed mode, once we successfully joined via the parent bridge, hide the internal lobby
-    // so players only see the main room UI outside the iframe.
-    // Embedded: do not hide lobby UI; otherwise only the background/canvas remains visible.
-    // (The server will switch phase to play and applyPhaseUI() will hide/show the right panels.)
-    try{ /* keep lobby visible */ }catch(_){ }
+    // Embedded UX: never show the internal lobby overlay. The parent already has it.
+    try{ G.ui.embedJoined = true; }catch(_){ }
+    try{ lobby?.classList.add('hidden'); }catch(_){ }
+    try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
 
-    // host: auto-start only after enough players join (prevents starting practice by accident)
+    // host: start immediately (practice if <4, duel if >=4). This matches the parent room's UX.
     if (window.__EMBED_IS_HOST__){
-      if (init.solo){
-        setTimeout(()=>{ try{ startBtn.click(); }catch(_){ } }, 300);
-      } else {
-        const deadline = Date.now() + 12_000;
-        const timer = setInterval(()=>{
-          try {
-            if (G.host.started) { clearInterval(timer); return; }
-            const humans = Object.values(G.state.players || {}).filter(p=>!p.isBot).length;
-            if (humans >= 4 || Date.now() > deadline){
-              clearInterval(timer);
-              startBtn.click();
-            }
-          } catch(_){ }
-        }, 250);
-      }
+      setTimeout(()=>{ try{ startBtn.click(); }catch(_){ } }, 180);
+    } else {
+      try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
     }
   }
 

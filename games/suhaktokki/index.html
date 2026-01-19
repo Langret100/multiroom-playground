@@ -317,6 +317,10 @@
       // In embed mode, keep a small status visible until we receive bridge_init.
       try{ const st=document.getElementById('lobbyStatus'); if(st) st.textContent='연결중...'; }catch(_){ }
 
+      // In embed mode we don't want to show the internal lobby overlay at all.
+      // The parent page already has a lobby + start button.
+      try{ document.getElementById('lobby')?.classList?.add('hidden'); }catch(_){ }
+
       // Early handshake + buffering (init이 module 로딩 전에 도착할 수 있음)
       try{ window.parent?.postMessage({ type: 'bridge_ready' }, '*'); }catch(_){ }
       window.addEventListener('message', (e)=>{
