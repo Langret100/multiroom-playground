@@ -1964,6 +1964,81 @@
         return false;
       };
 
+      // Snap the door along the room-wall opening ("hole") so side-entrance doors
+      // don't end up attached to the wrong place. We expand along the wall direction
+      // and pick the center of the contiguous corridor<->room open edge.
+      const snapDoorToHole = () => {
+        const ndx = (o._doorDx|0), ndy = (o._doorDy|0);
+        if (Math.abs(ndx) + Math.abs(ndy) !== 1) return;
+        const ox = o.x|0, oy = o.y|0;
+        // Perpendicular (along the wall): if normal is X, wall runs along Y, and vice versa.
+        const px = (ndx !== 0) ? 0 : 1;
+        const py = (ndx !== 0) ? 1 : 0;
+        const maxOff = 4;
+
+        const okAt = (off) => {
+          const cx = ox + px * off;
+          const cy = oy + py * off;
+          const rx2 = cx - ndx;
+          const ry2 = cy - ndy;
+          if (!canWalk(cx, cy)) return false;
+          if (!canWalk(rx2, ry2)) return false;
+          if (!inRoomRect(rx2, ry2)) return false;
+          // corridor tile must NOT be inside any other room rect.
+          const outsideIsCorridor = !inAnyRoomRect(cx, cy, o.roomId);
+          if (!outsideIsCorridor) return false;
+          return true;
+        };
+
+        if (!okAt(0)) return;
+        let lo = 0;
+        while (lo - 1 >= -maxOff && okAt(lo - 1)) lo--;
+        let hi = 0;
+        while (hi + 1 <= maxOff && okAt(hi + 1)) hi++;
+
+        const mid = Math.round((lo + hi) / 2);
+        o.x = (ox + px * mid) | 0;
+        o.y = (oy + py * mid) | 0;
+      };
+
+
+
+
+      // Helper: once door is on corridor side with a known normal (doorDx/doorDy),
+      // snap it to the *center* of the actual wall opening by scanning the contiguous
+      // corridor<->room open edge along the perpendicular axis.
+      // This fixes side-entrance rooms where authored door markers can be slightly off,
+      // producing "door attached in a weird spot" and weak blocking.
+      const snapDoorToHoleCenter = () => {
+        const ndx = (o._doorDx|0);
+        const ndy = (o._doorDy|0);
+        if (Math.abs(ndx) + Math.abs(ndy) !== 1) return;
+        const px = (ndx !== 0) ? 0 : 1;
+        const py = (ndx !== 0) ? 1 : 0;
+        const ox = o.x|0, oy = o.y|0;
+        const maxOff = 4;
+        const okAt = (off) => {
+          const cx = ox + px * off;
+          const cy = oy + py * off;
+          const rx2 = cx - ndx;
+          const ry2 = cy - ndy;
+          if (!canWalk(cx, cy)) return false;          // corridor tile
+          if (!canWalk(rx2, ry2)) return false;        // room-side tile
+          if (!inRoomRect(rx2, ry2)) return false;
+          // corridor tile should not be inside another room
+          if (inAnyRoomRect(cx, cy, o.roomId)) return false;
+          return true;
+        };
+        if (!okAt(0)) return;
+        let lo = 0, hi = 0;
+        while (lo - 1 >= -maxOff && okAt(lo - 1)) lo--;
+        while (hi + 1 <= maxOff && okAt(hi + 1)) hi++;
+        if (lo === 0 && hi === 0) return;
+        const mid = Math.round((lo + hi) / 2);
+        o.x = ox + px * mid;
+        o.y = oy + py * mid;
+
+      };
       // 1) First try: if the authored door tile is inside the room, push exactly 1 tile outward
       //    into a walkable corridor tile that is NOT inside another room.
       if (inRoomRect(ox0, oy0)) {
@@ -1984,6 +2059,7 @@
           o.y = best.outY;
           o._doorDx = best.dx;
           o._doorDy = best.dy;
+          snapDoorToHoleCenter();
           return;
         }
       }
@@ -2005,6 +2081,7 @@
           o._doorDx = best.dx;
           o._doorDy = best.dy;
           // keep o.x/o.y as-is
+          snapDoorToHoleCenter();
           return;
         }
       }
@@ -2057,6 +2134,7 @@
         o.y = best.outY;
         o._doorDx = best.dx;
         o._doorDy = best.dy;
+          snapDoorToHoleCenter();
         return;
       }
 
@@ -2081,6 +2159,7 @@
         if (canWalk(tx, ty)) {
           o.x = tx;
           o.y = ty;
+          snapDoorToHole();
           return;
         }
       }
@@ -6420,6 +6499,8 @@ default:
         }
       };
 
+      const isLRDoor = (!info.corridorVertical && !!imClosedLR);
+
       const drawClosed = () => {
         if (!info.corridorVertical && imClosedLR) {
           const dw = h;
@@ -6438,42 +6519,86 @@ default:
         // fully closed
         drawClosed();
       } else if (animK === 'close') {
-        // Among Us-ish close: vines spill down to cover the doorway in ~0.26s
+        // Close animation.
+        // - Front doors: vines spill down (original)
+        // - Left/Right doors: two panels slide toward the center (vertical open/close)
         drawOpen(0.75);
         const p = animP;
-        const drop = (1 - p) * TS * 0.55;
-        ctx.save();
-        ctx.translate(0, -drop);
-        ctx.beginPath();
-        // Clip along the major axis (Y in our draw space). For LR doors we swapped (dw/dh).
+
         if (!info.corridorVertical && imClosedLR) {
           const dw = h;
           const dh = w;
-          ctx.rect(Math.round(-dw/2), Math.round(-dh/2), Math.round(dw), Math.round(dh * p));
+          const shift = (1 - p) * (dh * 0.50);
+          // Top panel
+          ctx.save();
+          ctx.translate(0, -shift);
+          ctx.beginPath();
+          ctx.rect(Math.round(-dw/2), Math.round(-dh/2), Math.round(dw), Math.round(dh/2));
+          ctx.clip();
+          drawClosed();
+          ctx.restore();
+          // Bottom panel
+          ctx.save();
+          ctx.translate(0, +shift);
+          ctx.beginPath();
+          ctx.rect(Math.round(-dw/2), 0, Math.round(dw), Math.round(dh/2));
+          ctx.clip();
+          drawClosed();
+          ctx.restore();
+          drawCloseDust(p, info, w, h);
         } else {
+          const drop = (1 - p) * TS * 0.55;
+          ctx.save();
+          ctx.translate(0, -drop);
+          ctx.beginPath();
           ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * p));
+          ctx.clip();
+          drawClosed();
+          ctx.restore();
+          drawCloseDust(p, info, w, h);
         }
-        ctx.clip();
-        drawClosed();
-        ctx.restore();
-        drawCloseDust(p, info, w, h);
-      } else if (animK === 'open') {
-        // retract upward
+      }
+      else if (animK === 'open') {
+        // Open animation.
+        // - Front doors: retract upward (original)
+        // - Left/Right doors: two panels slide outward (up/down) to open
         const p = animP;
-        ctx.save();
-        ctx.beginPath();
+
         if (!info.corridorVertical && imClosedLR) {
           const dw = h;
           const dh = w;
-          ctx.rect(Math.round(-dw/2), Math.round(-dh/2), Math.round(dw), Math.round(dh * (1 - p)));
+          const shift = p * (dh * 0.50);
+          const a = Math.max(0, 1 - p * 0.90);
+          // Top panel
+          ctx.save();
+          ctx.globalAlpha = ctx.globalAlpha * a;
+          ctx.translate(0, -shift);
+          ctx.beginPath();
+          ctx.rect(Math.round(-dw/2), Math.round(-dh/2), Math.round(dw), Math.round(dh/2));
+          ctx.clip();
+          drawClosed();
+          ctx.restore();
+          // Bottom panel
+          ctx.save();
+          ctx.globalAlpha = ctx.globalAlpha * a;
+          ctx.translate(0, +shift);
+          ctx.beginPath();
+          ctx.rect(Math.round(-dw/2), 0, Math.round(dw), Math.round(dh/2));
+          ctx.clip();
+          drawClosed();
+          ctx.restore();
+          drawOpen(0.55 + 0.40 * p);
         } else {
+          ctx.save();
+          ctx.beginPath();
           ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * (1 - p)));
+          ctx.clip();
+          drawClosed();
+          ctx.restore();
+          drawOpen(0.55 + 0.40 * p);
         }
-        ctx.clip();
-        drawClosed();
-        ctx.restore();
-        drawOpen(0.55 + 0.40 * p);
       }
+
 
       // Tile-edge masking: connect vine door edges to surrounding wall tiles.
       // (Prevents the "transparent wall" feel when closed.)
