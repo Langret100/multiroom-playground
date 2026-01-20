@@ -2099,8 +2099,47 @@
       ? AS.map.spawnPoints
       : [{ x: 2, y: 2 }];
     const sp = sps[(id - 1) % sps.length] || sps[0];
-    const px = (Number(sp.x) + 0.5) * TS;
-    const py = (Number(sp.y) + 0.5) * TS;
+
+    // Avoid players stacking perfectly on the same pixel (looks like one player is missing).
+    // Pick the nearest walkable tile around the spawn that isn't already occupied.
+    const W = (AS.map && AS.map.width) ? (AS.map.width | 0) : 0;
+    const H = (AS.map && AS.map.height) ? (AS.map.height | 0) : 0;
+    const baseTx = (Number(sp.x) | 0);
+    const baseTy = (Number(sp.y) | 0);
+    const offsets = [
+      [0,0],[1,0],[-1,0],[0,1],[0,-1],
+      [1,1],[-1,1],[1,-1],[-1,-1],
+      [2,0],[-2,0],[0,2],[0,-2],
+      [2,1],[2,-1],[-2,1],[-2,-1],
+      [1,2],[-1,2],[1,-2],[-1,-2],
+    ];
+    const isWalk = (tx, ty) => {
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+      if (!solid) return true;
+      return !solid[ty * W + tx];
+    };
+
+    
+    let chosenTx = baseTx, chosenTy = baseTy;
+    const minD2 = (TS * 0.55) * (TS * 0.55);
+    const others = Object.values(st.players || {}).filter(pp => pp && pp.alive);
+    for (let k = 0; k < offsets.length; k++) {
+      const tx = baseTx + offsets[k][0];
+      const ty = baseTy + offsets[k][1];
+      if (!isWalk(tx, ty)) continue;
+      const cx = (tx + 0.5) * TS;
+      const cy = (ty + 0.5) * TS;
+      let ok = true;
+      for (const op of others) {
+        const dx = (op.x || 0) - cx;
+        const dy = (op.y || 0) - cy;
+        if (dx*dx + dy*dy < minD2) { ok = false; break; }
+      }
+      if (ok) { chosenTx = tx; chosenTy = ty; break; }
+    }
+
+    const px = (chosenTx + 0.5) * TS;
+    const py = (chosenTy + 0.5) * TS;
 
     st.players[id] = {
       id,
@@ -2136,6 +2175,8 @@
       missionSiteId: null,
       missionStage: 0,
       missionClearAt: 0,
+
+      // connection: we rely on explicit leave/unload events (no heartbeat pruning)
     };
 
     return id;
@@ -2194,9 +2235,51 @@
       // Among-Us style: big role reveal overlay (per player)
       sendToPlayer(pp.id, { t: 'uiRoleReveal', role: pp.role, practice });
     }
+  }
 
+  function hostRemovePlayer(playerId, reason = 'left') {
+    const st = G.state;
+    const pid = Number(playerId || 0);
+    if (!pid || !st.players || !st.players[pid]) return;
+    const p = st.players[pid];
+    const nick = p.nick || ('#' + pid);
+    const cid = (p.clientId != null) ? String(p.clientId) : null;
+
+    // Remove from state
+    delete st.players[pid];
+
+    // Cleanup host caches
+    try{ G.host.inputs && G.host.inputs.delete(pid); }catch(_){ }
+    try{ G.host.votes && G.host.votes.delete(pid); }catch(_){ }
+    try{ if (G.host._clientToPlayer && cid) G.host._clientToPlayer.delete(cid); }catch(_){ }
+
+    // Win rule: if the teacher leaves/disconnects, students win immediately.
+    // (Ghost/down players are allowed to exist and do NOT affect win conditions.)
+    if (!st.practice && Number(st.teacherId || 0) === pid) {
+      st.teacherId = null;
+      st.winner = 'crew';
+      G.phase = 'end';
+      broadcast({ t: 'toast', text: '선생토끼가 퇴장해서 학생토끼 승리!' });
+      broadcastState(true);
+      return;
+    }
+
+    // If we drop below 2 humans in real game, go back to practice.
+    try{
+      const humansNow = Object.values(st.players || {}).filter(pp => pp && pp.alive && !pp.isBot).length;
+      if (!st.practice && humansNow < 2) {
+        st.practice = true;
+        st.teacherId = null;
+        for (const pp of Object.values(st.players || {})) pp.role = 'crew';
+        broadcast({ t: 'toast', text: '인원이 줄어서 연습 모드로 전환됐어!' });
+      }
+    }catch(_){ }
 
     broadcastState(true);
+
+    if (reason) {
+      broadcast({ t: 'toast', text: `${nick} 퇴장` });
+    }
   }
 
   function hostAliveCount() {
@@ -7747,6 +7830,13 @@ default:
       G.net = null;
     });
 
+    // leave/disconnect (host)
+    net.on('leave', (m) => {
+      if (!net.isHost) return;
+      const pid = Number(m.playerId || 0);
+      if (pid) hostRemovePlayer(pid, m.reason || 'left');
+    });
+
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
@@ -8220,6 +8310,19 @@ net.on('uiMeetingOpen', (m) => {
     window.addEventListener('message', (ev)=>{
       const d = ev.data || {};
       if (!d || typeof d !== 'object') return;
+      // Parent -> iframe: leaving the embedded game view (go back to room)
+      if (d.type === 'bridge_leave') {
+        try {
+          if (G.net) {
+            const pid = Number(G.net.myPlayerId || 0);
+            if (pid) G.net.post({ t: 'leave', playerId: pid, reason: (d.reason || 'leave') });
+            // stop background simulation
+            try{ G.net.close && G.net.close(); }catch(_){ }
+            G.net = null;
+          }
+        } catch (_) {}
+        return;
+      }
       if (d.type === 'bridge_init'){
         startEmbedded(d).catch((e)=>{
           try{ console.error(e); }catch(_){ }
@@ -8228,6 +8331,19 @@ net.on('uiMeetingOpen', (m) => {
       }
     });
   }
+
+    // Best-effort: if the iframe is being unloaded/hidden, notify host to remove this player.
+    const _sendLeave = (why)=>{
+      try{
+        if (!G.net) return;
+        const pid = Number(G.net.myPlayerId || 0);
+        if (!pid) return;
+        G.net.post({ t: 'leave', playerId: pid, reason: why || 'unload' });
+      }catch(_){ }
+    };
+    window.addEventListener('pagehide', ()=>_sendLeave('pagehide'));
+    window.addEventListener('beforeunload', ()=>_sendLeave('unload'));
+
 
   // ---------- Boot ----------
   (async () => {

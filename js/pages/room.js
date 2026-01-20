@@ -19,6 +19,14 @@
 
   function exitGameFullscreen(){
     try{ document.body.classList.remove("in-game"); }catch(_){ }
+
+    // Coop (수학토끼): when leaving the embedded game view back to the room,
+    // notify the iframe so the host can remove this player from the match state.
+    try{
+      if (typeof postToMain === "function" && coop && coop.active && coop.meta && coop.meta.id === "suhaktokki"){
+        postToMain({ type: "bridge_leave", reason: "exit" });
+      }
+    }catch(_){ }
     // Stop game-specific BGM when leaving the embedded gameplay
     try{ window.__stopGameBgm?.(); }catch(_){ }
     // Resume room BGM only if the user previously enabled it
