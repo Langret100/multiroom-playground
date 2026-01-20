@@ -288,7 +288,8 @@
       if (!practice && role === 'teacher') {
         // glasses are local-only by nature (this overlay is local UI)
         const gx = rrPortrait.width / 2;
-        const gy = dy + dh * 0.40;
+        // Glasses should sit lower on the face (mobile request)
+        const gy = dy + dh * 0.46;
         drawGlassesOn(rrPctx, gx, gy, 0.9, tNow);
       }
     } else {
@@ -2147,11 +2148,21 @@
   }
 
   function hostStartGame(practice = false) {
+    const st = G.state;
     hostInitFromMap();
+
+    // Ensure the initial lighting state is fully bright (all lamps on) at game start.
+    // This prevents an occasional "slightly dark" look reported on some devices.
+    try{
+      for (const lid of Object.keys(st.lamps || {})){
+        if (st.lamps[lid]) st.lamps[lid].on = true;
+      }
+    }catch(_){ }
+
     G.host.started = true;
-    G.state.practice = !!practice;
-    G.state.timeLeft = 180;
-    G.state.maxTime = 180;
+    st.practice = !!practice;
+    st.timeLeft = 180;
+    st.maxTime = 180;
     hostAssignTeacher();
 
     // 왕관/플로우리스 추적(호스트 전용)
@@ -2164,7 +2175,7 @@
     
 
     // 각자 역할 안내(내가 선생토끼인지 바로 알 수 있게)
-    for (const pp of Object.values(G.state.players)) {
+    for (const pp of Object.values(st.players)) {
       const text = practice
         ? '연습 모드야! (선생토끼 없음) 마음껏 미션을 눌러봐!'
         : ((pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터) 들키지 말고 빵점을 줘!' : '당신은 학생토끼야! 미션을 해결해서 시간을 늘려!');
@@ -4138,8 +4149,10 @@ function tileAtPixel(x, y) {
       chip.className = 'mAvatar' + ((p.alive && !p.down) ? '' : ' mDead');
       const icon = createTokkiIcon(p.color ?? 0);
       const label = document.createElement('span');
-      // Show only an id label (no nicknames) — avatar carries identity.
-      label.textContent = `#${p.id}`;
+      // Use nickname in meeting UIs (chat/vote/roster). Fall back to #id if missing.
+      const nn = (p.nick || '').toString().trim();
+      label.textContent = nn ? nn : `#${p.id}`;
+      label.title = `#${p.id}`;
       label.style.fontWeight = '1000';
       label.style.fontSize = '12px';
       chip.appendChild(icon);
@@ -4165,8 +4178,11 @@ function tileAtPixel(x, y) {
       meta.className = 'mMeta';
       const who = document.createElement('span');
       who.className = 'mNick';
-      // No nickname: show id only.
-      who.textContent = `#${Number(m.pid||0)}`;
+      // Show nickname (fallback: #id)
+      const mnn = (m.nick || '').toString().trim();
+      const pid = Number(m.pid||0);
+      who.textContent = mnn ? mnn : `#${pid}`;
+      who.title = `#${pid}`;
       const time = document.createElement('span');
       time.className = 'mTime';
       time.textContent = String(m.time || '');
@@ -4271,7 +4287,10 @@ function tileAtPixel(x, y) {
       left.style.gap = '10px';
       const icon = createTokkiIcon(p.color ?? 0);
       const label = document.createElement('div');
-      label.innerHTML = `<b>#${p.id}</b>`;
+      const vnn = (p.nick || '').toString().trim();
+      label.textContent = vnn ? vnn : `#${p.id}`;
+      label.title = `#${p.id}`;
+      label.style.fontWeight = '900';
       left.appendChild(icon);
       left.appendChild(label);
       const btn = document.createElement('button');
@@ -6876,7 +6895,7 @@ default:
     const row = ((p.color || 0) % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS) + motionMap[motion] * DIR_ROWS + dir;
 
     // Slight y offset when fainted so the body lies on the ground (and doesn't look like it's floating).
-    const ySprite = y + (p.down ? 8 : 0);
+    const ySprite = y + (p.down ? 14 : 0);
 
     // Kill pose: shown to everyone (requested). This reveals the teacher during the action.
     const killPose = p.role === 'teacher' && p.emoteUntil && now() < p.emoteUntil && p.emoteKind === 'kill0' && AS.pixel?.teacher_kill0_sheet;
@@ -6917,14 +6936,19 @@ default:
 
     if (p.crown) drawCrown(x, y - 56);
 
-    // 선생토끼는 안경으로 확실히 구분 (정면(dir=0)에서 얼굴 위치에 오버레이)
-    if (p.role === 'teacher' && !G.state.practice) {
-      const shining = (p.glassesUntil && now() < p.glassesUntil);
-      if (dir === 0) {
-        // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다
-        drawGlasses(x, ySprite - 41, shining ? 1.0 : 0.7);
+    // 역할은 '본인에게만' 보여야 함: 선생토끼 안경은 본인 화면에서만 렌더링.
+    // (상태에는 role이 실려오더라도, 타 유저 화면에서는 안경이 보이지 않게 한다.)
+    try{
+      const me = (G.net && G.net.myPlayerId) ? (G.state.players && G.state.players[G.net.myPlayerId]) : null;
+      const isMeTeacher = !!me && (me.role === 'teacher') && !G.state.practice;
+      if (isMeTeacher && isLocal) {
+        const shining = (p.glassesUntil && now() < p.glassesUntil);
+        if (dir === 0) {
+          // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다 (조금 더 아래로)
+          drawGlasses(x, ySprite - 36, shining ? 1.0 : 0.7);
+        }
       }
-    }
+    }catch(_){ }
 
     if (p.down) {
       const tt = now() / 140;
@@ -7805,8 +7829,8 @@ net.on('uiMeetingOpen', (m) => {
 
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
-    // If parent says solo=true, force host so single-player practice can simulate locally.
-    window.__EMBED_IS_HOST__ = !!init.isHost || !!init.solo;
+    // Host is decided by the room (avoid multiple-host races when more players join).
+    window.__EMBED_IS_HOST__ = !!init.isHost;
     // Parent can precompute whether this should be practice.
     if (typeof init.practice === 'boolean') window.__EMBED_PRACTICE__ = init.practice;
 

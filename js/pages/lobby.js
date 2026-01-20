@@ -157,7 +157,8 @@ function statusDot(room){
     const g = window.gameById ? window.gameById(modeId) : null;
     const name = g ? g.name : (modeId || "-");
     try{
-      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 520px)").matches;
+      // Wider mobile threshold so long Korean game titles don't auto-wrap awkwardly
+      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
       const id = g?.id || modeId;
       if (isMobileNarrow && id === "drawanswer") return "그림\n맞추기";
     }catch(_){ }

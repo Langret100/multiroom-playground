@@ -312,7 +312,8 @@ function updatePreview(modeId){
     if (previewEls.thumb){
       previewEls.thumb.dataset.game = meta?.id || modeId || "";
       // Mobile: make "그림맞추기" fit by splitting into two lines.
-      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 520px)").matches;
+      // Wider mobile threshold so long Korean game titles don't auto-wrap awkwardly
+      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
       if ((meta?.id || modeId) === "drawanswer" && isMobileNarrow){
         previewEls.thumb.classList.add("label-drawanswer-mobile");
         previewEls.thumb.dataset.label = "그림맞추기";
@@ -1219,7 +1220,8 @@ function updatePreview(modeId){
     const g = window.gameById ? window.gameById(modeId) : null;
     const name = g ? g.name : (modeId || "-");
     try{
-      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 520px)").matches;
+      // Wider mobile threshold so long Korean game titles don't auto-wrap awkwardly
+      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
       const id = g?.id || modeId;
       if (isMobileNarrow && id === "drawanswer") return "그림\n맞추기";
     }catch(_){ }
@@ -1548,22 +1550,46 @@ function sendCpuBridgeInit(){
 
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
+
+  // Wait until the room state has my player entry.
+  // This avoids transient "solo" / host mis-detection that can break 4+ player coop.
+  try{
+    if (!room?.state?.players?.has?.(mySessionId)){
+      coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
+      if (coop._bridgeInitRetry < 30) setTimeout(sendCoopBridgeInit, 80);
+      return;
+    }
+    coop._bridgeInitRetry = 0;
+  }catch(_){ }
+
   const seat = (()=>{
     try{
-      const s = room?.state?.order?.get(mySessionId);
-      return (typeof s === "number") ? s : 0;
+      if (room?.state?.order?.has?.(mySessionId)){
+        const s = room.state.order.get(mySessionId);
+        return (typeof s === "number") ? s : 0;
+      }
+      return 0;
     }catch(_){ return 0; }
   })();
+
+  const CPU_SID = "__cpu__";
   const humanCount = (()=>{
-    try{ return room?.state?.players ? room.state.players.size : 0; }catch(_){ return 0; }
+    try{
+      let cnt = 0;
+      room?.state?.players?.forEach?.((_, sid)=>{
+        if (String(sid) === CPU_SID) return;
+        cnt++;
+      });
+      return cnt;
+    }catch(_){ return 0; }
   })();
-  const solo = (humanCount === 1);
+  const solo = (humanCount <= 1);
   const isHostFromState = (()=>{
     try{ return !!room?.state?.players?.get(mySessionId)?.isHost; }catch(_){ return false; }
   })();
-  // Some coop games allow solo practice. If you are alone, treat yourself as host
-  // for the embedded game even if the host flag hasn't arrived yet.
-  const effectiveIsHost = isHostFromState || (solo && (coop.meta.id === "suhaktokki"));
+
+  // Host must be decided by the room (avoid multiple hosts).
+  const effectiveIsHost = isHostFromState;
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
@@ -1577,18 +1603,8 @@ function sendCoopBridgeInit(){
     practice: (() => {
       // Explicit local practice mode (togester only)
       if (coop.practice) return true;
-      // SuhakTokki: treat 1~3 humans as practice, 4+ as real game (matches game internal rules)
-      if (coop.meta && coop.meta.id === "suhaktokki"){
-        let humans = 0;
-        try{
-          const CPU_SID = "__cpu__";
-          room?.state?.players?.forEach?.((p, sid)=>{
-            if (String(sid) === CPU_SID) return;
-            humans++;
-          });
-        }catch(_){ }
-        return (humans > 0 && humans < 4);
-      }
+      // SuhakTokki: only solo uses practice; 2+ players should run the normal game.
+      if (coop.meta && coop.meta.id === "suhaktokki") return (humanCount <= 1);
       return false;
     })()
   });
