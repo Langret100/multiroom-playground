@@ -1938,7 +1938,8 @@
 
     const pushDoorOutward = (o) => {
       // Place doors on the room-corridor boundary (Among Us style).
-      // This prevents doors from ending up in the middle of a room or mis-sized vs corridor width.
+      // Important: prefer the *map-authored* doorway location and only push 1 tile outward
+      // when possible. A full room-edge scan is used only as a fallback.
       const r = roomById.get(o.roomId);
       if (!r || !r.rect) return;
       const [rx, ry, rw, rh] = r.rect;
@@ -1952,7 +1953,64 @@
         { dx: 0, dy: -1 },
       ];
 
-      // Prefer doorway candidates near the room boundary (stable + fast)
+      // Helper: check if tile is inside ANY room rect (optionally excluding this room).
+      const inAnyRoomRect = (tx, ty, excludeId = null) => {
+        for (const rr of (AS.map.rooms || [])) {
+          if (!rr || !rr.rect) continue;
+          if (excludeId && rr.id === excludeId) continue;
+          const [x, y, w, h] = rr.rect;
+          if (tx >= x && ty >= y && tx < x + w && ty < y + h) return true;
+        }
+        return false;
+      };
+
+      // 1) First try: if the authored door tile is inside the room, push exactly 1 tile outward
+      //    into a walkable corridor tile that is NOT inside another room.
+      if (inRoomRect(ox0, oy0)) {
+        let best = null;
+        for (const d of dirs) {
+          const nx = ox0 + d.dx;
+          const ny = oy0 + d.dy;
+          if (inRoomRect(nx, ny)) continue;
+          if (!canWalk(nx, ny)) continue;
+          const outsideIsCorridor = !inAnyRoomRect(nx, ny, o.roomId);
+          const score = (outsideIsCorridor ? 10 : 0);
+          if (!best || score > best.score) {
+            best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, score };
+          }
+        }
+        if (best) {
+          o.x = best.outX;
+          o.y = best.outY;
+          o._doorDx = best.dx;
+          o._doorDy = best.dy;
+          return;
+        }
+      }
+
+      // 2) Second try: if the authored door tile is already outside the room, derive outward dir
+      //    by finding the adjacent inside-room tile.
+      if (!inRoomRect(ox0, oy0) && canWalk(ox0, oy0)) {
+        let best = null;
+        for (const d of dirs) {
+          const ix = ox0 - d.dx;
+          const iy = oy0 - d.dy;
+          if (!inRoomRect(ix, iy)) continue;
+          if (!canWalk(ix, iy)) continue;
+          const corridorIsCorridor = !inAnyRoomRect(ox0, oy0, o.roomId);
+          const score = (corridorIsCorridor ? 10 : 0);
+          if (!best || score > best.score) best = { dx: d.dx, dy: d.dy, score };
+        }
+        if (best) {
+          o._doorDx = best.dx;
+          o._doorDy = best.dy;
+          // keep o.x/o.y as-is
+          return;
+        }
+      }
+
+      // 3) Fallback: scan room boundary band for a likely doorway candidate near the authored position.
+      //    Prefer candidates whose outside tile is corridor (not inside another room).
       let best = null;
       const band = 3;
       for (let ty = ry; ty < ry + rh; ty++) {
@@ -1965,9 +2023,11 @@
             const ny = ty + d.dy;
             if (inRoomRect(nx, ny)) continue;
             if (!canWalk(nx, ny)) continue;
+            const outsideIsCorridor = !inAnyRoomRect(nx, ny, o.roomId);
             const dist = Math.abs(tx - ox0) + Math.abs(ty - oy0);
-            if (!best || dist < best.dist) {
-              best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, dist };
+            const score = (outsideIsCorridor ? 1000 : 0) - dist;
+            if (!best || score > best.score) {
+              best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, score };
             }
           }
         }
@@ -1983,17 +2043,16 @@
               const ny = ty + d.dy;
               if (inRoomRect(nx, ny)) continue;
               if (!canWalk(nx, ny)) continue;
+              const outsideIsCorridor = !inAnyRoomRect(nx, ny, o.roomId);
               const dist = Math.abs(tx - ox0) + Math.abs(ty - oy0);
-              if (!best || dist < best.dist) {
-                best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, dist };
-              }
+              const score = (outsideIsCorridor ? 1000 : 0) - dist;
+              if (!best || score > best.score) best = { outX: nx, outY: ny, dx: d.dx, dy: d.dy, score };
             }
           }
         }
       }
 
       if (best) {
-        // Place the door on the corridor side; store outward (room -> corridor) direction.
         o.x = best.outX;
         o.y = best.outY;
         o._doorDx = best.dx;
@@ -7868,20 +7927,20 @@ default:
           p.isBot = false;
           p.alive = true;
         }
-        net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false });
+        net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
         return;
       }
 
       const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
       if (playersCount >= 8) {
-        net.post({ t: 'joinDenied', toClient: from || m.from, reason: '방이 가득 찼어!' });
+        net.post({ t: 'joinDenied', toClient: from || m.from, reason: '방이 가득 찼어!', joinToken: jt });
         return;
       }
       const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
             if (from) G.host._clientToPlayer.set(from, pid);
-      net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false });
+      net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
 
       // If we started in practice (e.g., embed auto-start) and now have enough players,
@@ -7901,6 +7960,9 @@ default:
 
     net.on('joinAck', (m) => {
       if (m.toClient !== net.clientId) return;
+      // If multiple clients share the same clientId (possible in embed/bridge),
+      // only accept the ack that matches my joinToken.
+      if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       net.myPlayerId = Number(m.playerId || 0);
 
       // stop join retry loop
@@ -7918,6 +7980,7 @@ default:
 
     net.on('joinDenied', (m) => {
       if (m.toClient !== net.clientId) return;
+      if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       showToast(m.reason || '참가 실패');
       net.close();
       G.net = null;
