@@ -411,10 +411,20 @@
   }
   fullscreenBtn.addEventListener('click', () => requestFullscreenAndLandscape());
 
+  function stopHeartbeat() {
+    try {
+      if (G.net && G.net._hb) {
+        clearInterval(G.net._hb);
+        G.net._hb = null;
+      }
+    } catch (_) {}
+  }
+
   async function leaveRoom() {
     if (EMBED){
       // In multiroom iframe: just return to room UI
       try{ bridgeSend("sk_quit", {}); }catch(_){ }
+      try{ stopHeartbeat(); }catch(_){ }
       try{ G.net?.close?.(); }catch(_){ }
       G.net = null;
       return;
@@ -426,6 +436,7 @@
     try { sceneModal.classList.remove('show'); } catch (_) {}
     try { stopSceneAnim(); } catch (_) {}
 
+    stopHeartbeat();
     try { G.net?.close?.(); } catch (_) {}
     G.net = null;
 
@@ -2317,7 +2328,8 @@
       missionStage: 0,
       missionClearAt: 0,
 
-      // connection: we rely on explicit leave/unload events (no heartbeat pruning)
+      // connection (host heartbeat)
+      lastSeen: now(),
     };
 
     return id;
@@ -2495,6 +2507,29 @@
   function hostTick(dt) {
     const st = G.state;
     if (st.winner) return;
+
+    // heartbeat prune (ghost players)
+    try{
+      if (!G.host._lastPruneAt) G.host._lastPruneAt = 0;
+      if (now() - G.host._lastPruneAt > 1000) {
+        G.host._lastPruneAt = now();
+        const hostPid = (G.net && G.net.isHost) ? Number(G.net.myPlayerId || 0) : 0;
+        const ids = Object.keys(st.players || {}).map(k => Number(k || 0)).filter(v => !!v)
+        ;
+        const toKick = [];
+        for (const pid of ids) {
+          const p = st.players[pid];
+          if (!p) continue;
+          if (p.isBot) { p.lastSeen = now(); continue; }
+          if (hostPid && pid === hostPid) { p.lastSeen = now(); continue; }
+          const ls = Number(p.lastSeen || 0);
+          if (ls && (now() - ls > 12000)) toKick.push(pid);
+        }
+        for (const pid of toKick) {
+          hostRemovePlayer(pid, 'timeout');
+        }
+      }
+    }catch(_){ }
 
     // 타이머(누수 레벨이 높을수록 더 빨리 줄어듦)
     const leakMul = 1 + 0.06 * (st.leakLevel || 0);
@@ -7923,6 +7958,31 @@ default:
     const nx = me.x + me.vx * dt;
     const ny = me.y + me.vy * dt;
     moveWithCollision(me, nx, ny);
+
+    // soft-correct towards host auth position (reduces rubber-banding)
+    try{
+      const ax = (typeof me._authX === 'number') ? me._authX : null;
+      const ay = (typeof me._authY === 'number') ? me._authY : null;
+      if (ax != null && ay != null) {
+        const dx = ax - me.x;
+        const dy = ay - me.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 0.5) {
+          if (dist > 64) {
+            me.x = ax;
+            me.y = ay;
+            me.vx = 0;
+            me.vy = 0;
+          } else {
+            const maxStep = Math.max(48, TS * 6) * dt;
+            const step = Math.min(dist, maxStep);
+            const nx2 = me.x + (dx / dist) * step;
+            const ny2 = me.y + (dy / dist) * step;
+            moveWithCollision(me, nx2, ny2);
+          }
+        }
+      }
+    }catch(_){ }
   }
   // ---------- Main loop ----------
   let lastFrame = now();
@@ -8051,6 +8111,7 @@ default:
           p.clientId = from;
           p.isBot = false;
           p.alive = true;
+          p.lastSeen = now();
         }
         net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
@@ -8063,8 +8124,9 @@ default:
         return;
       }
       const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
+      try{ const p = G.state.players && G.state.players[pid]; if (p) p.lastSeen = now(); }catch(_){ }
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
-            if (from) G.host._clientToPlayer.set(from, pid);
+      if (from) G.host._clientToPlayer.set(from, pid);
       net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
 
@@ -8090,6 +8152,16 @@ default:
       if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       net.myPlayerId = Number(m.playerId || 0);
 
+      // heartbeat (client -> host)
+      try{
+        if (!net.isHost) {
+          if (net._hb) { clearInterval(net._hb); net._hb = null; }
+          net._hb = setInterval(()=>{
+            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+          }, 1000);
+        }
+      }catch(_){ }
+
       // stop join retry loop
       try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
 
@@ -8107,6 +8179,7 @@ default:
       if (m.toClient !== net.clientId) return;
       if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       showToast(m.reason || '참가 실패');
+      try{ if (net._hb) { clearInterval(net._hb); net._hb = null; } }catch(_){}
       net.close();
       G.net = null;
     });
@@ -8118,11 +8191,22 @@ default:
       if (pid) hostRemovePlayer(pid, m.reason || 'left');
     });
 
+    // heartbeat ping (host): keep lastSeen fresh even if player is idle
+    net.on('ping', (m) => {
+      if (!net.isHost) return;
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      const p = G.state.players && G.state.players[pid];
+      if (p) p.lastSeen = now();
+    });
+
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
       const pid = Number(m.playerId || 0);
       if (!pid) return;
+      const p = G.state.players && G.state.players[pid];
+      if (p) p.lastSeen = now();
       G.host.inputs.set(pid, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
     });
 
@@ -8227,33 +8311,41 @@ default:
       G.state.total = m.total;
       G.state.practice = !!m.practice;
 
-      // Apply authoritative state, but keep my locally-predicted position to avoid
-      // making my own movement look choppy when I'm not the host.
+      // Apply authoritative state; for my own player (non-host), keep locally predicted
+      // position but store the host position as a soft correction target.
       const incomingPlayers = m.players || {};
       const myPid = (!net.isHost && net.myPlayerId) ? String(net.myPlayerId) : null;
-      if (myPid && G.state.players && G.state.players[myPid] && incomingPlayers[myPid]) {
+      if (myPid && G.state.players && G.state.players[myPid]) {
         const prev = G.state.players[myPid];
         const inc = incomingPlayers[myPid];
-        const dx = (inc.x || 0) - (prev.x || 0);
-        const dy = (inc.y || 0) - (prev.y || 0);
-        const err = Math.hypot(dx, dy);
-        const snap = err > 48 || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || !!inc.vent;
-        if (!snap) {
-          incomingPlayers[myPid] = {
-            ...inc,
-            x: prev.x,
-            y: prev.y,
-            vx: prev.vx,
-            vy: prev.vy,
-            dir: (typeof prev.dir === 'number') ? prev.dir : inc.dir,
-            facing: (typeof prev.facing === 'number') ? prev.facing : inc.facing,
-          };
+        if (inc) {
+          const dx = (inc.x || 0) - (prev.x || 0);
+          const dy = (inc.y || 0) - (prev.y || 0);
+          const err = Math.hypot(dx, dy);
+          const hard = (err > 64) || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || (!!inc.vent) || (!!prev.vent);
+
+          // copy authoritative fields but keep predicted position unless we must hard snap
+          for (const [k, v] of Object.entries(inc)) {
+            if (k === 'x' || k === 'y' || k === 'vx' || k === 'vy') continue;
+            prev[k] = v;
+          }
+
+          prev._authX = (inc.x || 0);
+          prev._authY = (inc.y || 0);
+          prev._authAt = now();
+
+          if (hard) {
+            prev.x = inc.x;
+            prev.y = inc.y;
+            prev.vx = inc.vx || 0;
+            prev.vy = inc.vy || 0;
+          }
+
+          incomingPlayers[myPid] = prev;
+        } else {
+          // snapshot missed me: keep previous local copy
+          incomingPlayers[myPid] = prev;
         }
-      }
-      // If a snapshot temporarily misses my local player, keep my previous local copy
-      // so my character never disappears and input/camera remain stable.
-      if (myPid && G.state.players && G.state.players[myPid] && !incomingPlayers[myPid]) {
-        incomingPlayers[myPid] = G.state.players[myPid];
       }
       G.state.players = incomingPlayers;
 
@@ -8605,6 +8697,7 @@ net.on('uiMeetingOpen', (m) => {
             const pid = Number(G.net.myPlayerId || 0);
             if (pid) G.net.post({ t: 'leave', playerId: pid, reason: (d.reason || 'leave') });
             // stop background simulation
+            try{ stopHeartbeat(); }catch(_){ }
             try{ G.net.close && G.net.close(); }catch(_){ }
             G.net = null;
           }
@@ -8629,8 +8722,8 @@ net.on('uiMeetingOpen', (m) => {
         G.net.post({ t: 'leave', playerId: pid, reason: why || 'unload' });
       }catch(_){ }
     };
-    window.addEventListener('pagehide', ()=>_sendLeave('pagehide'));
-    window.addEventListener('beforeunload', ()=>_sendLeave('unload'));
+    window.addEventListener('pagehide', ()=>{ try{ _sendLeave('pagehide'); }catch(_){} try{ stopHeartbeat(); }catch(_){} });
+    window.addEventListener('beforeunload', ()=>{ try{ _sendLeave('unload'); }catch(_){} try{ stopHeartbeat(); }catch(_){} });
 
 
   // ---------- Boot ----------
