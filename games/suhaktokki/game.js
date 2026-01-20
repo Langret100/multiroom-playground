@@ -289,7 +289,7 @@
         // glasses are local-only by nature (this overlay is local UI)
         const gx = rrPortrait.width / 2;
         // Glasses should sit lower on the face (mobile request)
-        const gy = dy + dh * 0.52;
+        const gy = dy + dh * 0.46;
         drawGlassesOn(rrPctx, gx, gy, 0.9, tNow);
       }
     } else {
@@ -467,8 +467,8 @@
       const chip = document.createElement('span');
       chip.className = 'chip';
       const bot = p.isBot ? '🤖' : '🐰';
-      const status = (!p.alive) ? ' (퇴장)' : (p.dead ? ' (빵점)' : (p.down ? ' (다운)' : ''));
-      chip.textContent = `${bot} ${p.nick}${status}`;
+      const alive = (p.alive && !p.down) ? '' : ' (다운)';
+      chip.textContent = `${bot} ${p.nick}${alive}`;
       rosterList.appendChild(chip);
     }
   }
@@ -541,7 +541,8 @@
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-    if (e.key === 'm' || e.key === 'M') toggleMapUI();
+    // PC map shortcut: C
+    if (e.key === 'c' || e.key === 'C') toggleMapUI();
     if (e.key === 'Escape') { closeRulesUI(); closeMapUI(); }
   });
 
@@ -1098,9 +1099,12 @@
 
   const PLAYER_R = 14;
   const SPEED = 184; // px/s
-  // Slightly larger range so the teacher can reliably "score 0" on mobile without pixel-perfect... 
-  const KILL_RANGE = 84;
+  // Teacher "0점" must be very close ("붙어야"), so keep the range tight.
+  // (Still leaves a little forgiveness for touch input.)
+  const KILL_RANGE = 30;
   const INTERACT_RANGE = 112;
+  // Missions should require getting a bit closer than doors/meeting.
+  const MISSION_INTERACT_RANGE = 72;
   const VENT_TRAVEL_MS = 850;
   const VENT_COOLDOWN_MS = 4500;
   const FORCE_COOLDOWN_MS = 40_000;
@@ -1877,7 +1881,6 @@
       lockedRoomUntil: 0,
       waterBlocks: {}, // id -> {x,y,until}
       lamps: {}, // id -> {on, kind}
-      bodies: {}, // id -> {id,victimId,x,y,color,nick,at}
       teacherId: null,
       winner: null,
       lastUpdateAt: 0,
@@ -1916,7 +1919,6 @@
     st.doors = {};
     st.waterBlocks = {};
     st.lamps = {};
-    st.bodies = {};
     st.leaks = {};
     st.leakLevel = 0;
     st.lockedRoomId = null;
@@ -2111,8 +2113,6 @@
       color: (id - 1) % 8,
       alive: true,
       down: false,
-      dead: false,
-      ghost: false,
 
       x: px,
       y: py,
@@ -2131,6 +2131,11 @@
       emoteUntil: 0,
       killCdUntil: 0,
       saboCdUntil: 0,
+
+      // mission-in-progress indicator (33/66/100)
+      missionSiteId: null,
+      missionStage: 0,
+      missionClearAt: 0,
     };
 
     return id;
@@ -2165,6 +2170,7 @@
 
     G.host.started = true;
     st.practice = !!practice;
+    st.infiniteMissions = !st.practice;
     st.timeLeft = 180;
     st.maxTime = 180;
     hostAssignTeacher();
@@ -2194,14 +2200,12 @@
   }
 
   function hostAliveCount() {
-    return Object.values(G.state.players).filter(p => p.alive && !p.dead).length;
+    return Object.values(G.state.players).filter(p => p.alive && !p.down).length;
   }
 
   function hostCrewAliveCount() {
     const st = G.state;
-    // Crew that can still act (not downed). Downed crew are effectively eliminated for win condition.
-    return Object.values(st.players)
-      .filter(p => p.alive && !p.dead && !p.down && p.id !== st.teacherId).length;
+    return Object.values(st.players).filter(p => p.alive && !p.down && p.id !== st.teacherId).length;
   }
 
   function hostActivateRandomMission() {
@@ -2218,6 +2222,9 @@
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
     st.missions[pick].state = 'active';
     st.missions[pick].expiresAt = now() + 60_000;
+    st.missions[pick].activatedAt = now();
+    // Clear any stale seal timestamp if this site gets reused.
+    if (st.missions[pick].sealedAt) st.missions[pick].sealedAt = 0;
     return true;
   }
 
@@ -2228,6 +2235,7 @@
 
     m.state = 'idle';
     m.expiresAt = 0;
+    if (m.activatedAt) m.activatedAt = 0;
     if (m.forceFailAt) delete m.forceFailAt;
     if (m.forcedBy) delete m.forcedBy;
 
@@ -2279,6 +2287,19 @@
       }
     }
 
+    // Solved missions can respawn after a random cooldown (endless tasks mode)
+    if (st.infiniteMissions) {
+      for (const [id, m] of Object.entries(st.missions)) {
+        if (m.state === "solved" && m.respawnAt && now() >= m.respawnAt) {
+          m.state = "idle";
+          m.respawnAt = 0;
+          m.sealedAt = 0;
+          m.expiresAt = 0;
+          if (m.activatedAt) m.activatedAt = 0;
+        }
+      }
+    }
+
     // 미션 활성화 스케줄
     if (!G.host._nextMissionAt) G.host._nextMissionAt = now() + 6_000;
     if (now() >= G.host._nextMissionAt) {
@@ -2315,6 +2336,16 @@
         d.closed = false;
       }
     }
+
+    // Clear mission progress % markers after a short delay (so 100% is briefly visible).
+    for (const p of Object.values(st.players)) {
+      if (!p || !p.alive) continue;
+      if (p.missionClearAt && now() >= p.missionClearAt) {
+        p.missionClearAt = 0;
+        p.missionStage = 0;
+        p.missionSiteId = null;
+      }
+    }
     if (st.lockedRoomUntil && now() >= st.lockedRoomUntil) {
       st.lockedRoomUntil = 0;
       st.lockedRoomId = null;
@@ -2330,6 +2361,14 @@
     for (const p of Object.values(st.players)) {
       if (!p.alive) continue;
       if (p.down) continue;
+
+      // During the teacher "0점" emote, freeze movement so the pose doesn't look broken
+      // if we slow down the animation duration.
+      if (p.emoteKind === 'kill0' && now() < (p.emoteUntil || 0)) {
+        p.vx = 0;
+        p.vy = 0;
+        continue;
+      }
 
       // 땅굴(벤트) 이동 중이면 이동/킬/조작 불가 + 도착 처리
       if (p.vent) {
@@ -2384,14 +2423,14 @@
     // 승리 조건
     if (!st.practice) {
       const crewAlive = hostCrewAliveCount();
-      // Teacher wins when there are no standing crew left.
-      if (crewAlive <= 0 && st.teacherId && st.players[st.teacherId]?.alive && !st.players[st.teacherId]?.down) {
+      // Teacher wins when ALL other rabbits are down.
+      if (crewAlive === 0 && st.teacherId && st.players[st.teacherId]?.alive) {
         st.winner = 'teacher';
         G.phase = 'end';
         return;
       }
 
-      if (st.solved >= st.total) {
+      if (!st.infiniteMissions && st.solved >= st.total) {
         st.winner = 'crew';
         G.phase = 'end';
         return;
@@ -2431,6 +2470,20 @@
       if (tx >= x && ty >= y && tx < x + w && ty < y + h) return r;
     }
     return null;
+  }
+
+  // Fast lookup for room rectangles (used for door-closed visibility overlay)
+  let ROOMS_BY_ID = null;
+  function getRoomById(id) {
+    if (!id) return null;
+    if (!ROOMS_BY_ID) {
+      ROOMS_BY_ID = new Map();
+      const rms = (AS.map && Array.isArray(AS.map.rooms)) ? AS.map.rooms : [];
+      for (const r of rms) {
+        if (r && r.id) ROOMS_BY_ID.set(r.id, r);
+      }
+    }
+    return ROOMS_BY_ID.get(id) || null;
   }
 
   function drawLockedRoomOverlay(cam, st) {
@@ -2648,15 +2701,22 @@ function tileAtPixel(x, y) {
     let x = nx;
     let y = p.y;
 
-    // door boundary check on X move (center segment)
-    if (doorEdgeBlockedSegment(p.x, p.y, x, y) || collidesCircle(p, x, y, PLAYER_R)) {
+    // door boundary check on X move (check a few points on the collision circle).
+    // (If we only check the center, players can "clip" through a closed door with their edge.)
+    const doorHitX = doorEdgeBlockedSegment(p.x, p.y, x, y)
+      || doorEdgeBlockedSegment(p.x, p.y - PLAYER_R + 2, x, y - PLAYER_R + 2)
+      || doorEdgeBlockedSegment(p.x, p.y + PLAYER_R - 2, x, y + PLAYER_R - 2);
+    if (doorHitX || collidesCircle(p, x, y, PLAYER_R)) {
       x = p.x;
       p.vx = 0;
     }
 
     y = ny;
-    // door boundary check on Y move
-    if (doorEdgeBlockedSegment(x, p.y, x, y)) {
+    // door boundary check on Y move (check a few points on the collision circle).
+    const doorHitY = doorEdgeBlockedSegment(x, p.y, x, y)
+      || doorEdgeBlockedSegment(x - PLAYER_R + 2, p.y, x - PLAYER_R + 2, y)
+      || doorEdgeBlockedSegment(x + PLAYER_R - 2, p.y, x + PLAYER_R - 2, y);
+    if (doorHitY) {
       y = p.y;
       p.vy = 0;
     } else if (collidesCircle(p, x, y, PLAYER_R)) {
@@ -2703,21 +2763,23 @@ function tileAtPixel(x, y) {
       const ox = (obj.x + 0.5) * TS;
       const oy = (obj.y + 0.5) * TS;
       const d2 = dist2(player.x, player.y, ox, oy);
+      const range2 = (obj.type === 'mission') ? (MISSION_INTERACT_RANGE ** 2) : (INTERACT_RANGE ** 2);
+      if (d2 > range2) continue;
       if (d2 < bestD2) {
         bestD2 = d2;
         best = obj;
       }
     }
 
-    // body report: bodies snapshot (victim becomes ghost, body stays)
+    // body report: 'down'된 플레이어 주변에서도 가능(스프라이트는 down 상태로 표현)
     if (!st.practice && st.teacherId) {
-      for (const b of Object.values(st.bodies || {})) {
-        if (!b) continue;
-        // dead/ghost can see bodies but cannot report; filtering happens in hostHandleInteract
-        const d2 = dist2(player.x, player.y, b.x, b.y);
+      for (const bp of Object.values(st.players)) {
+        if (!bp.alive || !bp.down) continue;
+        if (bp.id === player.id) continue;
+        const d2 = dist2(player.x, player.y, bp.x, bp.y);
         if (d2 < bestD2) {
           bestD2 = d2;
-          best = { id: b.id, type: 'body_report', victimId: b.victimId, bodyId: b.id, px: b.x, py: b.y };
+          best = { id: 'body:' + bp.id, type: 'body_report', victimId: bp.id, px: bp.x, py: bp.y };
         }
       }
     }
@@ -2728,6 +2790,7 @@ function tileAtPixel(x, y) {
       return null;
     }
 
+    // 'best' is already filtered by type-specific range.
     if (bestD2 <= INTERACT_RANGE ** 2) return best;
     return null;
   }
@@ -2735,15 +2798,10 @@ function tileAtPixel(x, y) {
   function hostHandleInteract(playerId) {
     const st = G.state;
     const p = st.players[playerId];
-    if (!p || !p.alive) return;
+    if (!p || !p.alive || p.down) return;
 
     const obj = hostNearestInteractable(p);
     if (!obj) return;
-
-    // Ghost rule: a dead/ghost player can only do missions (no meeting/report/vote/skills).
-    if (p.dead || p.ghost) {
-      if (obj.type !== 'mission') return;
-    }
 
     if (obj.type === 'meeting_bell') {
       if (st.practice || !st.teacherId) {
@@ -2862,6 +2920,13 @@ function tileAtPixel(x, y) {
         prog = hostGetMissionProg(playerId, obj.id);
       }
 
+      // Show mission progress % over the character until the mission UI is closed.
+      // Stage mapping: 1->33%, 2->66%, 3->100%
+      p.missionSiteId = obj.id;
+      p.missionStage = clamp((prog?.correct || 0) + 1, 1, 3);
+      p.missionClearAt = 0;
+      broadcastState(true);
+
       sendToPlayer(playerId, { t: 'uiMissionOpen', ...ui, correct: prog?.correct || 0 });
       return;
     }
@@ -2871,10 +2936,7 @@ function tileAtPixel(x, y) {
         sendToPlayer(playerId, { t: 'toast', text: '연습 모드: 기절/회의가 없어. 미션 연습만 가능!' });
         return;
       }
-      if (p.dead || p.ghost) return;
-      // remove the reported body so it can't be spam-reported
-      try { if (obj.bodyId && st.bodies) delete st.bodies[obj.bodyId]; } catch (_) {}
-      hostStartMeeting('report', '빵점 토끼를 발견!');
+      hostStartMeeting('report', '기절한 토끼를 발견!');
       return;
     }
   }
@@ -2905,26 +2967,6 @@ function tileAtPixel(x, y) {
     // brief kill animation (shown to everyone)
     killer.emoteKind = 'kill0';
     killer.emoteUntil = now() + 900;
-
-    // Lock facing/dir during the kill pose so slowing animation or standing still
-    // doesn't cause the sprite to snap to a random default (vx==0 -> facing=1).
-    try {
-      const dx = (target.x - killer.x);
-      const dy = (target.y - killer.y);
-      const adx = Math.abs(dx), ady = Math.abs(dy);
-      let dir = 0;
-      let facing = (dx < 0) ? -1 : 1;
-      if (adx >= ady * 0.85) {
-        dir = 2; // side
-      } else {
-        dir = (dy < 0 ? 1 : 0); // back/up vs front/down
-      }
-      killer.killPoseDir = dir;
-      killer.killPoseFacing = facing;
-      // also pin these so other render paths match
-      killer.dir = dir;
-      killer.facing = facing;
-    } catch (_) {}
 
     killer.killCdUntil = now() + 18_000;
     broadcastState();
@@ -3148,11 +3190,12 @@ function tileAtPixel(x, y) {
     if (!voter || !voter.alive || voter.down) return;
 
     // targetIdOrNull == null => skip
-    const weight = (voter.crown) ? 2 : 1;
+    const emergency = (G.host.meetingKind === 'emergency');
+    const weight = (emergency && voter.crown) ? 2 : 1;
     G.host.votes.set(playerId, { target: targetIdOrNull, weight });
 
-    // Crown: next meeting only. Consume on first vote submission.
-    if (voter.crown) voter.crown = false;
+    // '다음 긴급회의 한정' : 긴급회의(종)에서만 2표 + 소멸
+    if (emergency && voter.crown) voter.crown = false;
   }
 
   function hostResolveMeeting() {
@@ -3199,9 +3242,11 @@ function tileAtPixel(x, y) {
       hostShowEjectScene(null);
     }
 
-    // Meeting ends: clear any remaining crowns (they should not carry over).
-    for (const pp of Object.values(st.players)) {
-      if (pp && pp.crown) pp.crown = false;
+    // 회의 종료: 왕관은 '다음 긴급회의 한정'이므로, 긴급회의에서만 소멸
+    if (G.host.meetingKind === 'emergency') {
+      for (const pp of Object.values(st.players)) {
+        if (pp && pp.crown) pp.crown = false;
+      }
     }
 
     broadcastState(true);
@@ -3397,7 +3442,7 @@ function tileAtPixel(x, y) {
   function hostMissionSubmit(playerId, payload) {
     const st = G.state;
     const p = st.players[playerId];
-    if (!p || !p.alive || p.dead || p.ghost || p.down) return;
+    if (!p || !p.alive || p.down) return;
 
     const siteId = payload.siteId;
     const m = st.missions[siteId];
@@ -3437,14 +3482,26 @@ function tileAtPixel(x, y) {
 
     // 맞음
     prog.correct += 1;
+
+    // Update world-space mission progress marker (33/66/100)
+    // Stage: (correct+1) -> 1:33%, 2:66%, 3:100%
+    p.missionSiteId = siteId;
+    p.missionStage = clamp(prog.correct + 1, 1, 3);
+    p.missionClearAt = 0;
+
     if (prog.correct >= 3) {
       // 완료
       if (isPractice) {
         st.timeLeft += 10;
         st.timeLeft = Math.min(st.timeLeft, 999);
+        st.maxTime = Math.max(st.maxTime || 0, st.timeLeft);
         sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: '+10초! (연습)' });
         // 연습은 진행도/상태 변경 없음
         hostInitMissionProg(playerId, siteId, m.kind, true);
+
+        // Show 100% briefly, then clear the marker.
+        p.missionStage = 3;
+        p.missionClearAt = now() + 900;
         broadcastState(true);
         return;
       }
@@ -3452,10 +3509,18 @@ function tileAtPixel(x, y) {
       m.state = 'solved';
       m.expiresAt = 0;
       m.sealedAt = now();
+      if (st.infiniteMissions) {
+        m.respawnAt = now() + (20_000 + Math.random() * 20_000);
+      }
       st.solved += 1;
       st.timeLeft += 30;
       st.timeLeft = Math.min(st.timeLeft, 999);
+      st.maxTime = Math.max(st.maxTime || 0, st.timeLeft);
       sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: '+30초! 해결!' });
+
+      // Show 100% briefly, then clear the marker.
+      p.missionStage = 3;
+      p.missionClearAt = now() + 1200;
 
       const siteObj = st.objects[siteId];
       if (siteObj) broadcast({ t: 'fx', kind: 'seal', x: siteObj.x, y: siteObj.y, bornAt: now() });
@@ -3488,10 +3553,16 @@ function tileAtPixel(x, y) {
       // 다음 시도 대비 진행 초기화
       hostInitMissionProg(playerId, siteId, m.kind, false);
 
+      // Show 100% briefly, then clear the marker.
+      p.missionStage = 3;
+      p.missionClearAt = now() + 1200;
+
       broadcastState(true);
     } else {
       sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: `정답! (${prog.correct}/3)` });
       sendToPlayer(playerId, { t: 'uiMissionNext', question: genQuestion(m.kind), correct: prog.correct });
+      // Broadcast so others can see the % change above the player's head.
+      broadcastState(true);
     }
   }
 
@@ -3621,7 +3692,6 @@ function tileAtPixel(x, y) {
       waterBlocks: st.waterBlocks,
       leaks: st.leaks,
       lamps: st.lamps,
-      bodies: st.bodies,
       leakLevel: st.leakLevel || 0,
       lockedRoomId: st.lockedRoomId,
       lockedRoomUntil: st.lockedRoomUntil,
@@ -3728,9 +3798,14 @@ function tileAtPixel(x, y) {
         tryVibrate([90, 40, 90]);
       }
     }
-    const pct = G.state.total ? (G.state.solved / G.state.total) : 0;
-    progFill.style.width = `${clamp(pct * 100, 0, 100)}%`;
-    if (progText) progText.textContent = `${G.state.solved}/${G.state.total}`;
+    // Time bar next to the timer (requested)
+    const mt = Math.max(1, Number(G.state.maxTime || 180));
+    const pctT = clamp((tl / mt) * 100, 0, 100);
+    progFill.style.width = `${pctT}%`;
+    if (progText) {
+      if (G.state.infiniteMissions) progText.textContent = `${G.state.solved}/∞`;
+      else progText.textContent = `${G.state.solved}/${G.state.total}`;
+    }
 
     // 선생토끼 전용: 스킬 버튼 UI
     const st = G.state;
@@ -3923,8 +3998,15 @@ function tileAtPixel(x, y) {
   }
 
   function closeMissionUI() {
+    const ui = G.ui.mission;
     missionModal.classList.remove('show');
     G.ui.mission = null;
+    // Tell host to clear the "mission in progress" marker above my head.
+    try{
+      if (ui && G.net && ui.siteId) {
+        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), siteId: ui.siteId });
+      }
+    }catch(_){ }
   }
 
   function renderQuestion(resultText) {
@@ -4179,7 +4261,7 @@ function tileAtPixel(x, y) {
     const players = Object.values(st.players || {}).slice().sort((a,b)=> (a.id||0) - (b.id||0));
     for (const p of players){
       const chip = document.createElement('div');
-      chip.className = 'mAvatar' + ((p.alive && !p.dead) ? '' : ' mDead');
+      chip.className = 'mAvatar' + ((p.alive && !p.down) ? '' : ' mDead');
       const icon = createTokkiIcon(p.color ?? 0);
       const label = document.createElement('span');
       // Use nickname in meeting UIs (chat/vote/roster). Fall back to #id if missing.
@@ -4236,35 +4318,19 @@ function tileAtPixel(x, y) {
     try{ meetingChatLog.scrollTop = meetingChatLog.scrollHeight; }catch(_){ }
   }
 
-  
-
-  function isLocalGhost(){
-    try {
-      const meId = Number(G.net?.myPlayerId || 0);
-      const me = (meId && G.state && G.state.players) ? G.state.players[meId] : null;
-      return !!me && (!!me.dead || !!me.ghost);
-    } catch (_) { return false; }
-  }
-
-  function updateMeetingChatControls(){
-    const ghost = isLocalGhost();
-    if (meetingChatText) {
-      meetingChatText.disabled = ghost;
-      if (ghost) meetingChatText.value = '';
-      meetingChatText.placeholder = ghost ? '유령은 회의 채팅을 할 수 없어요.' : '채팅을 입력하세요…';
-    }
-    if (meetingChatSend) {
-      meetingChatSend.disabled = ghost;
-      // keep layout but make it feel disabled
-      meetingChatSend.style.opacity = ghost ? '0.35' : '';
-      meetingChatSend.style.pointerEvents = ghost ? 'none' : '';
-    }
-  }
-
   function sendMeetingChat(){
     if (!G.net) return;
     if (G.phase !== 'meeting') return;
-    if (isLocalGhost()) return;
+
+    // Ghosts (downed players) can only watch the meeting: no chat.
+    try{
+      const me = G.state?.players?.[G.net?.myPlayerId];
+      if (!me || !me.alive || me.down) {
+        showToast('유령은 회의 채팅을 쓸 수 없어!');
+        return;
+      }
+    }catch(_){ }
+
     const text = sanitizeMeetingText(meetingChatText?.value || '');
     if (!text) return;
     const tNow = now();
@@ -4309,10 +4375,20 @@ function tileAtPixel(x, y) {
     renderMeetingChat();
     renderVoteList();
 
-    updateMeetingChatControls();
+    // Ghosts (downed players) should not be able to chat during meetings.
+    try{
+      const me = G.state?.players?.[G.net?.myPlayerId];
+      const ghost = (!me || !me.alive || me.down);
+      if (meetingChatText) {
+        meetingChatText.disabled = ghost;
+        if (ghost) meetingChatText.placeholder = '유령은 채팅 불가 (구경만)';
+        else meetingChatText.placeholder = '채팅...';
+      }
+      if (meetingChatSend) meetingChatSend.disabled = ghost;
+    }catch(_){ }
 
-    // focus chat box (best-effort) - ghosts are spectators
-    try{ if (!isLocalGhost()) setTimeout(()=> meetingChatText && meetingChatText.focus(), 80); }catch(_){ }
+    // focus chat box (best-effort)
+    try{ setTimeout(()=> (meetingChatText && !meetingChatText.disabled) && meetingChatText.focus(), 80); }catch(_){ }
 
     // 타이머 업데이트
     const tick = () => {
@@ -4334,13 +4410,11 @@ function tileAtPixel(x, y) {
     voteList.innerHTML = '';
     const st = G.state;
     const meId = G.net?.myPlayerId;
-    const me = (meId != null && st.players) ? st.players[meId] : null;
-    const meDead = !!(me && (me.dead || me.ghost) && me.alive);
 
     // Keep roster in sync with current alive/down states
     renderMeetingRoster();
 
-    const alive = Object.values(st.players).filter(p => p.alive && !p.dead);
+    const alive = Object.values(st.players).filter(p => p.alive && !p.down);
     alive.forEach(p => {
       const row = document.createElement('div');
       row.className = 'item';
@@ -4359,7 +4433,7 @@ function tileAtPixel(x, y) {
       const btn = document.createElement('button');
       btn.className = 'ui';
       btn.textContent = '투표';
-      btn.disabled = G.ui.meeting.voted || meDead || p.id === meId;
+      btn.disabled = G.ui.meeting.voted || p.id === meId;
       btn.onclick = () => {
         if (!G.net) return;
         G.ui.meeting.voted = true;
@@ -4374,9 +4448,6 @@ function tileAtPixel(x, y) {
 
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
-    const st = G.state;
-    const me = st.players && st.players[G.net.myPlayerId];
-    if (me && (me.dead || me.ghost)) return;
     G.ui.meeting.voted = true;
     G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
     renderVoteList();
@@ -4729,7 +4800,6 @@ function tileAtPixel(x, y) {
       let bestD2 = Infinity;
       for (const obj of Object.values(st.objects || {})) {
         if (!['meeting_bell', 'mission', 'root_door', 'vent_hole', 'lamp'].includes(obj.type)) continue;
-        if ((me.dead || me.ghost) && obj.type !== 'mission') continue;
         if (obj.type === 'vent_hole' && (me.role !== 'teacher' || st.practice)) continue;
         if (obj.type === 'lamp') {
           const lp = st.lamps && st.lamps[obj.id];
@@ -4746,15 +4816,16 @@ function tileAtPixel(x, y) {
         if (clickD2 < bestD2) { bestD2 = clickD2; best = obj; }
       }
 
-      // body report (click near a body snapshot)
-      if (!best && !st.practice && st.teacherId && !(me.dead || me.ghost)) {
-        for (const b of Object.values(st.bodies || {})) {
-          if (!b) continue;
-          const clickD2 = dist2(wx, wy, b.x, b.y);
+      // body report (click near a downed player)
+      if (!best && !st.practice && st.teacherId) {
+        for (const p of Object.values(st.players || {})) {
+          if (!p.alive || !p.down) continue;
+          if (p.id === me.id) continue;
+          const clickD2 = dist2(wx, wy, p.x, p.y);
           if (clickD2 > (TS * 0.9) ** 2) continue;
-          const meD2 = dist2(me.x, me.y, b.x, b.y);
+          const meD2 = dist2(me.x, me.y, p.x, p.y);
           if (meD2 > (INTERACT_RANGE + 10) ** 2) continue;
-          best = { type: 'body_report', bodyId: b.id, victimId: b.victimId };
+          best = { type: 'body_report' };
           break;
         }
       }
@@ -4956,17 +5027,33 @@ default:
     }
   }
 
-  interactBtn.addEventListener('click', () => {
+  function sendInteract() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    // If I'm the host (solo / practice), handle immediately without relying on relay/echo.
+    // Host shortcut (solo/practice)
     if (G.net.isHost && G.net.myPlayerId) {
       hostHandleInteract(G.net.myPlayerId);
       broadcastState(true);
       return;
     }
     G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
-  });
+  }
+
+  // Primary action: X (PC) / 조작 버튼 (mobile). Context-sensitive:
+  // - If teacher and a target is in range, X -> 0점
+  // - Otherwise, X -> interact (doors, missions, meeting, etc.)
+  function sendPrimaryAction() {
+    if (!G.net) return;
+    if (G.phase !== 'play') return;
+    const me = G.state?.players?.[G.net.myPlayerId];
+    if (!me || !me.alive || me.down) return;
+    const near = nearestHint(me);
+    const canKill = (me.role === 'teacher') && near.canKill && !!near.killTarget && !G.state.practice;
+    if (canKill) sendKill();
+    else if (near.canInteract) sendInteract();
+  }
+
+  interactBtn.addEventListener('click', () => sendInteract());
 
   function sendKill() {
     if (!G.net) return;
@@ -5006,17 +5093,7 @@ default:
     if (!isMobile && G.phase === 'play' && !isTyping()) {
       if (e.key === 'x' || e.key === 'X') {
         e.preventDefault();
-        sendKill();
-        return;
-      }
-      if (e.key === 'e' || e.key === 'E' || e.key === ' ') {
-        e.preventDefault();
-        if (G.net?.isHost && G.net.myPlayerId) {
-          hostHandleInteract(G.net.myPlayerId);
-          broadcastState(true);
-        } else if (G.net) {
-          G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
-        }
+        sendPrimaryAction();
         return;
       }
     }
@@ -5351,6 +5428,89 @@ default:
       }
     }
 
+    // -------- Closed-door visibility --------
+    // If a door is closed, the far side should be visible only as a dark interior
+    // (static), and we must not render dynamic entities (players) behind it.
+    // We implement this by:
+    // 1) Darkening the associated room rectangle when I'm outside it.
+    // 2) Hiding players whose line-of-sight segment from me crosses a closed-door edge.
+    const closedDoorEdges = new Set();
+    const closedRoomIds = new Set();
+    const meRoom = (me ? roomAtPixel(me.x, me.y) : null);
+    const meRoomId = meRoom ? meRoom.id : null;
+
+    for (const obj of Object.values(st.objects)) {
+      if (!obj || obj.type !== 'root_door') continue;
+      const d = st.doors && st.doors[obj.id];
+      if (!d || !d.closed) continue;
+
+      // room darkening (only when I'm not inside that room)
+      if (obj.roomId && obj.roomId !== meRoomId) closedRoomIds.add(obj.roomId);
+
+      // build blocked tile-to-tile edges for quick segment testing
+      const info = doorCrossInfoAt(obj.x, obj.y);
+      if (!info) continue;
+      const dx = info.dx | 0;
+      const dy = info.dy | 0;
+      const vertical = (Math.abs(dx) === 1);
+      const half = Math.floor(DOOR_WIDTH_TILES / 2);
+      for (let off = -half; off <= half; off++) {
+        let ax, ay, bx, by;
+        if (vertical) {
+          ax = (obj.x | 0) + off; ay = (obj.y | 0);
+          bx = ax; by = (obj.y | 0) - dy;
+        } else {
+          ax = (obj.x | 0); ay = (obj.y | 0) + off;
+          bx = (obj.x | 0) - dx; by = ay;
+        }
+        const k1 = `${ax},${ay}|${bx},${by}`;
+        const k2 = `${bx},${by}|${ax},${ay}`;
+        closedDoorEdges.add(k1);
+        closedDoorEdges.add(k2);
+      }
+    }
+
+    // Darken the closed room interiors (static view only)
+    if (closedRoomIds.size) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      for (const rid of closedRoomIds) {
+        const rr = getRoomById(rid);
+        if (!rr || !rr.rect) continue;
+        const [rx, ry, rw, rh] = rr.rect;
+        const x0 = rx * TS - cam.x;
+        const y0 = ry * TS - cam.y;
+        ctx.fillRect(x0, y0, rw * TS, rh * TS);
+      }
+      ctx.restore();
+    }
+
+    // Helper: does the segment cross any closed-door edge?
+    function segBlockedByClosedDoor(x0, y0, x1, y1) {
+      if (!closedDoorEdges.size) return false;
+      const step = TS * 0.25;
+      const dx = x1 - x0;
+      const dy = y1 - y0;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 1e-3) return false;
+      const n = Math.max(1, Math.ceil(dist / step));
+      let tx = Math.floor(x0 / TS);
+      let ty = Math.floor(y0 / TS);
+      for (let i = 1; i <= n; i++) {
+        const t = i / n;
+        const xx = x0 + dx * t;
+        const yy = y0 + dy * t;
+        const ntx = Math.floor(xx / TS);
+        const nty = Math.floor(yy / TS);
+        if (ntx !== tx || nty !== ty) {
+          if (closedDoorEdges.has(`${tx},${ty}|${ntx},${nty}`)) return true;
+          tx = ntx; ty = nty;
+        }
+      }
+      return false;
+    }
+
     // 1회성 효과(파티클/뽁/땅굴)
     drawFx(cam);
 
@@ -5373,6 +5533,11 @@ default:
           wy = ex.py + (ex.ty - ex.py) * a;
           pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
         }
+      }
+
+      // Hide movement behind closed doors.
+      if (me && p.id !== me.id) {
+        if (segBlockedByClosedDoor(me.x, me.y, wx, wy)) continue;
       }
 
       const px = wx - cam.x;
@@ -5724,6 +5889,13 @@ default:
     const sid = def.spriteId;
     const sx = (sid % cols) * TS;
     const sy = Math.floor(sid / cols) * TS;
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.22)";
+    ctx.beginPath();
+    ctx.ellipse(x, y + TS*0.22, TS*0.30, TS*0.13, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
     ctx.drawImage(AS.objsImg, sx, sy, TS, TS, x - TS / 2, y - TS / 2, TS, TS);
   }
 
@@ -5829,9 +6001,15 @@ default:
     const tw = 64, th = 64;
     ctx.drawImage(table, 0, 0, table.width, table.height, Math.round(-tw / 2), Math.round(-th / 2), tw, th);
 
-    // Extra bottom shading to avoid any greenish-looking ground pixels in the table asset
-    ctx.fillStyle = 'rgba(0,0,0,.14)';
-    ctx.fillRect(-tw/2, 10, tw, 22);
+    // Extra shading to neutralize any green-ish tint baked into the table sprite
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = 'rgba(0,0,0,.26)';
+    ctx.fillRect(-tw/2, 14, tw, 34);
+    ctx.restore();
+    // Small exterior dark strip (covers any ground pixels bleeding outside)
+    ctx.fillStyle = 'rgba(0,0,0,.20)';
+    ctx.fillRect(-tw/2, 12, tw, 26);
 
     // megaphone on top (bob + shake)
     if (mega) {
@@ -6023,9 +6201,8 @@ default:
       const ty = tileY | 0;
       const hint = { _doorDx: doorDx|0, _doorDy: doorDy|0 };
       const info = doorCrossInfoAt(tx, ty, hint);
-      // Oversize more aggressively so the door has no visible side gaps against wall tiles.
-      // (Requested: door should sit flush with wall; current left/right margin is noticeable.)
-      const w = TS * info.crossTiles + Math.round(TS * 0.85);
+      // Oversize a bit more so the door covers the corridor opening flush (no side gap).
+      const w = TS * info.crossTiles + Math.round(TS * 0.60);
       const h = TS * 2; // 64px tall -> 2 tiles
 
       // Door plane size (thin barrier) – boundary-like
@@ -6326,47 +6503,83 @@ default:
         }
       }
 
+    } else if (m.state !== 'active') {
+      // Mission not active yet: keep the hole blocked (rock). No water.
+      const seed = (strHash(String(m.kind || '')) % 999) * 0.01;
+      const bob = Math.sin(tNow * 0.010 + seed * 11) * 2.0;
+      if (rock) {
+        const dw = DW * 0.92;
+        const dh = DW * 0.92;
+        // sit on the rim (covers the hole)
+        ctx.drawImage(rock, 0, 0, rock.width, rock.height,
+          Math.round(-dw / 2), Math.round(-dh / 2 + 16 + bob), dw, dh);
+      } else {
+        // fallback plug
+        ctx.fillStyle = 'rgba(110,98,86,.95)';
+        ctx.beginPath();
+        ctx.ellipse(0, 16 + bob, 18, 12, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.28)';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      // subtle "sealed" ring
+      ctx.strokeStyle = 'rgba(255,255,255,.12)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(0, 12, 26, 14, 0, 0, Math.PI * 2);
+      ctx.stroke();
     } else {
-      // Unsolved: water is overflowing (animated)
-      const active = (m.state === 'active');
+      // Active mission: water is overflowing (animated)
+      const activatedAt = m.activatedAt || 0;
+      const rise = activatedAt ? clamp((tNow - activatedAt) / 420, 0, 1) : 1;
+      const riseY = (1 - rise) * 18;
+      const alpha = 0.35 + 0.65 * rise;
 
       if (sheet) {
         const frame = (Math.floor(tNow / 160) % 2);
-        const bob = Math.sin(tNow * 0.012) * (active ? 4.0 : 2.0);
+        const bob = Math.sin(tNow * 0.012) * 4.0;
         const sx = frame * 32;
-        // Place water closer to the ground hole (no floating feel)
-        ctx.drawImage(sheet, sx, 0, 32, 32, Math.round(-DW / 2), Math.round(-DW/2 + 6 + bob), DW, DW);
+        ctx.save();
+        ctx.globalAlpha *= alpha;
+        // Place water closer to the ground hole and "rise" in when activated.
+        ctx.drawImage(sheet, sx, 0, 32, 32,
+          Math.round(-DW / 2), Math.round(-DW / 2 + 6 + bob + riseY), DW, DW);
+        ctx.restore();
       } else {
         // fallback simple water jet
         const t = tNow / 300;
-        const amp = active ? 6 : 3;
-        ctx.strokeStyle = active ? 'rgba(125,211,252,.95)' : 'rgba(125,211,252,.70)';
-        ctx.lineWidth = active ? 4 : 3;
+        const amp = 6;
+        ctx.save();
+        ctx.globalAlpha *= alpha;
+        ctx.strokeStyle = 'rgba(125,211,252,.95)';
+        ctx.lineWidth = 4;
         ctx.beginPath();
         ctx.moveTo(0, 4);
-        ctx.bezierCurveTo(-3, -8 - Math.sin(t) * amp, 3, -12 - Math.cos(t) * amp, 0, -18 - Math.sin(t * 1.3) * amp);
+        ctx.bezierCurveTo(-3, -8 - Math.sin(t) * amp + riseY * 0.4, 3, -12 - Math.cos(t) * amp + riseY * 0.4, 0, -18 - Math.sin(t * 1.3) * amp + riseY * 0.4);
         ctx.stroke();
+        ctx.restore();
       }
 
-      // extra droplets (makes "not solved" super readable)
+      // extra droplets (active only)
       const base = tNow * 0.006 + (strHash(String(m.kind || '')) % 997);
-      for (let i = 0; i < 4; i++) {
+      const nDrop = 4;
+      for (let i = 0; i < nDrop; i++) {
         const tt = base + i * 1.7;
         const px = Math.sin(tt) * (10 + i * 2);
         const py = 20 + ((tt * 22) % 26);
-        const a = clamp(0.75 - (py / 70), 0, 1) * (active ? 0.95 : 0.70);
+        const a = clamp(0.75 - (py / 70), 0, 1) * 0.95 * alpha;
         ctx.fillStyle = `rgba(125,211,252,${a})`;
         ctx.beginPath();
         ctx.ellipse(px, py, 1.8, 2.6, 0, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      if (active) {
-        ctx.fillStyle = 'rgba(255,255,255,.95)';
-        ctx.font = '900 26px system-ui';
-        ctx.textAlign = 'center';
-        ctx.fillText('!', 0, -DW * 0.75);
-      }
+      // active marker
+      ctx.fillStyle = 'rgba(255,255,255,.95)';
+      ctx.font = '900 26px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', 0, -DW * 0.75);
     }
 
     ctx.restore();
@@ -6588,67 +6801,30 @@ default:
     }
     ctx.restore();
   }
-    function roundedRectPath(c, x, y, w, h, r) {
-    r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
-    c.beginPath();
-    c.moveTo(x + r, y);
-    c.lineTo(x + w - r, y);
-    c.quadraticCurveTo(x + w, y, x + w, y + r);
-    c.lineTo(x + w, y + h - r);
-    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    c.lineTo(x + r, y + h);
-    c.quadraticCurveTo(x, y + h, x, y + h - r);
-    c.lineTo(x, y + r);
-    c.quadraticCurveTo(x, y, x + r, y);
-    c.closePath();
-  }
-
-function drawCrown(x, y) {
-    const t = now() * 0.006;
-    const bob = Math.sin(t) * 2.2;
-    const pulse = (Math.sin(t * 1.7) * 0.5 + 0.5);
+  function drawCrown(x, y) {
+    const t = now() * 0.004;
+    const bob = Math.sin(t) * 2;
     ctx.save();
     ctx.translate(x, y + bob);
-    ctx.globalAlpha *= (0.85 + 0.15 * pulse);
-    ctx.shadowColor = `rgba(255,215,90,${0.35 + 0.35 * pulse})`;
-    ctx.shadowBlur = 8 + 10 * pulse;
-    ctx.lineJoin = 'round';
-    // band
-    ctx.fillStyle = 'rgba(255,205,70,.95)';
+    ctx.fillStyle = 'rgba(255,215,90,.95)';
     ctx.strokeStyle = 'rgba(255,255,255,.85)';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    roundedRectPath(ctx, -14, -2, 28, 8, 3);
-    ctx.fill();
-    ctx.stroke();
-    // spikes
-    ctx.beginPath();
-    ctx.moveTo(-12, -2);
-    ctx.lineTo(-8, -12);
-    ctx.lineTo(-4, -2);
-    ctx.lineTo(0, -14);
-    ctx.lineTo(4, -2);
-    ctx.lineTo(8, -12);
-    ctx.lineTo(12, -2);
+    ctx.moveTo(-12, 0);
+    ctx.lineTo(-8, -10);
+    ctx.lineTo(-2, -2);
+    ctx.lineTo(0, -12);
+    ctx.lineTo(2, -2);
+    ctx.lineTo(8, -10);
+    ctx.lineTo(12, 0);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // gems
-    ctx.shadowBlur = 0;
+    // 작은 보석
     ctx.fillStyle = 'rgba(125,211,252,.95)';
-    for (const [gx, gy] of [[-8,-6],[0,-8],[8,-6]]) {
-      ctx.beginPath();
-      ctx.arc(gx, gy, 2.2, 0, Math.PI*2);
-      ctx.fill();
-    }
-    // tiny sparkle
-    ctx.globalAlpha *= (0.55 + 0.45 * pulse);
-    ctx.strokeStyle = 'rgba(255,255,255,.85)';
-    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(0, -20); ctx.lineTo(0, -16);
-    ctx.moveTo(-2, -18); ctx.lineTo(2, -18);
-    ctx.stroke();
+    ctx.arc(0, -6, 2.4, 0, Math.PI*2);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -6907,20 +7083,6 @@ function drawCrown(x, y) {
     ctx.restore();
   }
 
-  function drawBodies(cam, st, viewer) {
-    // Draw body snapshots left behind when a player gets 0 points.
-    if (!st || !st.bodies) return;
-    // Show bodies to everyone (including ghosts).
-    for (const b of Object.values(st.bodies)) {
-      if (!b) continue;
-      const x = (b.x - cam.x) * ZOOM;
-      const y = (b.y - cam.y) * ZOOM;
-      // Reuse the down sprite pose but hide nickname.
-      const fake = { id: b.victimId, nick: b.nick || '', color: b.color || 0, role: 'crew', alive: true, down: true, _isBody: true, vx: 0, vy: 0, facing: 1 };
-      drawPlayer(fake, x, y);
-    }
-  }
-
   function drawWorldKillPrompt(cam, target) {
     if (!target) return;
     const sx = (target.wx - cam.x) * ZOOM;
@@ -6964,20 +7126,6 @@ function drawCrown(x, y) {
       ctx.globalAlpha = clamp(alpha, 0, 1);
       y += 10 * (p01 < 0.5 ? p01 * 2 : (1 - p01) * 2);
     }
-
-    // Ghost: semi-transparent and hidden from living crew (except teacher).
-    try {
-      if (p.ghost || p.dead) {
-        const me = G.state.players && G.net ? G.state.players[G.net.myPlayerId] : null;
-        const isTeacherView = !!me && (me.role === 'teacher') && !G.state.practice;
-        const isGhostView = !!me && (me.ghost || me.dead);
-        const isSelf = !!me && (String(me.id) === String(p.id));
-        if (!(isTeacherView || isGhostView || isSelf)) return;
-        ctx.save();
-        restored = true;
-        ctx.globalAlpha *= 0.42;
-      }
-    } catch(_){}
 
     const inWaterTile = !!waterAtTile(Math.floor(p.x / TS), Math.floor(p.y / TS));
     const swimming = inWaterTile && p.role === 'teacher' && !p.down && !p.vent;
@@ -7029,20 +7177,30 @@ function drawCrown(x, y) {
     // Slight y offset when fainted so the body lies on the ground (and doesn't look like it's floating).
     const ySprite = y + (p.down ? 14 : 0);
 
-    // Kill pose: shown to everyone. Lock facing/dir so the pose doesn't "snap" when vx==0.
+    // Soft ground shadow (helps characters feel grounded)
+    ctx.save();
+    const shA = p.down ? 0.30 : 0.22;
+    const shW = p.down ? 18 : 14;
+    const shH = p.down ? 7 : 6;
+    const shY = y + (p.down ? 18 : 10);
+    ctx.fillStyle = "rgba(0,0,0," + shA + ")";
+    ctx.beginPath();
+    ctx.ellipse(x, shY, shW, shH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // Kill pose: shown to everyone (requested). This reveals the teacher during the action.
     const killPose = p.role === 'teacher' && p.emoteUntil && now() < p.emoteUntil && p.emoteKind === 'kill0' && AS.pixel?.teacher_kill0_sheet;
-    const poseDir = (killPose && typeof p.killPoseDir === 'number') ? p.killPoseDir : dir;
-    const poseFacing = (killPose && typeof p.killPoseFacing === 'number') ? p.killPoseFacing : facing;
 
     if (killPose) {
       const sheet = AS.pixel.teacher_kill0_sheet;
       ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.translate(x, ySprite);
-      if (poseDir === 2) ctx.scale(-poseFacing, 1);
+      if (dir === 2) ctx.scale(-facing, 1);
       else ctx.scale(1, 1);
       // choose view based on dir: 0(front) 1(back) 2(side
-      const viewX = (poseDir === 1) ? 128 : (poseDir === 2 ? 0 : 64);
+      const viewX = (dir === 1) ? 128 : (dir === 2 ? 0 : 64);
       ctx.drawImage(sheet, viewX, 0, 64, 72, -SPR_W / 2, -60, SPR_W, SPR_H);
       ctx.restore();
     } else     if (AS.charsImg) {
@@ -7057,6 +7215,7 @@ function drawCrown(x, y) {
       // anchor: center-ish
       ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
       ctx.restore();
+      // Player distinction is handled by clothes color; extra head accents were removed (requested).
     } else {
       // fallback (should rarely happen)
       const col = colorHex(p.color || 0);
@@ -7066,11 +7225,11 @@ function drawCrown(x, y) {
 
     if (swimming) drawSwimOverlay(x, y);
 
-    // Crown indicates double-vote buff (earned by 3 consecutive mission solves).
-    // Visible until the next meeting resolves (then consumed/cleared).
-    if (p.crown) {
-      // place above nameplate; slight raise when downed
-      drawCrown(x, (p.down ? (y - 62) : (y - 56)));
+    if (p.crown) drawCrown(x, y - 56);
+
+    // Mission progress indicator (shown during mission interaction)
+    if (p.missionStage && p.missionSiteId && !p.down) {
+      drawMissionPercent(x, ySprite - 54, p.missionStage);
     }
 
     // 역할은 '본인에게만' 보여야 함: 선생토끼 안경은 본인 화면에서만 렌더링.
@@ -7082,7 +7241,8 @@ function drawCrown(x, y) {
         const shining = (p.glassesUntil && now() < p.glassesUntil);
         if (dir === 0) {
           // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다 (조금 더 아래로)
-          drawGlasses(x, ySprite - 26, shining ? 1.0 : 0.7);
+          // Lower the glasses so they sit on the eyes (requested).
+          drawGlasses(x, ySprite - 30, shining ? 1.0 : 0.7);
         }
       }
     }catch(_){ }
@@ -7105,12 +7265,6 @@ function drawCrown(x, y) {
       ctx.fillText('빵점', x, ySprite - 26);
     }
 
-
-    if (p._isBody) {
-      // Body snapshot: don't draw nickname/cooldown overlays.
-      if (restored) ctx.restore();
-      return;
-    }
 
     // nick
     ctx.fillStyle = 'rgba(255,255,255,.95)';
@@ -7138,6 +7292,30 @@ function drawCrown(x, y) {
     }
 
     if (restored) ctx.restore();
+  }
+
+  function drawMissionPercent(x, y, stage) {
+    const pct = (stage === 1) ? 33 : (stage === 2) ? 66 : 100;
+    const text = `${pct}%`;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 12px system-ui';
+    const w = Math.max(38, ctx.measureText(text).width + 18);
+    const h = 18;
+    ctx.fillStyle = 'rgba(10,14,26,.75)';
+    ctx.strokeStyle = 'rgba(255,255,255,.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(x - w/2, y - h/2, w, h, 9);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.96)';
+    ctx.strokeStyle = 'rgba(0,0,0,.35)';
+    ctx.lineWidth = 3;
+    ctx.strokeText(text, x, y);
+    ctx.fillText(text, x, y);
+    ctx.restore();
   }
 
 
@@ -7252,7 +7430,8 @@ function drawCrown(x, y) {
     ctx.stroke();
     ctx.fillStyle = 'rgba(8,16,34,.95)';
     ctx.font = '1100 18px system-ui';
-    ctx.fillText((target.type === 'root_door') ? (label === '열기' ? '↗' : '↘') : 'E', 0, 0);
+    // All interactions are done with X (or touch on mobile).
+    ctx.fillText('X', 0, 0);
     ctx.restore();
 
     // label
@@ -7286,7 +7465,8 @@ function drawCrown(x, y) {
       const ox = (obj.x + 0.5) * TS;
       const oy = (obj.y + 0.5) * TS;
       const d2 = dist2(me.x, me.y, ox, oy);
-      if (d2 > INTERACT_RANGE ** 2) continue;
+      const range2 = (obj.type === 'mission') ? (MISSION_INTERACT_RANGE ** 2) : (INTERACT_RANGE ** 2);
+      if (d2 > range2) continue;
       canInteract = true;
 
       if (d2 < bestD2) {
@@ -7601,12 +7781,12 @@ function drawCrown(x, y) {
       const st = G.state;
       const pid = Number(m.playerId || 0);
       const p = st.players[pid];
-      if (!p || !p.alive) return;
+      if (!p || !p.alive || p.down) return;
       const obj = st.objects[m.siteId];
       if (!obj || obj.type !== 'mission') return;
       const ox = (obj.x + 0.5) * TS;
       const oy = (obj.y + 0.5) * TS;
-      if (dist2(p.x, p.y, ox, oy) > INTERACT_RANGE ** 2) return;
+      if (dist2(p.x, p.y, ox, oy) > MISSION_INTERACT_RANGE ** 2) return;
 
       // reuse the same logic as interact-mission block
       if (now() < G.host.missionDisabledUntil) {
@@ -7625,6 +7805,12 @@ function drawCrown(x, y) {
         hostInitMissionProg(pid, obj.id, mm.kind, practice);
         prog = hostGetMissionProg(pid, obj.id);
       }
+
+      // Mission-in-progress % marker
+      p.missionSiteId = obj.id;
+      p.missionStage = clamp((prog?.correct || 0) + 1, 1, 3);
+      p.missionClearAt = 0;
+      broadcastState(true);
       sendToPlayer(pid, { t: 'uiMissionOpen', ...ui, correct: prog?.correct || 0 });
     });
 
@@ -7634,6 +7820,20 @@ function drawCrown(x, y) {
       const pid = Number(m.playerId || 0);
       if (!pid) return;
       hostMissionSubmit(pid, { ...m, playerId: pid });
+    });
+
+    net.on('missionClose', (m) => {
+      if (!net.isHost) return;
+      const pid = Number(m.playerId || 0);
+      if (!pid) return;
+      const st = G.state;
+      const p = st.players[pid];
+      if (!p) return;
+      // clear mission marker
+      p.missionSiteId = null;
+      p.missionStage = 0;
+      p.missionClearAt = 0;
+      broadcastState(true);
     });
 
     net.on('vote', (m) => {
@@ -7666,7 +7866,7 @@ function drawCrown(x, y) {
         const dx = (inc.x || 0) - (prev.x || 0);
         const dy = (inc.y || 0) - (prev.y || 0);
         const err = Math.hypot(dx, dy);
-        const snap = err > 48 || (!!inc.dead !== !!prev.dead) || (!!inc.alive !== !!prev.alive) || !!inc.vent;
+        const snap = err > 48 || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || !!inc.vent;
         if (!snap) {
           incomingPlayers[myPid] = {
             ...inc,
@@ -7680,10 +7880,6 @@ function drawCrown(x, y) {
         }
       }
       G.state.players = incomingPlayers;
-
-      // Meeting spectators: if I became a ghost mid-meeting, lock chat inputs.
-      try { if (G.phase === 'meeting') updateMeetingChatControls(); } catch (_) {}
-
 
       // If joinAck was missed, recover myPlayerId by matching clientId.
       if (!net.myPlayerId && m.players) {
@@ -7715,19 +7911,19 @@ function drawCrown(x, y) {
             if (!pid || pid === myId || !pp) continue;
             const ex = sm.get(pid);
             if (!ex) {
-              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, dead: !!pp.dead, alive: !!pp.alive, vent: !!pp.vent });
+              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
               continue;
             }
             const a = clamp((tNow - ex.t0) / 180, 0, 1);
             const cx = ex.px + (ex.tx - ex.px) * a;
             const cy = ex.py + (ex.ty - ex.py) * a;
-            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.dead !== !!ex.dead) || (!!pp.alive !== !!ex.alive);
+            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);
             if (jump) {
               ex.px = pp.x; ex.py = pp.y; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
             } else {
               ex.px = cx; ex.py = cy; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
             }
-            ex.dead = !!pp.dead;
+            ex.down = !!pp.down;
             ex.alive = !!pp.alive;
             ex.vent = !!pp.vent;
           }
@@ -7738,7 +7934,6 @@ function drawCrown(x, y) {
       G.state.doors = m.doors;
       G.state.waterBlocks = m.waterBlocks;
       G.state.lamps = m.lamps || {};
-      G.state.bodies = m.bodies || {};
       G.state.leaks = m.leaks || {};
       G.state.leakLevel = m.leakLevel || 0;
       G.state.lockedRoomId = m.lockedRoomId || null;
@@ -7761,16 +7956,7 @@ function drawCrown(x, y) {
       }
 
       if (G.phase === 'end' && G.state.winner) {
-        // end: notify parent room to return to lobby (embed)
-        try {
-          if (!G.ui._sentOverAt) G.ui._sentOverAt = 0;
-          if (!G.ui._sentOverAt) {
-            G.ui._sentOverAt = now();
-            setTimeout(() => {
-              try { bridgeSend('sk_over', { winner: G.state.winner }); } catch (_) {}
-            }, 2000);
-          }
-        } catch (_) {}
+        // end
       }
 
       // 호스트 권한 UI

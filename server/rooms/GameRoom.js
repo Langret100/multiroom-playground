@@ -195,30 +195,6 @@ this.st = {
       this.broadcast("sk_msg", { msg: inner });
     });
 
-    // SuhakTokki game over: return the whole room back to lobby phase
-    this.onMessage("sk_over", (client, payload) => {
-      if (this.state.mode !== "suhaktokki") return;
-      // Only the host iframe should normally send this, but we accept any client
-      // to avoid getting stuck in playing state.
-      if (this.state.phase !== "playing") return;
-
-      this.state.phase = "lobby";
-      this.started = false;
-
-      // Clear ready flags so players must ready again
-      for (const p of this.state.players.values()) {
-        p.ready = false;
-      }
-
-      try {
-        const meta = (this.metadata && typeof this.metadata === 'object') ? { ...this.metadata } : {};
-        meta.status = 'waiting';
-        this.setMetadata(meta);
-      } catch (_) {}
-
-      this.broadcast("backToRoom", { mode: "suhaktokki", winner: payload?.winner || null });
-    });
-
     // ---- Togester relay (Firebase 제거: Colyseus 메시지로 동기화) ----
     this.onMessage("tg_state", (client, { state }) => {
       if (this.state.mode !== "togester") return;

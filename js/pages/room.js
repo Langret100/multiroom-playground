@@ -782,13 +782,6 @@ function updatePreview(modeId){
       return;
     }
 
-    // SuhakTokki game over -> server (end match for everyone)
-    if (d.type === "sk_over"){
-      if (!fromMain) return;
-      try{ room.send("sk_over", { winner: d.winner || null }); }catch(_){ }
-      return;
-    }
-
     // In-game "나가기" from embedded DrawAnswer iframe (return to room UI only)
     if (d.type === "da_quit"){
       if (!fromMain) return;
@@ -1610,8 +1603,10 @@ function sendCoopBridgeInit(){
     practice: (() => {
       // Explicit local practice mode (togester only)
       if (coop.practice) return true;
-      // SuhakTokki: only solo uses practice; 2+ players should run the normal game.
-      if (coop.meta && coop.meta.id === "suhaktokki") return (humanCount <= 1);
+      // SuhakTokki: practice for 1~3 players, real game (teacher/crew) for 4+.
+      // This also avoids a timing/race where bridge_init can be sent before all players
+      // are present in state, incorrectly forcing practice in 4+ rooms.
+      if (coop.meta && coop.meta.id === "suhaktokki") return (humanCount < 4);
       return false;
     })()
   });
