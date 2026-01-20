@@ -782,6 +782,13 @@ function updatePreview(modeId){
       return;
     }
 
+    // SuhakTokki game over -> server (end match for everyone)
+    if (d.type === "sk_over"){
+      if (!fromMain) return;
+      try{ room.send("sk_over", { winner: d.winner || null }); }catch(_){ }
+      return;
+    }
+
     // In-game "나가기" from embedded DrawAnswer iframe (return to room UI only)
     if (d.type === "da_quit"){
       if (!fromMain) return;

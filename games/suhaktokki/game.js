@@ -467,8 +467,8 @@
       const chip = document.createElement('span');
       chip.className = 'chip';
       const bot = p.isBot ? '🤖' : '🐰';
-      const alive = (p.alive && !p.down) ? '' : ' (다운)';
-      chip.textContent = `${bot} ${p.nick}${alive}`;
+      const status = (!p.alive) ? ' (퇴장)' : (p.dead ? ' (빵점)' : (p.down ? ' (다운)' : ''));
+      chip.textContent = `${bot} ${p.nick}${status}`;
       rosterList.appendChild(chip);
     }
   }
@@ -1877,6 +1877,7 @@
       lockedRoomUntil: 0,
       waterBlocks: {}, // id -> {x,y,until}
       lamps: {}, // id -> {on, kind}
+      bodies: {}, // id -> {id,victimId,x,y,color,nick,at}
       teacherId: null,
       winner: null,
       lastUpdateAt: 0,
@@ -1915,6 +1916,7 @@
     st.doors = {};
     st.waterBlocks = {};
     st.lamps = {};
+    st.bodies = {};
     st.leaks = {};
     st.leakLevel = 0;
     st.lockedRoomId = null;
@@ -2109,6 +2111,8 @@
       color: (id - 1) % 8,
       alive: true,
       down: false,
+      dead: false,
+      ghost: false,
 
       x: px,
       y: py,
@@ -2190,12 +2194,12 @@
   }
 
   function hostAliveCount() {
-    return Object.values(G.state.players).filter(p => p.alive && !p.down).length;
+    return Object.values(G.state.players).filter(p => p.alive && !p.dead).length;
   }
 
   function hostCrewAliveCount() {
     const st = G.state;
-    return Object.values(st.players).filter(p => p.alive && !p.down && p.id !== st.teacherId).length;
+    return Object.values(st.players).filter(p => p.alive && !p.dead && p.id !== st.teacherId).length;
   }
 
   function hostActivateRandomMission() {
@@ -2702,15 +2706,15 @@ function tileAtPixel(x, y) {
       }
     }
 
-    // body report: 'down'된 플레이어 주변에서도 가능(스프라이트는 down 상태로 표현)
+    // body report: bodies snapshot (victim becomes ghost, body stays)
     if (!st.practice && st.teacherId) {
-      for (const bp of Object.values(st.players)) {
-        if (!bp.alive || !bp.down) continue;
-        if (bp.id === player.id) continue;
-        const d2 = dist2(player.x, player.y, bp.x, bp.y);
+      for (const b of Object.values(st.bodies || {})) {
+        if (!b) continue;
+        // dead/ghost can see bodies but cannot report; filtering happens in hostHandleInteract
+        const d2 = dist2(player.x, player.y, b.x, b.y);
         if (d2 < bestD2) {
           bestD2 = d2;
-          best = { id: 'body:' + bp.id, type: 'body_report', victimId: bp.id, px: bp.x, py: bp.y };
+          best = { id: b.id, type: 'body_report', victimId: b.victimId, bodyId: b.id, px: b.x, py: b.y };
         }
       }
     }
@@ -2728,10 +2732,15 @@ function tileAtPixel(x, y) {
   function hostHandleInteract(playerId) {
     const st = G.state;
     const p = st.players[playerId];
-    if (!p || !p.alive || p.down) return;
+    if (!p || !p.alive) return;
 
     const obj = hostNearestInteractable(p);
     if (!obj) return;
+
+    // Ghost rule: a dead/ghost player can only do missions (no meeting/report/vote/skills).
+    if (p.dead || p.ghost) {
+      if (obj.type !== 'mission') return;
+    }
 
     if (obj.type === 'meeting_bell') {
       if (st.practice || !st.teacherId) {
@@ -2859,7 +2868,10 @@ function tileAtPixel(x, y) {
         sendToPlayer(playerId, { t: 'toast', text: '연습 모드: 기절/회의가 없어. 미션 연습만 가능!' });
         return;
       }
-      hostStartMeeting('report', '기절한 토끼를 발견!');
+      if (p.dead || p.ghost) return;
+      // remove the reported body so it can't be spam-reported
+      try { if (obj.bodyId && st.bodies) delete st.bodies[obj.bodyId]; } catch (_) {}
+      hostStartMeeting('report', '빵점 토끼를 발견!');
       return;
     }
   }
@@ -3365,7 +3377,7 @@ function tileAtPixel(x, y) {
   function hostMissionSubmit(playerId, payload) {
     const st = G.state;
     const p = st.players[playerId];
-    if (!p || !p.alive || p.down) return;
+    if (!p || !p.alive || p.dead || p.ghost || p.down) return;
 
     const siteId = payload.siteId;
     const m = st.missions[siteId];
@@ -3589,6 +3601,7 @@ function tileAtPixel(x, y) {
       waterBlocks: st.waterBlocks,
       leaks: st.leaks,
       lamps: st.lamps,
+      bodies: st.bodies,
       leakLevel: st.leakLevel || 0,
       lockedRoomId: st.lockedRoomId,
       lockedRoomUntil: st.lockedRoomUntil,
@@ -4146,7 +4159,7 @@ function tileAtPixel(x, y) {
     const players = Object.values(st.players || {}).slice().sort((a,b)=> (a.id||0) - (b.id||0));
     for (const p of players){
       const chip = document.createElement('div');
-      chip.className = 'mAvatar' + ((p.alive && !p.down) ? '' : ' mDead');
+      chip.className = 'mAvatar' + ((p.alive && !p.dead) ? '' : ' mDead');
       const icon = createTokkiIcon(p.color ?? 0);
       const label = document.createElement('span');
       // Use nickname in meeting UIs (chat/vote/roster). Fall back to #id if missing.
@@ -4203,9 +4216,35 @@ function tileAtPixel(x, y) {
     try{ meetingChatLog.scrollTop = meetingChatLog.scrollHeight; }catch(_){ }
   }
 
+  
+
+  function isLocalGhost(){
+    try {
+      const meId = Number(G.net?.myPlayerId || 0);
+      const me = (meId && G.state && G.state.players) ? G.state.players[meId] : null;
+      return !!me && (!!me.dead || !!me.ghost);
+    } catch (_) { return false; }
+  }
+
+  function updateMeetingChatControls(){
+    const ghost = isLocalGhost();
+    if (meetingChatText) {
+      meetingChatText.disabled = ghost;
+      if (ghost) meetingChatText.value = '';
+      meetingChatText.placeholder = ghost ? '유령은 회의 채팅을 할 수 없어요.' : '채팅을 입력하세요…';
+    }
+    if (meetingChatSend) {
+      meetingChatSend.disabled = ghost;
+      // keep layout but make it feel disabled
+      meetingChatSend.style.opacity = ghost ? '0.35' : '';
+      meetingChatSend.style.pointerEvents = ghost ? 'none' : '';
+    }
+  }
+
   function sendMeetingChat(){
     if (!G.net) return;
     if (G.phase !== 'meeting') return;
+    if (isLocalGhost()) return;
     const text = sanitizeMeetingText(meetingChatText?.value || '');
     if (!text) return;
     const tNow = now();
@@ -4250,8 +4289,10 @@ function tileAtPixel(x, y) {
     renderMeetingChat();
     renderVoteList();
 
-    // focus chat box (best-effort)
-    try{ setTimeout(()=> meetingChatText && meetingChatText.focus(), 80); }catch(_){ }
+    updateMeetingChatControls();
+
+    // focus chat box (best-effort) - ghosts are spectators
+    try{ if (!isLocalGhost()) setTimeout(()=> meetingChatText && meetingChatText.focus(), 80); }catch(_){ }
 
     // 타이머 업데이트
     const tick = () => {
@@ -4273,11 +4314,13 @@ function tileAtPixel(x, y) {
     voteList.innerHTML = '';
     const st = G.state;
     const meId = G.net?.myPlayerId;
+    const me = (meId != null && st.players) ? st.players[meId] : null;
+    const meDead = !!(me && (me.dead || me.ghost) && me.alive);
 
     // Keep roster in sync with current alive/down states
     renderMeetingRoster();
 
-    const alive = Object.values(st.players).filter(p => p.alive && !p.down);
+    const alive = Object.values(st.players).filter(p => p.alive && !p.dead);
     alive.forEach(p => {
       const row = document.createElement('div');
       row.className = 'item';
@@ -4296,7 +4339,7 @@ function tileAtPixel(x, y) {
       const btn = document.createElement('button');
       btn.className = 'ui';
       btn.textContent = '투표';
-      btn.disabled = G.ui.meeting.voted || p.id === meId;
+      btn.disabled = G.ui.meeting.voted || meDead || p.id === meId;
       btn.onclick = () => {
         if (!G.net) return;
         G.ui.meeting.voted = true;
@@ -4311,6 +4354,9 @@ function tileAtPixel(x, y) {
 
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
+    const st = G.state;
+    const me = st.players && st.players[G.net.myPlayerId];
+    if (me && (me.dead || me.ghost)) return;
     G.ui.meeting.voted = true;
     G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
     renderVoteList();
@@ -4663,6 +4709,7 @@ function tileAtPixel(x, y) {
       let bestD2 = Infinity;
       for (const obj of Object.values(st.objects || {})) {
         if (!['meeting_bell', 'mission', 'root_door', 'vent_hole', 'lamp'].includes(obj.type)) continue;
+        if ((me.dead || me.ghost) && obj.type !== 'mission') continue;
         if (obj.type === 'vent_hole' && (me.role !== 'teacher' || st.practice)) continue;
         if (obj.type === 'lamp') {
           const lp = st.lamps && st.lamps[obj.id];
@@ -4679,16 +4726,15 @@ function tileAtPixel(x, y) {
         if (clickD2 < bestD2) { bestD2 = clickD2; best = obj; }
       }
 
-      // body report (click near a downed player)
-      if (!best && !st.practice && st.teacherId) {
-        for (const p of Object.values(st.players || {})) {
-          if (!p.alive || !p.down) continue;
-          if (p.id === me.id) continue;
-          const clickD2 = dist2(wx, wy, p.x, p.y);
+      // body report (click near a body snapshot)
+      if (!best && !st.practice && st.teacherId && !(me.dead || me.ghost)) {
+        for (const b of Object.values(st.bodies || {})) {
+          if (!b) continue;
+          const clickD2 = dist2(wx, wy, b.x, b.y);
           if (clickD2 > (TS * 0.9) ** 2) continue;
-          const meD2 = dist2(me.x, me.y, p.x, p.y);
+          const meD2 = dist2(me.x, me.y, b.x, b.y);
           if (meD2 > (INTERACT_RANGE + 10) ** 2) continue;
-          best = { type: 'body_report' };
+          best = { type: 'body_report', bodyId: b.id, victimId: b.victimId };
           break;
         }
       }
@@ -6803,6 +6849,20 @@ default:
     ctx.restore();
   }
 
+  function drawBodies(cam, st, viewer) {
+    // Draw body snapshots left behind when a player gets 0 points.
+    if (!st || !st.bodies) return;
+    // Show bodies to everyone (including ghosts).
+    for (const b of Object.values(st.bodies)) {
+      if (!b) continue;
+      const x = (b.x - cam.x) * ZOOM;
+      const y = (b.y - cam.y) * ZOOM;
+      // Reuse the down sprite pose but hide nickname.
+      const fake = { id: b.victimId, nick: b.nick || '', color: b.color || 0, role: 'crew', alive: true, down: true, _isBody: true, vx: 0, vy: 0, facing: 1 };
+      drawPlayer(fake, x, y);
+    }
+  }
+
   function drawWorldKillPrompt(cam, target) {
     if (!target) return;
     const sx = (target.wx - cam.x) * ZOOM;
@@ -6846,6 +6906,20 @@ default:
       ctx.globalAlpha = clamp(alpha, 0, 1);
       y += 10 * (p01 < 0.5 ? p01 * 2 : (1 - p01) * 2);
     }
+
+    // Ghost: semi-transparent and hidden from living crew (except teacher).
+    try {
+      if (p.ghost || p.dead) {
+        const me = G.state.players && G.net ? G.state.players[G.net.myPlayerId] : null;
+        const isTeacherView = !!me && (me.role === 'teacher') && !G.state.practice;
+        const isGhostView = !!me && (me.ghost || me.dead);
+        const isSelf = !!me && (String(me.id) === String(p.id));
+        if (!(isTeacherView || isGhostView || isSelf)) return;
+        ctx.save();
+        restored = true;
+        ctx.globalAlpha *= 0.42;
+      }
+    } catch(_){}
 
     const inWaterTile = !!waterAtTile(Math.floor(p.x / TS), Math.floor(p.y / TS));
     const swimming = inWaterTile && p.role === 'teacher' && !p.down && !p.vent;
@@ -6968,6 +7042,12 @@ default:
       ctx.fillText('빵점', x, ySprite - 26);
     }
 
+
+    if (p._isBody) {
+      // Body snapshot: don't draw nickname/cooldown overlays.
+      if (restored) ctx.restore();
+      return;
+    }
 
     // nick
     ctx.fillStyle = 'rgba(255,255,255,.95)';
@@ -7458,7 +7538,7 @@ default:
       const st = G.state;
       const pid = Number(m.playerId || 0);
       const p = st.players[pid];
-      if (!p || !p.alive || p.down) return;
+      if (!p || !p.alive) return;
       const obj = st.objects[m.siteId];
       if (!obj || obj.type !== 'mission') return;
       const ox = (obj.x + 0.5) * TS;
@@ -7523,7 +7603,7 @@ default:
         const dx = (inc.x || 0) - (prev.x || 0);
         const dy = (inc.y || 0) - (prev.y || 0);
         const err = Math.hypot(dx, dy);
-        const snap = err > 48 || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || !!inc.vent;
+        const snap = err > 48 || (!!inc.dead !== !!prev.dead) || (!!inc.alive !== !!prev.alive) || !!inc.vent;
         if (!snap) {
           incomingPlayers[myPid] = {
             ...inc,
@@ -7537,6 +7617,10 @@ default:
         }
       }
       G.state.players = incomingPlayers;
+
+      // Meeting spectators: if I became a ghost mid-meeting, lock chat inputs.
+      try { if (G.phase === 'meeting') updateMeetingChatControls(); } catch (_) {}
+
 
       // If joinAck was missed, recover myPlayerId by matching clientId.
       if (!net.myPlayerId && m.players) {
@@ -7568,19 +7652,19 @@ default:
             if (!pid || pid === myId || !pp) continue;
             const ex = sm.get(pid);
             if (!ex) {
-              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
+              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, dead: !!pp.dead, alive: !!pp.alive, vent: !!pp.vent });
               continue;
             }
             const a = clamp((tNow - ex.t0) / 180, 0, 1);
             const cx = ex.px + (ex.tx - ex.px) * a;
             const cy = ex.py + (ex.ty - ex.py) * a;
-            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);
+            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.dead !== !!ex.dead) || (!!pp.alive !== !!ex.alive);
             if (jump) {
               ex.px = pp.x; ex.py = pp.y; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
             } else {
               ex.px = cx; ex.py = cy; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
             }
-            ex.down = !!pp.down;
+            ex.dead = !!pp.dead;
             ex.alive = !!pp.alive;
             ex.vent = !!pp.vent;
           }
@@ -7591,6 +7675,7 @@ default:
       G.state.doors = m.doors;
       G.state.waterBlocks = m.waterBlocks;
       G.state.lamps = m.lamps || {};
+      G.state.bodies = m.bodies || {};
       G.state.leaks = m.leaks || {};
       G.state.leakLevel = m.leakLevel || 0;
       G.state.lockedRoomId = m.lockedRoomId || null;
@@ -7613,7 +7698,16 @@ default:
       }
 
       if (G.phase === 'end' && G.state.winner) {
-        // end
+        // end: notify parent room to return to lobby (embed)
+        try {
+          if (!G.ui._sentOverAt) G.ui._sentOverAt = 0;
+          if (!G.ui._sentOverAt) {
+            G.ui._sentOverAt = now();
+            setTimeout(() => {
+              try { bridgeSend('sk_over', { winner: G.state.winner }); } catch (_) {}
+            }, 2000);
+          }
+        } catch (_) {}
       }
 
       // 호스트 권한 UI
