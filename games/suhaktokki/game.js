@@ -7765,10 +7765,12 @@ default:
       const from = (m && m.from != null) ? String(m.from) : '';
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
 
-      // Dedupe: some environments resend 'join' (or re-run embed init), which used to
-      // create a second player for the same client and break input syncing.
-      if (from && G.host._clientToPlayer.has(from)) {
-        const pid = Number(G.host._clientToPlayer.get(from) || 0);
+      // Dedupe joins using a per-join token (NOT clientId), because embed sessionId can be shared
+      // across iframes. Clients retry join until joinAck arrives, reusing the same joinToken.
+      if (!G.host._joinTokenToPlayer) G.host._joinTokenToPlayer = new Map();
+      const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
+      if (jt && G.host._joinTokenToPlayer.has(jt)) {
+        const pid = Number(G.host._joinTokenToPlayer.get(jt) || 0);
         const p = st.players[pid];
         if (p) {
           p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
@@ -7776,7 +7778,7 @@ default:
           p.isBot = false;
           p.alive = true;
         }
-        net.post({ t: 'joinAck', toClient: from, playerId: pid, isHost: false });
+        net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false });
         broadcastState(true);
         return;
       }
@@ -7787,7 +7789,8 @@ default:
         return;
       }
       const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
-      if (from) G.host._clientToPlayer.set(from, pid);
+      if (jt) G.host._joinTokenToPlayer.set(jt, pid);
+            if (from) G.host._clientToPlayer.set(from, pid);
       net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false });
       broadcastState(true);
 
@@ -8190,7 +8193,8 @@ net.on('uiMeetingOpen', (m) => {
       applyPhaseUI();
     } else {
       // join 요청
-      net.post({ t: 'join', nick, clientId: net.clientId });
+      if (!net.joinToken) net.joinToken = randId();
+      net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken });
 
       // If the first join packet is dropped (common when the iframe loads before the room
       // starts relaying packets), keep retrying until we get joinAck.
@@ -8200,7 +8204,8 @@ net.on('uiMeetingOpen', (m) => {
             try{
               if (!G.net || G.net !== net) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
               if (net.isHost || net.myPlayerId) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
-              net.post({ t: 'join', nick, clientId: net.clientId, retry: true });
+              if (!net.joinToken) net.joinToken = randId();
+              net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken, retry: true });
             }catch(_){ }
           }, 900);
         }
