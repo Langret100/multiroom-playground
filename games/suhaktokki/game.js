@@ -1060,6 +1060,9 @@
       ['vine_door_closed', 'assets/pixel/vine_door_closed.png'],
       ['vine_door_side', 'assets/pixel/vine_door_side.png'],
       ['vine_door_open', 'assets/pixel/vine_door_open.png'],
+      // Side-entrance (left/right) door sprites (separate design)
+      ['vine_door_lr_closed', 'assets/pixel/vine_door_lr_closed.png'],
+      ['vine_door_lr_open', 'assets/pixel/vine_door_lr_open.png'],
       ['teacher_basic_sheet', 'assets/pixel/teacher_basic_sheet.png'],
       ['teacher_kill0_sheet', 'assets/pixel/teacher_kill0_sheet.png'],
       ['teacher_tch_sheet', 'assets/pixel/teacher_tch_sheet.png'],
@@ -5531,20 +5534,21 @@ default:
       if (obj.roomId && obj.roomId !== meRoomId) closedRoomIds.add(obj.roomId);
 
       // build blocked tile-to-tile edges for quick segment testing
-      const info = doorCrossInfoAt(obj.x, obj.y);
+      const hint = { _doorDx: (obj._doorDx|0)||0, _doorDy: (obj._doorDy|0)||0 };
+      const info = doorCrossInfoAt(obj.x|0, obj.y|0, hint);
       if (!info) continue;
-      const dx = info.dx | 0;
-      const dy = info.dy | 0;
-      const vertical = (Math.abs(dx) === 1);
-      const half = Math.floor(DOOR_WIDTH_TILES / 2);
+      const doorDx = hint._doorDx;
+      const doorDy = hint._doorDy;
+      const width = Math.max(1, (info.crossTiles|0) || 3);
+      const half = Math.floor((width - 1) / 2);
       for (let off = -half; off <= half; off++) {
         let ax, ay, bx, by;
-        if (vertical) {
+        if (info.corridorVertical) {
           ax = (obj.x | 0) + off; ay = (obj.y | 0);
-          bx = ax; by = (obj.y | 0) - dy;
+          bx = ax; by = (obj.y | 0) - doorDy;
         } else {
           ax = (obj.x | 0); ay = (obj.y | 0) + off;
-          bx = (obj.x | 0) - dx; by = ay;
+          bx = (obj.x | 0) - doorDx; by = ay;
         }
         const k1 = `${ax},${ay}|${bx},${by}`;
         const k2 = `${bx},${by}|${ax},${ay}`;
@@ -5557,7 +5561,9 @@ default:
     if (closedRoomIds.size) {
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
-      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      // Keep far-side objects readable, but hide what players are doing.
+      // (Players behind a closed door are not rendered; this is the "privacy" tint.)
+      ctx.fillStyle = 'rgba(0,0,0,.38)';
       for (const rid of closedRoomIds) {
         const rr = getRoomById(rid);
         if (!rr || !rr.rect) continue;
@@ -6144,6 +6150,9 @@ default:
     const imClosed = AS.pixel?.vine_door_closed;
     const imSide = AS.pixel?.vine_door_side;
     const imOpen = AS.pixel?.vine_door_open;
+    // Side-entrance (left/right) door sprites
+    const imClosedLR = AS.pixel?.vine_door_lr_closed;
+    const imOpenLR = AS.pixel?.vine_door_lr_open;
     const wallIm = AS.pixel?.wall || AS.pixel?.wall_alt || null;
 
     const tNow = now();
@@ -6285,12 +6294,24 @@ default:
       const hint = { _doorDx: doorDx|0, _doorDy: doorDy|0 };
       const info = doorCrossInfoAt(tx, ty, hint);
       // Oversize a bit more so the door covers the corridor opening flush (no side gap).
+      // Door opening major length and thickness.
+      // corridorVertical=true: doorway spans X (horizontal door plane)
+      // corridorVertical=false: doorway spans Y (vertical door plane)
       const w = TS * info.crossTiles + Math.round(TS * 0.60);
-      const h = TS * 2; // 64px tall -> 2 tiles
+      const h = TS * 2; // 64px thick -> 2 tiles
 
       // Door plane size (thin barrier) – boundary-like
       const planeW = info.corridorVertical ? w : TS * 0.9;
       const planeH = info.corridorVertical ? TS * 0.9 : w;
+
+      // Image draw size: for side-entrance doors (corridor runs horizontally),
+      // the door artwork should be "tall" along Y. So we swap draw dimensions.
+      const drawW = info.corridorVertical ? w : h;
+      const drawH = info.corridorVertical ? h : w;
+
+      // Choose proper sprites by orientation.
+      const openIm = info.corridorVertical ? imOpen : (imOpenLR || imOpen);
+      const closedIm = info.corridorVertical ? imClosed : (imClosedLR || imClosed);
 
       ctx.save();
       ctx.translate(x, y);
@@ -6330,11 +6351,25 @@ default:
       // Render states (support close/open animation)
       const drawOpen = (alpha=0.95) => {
         ctx.globalAlpha = alpha;
-        ctx.drawImage(imOpen, 0, 0, imOpen.width, imOpen.height, Math.round(-w/2), Math.round(-h/2), w, h);
+        // For side-entrance doors, draw using dedicated LR sprite and swap draw dimensions.
+        if (!info.corridorVertical && imOpenLR) {
+          const dw = h;
+          const dh = w;
+          ctx.drawImage(imOpenLR, 0, 0, imOpenLR.width, imOpenLR.height, Math.round(-dw/2), Math.round(-dh/2), dw, dh);
+        } else {
+          ctx.drawImage(imOpen, 0, 0, imOpen.width, imOpen.height, Math.round(-w/2), Math.round(-h/2), w, h);
+        }
       };
 
       const drawClosed = () => {
-        drawClosedComposite(info, w, h);
+        if (!info.corridorVertical && imClosedLR) {
+          const dw = h;
+          const dh = w;
+          ctx.globalAlpha = 0.98;
+          ctx.drawImage(imClosedLR, 0, 0, imClosedLR.width, imClosedLR.height, Math.round(-dw/2), Math.round(-dh/2), dw, dh);
+        } else {
+          drawClosedComposite(info, w, h);
+        }
       };
 
       if (!closed && animK !== 'close') {
@@ -6351,7 +6386,14 @@ default:
         ctx.save();
         ctx.translate(0, -drop);
         ctx.beginPath();
-        ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * p));
+        // Clip along the major axis (Y in our draw space). For LR doors we swapped (dw/dh).
+        if (!info.corridorVertical && imClosedLR) {
+          const dw = h;
+          const dh = w;
+          ctx.rect(Math.round(-dw/2), Math.round(-dh/2), Math.round(dw), Math.round(dh * p));
+        } else {
+          ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * p));
+        }
         ctx.clip();
         drawClosed();
         ctx.restore();
@@ -6361,7 +6403,13 @@ default:
         const p = animP;
         ctx.save();
         ctx.beginPath();
-        ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * (1 - p)));
+        if (!info.corridorVertical && imClosedLR) {
+          const dw = h;
+          const dh = w;
+          ctx.rect(Math.round(-dw/2), Math.round(-dh/2), Math.round(dw), Math.round(dh * (1 - p)));
+        } else {
+          ctx.rect(Math.round(-w/2), Math.round(-h/2), Math.round(w), Math.round(h * (1 - p)));
+        }
         ctx.clip();
         drawClosed();
         ctx.restore();
@@ -6370,10 +6418,14 @@ default:
 
       // Tile-edge masking: connect vine door edges to surrounding wall tiles.
       // (Prevents the "transparent wall" feel when closed.)
-      try {
-        const a = (closed || animK === 'close') ? 0.92 : 0.55;
-        drawDoorEdgeMask(info, w, h, a);
-      } catch (_) {}
+      // Edge mask: works well for front doors. For LR doors we use a full sprite,
+      // so masking can create odd seams; skip it.
+      if (info.corridorVertical) {
+        try {
+          const a = (closed || animK === 'close') ? 0.92 : 0.55;
+          drawDoorEdgeMask(info, w, h, a);
+        } catch (_) {}
+      }
 
       // Closed-door ambient rustle: tiny dust specks near the base edge
       if (closed && animK !== 'open') {
@@ -6516,6 +6568,21 @@ default:
     ctx.ellipse(0, 14, 18, 9.5, 0, 0, Math.PI * 2);
     ctx.stroke();
 
+    // Water stains remain around the hole even when it is blocked (requested).
+    // Keep it subtle when not active; stronger when the water is overflowing.
+    {
+      const active = (m.state === 'active');
+      const a = active ? 0.18 : 0.11;
+      ctx.fillStyle = `rgba(125,211,252,${a})`;
+      ctx.beginPath();
+      ctx.ellipse(0, 28, 30, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = `rgba(125,211,252,${a * 0.75})`;
+      ctx.beginPath();
+      ctx.ellipse(-10, 26, 12, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     if (m.state === 'solved') {
       // Mission solved: carrot plug seals the hole (clear contrast)
       const sealedAt = m.sealedAt || 0;
@@ -6587,25 +6654,48 @@ default:
       }
 
     } else if (m.state !== 'active') {
-      // Mission not active yet: keep the hole blocked (rock). No water.
+      // Mission not active: block the hole with a carrot (instead of a rock)
+      // while keeping the wet stains around it (requested).
       const seed = (strHash(String(m.kind || '')) % 999) * 0.01;
       const bob = Math.sin(tNow * 0.010 + seed * 11) * 2.0;
-      if (rock) {
-        const dw = DW * 0.92;
-        const dh = DW * 0.92;
-        // sit on the rim (covers the hole)
-        ctx.drawImage(rock, 0, 0, rock.width, rock.height,
-          Math.round(-dw / 2), Math.round(-dh / 2 + 16 + bob), dw, dh);
-      } else {
-        // fallback plug
-        ctx.fillStyle = 'rgba(110,98,86,.95)';
-        ctx.beginPath();
-        ctx.ellipse(0, 16 + bob, 18, 12, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = 'rgba(0,0,0,.28)';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
+
+      const sc = 0.78;
+      const rw = DW * sc;
+      const rh = DW * sc;
+      const cx = 0;
+      const cy = 12 + bob;
+
+      // carrot body
+      ctx.fillStyle = 'rgba(255,152,84,.98)';
+      ctx.beginPath();
+      ctx.roundRect(cx - rw*0.16, cy - rh*0.22, rw*0.32, rh*0.46, 10);
+      ctx.fill();
+      // carrot shading
+      ctx.fillStyle = 'rgba(0,0,0,.12)';
+      ctx.beginPath();
+      ctx.roundRect(cx - rw*0.16, cy - rh*0.02, rw*0.32, rh*0.26, 10);
+      ctx.fill();
+      // highlight
+      ctx.fillStyle = 'rgba(255,255,255,.16)';
+      ctx.beginPath();
+      ctx.roundRect(cx - rw*0.12, cy - rh*0.18, rw*0.07, rh*0.32, 8);
+      ctx.fill();
+      // leaves
+      ctx.fillStyle = 'rgba(74,222,128,.95)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - rh*0.24);
+      ctx.lineTo(cx - rw*0.10, cy - rh*0.40);
+      ctx.lineTo(cx - rw*0.02, cy - rh*0.42);
+      ctx.lineTo(cx + rw*0.02, cy - rh*0.34);
+      ctx.lineTo(cx + rw*0.10, cy - rh*0.40);
+      ctx.lineTo(cx + rw*0.06, cy - rh*0.26);
+      ctx.closePath();
+      ctx.fill();
+      // outline for contrast
+      ctx.strokeStyle = 'rgba(0,0,0,.28)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
       // subtle "sealed" ring
       ctx.strokeStyle = 'rgba(255,255,255,.12)';
       ctx.lineWidth = 2;
@@ -7325,7 +7415,7 @@ default:
         if (dir === 0) {
           // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다 (조금 더 아래로)
           // Lower the glasses so they sit on the eyes (requested).
-          drawGlasses(x, ySprite - 30, shining ? 1.0 : 0.7);
+          drawGlasses(x, ySprite - 26, shining ? 1.0 : 0.7);
         }
       }
     }catch(_){ }
@@ -7971,6 +8061,11 @@ default:
             facing: (typeof prev.facing === 'number') ? prev.facing : inc.facing,
           };
         }
+      }
+      // If a snapshot temporarily misses my local player, keep my previous local copy
+      // so my character never disappears and input/camera remain stable.
+      if (myPid && G.state.players && G.state.players[myPid] && !incomingPlayers[myPid]) {
+        incomingPlayers[myPid] = G.state.players[myPid];
       }
       G.state.players = incomingPlayers;
 
