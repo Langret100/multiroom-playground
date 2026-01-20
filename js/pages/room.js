@@ -1217,7 +1217,13 @@ function updatePreview(modeId){
 
   function modeLabel(modeId){
     const g = window.gameById ? window.gameById(modeId) : null;
-    return g ? g.name : (modeId || "-");
+    const name = g ? g.name : (modeId || "-");
+    try{
+      const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 520px)").matches;
+      const id = g?.id || modeId;
+      if (isMobileNarrow && id === "drawanswer") return "그림\n맞추기";
+    }catch(_){ }
+    return name;
   }
 
   function renderPlayers(){

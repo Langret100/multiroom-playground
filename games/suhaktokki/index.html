@@ -68,14 +68,15 @@
     #joy{position:absolute;left:calc(14px + env(safe-area-inset-left));bottom:calc(14px + env(safe-area-inset-bottom));width:180px;height:180px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);backdrop-filter:blur(6px);}
     #joyKnob{position:absolute;left:50%;top:50%;width:80px;height:80px;border-radius:999px;transform:translate(-50%,-50%);background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.12);}
     #interactBtn,#killBtn,#saboBtnTouch,#forceBtnTouch{position:absolute;right:calc(14px + env(safe-area-inset-right));width:var(--actW);height:var(--actH);border-radius:22px;display:flex;align-items:center;justify-content:center;font-weight:1000;font-size:22px;opacity:.35;pointer-events:none;}
+    /* 2x2 grid (Together-style thumb reach) */
     #interactBtn{bottom:calc(18px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#66e0a3,#33c38a);border:0;color:#071022;}
     #killBtn{bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep));background:linear-gradient(180deg,#222,#000);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
-    #saboBtnTouch{bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep) + var(--actStep));background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
-    #forceBtnTouch{bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep) + var(--actStep) + var(--actStep));background:linear-gradient(180deg,#a855f7,#7c3aed);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
+    #forceBtnTouch{right:calc(14px + env(safe-area-inset-right) + var(--actW) + var(--actGap));bottom:calc(18px + env(safe-area-inset-bottom));background:linear-gradient(180deg,#a855f7,#7c3aed);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
+    #saboBtnTouch{right:calc(14px + env(safe-area-inset-right) + var(--actW) + var(--actGap));bottom:calc(18px + env(safe-area-inset-bottom) + var(--actStep));background:linear-gradient(180deg,#3b82f6,#1d4ed8);border:1px solid rgba(255,255,255,.12);color:#fff;font-size:20px;}
 
     /* Small screens: avoid HUD buttons going off-screen */
     @media (max-width: 520px){
-      :root{--actW:160px;--actH:72px;--actGap:12px;--actStep:calc(var(--actH) + var(--actGap));}
+      :root{--actW:132px;--actH:68px;--actGap:10px;--actStep:calc(var(--actH) + var(--actGap));}
       #joy{width:150px;height:150px;}
       #joyKnob{width:68px;height:68px;}
 

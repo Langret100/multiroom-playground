@@ -606,7 +606,9 @@ tbody td{ padding: 10px 8px; }
   border: 1px solid var(--line);
   background: rgba(255,255,255,.04);
   font-size: 0.82rem;
-  white-space: nowrap;
+  /* Allow explicit newlines (mobile: drawanswer -> "그림\n맞추기") */
+  white-space: pre-line;
+  text-align: center;
 }
 .modeTag.tetris{ border-color: rgba(53,208,255,.55); }
 .modeTag.suika{ border-color: rgba(255,146,84,.55); }

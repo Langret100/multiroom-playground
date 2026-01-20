@@ -13,6 +13,10 @@ function shuffle(arr){
   return arr;
 }
 
+function clearClockTimer(t){
+  try{ if (t && typeof t.clear === 'function') t.clear(); }catch(_){ }
+}
+
 
 export class GameRoom extends Room {
   onCreate(options){
@@ -48,6 +52,7 @@ this.state.maxClients = this.maxClients;
     this.tickRate = 20; // 서버 틱: 20Hz (무료/대역폭 친화)
     this.inputs = new Map(); // sessionId -> latest mask
     this.started = false;
+    this._mainLoopTimer = null;
 
     // stackga tournament state
     this.tour = null; // { type, stage, players, bye, w1, w2, active:{a,b}, seeds:{a,b} }
@@ -723,18 +728,27 @@ try{
       }
     }catch(_){ }
 
-    // playerCount/allReady are derived in recomputeReady()
+    // Recompute derived lobby state
+    this.recomputeReady();
 
-    // if host left, promote the smallest seat to host
-    if (this.state.playerCount > 0){
+    // If no human players remain, reset the room back to lobby so it never gets stuck in "playing".
+    // (This fixes the issue where everyone leaves but the room still shows "게임중".)
+    if (this.state.playerCount <= 0){
+      this.resetToLobby("empty");
+      return;
+    }
+
+    // If host left, promote the smallest seat (humans only) to host
+    {
       const players = Array.from(this.state.players.entries());
       let hostSid = null;
-      // choose smallest seat
       let best = 999;
       for (const [sid] of players){
+        if (sid === CPU_SID) continue;
         const seat = this.state.order.get(sid);
         if (seat !== undefined && seat < best){
-          best = seat; hostSid = sid;
+          best = seat;
+          hostSid = sid;
         }
       }
       for (const [sid, ps] of players){
@@ -744,8 +758,6 @@ try{
       this.setMetadata({ ...this.metadata, hostNick });
     }
 
-    // if everyone left, let Colyseus dispose naturally
-    this.recomputeReady();
     this.syncMetadata();
     this.broadcast("system", { nick: "SYSTEM", text: `${nick} 퇴장`, time: new Date().toTimeString().slice(0,5) });
   }
@@ -783,15 +795,76 @@ try{
     });
   }
 
+  resetToLobby(reason = "empty"){
+    // Stop main loop + any game-specific timers
+    clearClockTimer(this._mainLoopTimer);
+    this._mainLoopTimer = null;
+    this.started = false;
+
+    // Clear duel tournament state
+    this.tour = null;
+
+    // Clear coop transient states
+    try{
+      if (this.tg){
+        this.tg.players = new Map();
+        this.tg.buttons = {};
+        this.tg.floors = new Map();
+        this.tg.floorUsed = new Map();
+        this.tg.level = 1;
+        this.tg.lastBroadcastAt = 0;
+        this.tg.over = false;
+      }
+    }catch(_){ }
+    try{
+      if (this.st){
+        clearClockTimer(this.st.timer);
+        clearClockTimer(this.st.interval);
+        this.st.timer = null;
+        this.st.interval = null;
+        this.st.players = {};
+        this.st.foods = [];
+        this.st.scores = {};
+        this.st.startedAt = 0;
+        this.st.durationMs = 180000;
+      }
+    }catch(_){ }
+
+    // Remove pseudo CPU seat if present
+    try{
+      if (this.state.players.has(CPU_SID)) this.state.players.delete(CPU_SID);
+      if (this.state.order.has(CPU_SID)) this.state.order.delete(CPU_SID);
+      this.inputs.delete(CPU_SID);
+    }catch(_){ }
+
+    // Reset room phase/state so late joiners don't get stuck in "playing".
+    this.tick = 0;
+    this.state.phase = "lobby";
+    this.state.allReady = false;
+    this.state.playerCount = 0;
+    for (const p of this.state.players.values()){
+      p.ready = false;
+      p.isHost = false;
+    }
+
+    // Update metadata
+    try{
+      this.setMetadata({ ...this.metadata, status: "waiting", hostNick: "-", resetReason: String(reason||"empty").slice(0,24) });
+    }catch(_){ }
+    this.syncMetadata();
+  }
+
   startGameLoop(){
     if (this.started) return;
     this.started = true;
+    clearClockTimer(this._mainLoopTimer);
+    this._mainLoopTimer = null;
     // Pre-fill inputs with 0 for connected players
     for (const sid of this.state.players.keys()){
       if (!this.inputs.has(sid)) this.inputs.set(sid, 0);
     }
 
-    this.clock.setInterval(() => {
+    this._mainLoopTimer = this.clock.setInterval(() => {
       this.tick++;
       const frameInputs = {};
       if (this.state.modeType === "duel" && this.tour?.active){

@@ -963,13 +963,11 @@
               tctx.clearRect(0, 0, W, H);
               tctx.putImageData(img, 0, 0);
               cctx.save();
-              cctx.translate(SPR_W / 2, SPR_H / 2);
+              // Shift the rotated body slightly downward so the "fainted" bunny lies on the floor
+              // (and doesn't look like it's floating).
+              cctx.translate(SPR_W / 2, SPR_H / 2 + 10);
               cctx.rotate(-Math.PI / 2 + (useF ? 0.06 : -0.04));
               cctx.drawImage(tiny, -SPR_W / 2, -SPR_H / 2, SPR_W, SPR_H);
-              // simple dim
-              cctx.globalAlpha = 0.22;
-              cctx.fillStyle = 'black';
-              cctx.fillRect(-SPR_W / 2, -SPR_H / 2, SPR_W, SPR_H);
               cctx.restore();
               sctx.drawImage(cell, 0, 0, SPR_W, SPR_H, x, baseY, SPR_W, SPR_H);
               continue;
@@ -1099,7 +1097,8 @@
 
   const PLAYER_R = 14;
   const SPEED = 184; // px/s
-  const KILL_RANGE = 52;
+  // Slightly larger range so the teacher can reliably "score 0" on mobile without pixel-perfect... 
+  const KILL_RANGE = 84;
   const INTERACT_RANGE = 112;
   const VENT_TRAVEL_MS = 850;
   const VENT_COOLDOWN_MS = 4500;
@@ -4339,8 +4338,8 @@ function tileAtPixel(x, y) {
   }
 
   function hairHex(colorIdx) {
-    // 머리/포인트 색상(옷색과 다르게 8명 구분)
-    return ['#1e3a8a','#14532d','#9d174d','#854d0e','#4c1d95','#7c2d12','#0f766e','#7f1d1d'][colorIdx % 8];
+    // 머리/포인트 색상(옷색과 다르게 8명 구분) - 밝고 대비가 큰 색으로
+    return ['#f97316','#9333ea','#14b8a6','#2563eb','#84cc16','#db2777','#f59e0b','#ef4444'][colorIdx % 8];
   }
 
   function roundRect(c, x, y, w, h, r) {
@@ -5071,11 +5070,14 @@ default:
     // punch visible areas
     ctx.globalCompositeOperation = 'destination-out';
 
+    // NOTE: world is rendered in (world px) * ZOOM, but this mask is drawn in screen space.
+    const scale = ZOOM;
+
     // near circle
-    const cx = me.x - cam.x;
-    const cy = me.y - cam.y;
+    const cx = (me.x - cam.x) * scale;
+    const cy = (me.y - cam.y) * scale;
     ctx.beginPath();
-    ctx.arc(cx, cy, nearR, 0, Math.PI*2);
+    ctx.arc(cx, cy, nearR * scale, 0, Math.PI*2);
     ctx.fill();
 
     // wedge polygon via ray casting
@@ -5085,8 +5087,8 @@ default:
       const t = i / rays;
       const ang = look - half + (2*half) * t;
       const hit = castRay(me.x, me.y, ang, maxDist);
-      const sx = hit.x - cam.x;
-      const sy = hit.y - cam.y;
+      const sx = (hit.x - cam.x) * scale;
+      const sy = (hit.y - cam.y) * scale;
       ctx.lineTo(sx, sy);
     }
     ctx.closePath();
@@ -5106,11 +5108,11 @@ default:
       for (const id of ids){
         const o = st.objects && st.objects[id];
         if (!o) continue;
-        const lx = (o.x + 0.5) * TS - cam.x;
-        const ly = (o.y + 0.5) * TS - cam.y;
+        const lx = ((o.x + 0.5) * TS - cam.x) * scale;
+        const ly = ((o.y + 0.5) * TS - cam.y) * scale;
         if (lx < -40 || ly < -40 || lx > viewW + 40 || ly > viewH + 40) continue;
         ctx.beginPath();
-        ctx.arc(lx, ly - 18, 6, 0, Math.PI*2);
+        ctx.arc(lx, ly - 18 * scale, 6 * scale, 0, Math.PI*2);
         ctx.fill();
       }
       ctx.restore();
@@ -5936,7 +5938,8 @@ default:
       const ty = tileY | 0;
       const hint = { _doorDx: doorDx|0, _doorDy: doorDy|0 };
       const info = doorCrossInfoAt(tx, ty, hint);
-      const w = TS * info.crossTiles;
+      // Slightly oversize so the door fully covers the corridor opening and aligns flush with the wall.
+      const w = TS * info.crossTiles + Math.round(TS * 0.25);
       const h = TS * 2; // 64px tall -> 2 tiles
 
       // Door plane size (thin barrier) – boundary-like
@@ -6573,7 +6576,8 @@ default:
 
   function drawTogesterBunny(x, y, color, name, isLocal=false, isDead=false, state){
     ctx.save();
-    if (isDead) ctx.globalAlpha = 0.4;
+    // Don't dim fainted players with a black overlay; use pose/FX instead.
+    if (isDead) ctx.globalAlpha = 1;
     const s = state || {};
     const vx = (typeof s.vx === 'number') ? s.vx : 0;
     const vy = (typeof s.vy === 'number') ? s.vy : 0;
@@ -6714,17 +6718,20 @@ default:
     const oy = -60;
 
     ctx.fillStyle = col;
+    // Bigger tuft + fringe so it's clearly visible on mobile.
     // top tuft
-    ctx.fillRect(ox + 28, oy + 8, 8, 3);
-    ctx.fillRect(ox + 30, oy + 5, 4, 3);
+    ctx.fillRect(ox + 26, oy + 7, 12, 4);
+    ctx.fillRect(ox + 29, oy + 4, 6, 3);
+    // fringe
+    ctx.fillRect(ox + 27, oy + 11, 10, 2);
     // side strands
-    ctx.fillRect(ox + 26, oy + 11, 3, 2);
-    ctx.fillRect(ox + 35, oy + 11, 3, 2);
+    ctx.fillRect(ox + 24, oy + 11, 4, 3);
+    ctx.fillRect(ox + 36, oy + 11, 4, 3);
 
     // subtle outline for contrast
     ctx.strokeStyle = 'rgba(0,0,0,.35)';
     ctx.lineWidth = 1;
-    ctx.strokeRect(ox + 28, oy + 8, 8, 3);
+    ctx.strokeRect(ox + 26, oy + 7, 12, 4);
 
     ctx.restore();
   }
@@ -6868,6 +6875,9 @@ default:
 
     const row = ((p.color || 0) % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS) + motionMap[motion] * DIR_ROWS + dir;
 
+    // Slight y offset when fainted so the body lies on the ground (and doesn't look like it's floating).
+    const ySprite = y + (p.down ? 8 : 0);
+
     // Kill pose: shown to everyone (requested). This reveals the teacher during the action.
     const killPose = p.role === 'teacher' && p.emoteUntil && now() < p.emoteUntil && p.emoteKind === 'kill0' && AS.pixel?.teacher_kill0_sheet;
 
@@ -6875,7 +6885,7 @@ default:
       const sheet = AS.pixel.teacher_kill0_sheet;
       ctx.save();
       ctx.imageSmoothingEnabled = false;
-      ctx.translate(x, y);
+      ctx.translate(x, ySprite);
       if (dir === 2) ctx.scale(-facing, 1);
       else ctx.scale(1, 1);
       // choose view based on dir: 0(front) 1(back) 2(side
@@ -6885,7 +6895,7 @@ default:
     } else     if (AS.charsImg) {
       ctx.save();
       ctx.imageSmoothingEnabled = false;
-      ctx.translate(x, y);
+      ctx.translate(x, ySprite);
       // Mirror only for side sprites; front/back stay facing camera
       if (dir === 2) ctx.scale(-facing, 1);
       else ctx.scale(1, 1);
@@ -6895,7 +6905,7 @@ default:
       ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
       ctx.restore();
       // Hair accent overlay (8-player distinction)
-      try { drawHairAccentOnSprite(x, y, p.color || 0, dir, facing); } catch (_) {}
+      try { if (!p.down) drawHairAccentOnSprite(x, ySprite, p.color || 0, dir, facing); } catch (_) {}
     } else {
       // fallback (should rarely happen)
       const col = colorHex(p.color || 0);
@@ -6907,21 +6917,16 @@ default:
 
     if (p.crown) drawCrown(x, y - 56);
 
-    // 선생토끼(임포스터) 표시는 '내 화면'에서만: 정면(dir=0)에서 얼굴 위치에 안경 오버레이
-    if (isLocal && p.role === 'teacher' && !G.state.practice) {
+    // 선생토끼는 안경으로 확실히 구분 (정면(dir=0)에서 얼굴 위치에 오버레이)
+    if (p.role === 'teacher' && !G.state.practice) {
       const shining = (p.glassesUntil && now() < p.glassesUntil);
       if (dir === 0) {
         // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다
-        drawGlasses(x, y - 46, shining ? 1.0 : 0.7);
+        drawGlasses(x, ySprite - 41, shining ? 1.0 : 0.7);
       }
     }
 
     if (p.down) {
-      ctx.fillStyle = 'rgba(0,0,0,.45)';
-      ctx.beginPath();
-      ctx.ellipse(x, y + 18, 20, 8, 0, 0, Math.PI * 2);
-      ctx.fill();
-
       const tt = now() / 140;
       for (let i = 0; i < 3; i++) {
         const ang = tt + i * (Math.PI * 2 / 3);
@@ -6929,14 +6934,14 @@ default:
         const ry = -24 + Math.sin(ang) * 4;
         ctx.fillStyle = 'rgba(255,255,255,.9)';
         ctx.beginPath();
-        ctx.arc(x + rx, y + ry, 2.2, 0, Math.PI * 2);
+        ctx.arc(x + rx, ySprite + ry, 2.2, 0, Math.PI * 2);
         ctx.fill();
       }
 
       ctx.fillStyle = 'rgba(255,90,122,.95)';
       ctx.font = '900 14px system-ui';
       ctx.textAlign = 'center';
-      ctx.fillText('빵점', x, y - 30);
+      ctx.fillText('빵점', x, ySprite - 26);
     }
 
 
