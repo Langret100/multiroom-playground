@@ -289,7 +289,7 @@
         // glasses are local-only by nature (this overlay is local UI)
         const gx = rrPortrait.width / 2;
         // Glasses should sit lower on the face (mobile request)
-        const gy = dy + dh * 0.46;
+        const gy = dy + dh * 0.52;
         drawGlassesOn(rrPctx, gx, gy, 0.9, tNow);
       }
     } else {
@@ -2199,7 +2199,9 @@
 
   function hostCrewAliveCount() {
     const st = G.state;
-    return Object.values(st.players).filter(p => p.alive && !p.dead && p.id !== st.teacherId).length;
+    // Crew that can still act (not downed). Downed crew are effectively eliminated for win condition.
+    return Object.values(st.players)
+      .filter(p => p.alive && !p.dead && !p.down && p.id !== st.teacherId).length;
   }
 
   function hostActivateRandomMission() {
@@ -2382,7 +2384,8 @@
     // 승리 조건
     if (!st.practice) {
       const crewAlive = hostCrewAliveCount();
-      if (crewAlive <= 1 && st.teacherId && st.players[st.teacherId]?.alive) {
+      // Teacher wins when there are no standing crew left.
+      if (crewAlive <= 0 && st.teacherId && st.players[st.teacherId]?.alive && !st.players[st.teacherId]?.down) {
         st.winner = 'teacher';
         G.phase = 'end';
         return;
@@ -2903,6 +2906,26 @@ function tileAtPixel(x, y) {
     killer.emoteKind = 'kill0';
     killer.emoteUntil = now() + 900;
 
+    // Lock facing/dir during the kill pose so slowing animation or standing still
+    // doesn't cause the sprite to snap to a random default (vx==0 -> facing=1).
+    try {
+      const dx = (target.x - killer.x);
+      const dy = (target.y - killer.y);
+      const adx = Math.abs(dx), ady = Math.abs(dy);
+      let dir = 0;
+      let facing = (dx < 0) ? -1 : 1;
+      if (adx >= ady * 0.85) {
+        dir = 2; // side
+      } else {
+        dir = (dy < 0 ? 1 : 0); // back/up vs front/down
+      }
+      killer.killPoseDir = dir;
+      killer.killPoseFacing = facing;
+      // also pin these so other render paths match
+      killer.dir = dir;
+      killer.facing = facing;
+    } catch (_) {}
+
     killer.killCdUntil = now() + 18_000;
     broadcastState();
   }
@@ -3125,12 +3148,11 @@ function tileAtPixel(x, y) {
     if (!voter || !voter.alive || voter.down) return;
 
     // targetIdOrNull == null => skip
-    const emergency = (G.host.meetingKind === 'emergency');
-    const weight = (emergency && voter.crown) ? 2 : 1;
+    const weight = (voter.crown) ? 2 : 1;
     G.host.votes.set(playerId, { target: targetIdOrNull, weight });
 
-    // '다음 긴급회의 한정' : 긴급회의(종)에서만 2표 + 소멸
-    if (emergency && voter.crown) voter.crown = false;
+    // Crown: next meeting only. Consume on first vote submission.
+    if (voter.crown) voter.crown = false;
   }
 
   function hostResolveMeeting() {
@@ -3177,11 +3199,9 @@ function tileAtPixel(x, y) {
       hostShowEjectScene(null);
     }
 
-    // 회의 종료: 왕관은 '다음 긴급회의 한정'이므로, 긴급회의에서만 소멸
-    if (G.host.meetingKind === 'emergency') {
-      for (const pp of Object.values(st.players)) {
-        if (pp && pp.crown) pp.crown = false;
-      }
+    // Meeting ends: clear any remaining crowns (they should not carry over).
+    for (const pp of Object.values(st.players)) {
+      if (pp && pp.crown) pp.crown = false;
     }
 
     broadcastState(true);
@@ -6003,8 +6023,9 @@ default:
       const ty = tileY | 0;
       const hint = { _doorDx: doorDx|0, _doorDy: doorDy|0 };
       const info = doorCrossInfoAt(tx, ty, hint);
-      // Slightly oversize so the door fully covers the corridor opening and aligns flush with the wall.
-      const w = TS * info.crossTiles + Math.round(TS * 0.25);
+      // Oversize more aggressively so the door has no visible side gaps against wall tiles.
+      // (Requested: door should sit flush with wall; current left/right margin is noticeable.)
+      const w = TS * info.crossTiles + Math.round(TS * 0.85);
       const h = TS * 2; // 64px tall -> 2 tiles
 
       // Door plane size (thin barrier) – boundary-like
@@ -6567,30 +6588,67 @@ default:
     }
     ctx.restore();
   }
-  function drawCrown(x, y) {
-    const t = now() * 0.004;
-    const bob = Math.sin(t) * 2;
+    function roundedRectPath(c, x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, Math.min(w, h) / 2));
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.lineTo(x + w - r, y);
+    c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r);
+    c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h);
+    c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r);
+    c.quadraticCurveTo(x, y, x + r, y);
+    c.closePath();
+  }
+
+function drawCrown(x, y) {
+    const t = now() * 0.006;
+    const bob = Math.sin(t) * 2.2;
+    const pulse = (Math.sin(t * 1.7) * 0.5 + 0.5);
     ctx.save();
     ctx.translate(x, y + bob);
-    ctx.fillStyle = 'rgba(255,215,90,.95)';
+    ctx.globalAlpha *= (0.85 + 0.15 * pulse);
+    ctx.shadowColor = `rgba(255,215,90,${0.35 + 0.35 * pulse})`;
+    ctx.shadowBlur = 8 + 10 * pulse;
+    ctx.lineJoin = 'round';
+    // band
+    ctx.fillStyle = 'rgba(255,205,70,.95)';
     ctx.strokeStyle = 'rgba(255,255,255,.85)';
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(-12, 0);
-    ctx.lineTo(-8, -10);
-    ctx.lineTo(-2, -2);
-    ctx.lineTo(0, -12);
-    ctx.lineTo(2, -2);
-    ctx.lineTo(8, -10);
-    ctx.lineTo(12, 0);
+    roundedRectPath(ctx, -14, -2, 28, 8, 3);
+    ctx.fill();
+    ctx.stroke();
+    // spikes
+    ctx.beginPath();
+    ctx.moveTo(-12, -2);
+    ctx.lineTo(-8, -12);
+    ctx.lineTo(-4, -2);
+    ctx.lineTo(0, -14);
+    ctx.lineTo(4, -2);
+    ctx.lineTo(8, -12);
+    ctx.lineTo(12, -2);
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    // 작은 보석
+    // gems
+    ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(125,211,252,.95)';
+    for (const [gx, gy] of [[-8,-6],[0,-8],[8,-6]]) {
+      ctx.beginPath();
+      ctx.arc(gx, gy, 2.2, 0, Math.PI*2);
+      ctx.fill();
+    }
+    // tiny sparkle
+    ctx.globalAlpha *= (0.55 + 0.45 * pulse);
+    ctx.strokeStyle = 'rgba(255,255,255,.85)';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.arc(0, -6, 2.4, 0, Math.PI*2);
-    ctx.fill();
+    ctx.moveTo(0, -20); ctx.lineTo(0, -16);
+    ctx.moveTo(-2, -18); ctx.lineTo(2, -18);
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -6971,18 +7029,20 @@ default:
     // Slight y offset when fainted so the body lies on the ground (and doesn't look like it's floating).
     const ySprite = y + (p.down ? 14 : 0);
 
-    // Kill pose: shown to everyone (requested). This reveals the teacher during the action.
+    // Kill pose: shown to everyone. Lock facing/dir so the pose doesn't "snap" when vx==0.
     const killPose = p.role === 'teacher' && p.emoteUntil && now() < p.emoteUntil && p.emoteKind === 'kill0' && AS.pixel?.teacher_kill0_sheet;
+    const poseDir = (killPose && typeof p.killPoseDir === 'number') ? p.killPoseDir : dir;
+    const poseFacing = (killPose && typeof p.killPoseFacing === 'number') ? p.killPoseFacing : facing;
 
     if (killPose) {
       const sheet = AS.pixel.teacher_kill0_sheet;
       ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.translate(x, ySprite);
-      if (dir === 2) ctx.scale(-facing, 1);
+      if (poseDir === 2) ctx.scale(-poseFacing, 1);
       else ctx.scale(1, 1);
       // choose view based on dir: 0(front) 1(back) 2(side
-      const viewX = (dir === 1) ? 128 : (dir === 2 ? 0 : 64);
+      const viewX = (poseDir === 1) ? 128 : (poseDir === 2 ? 0 : 64);
       ctx.drawImage(sheet, viewX, 0, 64, 72, -SPR_W / 2, -60, SPR_W, SPR_H);
       ctx.restore();
     } else     if (AS.charsImg) {
@@ -6997,8 +7057,6 @@ default:
       // anchor: center-ish
       ctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, -SPR_W / 2, -60, SPR_W, SPR_H);
       ctx.restore();
-      // Hair accent overlay (8-player distinction)
-      try { if (!p.down) drawHairAccentOnSprite(x, ySprite, p.color || 0, dir, facing); } catch (_) {}
     } else {
       // fallback (should rarely happen)
       const col = colorHex(p.color || 0);
@@ -7008,7 +7066,12 @@ default:
 
     if (swimming) drawSwimOverlay(x, y);
 
-    if (p.crown) drawCrown(x, y - 56);
+    // Crown indicates double-vote buff (earned by 3 consecutive mission solves).
+    // Visible until the next meeting resolves (then consumed/cleared).
+    if (p.crown) {
+      // place above nameplate; slight raise when downed
+      drawCrown(x, (p.down ? (y - 62) : (y - 56)));
+    }
 
     // 역할은 '본인에게만' 보여야 함: 선생토끼 안경은 본인 화면에서만 렌더링.
     // (상태에는 role이 실려오더라도, 타 유저 화면에서는 안경이 보이지 않게 한다.)
@@ -7019,7 +7082,7 @@ default:
         const shining = (p.glassesUntil && now() < p.glassesUntil);
         if (dir === 0) {
           // y는 발밑 기준이므로 얼굴까지 충분히 올려서 붙인다 (조금 더 아래로)
-          drawGlasses(x, ySprite - 36, shining ? 1.0 : 0.7);
+          drawGlasses(x, ySprite - 26, shining ? 1.0 : 0.7);
         }
       }
     }catch(_){ }
