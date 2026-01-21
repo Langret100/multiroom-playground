@@ -1559,15 +1559,33 @@ function sendCpuBridgeInit(){
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
 
-  // Wait until the room state has my player entry.
-  // This avoids transient "solo" / host mis-detection that can break 4+ player coop.
+  // Wait until the room state has my player entry (so host/seat can be derived reliably).
+  // Some environments can load the iframe faster than the first room_state snapshot.
+  // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
   try{
-    if (!room?.state?.players?.has?.(mySessionId)){
+    const players = room?.state?.players;
+    const hasMe = !!(players && typeof players.get === "function" && players.get(mySessionId));
+    if (!hasMe){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
-      if (coop._bridgeInitRetry < 30) setTimeout(sendCoopBridgeInit, 80);
+
+      // Small backoff to avoid spamming the event loop while waiting for the snapshot.
+      const n = coop._bridgeInitRetry;
+      const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
+
+      // Keep only one retry timer at a time (multiple triggers can happen: iframe onload, bridge_ready, etc.)
+      if (coop._bridgeInitTimer) return;
+      coop._bridgeInitTimer = setTimeout(()=>{
+        try{ coop._bridgeInitTimer = null; }catch(_){ }
+        try{
+          if (!coop.active || !coop.meta) return;
+          if (!duel.iframeEl) return;
+        }catch(_){ return; }
+        sendCoopBridgeInit();
+      }, delay);
       return;
     }
     coop._bridgeInitRetry = 0;
+    try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
   }catch(_){ }
 
   const seat = (()=>{
