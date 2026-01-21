@@ -453,7 +453,7 @@
 
   function hostExitAll() {
     // Host-confirmed exit: end the match for everyone and go back to the room after 1.5s.
-    try { showToast('호스트 이탈로 게임이 종료되었습니다.'); } catch (_) {}
+    try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
     try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'host_exit', at: now() }); } catch (_) {}
     setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
   }
@@ -465,7 +465,7 @@
     const within = (armedAt && (t - armedAt) < 4500);
     if (!within) {
       G.ui._hostLeaveArmedAt = t;
-      try { showToast('당신이 호스트입니다. 게임이 종료될 때 까지 나가면 안됩니다'); } catch (_) {}
+      try { showCenterNotice('당신이 호스트입니다. 게임이 종료될 때 까지 나가면 안됩니다', 2500); } catch (_) {}
       return;
     }
     // second press
@@ -586,6 +586,7 @@
 
   // ---------- Assets ----------
   const AS = {
+    loadingImg: null,
     tilesImg: null,
     objsImg: null,
     tilesMeta: null,
@@ -1057,6 +1058,8 @@
     if (!AS.tilesMeta) AS.tilesMeta = DEFAULT_TILES_META;
     if (!AS.objsMeta) AS.objsMeta = DEFAULT_OBJS_META;
     if (!AS.map || !AS.map.layers) AS.map = makeFallbackMap();
+
+    AS.loadingImg = await loadImage('assets/mathrabbitloading.png');
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
@@ -3270,6 +3273,7 @@ function hostHandleInteract(playerId) {
 
       // Among-Us style quick door animation (vines spill down/up)
       const t0 = now();
+      try{ if (!G.ui) G.ui = {}; G.ui._embedWaitingStart = true; }catch(_){ }
       d.anim = { k: d.closed ? 'close' : 'open', s: t0, e: t0 + (d.closed ? 260 : 200) };
 
       if (d.closed) {
@@ -4455,7 +4459,14 @@ function hostHandleInteract(playerId) {
     } catch {}
   }
 
-  function showToast(text) {
+  
+function showCenterNotice(text, ms=2500){
+  if (!G.ui) G.ui = {};
+  G.ui.centerNoticeText = String(text || '');
+  G.ui.centerNoticeUntil = now() + (ms || 2500);
+}
+
+function showToast(text) {
     // 간단 토스트: rolePill 텍스트 잠깐 바꾸기
     const prev = roleText.textContent;
     roleText.textContent = text;
@@ -5675,6 +5686,14 @@ default:
   }
 
   function getLookAngle(me){
+    // Prefer explicit facing/dir from simulation (stable & matches the sprite direction).
+    try{
+      if (me && me.dir != null) {
+        if (me.dir === 2) return (me.facing < 0 ? Math.PI : 0);
+        if (me.dir === 1) return -Math.PI/2;
+        if (me.dir === 0) return Math.PI/2;
+      }
+    }catch(_){ }
     // prefer current input direction; fallback to last stored
     const mvx = G.local.mvx || 0;
     const mvy = G.local.mvy || 0;
@@ -5721,7 +5740,8 @@ function drawLightMask(cam, me, st){
   // Among Us-like: fixed 60° cone. Darkness shrinks distance.
   const baseHalf = (Math.PI/180) * 30;                // 60° total
   const baseDist = (520 - 320 * a) * ZOOM;            // ~520px -> ~200px (screen space)
-  const nearR    = (170 - 70 * a) * ZOOM;             // close-by soft circle
+  const nearR    = (26) * ZOOM;                       // tiny always-visible circle around my body
+  const nearFeather = (14) * ZOOM;                    // feather for the small circle
 
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
@@ -5734,19 +5754,26 @@ function drawLightMask(cam, me, st){
   // punch visible areas with soft gradients
   ctx.globalCompositeOperation = 'destination-out';
 
-  // near radial soft reveal
-  try{
-    const g0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, nearR);
-    g0.addColorStop(0.00, 'rgba(0,0,0,1)');
-    g0.addColorStop(0.55, 'rgba(0,0,0,0.95)');
-    g0.addColorStop(1.00, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g0;
-    ctx.beginPath();
-    ctx.arc(cx, cy, nearR, 0, Math.PI * 2);
-    ctx.fill();
-  }catch(_){}
+  
+// near body reveal: tiny circle around the player (so you can always see yourself)
+try{
+  const r0 = Math.max(2, nearR);
+  const r1 = Math.max(r0 + 2, nearR + nearFeather);
+  const g0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
+  const mid = clamp(r0 / r1, 0, 1);
+  g0.addColorStop(0.00, 'rgba(0,0,0,1)');
+  g0.addColorStop(mid,  'rgba(0,0,0,1)');
+  g0.addColorStop(1.00, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g0;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1, 0, Math.PI*2);
+  ctx.fill();
+}catch(_){
+  ctx.beginPath();
+  ctx.arc(cx, cy, nearR, 0, Math.PI*2);
+  ctx.fill();
+}
 
-  // directional cone (layered to feather the edges)
   const layers = [
     { alpha: 1.00, widen: 1.00, dist: 1.00 },
     { alpha: 0.55, widen: 1.18, dist: 0.97 },
@@ -5806,6 +5833,93 @@ function drawLightMask(cam, me, st){
   }
 }
 
+function drawLoadingScreen(extraText=null){
+  ctx.save();
+  try{
+    if (AS.loadingImg && AS.loadingImg.width > 0) {
+      const iw = AS.loadingImg.width, ih = AS.loadingImg.height;
+      const scale = Math.max(viewW / iw, viewH / ih);
+      const dw = iw * scale, dh = ih * scale;
+      const dx = (viewW - dw) / 2;
+      const dy = (viewH - dh) / 2;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(AS.loadingImg, dx, dy, dw, dh);
+      ctx.imageSmoothingEnabled = false;
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0,0,viewW,viewH);
+    }
+  }catch(_){
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,viewW,viewH);
+  }
+
+  if (extraText){
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0,0,viewW,viewH);
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.font = 'bold 20px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(extraText), viewW/2, viewH*0.55);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawCenterNoticeOverlay(){
+  try{
+    if (!G.ui) return;
+    const until = Number(G.ui.centerNoticeUntil || 0);
+    if (!until) return;
+    const t = now();
+    if (t > until) return;
+    const msg = String(G.ui.centerNoticeText || '').trim();
+    if (!msg) return;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.40)';
+    ctx.fillRect(0,0,viewW,viewH);
+
+    const padX = 22;
+    const padY = 14;
+    ctx.font = 'bold 22px system-ui';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const maxW = Math.min(viewW * 0.82, 720);
+    const words = msg.split(/\s+/);
+    const lines = [];
+    let line = '';
+    for (const w of words){
+      const test = line ? (line + ' ' + w) : w;
+      if (ctx.measureText(test).width <= maxW) line = test;
+      else { if (line) lines.push(line); line = w; }
+    }
+    if (line) lines.push(line);
+
+    const lineH = 28;
+    const boxW = maxW + padX*2;
+    const boxH = lines.length*lineH + padY*2;
+    const bx = (viewW - boxW)/2;
+    const by = (viewH - boxH)/2;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    roundRect(ctx, bx, by, boxW, boxH, 10);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.96)';
+    let y = by + boxH/2 - (lines.length-1)*lineH/2;
+    for (const L of lines){
+      ctx.fillText(L, viewW/2, y);
+      y += lineH;
+    }
+    ctx.restore();
+  }catch(_){}
+}
+
+
 
   function draw() {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -5813,14 +5927,27 @@ function drawLightMask(cam, me, st){
     ctx.imageSmoothingEnabled = false;
     ctx.clearRect(0, 0, viewW, viewH);
 
-    if (!AS.map || !mapCanvas) {
-      ctx.fillStyle = 'rgba(255,255,255,.85)';
-      ctx.font = 'bold 16px system-ui';
-      ctx.fillText('로딩 중...', 20, 30);
-      return;
-    }
+    
+// Show a proper loading/title screen instead of a black canvas while assets/join/start are pending.
+if (!AS.map || !mapCanvas) {
+  drawLoadingScreen();
+  drawCenterNoticeOverlay();
+  return;
+}
 
-    const st = G.state;
+const st = G.state;
+
+// Embedded mode: while we're still in lobby / waiting for host start, show the loading/title art.
+try{
+  const isEmbed = !!(G.ui && G.ui.embedJoined);
+  if (isEmbed && (G.phase === 'lobby' || !st.started)) {
+    const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart) ? '플레이어 접속을 기다리는 중...' : null;
+    drawLoadingScreen(hint);
+    drawCenterNoticeOverlay();
+    return;
+  }
+}catch(_){}
+
     const me = st.players[G.net?.myPlayerId] || Object.values(st.players)[0];
     let cam = me ? getCamera(me) : { x: 0, y: 0, vw: viewW / ZOOM, vh: viewH / ZOOM };
 
@@ -6402,7 +6529,10 @@ function drawLightMask(cam, me, st){
       ctx.fillRect(gx - r, gy - r, r * 2, r * 2);
       ctx.restore();
     }
-  }
+  
+    // Center notices (host warnings, host exit, etc.)
+    drawCenterNoticeOverlay();
+}
 
   function drawLockedDoorOverlay(x, y, remMs) {
     const p = clamp(remMs / 10_000, 0, 1);
@@ -8279,7 +8409,7 @@ function drawLightMask(cam, me, st){
         if (last && (t - last) > 4500 && !(G.ui && (G.ui._hostExitHandled || G.ui._hostGoneHandled))) {
           if (!G.ui) G.ui = {};
           G.ui._hostGoneHandled = true;
-          try { showToast('호스트 이탈로 게임이 종료되었습니다.'); } catch (_) {}
+          try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
           setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
         }
       }
@@ -9183,7 +9313,7 @@ net.on('uiMeetingOpen', (m) => {
       if (G.ui && G.ui._hostExitHandled) return;
       if (!G.ui) G.ui = {};
       G.ui._hostExitHandled = true;
-      try { showToast('호스트 이탈로 게임이 종료되었습니다.'); } catch (_) {}
+      try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
       setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
     });
     net.on('uiRoleReveal', (m) => {
@@ -9345,11 +9475,12 @@ net.on('uiMeetingOpen', (m) => {
       const it = setInterval(()=>{
         try{
           if (!G.net || !G.net.isHost) { clearInterval(it); return; }
-          if (G.host.started) { clearInterval(it); return; }
+          if (G.host.started) { clearInterval(it); try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ } return; }
           const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
           if (n >= 4 || (now() - t0) > MAX_WAIT){
             clearInterval(it);
             try{ startBtn.click(); }catch(_){ }
+            try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ }
           }
         }catch(_){ }
       }, CHECK_MS);
