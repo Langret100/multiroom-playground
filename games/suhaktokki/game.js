@@ -1819,7 +1819,11 @@
   class BridgeNet {
     constructor(roomCode, sessionId, isHost){
       this.room = roomCode;
-      this.clientId = String(sessionId || randId());
+	      // IMPORTANT (embed): multiple iframes can share the same sessionId.
+	      // Use a per-iframe unique clientId for routing, and keep the provided
+	      // sessionId only as a non-routing tag.
+	      this.sessionId = String(sessionId || '');
+	      this.clientId = randId();
       this.hostId = null;
       this.isHost = !!isHost;
       this.myPlayerId = null;
@@ -1841,6 +1845,7 @@
     post(msg){
       msg.room = this.room;
       msg.from = this.clientId;
+	      if (this.sessionId) msg.sessionId = this.sessionId;
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
