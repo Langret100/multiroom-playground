@@ -1908,7 +1908,6 @@
       meetingAlarmUntil: 0,
       meetingAlarmFlashUntil: 0,
       mapOpen: false,
-      debugCollision: false,
       roleRevealUntil: 0,
     },
 
@@ -2851,6 +2850,33 @@ function tileAtPixel(x, y) {
     return { corridorVertical, crossTiles };
   }
 
+  // Build a stable span of offsets across the door opening (perpendicular to the
+  // corridor axis). We derive this from *actual open tiles* around the door tile
+  // so even-width corridors (2/4) don't leave a "gap" you can slip through.
+  function doorSpanOffsetsAt(tx, ty, info) {
+    const max = 4;
+    const desired = clamp((info && (info.crossTiles|0)) || 3, 1, 4);
+    // corridorVertical => opening spans X (perpendicular to vertical corridor)
+    const spanX = !!(info && info.corridorVertical);
+
+    let left = 0, right = 0;
+    if (spanX) {
+      left = _openRun(tx, ty, -1, 0, max);
+      right = _openRun(tx, ty,  1, 0, max);
+    } else {
+      left = _openRun(tx, ty, 0, -1, max);
+      right = _openRun(tx, ty, 0,  1, max);
+    }
+
+    // Trim to desired size, keeping the span contiguous.
+    while (1 + left + right > desired) {
+      if (right > left) right--; else left--;
+    }
+    // NOTE: if 1+left+right < desired, we simply keep the real open span.
+
+    return { spanX, minOff: -left, maxOff: right };
+  }
+
   // Door boundary blocking (Among Us-style): a closed door blocks the *edge* between two tiles
   // (corridor <-> room) rather than making a whole tile solid. This avoids invisible solid-tile
   // artifacts and makes vision/collision more accurate.
@@ -2861,6 +2887,29 @@ function tileAtPixel(x, y) {
     const dy = (ty1 - ty0) | 0;
     if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
 
+    // Helper: room-rect lookup for inferring door normal when metadata is missing.
+    const roomRectOf = (roomId) => {
+      try {
+        const rooms = AS?.map?.rooms;
+        if (!rooms || !Array.isArray(rooms)) return null;
+        for (const r of rooms) {
+          if (!r) continue;
+          if (String(r.id) !== String(roomId)) continue;
+          return {
+            x: (r.x | 0),
+            y: (r.y | 0),
+            w: (r.w | 0),
+            h: (r.h | 0),
+          };
+        }
+      } catch (_) {}
+      return null;
+    };
+    const inRect = (rect, x, y) => {
+      if (!rect) return false;
+      return x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h;
+    };
+
     for (const obj of Object.values(st.objects)) {
       if (!obj || obj.type !== 'root_door') continue;
       const d = st.doors[obj.id];
@@ -2868,31 +2917,38 @@ function tileAtPixel(x, y) {
 
       const ox = obj.x | 0;
       const oy = obj.y | 0;
-      const info = doorCrossInfoAt(ox, oy, obj);
-      const half = Math.floor((info.crossTiles - 1) / 2);
 
-      if (info.corridorVertical) {
-        // Corridor runs vertically, doorway spans along X, door plane is horizontal.
-        const ody = (obj._doorDy | 0) || 1; // outward (room->corridor)
-        for (let off = -half; off <= half; off++) {
-          const ax = ox + off;
-          const ay = oy;         // corridor side tile
-          const bx = ox + off;
-          const by = oy - ody;   // room side tile
-          if ((tx0 === ax && ty0 === ay && tx1 === bx && ty1 === by) ||
-              (tx1 === ax && ty1 === ay && tx0 === bx && ty0 === by)) return true;
+      // Door normal (room -> corridor). Prefer authored/pushed metadata; infer from room rect if needed.
+      let odx = (obj._doorDx | 0) || 0;
+      let ody = (obj._doorDy | 0) || 0;
+      if (Math.abs(odx) + Math.abs(ody) !== 1) {
+        odx = 0; ody = 0;
+        const rect = roomRectOf(obj.roomId);
+        if (rect) {
+          // Door object lives on the corridor tile. The room-side tile is one step opposite to the normal.
+          const dirs = [ [0,-1], [0,1], [-1,0], [1,0] ];
+          for (const [ddx, ddy] of dirs) {
+            const rx = ox - ddx;
+            const ry = oy - ddy;
+            if (inRect(rect, rx, ry)) { odx = ddx; ody = ddy; break; }
+          }
         }
-      } else {
-        // Corridor runs horizontally, doorway spans along Y, door plane is vertical.
-        const odx = (obj._doorDx | 0) || 1; // outward (room->corridor)
-        for (let off = -half; off <= half; off++) {
-          const ax = ox;
-          const ay = oy + off;   // corridor side tile
-          const bx = ox - odx;   // room side tile
-          const by = oy + off;
-          if ((tx0 === ax && ty0 === ay && tx1 === bx && ty1 === by) ||
-              (tx1 === ax && ty1 === ay && tx0 === bx && ty0 === by)) return true;
-        }
+        if (Math.abs(odx) + Math.abs(ody) !== 1) { odx = 0; ody = 1; }
+      }
+
+      // Door span/width: reuse the same cross-tiles estimate used by rendering,
+      // but compute a *contiguous open-span* so even-width corridors are fully blocked.
+      const info = doorCrossInfoAt(ox, oy, obj);
+      const span = doorSpanOffsetsAt(ox, oy, info);
+      for (let off = span.minOff; off <= span.maxOff; off++) {
+        // Corridor side tile (door object lives on corridor tile)
+        const cx = span.spanX ? (ox + off) : ox;
+        const cy = span.spanX ? oy : (oy + off);
+        // Room side tile is one step opposite to the door normal.
+        const rx = cx - odx;
+        const ry = cy - ody;
+        if ((tx0 === cx && ty0 === cy && tx1 === rx && ty1 === ry) ||
+            (tx1 === cx && ty1 === cy && tx0 === rx && ty0 === ry)) return true;
       }
     }
     return false;
@@ -3711,12 +3767,17 @@ function tileAtPixel(x, y) {
     let prog = hostGetMissionProg(playerId, siteId);
     if (!prog) {
       // 클라이언트가 새로고침 등으로 상태를 잃었을 때 대비
-      const practice = (m.state !== 'active');
+      const practice = !!st.practice;
       hostInitMissionProg(playerId, siteId, m.kind, practice);
       prog = hostGetMissionProg(playerId, siteId);
     }
 
-    const isPractice = !!prog.practice;
+    // Practice mode is global (1~3 players). Keep per-player mission prog in sync.
+    const isPractice = !!st.practice;
+    if (prog.practice !== isPractice) {
+      hostInitMissionProg(playerId, siteId, m.kind, isPractice);
+      prog = hostGetMissionProg(playerId, siteId) || prog;
+    }
     if (!isPractice && m.state === 'solved') return;
 
     const q = payload.question;
@@ -3724,22 +3785,31 @@ function tileAtPixel(x, y) {
 
     const ok = checkAnswer(q, ans);
     if (!ok) {
+      // Wrong: immediately exit the mission UI (no lingering modal / darkness overlay).
       prog.hadWrong = true;
-      // 활성 미션에서만 페널티
-      if (!isPractice) applyPenalty(m.kind, playerId);
+      if (!isPractice) {
+        // Active (real) mission: apply penalty.
+        applyPenalty(m.kind, playerId);
+        // Flawless crown condition resets on any mistake (crew only).
+        if (p.id !== st.teacherId) hostResetFlawless(playerId);
+        // Teacher mistake: 10s silly glasses.
+        if (p.id === st.teacherId) p.glassesUntil = Math.max(p.glassesUntil || 0, now() + 10_000);
+      }
 
-      // 플로우리스(왕관) 조건은 '틀림'이 있으면 즉시 리셋
-      if (!isPractice && p.id !== st.teacherId) hostResetFlawless(playerId);
+      // Reset this site's progress so reopening starts fresh.
+      hostInitMissionProg(playerId, siteId, m.kind, isPractice);
 
-      // 선생토끼가 틀리면 10초 땡글 안경
-      if (!isPractice && p.id === st.teacherId) p.glassesUntil = Math.max(p.glassesUntil || 0, now() + 10_000);
+      // Clear world marker quickly (client will also send missionClose).
+      p.missionSiteId = null;
+      p.missionStage = 0;
+      p.missionClearAt = 0;
 
-      sendToPlayer(playerId, { t: 'uiMissionResult', ok: false, text: '틀렸어! 다시!' });
-      sendToPlayer(playerId, { t: 'uiMissionNext', question: genQuestion(m.kind), correct: prog.correct });
+      sendToPlayer(playerId, { t: 'uiMissionExit', siteId, toast: '틀렸어! 다시 시도해!' });
+      broadcastState(true);
       return;
     }
 
-    // 맞음
+    // Correct: progress toward 3 correct (practice + real share the same 3-question flow)
     prog.correct += 1;
 
     // Update world-space mission progress marker (33/66/100)
@@ -3749,43 +3819,32 @@ function tileAtPixel(x, y) {
     p.missionClearAt = 0;
 
     if (prog.correct >= 3) {
-      // 완료
-      if (isPractice) {
-        st.timeLeft += 10;
-        st.timeLeft = Math.min(st.timeLeft, 999);
-        st.maxTime = Math.max(st.maxTime || 0, st.timeLeft);
-        sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: '+10초! (연습)' });
-        // 연습은 진행도/상태 변경 없음
-        hostInitMissionProg(playerId, siteId, m.kind, true);
-
-        // Show 100% briefly, then clear the marker.
-        p.missionStage = 3;
-        p.missionClearAt = now() + 900;
-        broadcastState(true);
-        return;
+      // complete
+      if (!isPractice) {
+        m.state = 'solved';
+        m.expiresAt = 0;
+        m.sealedAt = now();
+        if (st.infiniteMissions) {
+          m.respawnAt = now() + (20_000 + Math.random() * 20_000);
+        }
+        st.solved += 1;
       }
 
-      m.state = 'solved';
-      m.expiresAt = 0;
-      m.sealedAt = now();
-      if (st.infiniteMissions) {
-        m.respawnAt = now() + (20_000 + Math.random() * 20_000);
-      }
-      st.solved += 1;
-      st.timeLeft += 30;
+      // Reward: +15 seconds (practice + real)
+      st.timeLeft += 15;
       st.timeLeft = Math.min(st.timeLeft, 999);
       st.maxTime = Math.max(st.maxTime || 0, st.timeLeft);
-      sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: '+30초! 해결!' });
+      sendToPlayer(playerId, { t: 'uiMissionExit', siteId, toast: isPractice ? '+15초! (연습)' : '+15초! 해결!' });
 
       // Show 100% briefly, then clear the marker.
       p.missionStage = 3;
       p.missionClearAt = now() + 1200;
 
       const siteObj = st.objects[siteId];
-      if (siteObj) broadcast({ t: 'fx', kind: 'seal', x: siteObj.x, y: siteObj.y, bornAt: now() });
+      if (!isPractice && siteObj) broadcast({ t: 'fx', kind: 'seal', x: siteObj.x, y: siteObj.y, bornAt: now() });
 
-      // 누수(압박) 완화: 미션을 해결하면 누수 레벨 1 감소 + 가장 오래된 물샘 흔적 1개 제거
-      if ((st.leakLevel || 0) > 0) {
+      // 누수(압박) 완화: (실전만) 미션을 해결하면 누수 레벨 1 감소 + 가장 오래된 물샘 흔적 1개 제거
+      if (!isPractice && (st.leakLevel || 0) > 0) {
         st.leakLevel = Math.max(0, (st.leakLevel || 0) - 1);
         const entries = Object.entries(st.leaks || {});
         if (entries.length) {
@@ -3795,8 +3854,8 @@ function tileAtPixel(x, y) {
         broadcast({ t: 'toast', text: `당근으로 막았다! 누수가 줄었어. (누수 ${st.leakLevel})` });
       }
 
-      // 왕관: 서로 다른 활성 미션 3개를 '한 번도 틀림 없이' 해결
-      if (p.id !== st.teacherId && !p.crown && !prog.hadWrong) {
+      // 왕관: (실전만) 서로 다른 활성 미션 3개를 '한 번도 틀림 없이' 해결
+      if (!isPractice && p.id !== st.teacherId && !p.crown && !prog.hadWrong) {
         const size = hostAddFlawlessKind(playerId, m.kind);
         if (size >= 3) {
           p.crown = true;
@@ -3810,7 +3869,7 @@ function tileAtPixel(x, y) {
       }
 
       // 다음 시도 대비 진행 초기화
-      hostInitMissionProg(playerId, siteId, m.kind, false);
+      hostInitMissionProg(playerId, siteId, m.kind, isPractice);
 
       // Show 100% briefly, then clear the marker.
       p.missionStage = 3;
@@ -4251,7 +4310,9 @@ function tileAtPixel(x, y) {
     };
 
     missionTitle.textContent = `${KIND_LABEL[payload.kind] || '미션'} 미션`;
-    missionDesc.textContent = payload.practice ? '연습 미션: 맞히면 +10초 (진행도는 안 올라가요)' : '문제 3개를 맞히면 해결! (+30초)';
+    missionDesc.textContent = payload.practice
+      ? '연습 미션: 문제 3개 모두 맞히면 +15초'
+      : '문제 3개 모두 맞히면 해결! (+15초)';
     missionModal.classList.add('show');
     renderQuestion();
   }
@@ -5190,12 +5251,6 @@ function tileAtPixel(x, y) {
       case '2':
         if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'tsk' });
         handled = true; break;
-      case 'c':
-      case 'C':
-        // debug: visualize collision tiles (helps diagnose "invisible" blockers)
-        G.ui.debugCollision = !G.ui.debugCollision;
-        showToast(G.ui.debugCollision ? '디버그: 충돌 타일 표시 ON' : '디버그: 충돌 타일 표시 OFF');
-        handled = true; break;
 default:
         handled = false;
     }
@@ -5592,28 +5647,6 @@ default:
     const vh = (cam.vh || (viewH / ZOOM));
     ctx.drawImage(mapCanvas, cam.x, cam.y, vw, vh, 0, 0, vw, vh);
 
-    // debug: show collision tiles as a translucent red overlay
-    if (G.ui.debugCollision && solid && AS.map) {
-      const W = AS.map.width | 0;
-      const H = AS.map.height | 0;
-      const tx0 = Math.max(0, Math.floor(cam.x / TS) - 1);
-      const ty0 = Math.max(0, Math.floor(cam.y / TS) - 1);
-      const tx1 = Math.min(W - 1, Math.floor((cam.x + vw) / TS) + 1);
-      const ty1 = Math.min(H - 1, Math.floor((cam.y + vh) / TS) + 1);
-      ctx.save();
-      ctx.globalAlpha = 0.28;
-      ctx.fillStyle = 'rgb(255,0,80)';
-      for (let ty = ty0; ty <= ty1; ty++) {
-        for (let tx = tx0; tx <= tx1; tx++) {
-          if (!solid[ty * W + tx]) continue;
-          const sx = tx * TS - cam.x;
-          const sy = ty * TS - cam.y;
-          ctx.fillRect(sx, sy, TS, TS);
-        }
-      }
-      ctx.restore();
-    }
-
     // locked room overlay (add-penalty)
     drawLockedRoomOverlay(cam, st);
 
@@ -5707,24 +5740,18 @@ default:
       if (obj.roomId && obj.roomId !== meRoomId) closedRoomIds.add(obj.roomId);
 
       // build blocked tile-to-tile edges for quick segment testing
-      const hint = { _doorDx: (obj._doorDx|0)||0, _doorDy: (obj._doorDy|0)||0 };
-      const info = doorCrossInfoAt(obj.x|0, obj.y|0, hint);
+      const doorDx = (obj._doorDx|0)||0;
+      const doorDy = (obj._doorDy|0)||0;
+      const info = doorCrossInfoAt(obj.x|0, obj.y|0, obj);
       if (!info) continue;
-      const doorDx = hint._doorDx;
-      const doorDy = hint._doorDy;
-      const width = Math.max(1, (info.crossTiles|0) || 3);
-      const half = Math.floor((width - 1) / 2);
-      for (let off = -half; off <= half; off++) {
-        let ax, ay, bx, by;
-        if (info.corridorVertical) {
-          ax = (obj.x | 0) + off; ay = (obj.y | 0);
-          bx = ax; by = (obj.y | 0) - doorDy;
-        } else {
-          ax = (obj.x | 0); ay = (obj.y | 0) + off;
-          bx = (obj.x | 0) - doorDx; by = ay;
-        }
-        const k1 = `${ax},${ay}|${bx},${by}`;
-        const k2 = `${bx},${by}|${ax},${ay}`;
+      const span = doorSpanOffsetsAt(obj.x|0, obj.y|0, info);
+      for (let off = span.minOff; off <= span.maxOff; off++) {
+        const cx = span.spanX ? ((obj.x|0) + off) : (obj.x|0);
+        const cy = span.spanX ? (obj.y|0) : ((obj.y|0) + off);
+        const rx = cx - doorDx;
+        const ry = cy - doorDy;
+        const k1 = `${cx},${cy}|${rx},${ry}`;
+        const k2 = `${rx},${ry}|${cx},${cy}`;
         closedDoorEdges.add(k1);
         closedDoorEdges.add(k2);
       }
@@ -8253,7 +8280,15 @@ default:
         sendToPlayer(pid, { t: 'toast', text: '이미 당근으로 막았어!' });
         return;
       }
-      const practice = mm.state !== 'active';
+      // In real game (4+), missions are always treated as real missions (not practice).
+      // In practice mode, every mission is treated as practice regardless of activation state.
+      if (!st.practice && mm.state === 'idle') {
+        mm.state = 'active';
+        mm.expiresAt = now() + 60_000;
+        mm.activatedAt = now();
+        if (mm.sealedAt) mm.sealedAt = 0;
+      }
+      const practice = !!st.practice;
       const ui = buildMissionUI(obj.id, mm.kind, practice);
       let prog = hostGetMissionProg(pid, obj.id);
       if (!prog || prog.practice !== !!practice) {
@@ -8284,6 +8319,13 @@ default:
       const st = G.state;
       const p = st.players[pid];
       if (!p) return;
+      // If a player closes the mission UI mid-run, treat it as a reset so the
+      // next open starts from 0/3 ("한 번에 문제 3개" 규칙).
+      const siteId = m.siteId;
+      const mm = siteId ? st.missions[siteId] : null;
+      if (mm && mm.kind) {
+        hostInitMissionProg(pid, siteId, mm.kind, !!st.practice);
+      }
       // clear mission marker
       p.missionSiteId = null;
       p.missionStage = 0;
@@ -8431,7 +8473,7 @@ default:
       startBtn.disabled = !(net.isHost && Object.keys(G.state.players).length >= 1 && !G.host.started);
       if (net.isHost && !G.host.started) {
         const n = Object.keys(G.state.players).length;
-        startBtn.textContent = n >= 2 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
+        startBtn.textContent = n >= 4 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
       }
       applyPhaseUI();
     });
@@ -8454,6 +8496,18 @@ default:
       if (typeof m.correct === 'number') G.ui.mission.correct = m.correct;
       G.ui.mission.question = m.question;
       renderQuestion();
+    });
+
+
+    net.on('uiMissionExit', (m) => {
+      if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
+      // Close mission immediately (used on wrong answer / mission complete)
+      if (G.ui.mission) {
+        if (!m.siteId || String(G.ui.mission.siteId) === String(m.siteId)) {
+          closeMissionUI();
+        }
+      }
+      if (m.toast) showToast(m.toast);
     });
 
     net.on('uiForceCloseMission', (m) => {

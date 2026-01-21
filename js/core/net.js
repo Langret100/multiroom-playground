@@ -369,7 +369,5 @@ if (isDuel && humans.length === 1){
 
   // Build marker for debugging deployments
   window.__BUILD_ID = "2026-01-07-fix-ready-bgm";
-  try{ console.log("[build]", window.__BUILD_ID); }catch(_){ }
-
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();
