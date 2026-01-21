@@ -8469,6 +8469,14 @@ try{
         G.host._lastStateBroadcast = t;
         broadcastState();
       }
+
+      // Also broadcast a lightweight roster occasionally during play.
+      // This lets clients who missed joinAck/state bind their playerId reliably (common on slow iframe loads).
+      if (!G.host._lastRosterInPlay) G.host._lastRosterInPlay = 0;
+      if (t - G.host._lastRosterInPlay > 900) {
+        G.host._lastRosterInPlay = t;
+        try{ broadcastRoster(); }catch(_){ }
+      }
     }
 
     // host lobby: broadcast a small roster snapshot periodically so guests who miss joinAck/state
@@ -9088,20 +9096,54 @@ G.state.missions = m.missions;
         }
       }catch(_){ }
 
-      // Bind my playerId if joinAck/state was missed.
+      // Bind my playerId if joinAck/state was missed (roster is lighter and often arrives first).
       try{
-        if (!net.myPlayerId) {
-          const jt = net.joinToken || null;
-          const cid = net.clientId || null;
-          if (jt || cid) {
+        const jt = net.joinToken || null;
+        const cid = net.clientId || null;
+
+        const cur = Number(net.myPlayerId || 0);
+        const curObj = cur ? (st.players && st.players[String(cur)]) : null;
+        let need = (!cur || !curObj);
+
+        // If we already think we have an id but the token doesn't match, re-bind.
+        try{
+          if (!need && jt && curObj && curObj.joinToken && String(curObj.joinToken) !== String(jt)) need = true;
+        }catch(_){ }
+
+        if (need && (jt || cid)) {
+          let found = 0;
+
+          // 1) Prefer joinToken match
+          if (jt) {
             for (const pp of Object.values(st.players || {})) {
               if (!pp) continue;
-              if (jt && pp.joinToken && String(pp.joinToken) === String(jt)) { net.myPlayerId = String(pp.id); break; }
-              if (cid && pp.clientId && String(pp.clientId) === String(cid)) { net.myPlayerId = String(pp.id); break; }
+              if (pp.joinToken && String(pp.joinToken) === String(jt)) { found = Number(pp.id || 0); break; }
             }
           }
-          if (net.myPlayerId) {
-            try{ startHeartbeat(); }catch(_){ }
+          // 2) Fallback to clientId match
+          if (!found && cid) {
+            for (const pp of Object.values(st.players || {})) {
+              if (!pp) continue;
+              if (pp.clientId && String(pp.clientId) === String(cid)) { found = Number(pp.id || 0); break; }
+            }
+          }
+
+          if (found) {
+            net.myPlayerId = found;
+
+            // Start heartbeat (client -> host) just like joinAck/state handler.
+            try{
+              if (!net.isHost) {
+                if (net._hb) { clearInterval(net._hb); net._hb = null; }
+                net._hbPid = Number(net.myPlayerId || 0);
+                net._hb = setInterval(()=>{
+                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+                }, 1000);
+              }
+            }catch(_){ }
+
+            // Stop join retry loop (if running).
+            try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
           }
         }
       }catch(_){ }
