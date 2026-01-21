@@ -4521,7 +4521,7 @@ function showToast(text) {
     // Tell host to clear the "mission in progress" marker above my head.
     try{
       if (ui && G.net && ui.siteId) {
-        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), siteId: ui.siteId });
+        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, siteId: ui.siteId });
       }
     }catch(_){ }
   }
@@ -4711,7 +4711,7 @@ function showToast(text) {
     if (!ui || !G.net) return;
     const payload = {
       t: 'missionSubmit',
-      playerId: Number(G.net.myPlayerId || 0),
+      playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null,
       siteId: ui.siteId,
       kind: ui.kind,
       practice: ui.practice,
@@ -4954,7 +4954,7 @@ function showToast(text) {
       btn.onclick = () => {
         if (!G.net) return;
         G.ui.meeting.voted = true;
-        G.net.post({ t: 'vote', playerId: meId, target: p.id });
+        G.net.post({ t: 'vote', playerId: meId, joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, target: p.id });
         renderVoteList();
       };
       row.appendChild(left);
@@ -4966,7 +4966,7 @@ function showToast(text) {
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
     G.ui.meeting.voted = true;
-    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
+    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, target: null });
     renderVoteList();
   });
 
@@ -5359,7 +5359,7 @@ function showToast(text) {
         hostHandleInteract(G.net.myPlayerId);
         broadcastState(true);
       } else {
-        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
+        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'interact' });
       }
       return true;
     } catch (_) {
@@ -5448,10 +5448,10 @@ function showToast(text) {
       case 'D':
         G.local.keys.right = true; break;
             case '1':
-        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'cry' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'cry' });
         handled = true; break;
       case '2':
-        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'tsk' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'tsk' });
         handled = true; break;
 default:
         handled = false;
@@ -5552,7 +5552,7 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'interact' });
   }
 
   // Primary action: X (PC) / 조작 버튼 (mobile). Context-sensitive:
@@ -5583,7 +5583,7 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'kill' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'kill' });
   }
 
   killBtn.addEventListener('click', () => sendKill());
@@ -5592,13 +5592,13 @@ default:
   function sendSabotage() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'sabotage' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'sabotage' });
   }
 
   function sendForceMission() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'forceMission' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'forceMission' });
   }
 
   saboBtn?.addEventListener('click', () => sendSabotage());
@@ -5769,50 +5769,59 @@ function drawLightMask(cam, me, st){
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
 
-  // IMPORTANT: Do NOT use destination-out directly on the main canvas.
-  // It would erase the already-rendered world (making the visible region look inverted).
-  // Instead, render the darkness/vision mask on an offscreen canvas, then draw it on top.
+  // IMPORTANT:
+  // Some browsers/devices can end up with an active clip region on the main ctx (from other draw calls),
+  // which would invert vision (only the cone gets darkened). To make vision deterministic, render the
+  // darkness overlay on a dedicated offscreen canvas (fresh clip state), then blit it on top.
   if (!G.ui) G.ui = {};
-  if (!G.ui._lightMaskC) {
-    G.ui._lightMaskC = document.createElement('canvas');
-    G.ui._lightMaskCtx = G.ui._lightMaskC.getContext('2d');
+  let vc = G.ui._visionCanvas;
+  let vctx = G.ui._visionCtx;
+  if (!vc || !vctx) {
+    vc = document.createElement('canvas');
+    vctx = vc.getContext('2d');
+    try{
+      vctx.imageSmoothingEnabled = false;
+      vctx.mozImageSmoothingEnabled = false;
+      vctx.webkitImageSmoothingEnabled = false;
+      vctx.msImageSmoothingEnabled = false;
+    }catch(_){ }
+    G.ui._visionCanvas = vc;
+    G.ui._visionCtx = vctx;
   }
-  const mC = G.ui._lightMaskC;
-  const mctx = G.ui._lightMaskCtx;
-  if (!mctx) return;
-
-  if (mC.width !== viewW || mC.height !== viewH) {
-    mC.width = viewW;
-    mC.height = viewH;
+  if (vc.width !== viewW || vc.height !== viewH) {
+    vc.width = viewW;
+    vc.height = viewH;
+    try{ vctx.imageSmoothingEnabled = false; }catch(_){ }
   }
 
-  // 1) draw darkness overlay to mask canvas
-  mctx.save();
-  mctx.globalCompositeOperation = 'source-over';
-  mctx.clearRect(0, 0, viewW, viewH);
-  mctx.fillStyle = `rgba(0,0,0,${overlayA})`;
-  mctx.fillRect(0, 0, viewW, viewH);
+  vctx.save();
+  try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
+  vctx.clearRect(0, 0, viewW, viewH);
 
-  // 2) punch visible areas out of the darkness mask
-  mctx.globalCompositeOperation = 'destination-out';
+  // darkness overlay
+  vctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+  vctx.fillRect(0, 0, viewW, viewH);
 
-  // near body reveal: small circle around the player (so you can always see yourself)
+  // punch visible areas with soft gradients
+  vctx.globalCompositeOperation = 'destination-out';
+
+  // near body reveal: tiny circle around the player (so you can always see yourself)
   try{
     const r0 = Math.max(2, nearR);
     const r1 = Math.max(r0 + 2, nearR + nearFeather);
-    const g0 = mctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
+    const g0 = vctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
     const mid = clamp(r0 / r1, 0, 1);
     g0.addColorStop(0.00, 'rgba(0,0,0,1)');
     g0.addColorStop(mid,  'rgba(0,0,0,1)');
     g0.addColorStop(1.00, 'rgba(0,0,0,0)');
-    mctx.fillStyle = g0;
-    mctx.beginPath();
-    mctx.arc(cx, cy, r1, 0, Math.PI*2);
-    mctx.fill();
+    vctx.fillStyle = g0;
+    vctx.beginPath();
+    vctx.arc(cx, cy, r1, 0, Math.PI*2);
+    vctx.fill();
   }catch(_){
-    mctx.beginPath();
-    mctx.arc(cx, cy, nearR, 0, Math.PI*2);
-    mctx.fill();
+    vctx.beginPath();
+    vctx.arc(cx, cy, nearR, 0, Math.PI*2);
+    vctx.fill();
   }
 
   const layers = [
@@ -5825,37 +5834,110 @@ function drawLightMask(cam, me, st){
     const half = baseHalf * L.widen;
     const r = baseDist * L.dist;
 
-    mctx.save();
-    mctx.translate(cx, cy);
-    mctx.rotate(look);
+    vctx.save();
+    vctx.translate(cx, cy);
+    vctx.rotate(look);
 
-    // cone clip
-    mctx.beginPath();
-    mctx.moveTo(0, 0);
-    mctx.arc(0, 0, r, -half, half);
-    mctx.closePath();
-    mctx.clip();
+    vctx.beginPath();
+    vctx.moveTo(0, 0);
+    vctx.arc(0, 0, r, -half, half);
+    vctx.closePath();
+    vctx.clip();
 
     try{
-      const g = mctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      const g = vctx.createRadialGradient(0, 0, 0, 0, 0, r);
       g.addColorStop(0.00, `rgba(0,0,0,${1.00 * L.alpha})`);
       g.addColorStop(0.45, `rgba(0,0,0,${0.75 * L.alpha})`);
       g.addColorStop(1.00, 'rgba(0,0,0,0)');
-      mctx.fillStyle = g;
+      vctx.fillStyle = g;
     }catch(_){
-      mctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
+      vctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
     }
 
-    mctx.fillRect(-r, -r, r * 2, r * 2);
-    mctx.restore();
+    vctx.fillRect(-r, -r, r * 2, r * 2);
+    vctx.restore();
   }
 
-  mctx.restore();
 
-  // 3) draw the mask canvas on top of the already-rendered world
+  vctx.restore();
+
+  // Door-closed visibility occlusion:
+  // When a door is closed, the area on the other side is treated as unseen until the door opens.
+  // This is applied *after* cutting the vision cone so it can override visibility.
+  try{
+    const occA = 0.92; // stronger than normal darkness (fog-of-war)
+    const myRoom = roomAtPixel(me.x, me.y);
+    const myRoomId = myRoom ? myRoom.id : null;
+
+    // Quick scan: if no closed doors, skip.
+    let hasClosed = false;
+    for (const obj of Object.values(st.objects || {})) {
+      if (obj && obj.type === 'root_door') {
+        const dd = st.doors && st.doors[obj.id];
+        const closed = !!(dd && (dd.closed || (dd.closedUntil && now() < dd.closedUntil)));
+        if (closed) { hasClosed = true; break; }
+      }
+    }
+
+    if (hasClosed) {
+      vctx.save();
+      try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
+      vctx.globalCompositeOperation = 'source-over';
+      vctx.fillStyle = `rgba(0,0,0,${occA})`;
+
+      for (const obj of Object.values(st.objects || {})) {
+        if (!obj || obj.type !== 'root_door') continue;
+        const dd = st.doors && st.doors[obj.id];
+        const closed = !!(dd && (dd.closed || (dd.closedUntil && now() < dd.closedUntil)));
+        if (!closed) continue;
+
+        const rid = obj.roomId;
+        if (!rid) continue;
+
+        // If I'm NOT in this room -> hide the whole room rectangle.
+        if (myRoomId !== rid) {
+          const rr = (AS.map.rooms || []).find(r => r.id === rid)?.rect || null;
+          if (!rr) continue;
+          const [rx, ry, rw, rh] = rr;
+          const sx = (rx * TS - cam.x) * ZOOM;
+          const sy = (ry * TS - cam.y) * ZOOM;
+          const sw = (rw * TS) * ZOOM;
+          const sh = (rh * TS) * ZOOM;
+          // Only draw if it intersects the viewport a bit.
+          if (sx > viewW || sy > viewH || (sx + sw) < 0 || (sy + sh) < 0) continue;
+          vctx.fillRect(Math.floor(sx), Math.floor(sy), Math.ceil(sw), Math.ceil(sh));
+          continue;
+        }
+
+        // If I'm IN this room -> hide a short corridor strip outside the door so I can't peek out.
+        const dx = (obj._doorDx|0)||0;
+        const dy = (obj._doorDy|0)||0;
+        if (Math.abs(dx) + Math.abs(dy) !== 1) continue;
+
+        const span = doorSpanOffsetsAt(obj.x|0, obj.y|0) || { spanX: true, offsets:[0] };
+        const offsets = span.offsets || [0];
+        const L = 7; // tiles to cover beyond the door
+
+        for (let s = 0; s <= L; s++) {
+          const tx = (obj.x|0) + dx * s;
+          const ty = (obj.y|0) + dy * s;
+          for (const off of offsets) {
+            const wx = ((span.spanX ? (tx + off) : tx) * TS - cam.x) * ZOOM;
+            const wy = ((span.spanX ? ty : (ty + off)) * TS - cam.y) * ZOOM;
+            if (wx > viewW || wy > viewH || (wx + TS*ZOOM) < 0 || (wy + TS*ZOOM) < 0) continue;
+            vctx.fillRect(Math.floor(wx), Math.floor(wy), Math.ceil(TS * ZOOM), Math.ceil(TS * ZOOM));
+          }
+        }
+      }
+
+      vctx.restore();
+    }
+  }catch(_){ }
+
+  // composite overlay onto main canvas (screen space)
   ctx.save();
-  ctx.globalCompositeOperation = 'source-over';
-  ctx.drawImage(mC, 0, 0);
+  try{ ctx.setTransform(1,0,0,1,0,0); }catch(_){ }
+  ctx.drawImage(vc, 0, 0);
   ctx.restore();
 
   // When all lamps are off, show faint lamp positions so players can find them.
@@ -5880,6 +5962,7 @@ function drawLightMask(cam, me, st){
     ctx.restore();
   }
 }
+
 
 function drawLoadingScreen(extraText=null){
   ctx.save();
@@ -8381,8 +8464,8 @@ try{
     if (!rs || !rs.remotes) return;
 
     // Interpolate slightly *in the past* to hide network jitter (Among Us style).
-    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 160);
-    const k = (rs.k || 30);
+    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 220);
+    const k = (rs.k || 22);
     const snapDist = (rs.snapDist || (TS * 6));
     const tNow = now();
     const targetT = tNow - bufferMs;
@@ -8442,12 +8525,59 @@ try{
     }
   }
 
+
+  // ---------- Client-side binding fallback ----------
+  // If joinAck/roster is delayed or dropped, some clients may not learn their playerId.
+  // We continuously try to bind myPlayerId using joinToken/clientId (and optionally nick).
+  function clientEnsureMyPlayerId() {
+    try{
+      const net = G.net;
+      if (!net || net.isHost) return;
+      const st = G.state;
+      if (!st || !st.players) return;
+
+      const cur = Number(net.myPlayerId || 0);
+      if (cur && st.players[String(cur)]) return;
+
+      const jt = (net.joinToken != null) ? String(net.joinToken) : '';
+      const cid = (net.clientId != null) ? String(net.clientId) : '';
+      const nick = (net._nick != null) ? String(net._nick) : '';
+
+      let found = 0;
+
+      if (jt) {
+        for (const [pid, p] of Object.entries(st.players)) {
+          if (p && p.joinToken != null && String(p.joinToken) === jt) { found = Number(pid); break; }
+        }
+      }
+      if (!found && cid) {
+        for (const [pid, p] of Object.entries(st.players)) {
+          if (p && p.clientId != null && String(p.clientId) === cid) { found = Number(pid); break; }
+        }
+      }
+      // Weak fallback: unique nickname match (only if exactly one).
+      if (!found && nick) {
+        let cand = 0, count = 0;
+        for (const [pid, p] of Object.entries(st.players)) {
+          if (p && p.nick != null && String(p.nick) === nick) { cand = Number(pid); count++; }
+        }
+        if (count === 1) found = cand;
+      }
+
+      if (found) net.myPlayerId = found;
+    }catch(_){ }
+  }
+
 // ---------- Main loop ----------
   let lastFrame = now();
   function frame() {
     const t = now();
     const dt = Math.min(0.05, (t - lastFrame) / 1000);
     lastFrame = t;
+
+
+    // Ensure non-host clients bind to their own player even if joinAck was delayed.
+    clientEnsureMyPlayerId();
 
     // Host disconnect watchdog (non-host clients): if we stop receiving host packets,
     // reset back to the room instead of getting stuck.
@@ -8524,7 +8654,7 @@ try{
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
         if (t - G.local._lastInputAt > 33) {
           G.local._lastInputAt = t;
-          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), mvx: G.local.mvx, mvy: G.local.mvy });
+          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, mvx: G.local.mvx, mvy: G.local.mvy });
         }
       }
     }
@@ -8546,7 +8676,7 @@ try{
           const ox = (obj.x + 0.5) * TS;
           const oy = (obj.y + 0.5) * TS;
           if (dist2(me.x, me.y, ox, oy) <= INTERACT_RANGE ** 2) {
-            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), siteId: rm.siteId });
+            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, siteId: rm.siteId });
           }
         }
         // attempt only once
@@ -8689,7 +8819,7 @@ try{
           if (net._hb) { clearInterval(net._hb); net._hb = null; }
           net._hbPid = Number(net.myPlayerId || 0);
           net._hb = setInterval(()=>{
-            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: (net.joinToken != null) ? String(net.joinToken) : null }); }catch(_){ }
           }, 1000);
         }
       }catch(_){ }
@@ -8736,14 +8866,38 @@ try{
     // leave/disconnect (host)
     net.on('leave', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (pid) hostRemovePlayer(pid, m.reason || 'left');
     });
+
+
+    // Host-side helper: resolve playerId even if the client hasn't bound yet.
+    // This prevents "spectator of host" cases where some clients never receive joinAck.
+    function hostResolvePidFromMsg(m) {
+      try{
+        const st = G.state;
+        let pid = Number((m && m.playerId) || 0);
+        if (pid && st && st.players && st.players[pid]) return pid;
+
+        const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
+        if (jt && G.host && G.host._joinTokenToPlayer && G.host._joinTokenToPlayer.has(jt)) {
+          const p2 = Number(G.host._joinTokenToPlayer.get(jt) || 0);
+          if (p2 && st.players && st.players[p2]) return p2;
+        }
+
+        const cid = String((m && (m.cid ?? m.from ?? m.clientId ?? m.sessionId)) || '');
+        if (cid && G.host && G.host._clientToPlayer && G.host._clientToPlayer.has(cid)) {
+          const p3 = Number(G.host._clientToPlayer.get(cid) || 0);
+          if (p3 && st.players && st.players[p3]) return p3;
+        }
+      }catch(_){ }
+      return 0;
+    }
 
     // heartbeat ping (host): keep lastSeen fresh even if player is idle
     net.on('ping', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
@@ -8752,7 +8906,7 @@ try{
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
@@ -8761,7 +8915,7 @@ try{
 
     net.on('emote', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       const p = G.state.players[pid];
       if (!p || !p.alive) return;
       const kind = (m.kind === 'cry' || m.kind === 'tsk') ? m.kind : null;
@@ -8773,7 +8927,7 @@ try{
 
     net.on('act', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (!pid) return;
       if (m.kind === 'interact') hostHandleInteract(pid);
       if (m.kind === 'kill') hostHandleKill(pid);
@@ -8783,7 +8937,7 @@ try{
     net.on('openMission', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       const p = st.players[pid];
       if (!p || !p.alive) return;
       const isGhost = (!!p.down && p.role !== 'teacher');
@@ -8838,14 +8992,14 @@ try{
 
     net.on('missionSubmit', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (!pid) return;
       hostMissionSubmit(pid, { ...m, playerId: pid });
     });
 
     net.on('missionClose', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (!pid) return;
       const st = G.state;
       const p = st.players[pid];
@@ -8868,7 +9022,7 @@ try{
 
     net.on('vote', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = hostResolvePidFromMsg(m);
       if (!pid) return;
       hostSubmitVote(pid, m.target);
     });
@@ -8975,7 +9129,7 @@ try{
             if (!net._hb) {
               net._hbPid = pid;
               net._hb = setInterval(()=>{
-                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: (net.joinToken != null) ? String(net.joinToken) : null }); }catch(_){ }
               }, 1000);
             }
             // stop join retry loop once bound
@@ -9162,7 +9316,7 @@ G.state.missions = m.missions;
                 if (net._hb) { clearInterval(net._hb); net._hb = null; }
                 net._hbPid = Number(net.myPlayerId || 0);
                 net._hb = setInterval(()=>{
-                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: (net.joinToken != null) ? String(net.joinToken) : null }); }catch(_){ }
                 }, 1000);
               }
             }catch(_){ }
@@ -9371,7 +9525,7 @@ net.on('uiMeetingOpen', (m) => {
       // If we already have an active meeting id, ignore messages from other meetings
       if (G.ui.meetingChat?.id && mid && mid !== Number(G.ui.meetingChat.id)) return;
 
-      const pid = Number(m.playerId || 0);
+      const pid = (G.net && G.net.isHost) ? hostResolvePidFromMsg(m) : Number(m.playerId || 0);
       const p = (G.state && G.state.players) ? G.state.players[pid] : null;
       const nick = String(m.nick || p?.nick || `#${pid}`).
         replace(/[\r\n\t]/g,' ').slice(0, 12);
@@ -9475,6 +9629,25 @@ net.on('uiMeetingOpen', (m) => {
       // join 요청
       if (!net.joinToken) net.joinToken = randId();
       net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken });
+
+      // Remember nick for client-side binding fallback (if joinAck/roster is delayed).
+      try{ net._nick = nick; }catch(_){}
+
+      // Start heartbeat immediately, even before joinAck. If myPlayerId is not yet known,
+      // the host can still resolve us via joinToken/clientId.
+      try{
+        if (!net._hb){
+          net._hbPid = 0;
+          net._hb = setInterval(() => {
+            try{
+              if (!G.net || G.net !== net) { clearInterval(net._hb); net._hb = null; return; }
+              const pid = Number(net.myPlayerId || 0);
+              net._hbPid = pid;
+              net.post({ t: 'ping', playerId: pid, joinToken: (net.joinToken != null) ? String(net.joinToken) : null });
+            }catch(_){}
+          }, 1200);
+        }
+      }catch(_){ }
 
       // If the first join packet is dropped (common when the iframe loads before the room
       // starts relaying packets), keep retrying until we get joinAck.
