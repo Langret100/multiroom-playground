@@ -2902,16 +2902,33 @@ function tileAtPixel(x, y) {
 // This guarantees you cannot pass room <-> corridor when a door is closed,
 // even if edge-based checks miss due to large dt or diagonal movement.
 
-function rebuildDoorSolidSet() {
+function rebuildDoorSolidSet(force = false) {
   const st = G.state;
   if (!st) return;
+
+  const objs = Object.values(st.objects || {});
+  const doors = st.doors || {};
+
+  // Build a cheap key of which doors are closed. If unchanged, skip the heavy rebuild.
+  let key = '';
+  for (const obj of objs) {
+    if (!obj || obj.type !== 'root_door') continue;
+    const d = doors[obj.id];
+    if (d && d.closed) key += String(obj.id) + ';';
+  }
+
+  if (!force && G._doorSolidKey === key) return;
+  G._doorSolidKey = key;
+
   if (!G._doorSolidSet) G._doorSolidSet = new Set();
   const set = G._doorSolidSet;
   set.clear();
 
-  for (const obj of Object.values(st.objects || {})) {
+  if (!key) return;
+
+  for (const obj of objs) {
     if (!obj || obj.type !== 'root_door') continue;
-    const d = st.doors && st.doors[obj.id];
+    const d = doors[obj.id];
     if (!d || !d.closed) continue;
 
     const ox = obj.x | 0;
@@ -2921,14 +2938,11 @@ function rebuildDoorSolidSet() {
     if (!info) { set.add(ox + "," + oy); continue; }
     const span = doorSpanOffsetsAt(ox, oy, info);
 
-    // Mark the doorway tiles as solid while closed.
     for (let off = span.minOff; off <= span.maxOff; off++) {
       const cx = span.spanX ? (ox + off) : ox;
       const cy = span.spanX ? oy : (oy + off);
       set.add(cx + "," + cy);
     }
-
-    // Safety plug: include the authored door tile itself.
     set.add(ox + "," + oy);
   }
 }
@@ -5478,78 +5492,114 @@ default:
     }
     return G.ui._lookAng || 0;
   }
+function drawLightMask(cam, me, st){
+  if (!me || me.role === 'teacher' || st.practice) return;
 
-  function drawLightMask(cam, me, st){
-    if (!me || me.role === 'teacher' || st.practice) return;
-    const dark01 = getGlobalDarkness01(st);
-    if (dark01 <= 0) return;
+  let dark01 = getGlobalDarkness01(st);
 
-    // Intensity curves
-    const a = clamp(dark01, 0, 1);
-    const overlayA = 0.28 + 0.62 * a;
-    const look = getLookAngle(me);
-    const half = (Math.PI/180) * (150 - 80 * a); // 150deg -> 70deg
-    const maxDist = 520 - 220 * a; // 520px -> 300px
-    const nearR = 110 - 45 * a; // small circle for close-by side vision
-    const rays = Math.round(70 - 10 * a);
+  // Per-player darkness debuff (e.g., subtraction wrong): temporarily narrows vision more.
+  try{
+    const tNow = now();
+    if (me.darkUntil && tNow < me.darkUntil) {
+      const p = clamp((me.darkUntil - tNow) / 8000, 0, 1);
+      dark01 = clamp(dark01 + 0.85 * p, 0, 1);
+    }
+  }catch(_){}
 
-    // darkness overlay
+  if (dark01 <= 0) return;
+
+  const a = clamp(dark01, 0, 1);
+
+  // Darkness overlay alpha and vision params (more off lamps => narrower & shorter vision)
+  const overlayA = 0.20 + 0.72 * a;
+  const look = getLookAngle(me);
+
+  const baseHalf = (Math.PI/180) * (165 - 110 * a);   // ~165deg -> ~55deg
+  const baseDist = (640 - 420 * a) * ZOOM;            // ~640px -> ~220px (screen space)
+  const nearR    = (220 - 120 * a) * ZOOM;            // close-by soft circle
+
+  const cx = (me.x - cam.x) * ZOOM;
+  const cy = (me.y - cam.y) * ZOOM;
+
+  // darkness overlay
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+  ctx.fillRect(0, 0, viewW, viewH);
+
+  // punch visible areas with soft gradients
+  ctx.globalCompositeOperation = 'destination-out';
+
+  // near radial soft reveal
+  try{
+    const g0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, nearR);
+    g0.addColorStop(0.00, 'rgba(0,0,0,1)');
+    g0.addColorStop(0.55, 'rgba(0,0,0,0.95)');
+    g0.addColorStop(1.00, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, nearR, 0, Math.PI * 2);
+    ctx.fill();
+  }catch(_){}
+
+  // directional cone (layered to feather the edges)
+  const layers = [
+    { alpha: 1.00, widen: 1.00, dist: 1.00 },
+    { alpha: 0.55, widen: 1.18, dist: 0.97 },
+    { alpha: 0.22, widen: 1.38, dist: 0.92 },
+  ];
+
+  for (const L of layers) {
+    const half = baseHalf * L.widen;
+    const r = baseDist * L.dist;
+
     ctx.save();
-    ctx.fillStyle = `rgba(0,0,0,${overlayA})`;
-    ctx.fillRect(0, 0, viewW, viewH);
+    ctx.translate(cx, cy);
+    ctx.rotate(look);
 
-    // punch visible areas
-    ctx.globalCompositeOperation = 'destination-out';
-
-    // NOTE: world is rendered in (world px) * ZOOM, but this mask is drawn in screen space.
-    const scale = ZOOM;
-
-    // near circle
-    const cx = (me.x - cam.x) * scale;
-    const cy = (me.y - cam.y) * scale;
     ctx.beginPath();
-    ctx.arc(cx, cy, nearR * scale, 0, Math.PI*2);
-    ctx.fill();
-
-    // wedge polygon via ray casting
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    for (let i = 0; i <= rays; i++){
-      const t = i / rays;
-      const ang = look - half + (2*half) * t;
-      const hit = castRay(me.x, me.y, ang, maxDist);
-      const sx = (hit.x - cam.x) * scale;
-      const sy = (hit.y - cam.y) * scale;
-      ctx.lineTo(sx, sy);
-    }
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, r, -half, half);
     ctx.closePath();
-    ctx.fill();
+    ctx.clip();
 
-    ctx.restore();
-
-    // When all lamps are off, show faint lamp positions so players can find them.
-    const lamps = st.lamps || {};
-    const ids = Object.keys(lamps);
-    let onCount = 0;
-    for (const id of ids){ if (lamps[id]?.on) onCount++; }
-    if (ids.length && onCount === 0){
-      ctx.save();
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = 'rgba(255,225,140,1)';
-      for (const id of ids){
-        const o = st.objects && st.objects[id];
-        if (!o) continue;
-        const lx = ((o.x + 0.5) * TS - cam.x) * scale;
-        const ly = ((o.y + 0.5) * TS - cam.y) * scale;
-        if (lx < -40 || ly < -40 || lx > viewW + 40 || ly > viewH + 40) continue;
-        ctx.beginPath();
-        ctx.arc(lx, ly - 18 * scale, 6 * scale, 0, Math.PI*2);
-        ctx.fill();
-      }
-      ctx.restore();
+    try{
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      g.addColorStop(0.00, `rgba(0,0,0,${1.00 * L.alpha})`);
+      g.addColorStop(0.45, `rgba(0,0,0,${0.75 * L.alpha})`);
+      g.addColorStop(1.00, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+    }catch(_){
+      ctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
     }
+
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.restore();
   }
 
+  ctx.restore();
+
+  // When all lamps are off, show faint lamp positions so players can find them.
+  const lamps = st.lamps || {};
+  const ids = Object.keys(lamps);
+  let onCount = 0;
+  for (const id of ids){ if (lamps[id]?.on) onCount++; }
+  if (ids.length && onCount === 0){
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = 'rgba(255,225,140,1)';
+    for (const id of ids){
+      const o = st.objects && st.objects[id];
+      if (!o) continue;
+      const lx = ((o.x + 0.5) * TS - cam.x) * ZOOM;
+      const ly = ((o.y + 0.5) * TS - cam.y) * ZOOM;
+      if (lx < -40 || ly < -40 || lx > viewW + 40 || ly > viewH + 40) continue;
+      ctx.beginPath();
+      ctx.arc(lx, ly - 18 * ZOOM, 6 * ZOOM, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
 
 
   function draw() {
@@ -5689,15 +5739,35 @@ default:
       let wx = p.x, wy = p.y;
       let pDraw = p;
       // Client-side smoothing for remote players (render-only)
-      if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
-        const ex = G.netSmooth.players.get(p.id);
-        if (ex) {
-          const a = clamp((now() - ex.t0) / 260, 0, 1);
-          wx = ex.px + (ex.tx - ex.px) * a;
-          wy = ex.py + (ex.ty - ex.py) * a;
-          pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
-        }
+if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
+  const ex = G.netSmooth.players.get(p.id);
+  if (ex) {
+    const buf = (G.netSmooth.bufferMs || 140);
+    const rt = now() - buf;
+    const t0 = (typeof ex.t0 === 'number') ? ex.t0 : rt;
+    const t1 = (typeof ex.t1 === 'number') ? ex.t1 : rt;
+    let sx = ex.x1, sy = ex.y1;
+
+    if (t1 > t0) {
+      const u = clamp((rt - t0) / (t1 - t0), 0, 1);
+      sx = (ex.x0 || 0) + ((ex.x1 || 0) - (ex.x0 || 0)) * u;
+      sy = (ex.y0 || 0) + ((ex.y1 || 0) - (ex.y0 || 0)) * u;
+
+      // tiny extrapolation when we're past the latest sample
+      const dtMs = rt - t1;
+      if (dtMs > 0 && dtMs <= 180) {
+        const vx = ((ex.x1 || 0) - (ex.x0 || 0)) / (t1 - t0);
+        const vy = ((ex.y1 || 0) - (ex.y0 || 0)) / (t1 - t0);
+        sx = (ex.x1 || 0) + vx * dtMs;
+        sy = (ex.y1 || 0) + vy * dtMs;
       }
+    }
+
+    wx = sx;
+    wy = sy;
+    pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
+  }
+}
 
       const px = wx - cam.x;
       const py = wy - cam.y;
@@ -8277,44 +8347,49 @@ default:
       
 
       // Smooth remote players on clients so other players look less 'choppy'.
-      try {
-        if (!net.isHost) {
-          if (!G.netSmooth) G.netSmooth = { players: new Map() };
-          const sm = G.netSmooth.players;
-          const tNow = now();
-          const myId = Number(net.myPlayerId || 0);
-          const playersObj = m.players || {};
+try {
+  if (!net.isHost) {
+    if (!G.netSmooth) G.netSmooth = { players: new Map(), bufferMs: 140 };
+    const sm = G.netSmooth.players;
+    const tNow = now();
+    const stamp = (typeof m.at === 'number') ? m.at : tNow;
+    const myId = Number(net.myPlayerId || 0);
+    const playersObj = m.players || {};
 
-          // prune missing players
-          for (const pid of Array.from(sm.keys())) {
-            if (!playersObj[String(pid)]) sm.delete(pid);
-          }
+    // prune missing players
+    for (const pid of Array.from(sm.keys())) {
+      if (!playersObj[String(pid)]) sm.delete(pid);
+    }
 
-          for (const [pidStr, pp] of Object.entries(playersObj)) {
-            const pid = Number(pidStr || 0);
-            if (!pid || pid === myId || !pp) continue;
-            const ex = sm.get(pid);
-            if (!ex) {
-              sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
-              continue;
-            }
-            const a = clamp((tNow - ex.t0) / 260, 0, 1);
-            const cx = ex.px + (ex.tx - ex.px) * a;
-            const cy = ex.py + (ex.ty - ex.py) * a;
-            const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);
-            if (jump) {
-              ex.px = pp.x; ex.py = pp.y; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
-            } else {
-              ex.px = cx; ex.py = cy; ex.tx = pp.x; ex.ty = pp.y; ex.t0 = tNow;
-            }
-            ex.down = !!pp.down;
-            ex.alive = !!pp.alive;
-            ex.vent = !!pp.vent;
-          }
-        }
-      } catch (_) {}
+    for (const [pidStr, pp] of Object.entries(playersObj)) {
+      const pid = Number(pidStr || 0);
+      if (!pid || pid === myId || !pp) continue;
 
-      G.state.missions = m.missions;
+      let ex = sm.get(pid);
+      if (!ex) {
+        ex = { x0: pp.x, y0: pp.y, t0: stamp, x1: pp.x, y1: pp.y, t1: stamp, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent };
+        sm.set(pid, ex);
+        continue;
+      }
+
+      // shift history (keep last segment)
+      if (ex.t1 !== stamp) {
+        ex.x0 = ex.x1; ex.y0 = ex.y1; ex.t0 = ex.t1;
+      }
+      ex.x1 = pp.x; ex.y1 = pp.y; ex.t1 = stamp;
+      ex.down = !!pp.down;
+      ex.alive = !!pp.alive;
+      ex.vent = !!pp.vent;
+
+      // hard snap on large jumps / special states
+      const segD = Math.hypot((ex.x1 || 0) - (ex.x0 || 0), (ex.y1 || 0) - (ex.y0 || 0));
+      if (segD > TS * 6 || ex.vent || ex.down || !ex.alive) {
+        ex.x0 = ex.x1; ex.y0 = ex.y1; ex.t0 = ex.t1;
+      }
+    }
+  }
+} catch (_) {}
+G.state.missions = m.missions;
       G.state.doors = m.doors;
       try{ rebuildDoorSolidSet(); }catch(_){ }
       G.state.waterBlocks = m.waterBlocks;
