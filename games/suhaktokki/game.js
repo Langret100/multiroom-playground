@@ -2897,111 +2897,11 @@ function tileAtPixel(x, y) {
     return { spanX, minOff: -left, maxOff: right };
   }
 
-  // Door boundary blocking (Among Us-style): a closed door blocks the *edge* between two tiles
-  // (corridor <-> room) rather than making a whole tile solid. This avoids invisible solid-tile
-  // artifacts and makes vision/collision more accurate.
-  function doorEdgeBlockedBetween(tx0, ty0, tx1, ty1) {
-    const st = G.state;
-    if (!st || !st.objects || !st.doors) return false;
-    const dx = (tx1 - tx0) | 0;
-    const dy = (ty1 - ty0) | 0;
-    if (Math.abs(dx) + Math.abs(dy) !== 1) return false;
-
-    // Helper: room-rect lookup for inferring door normal when metadata is missing.
-    const roomRectOf = (roomId) => {
-      try {
-        const rooms = AS?.map?.rooms;
-        if (!rooms || !Array.isArray(rooms)) return null;
-        for (const r of rooms) {
-          if (!r) continue;
-          if (String(r.id) !== String(roomId)) continue;
-          return {
-            x: (r.x | 0),
-            y: (r.y | 0),
-            w: (r.w | 0),
-            h: (r.h | 0),
-          };
-        }
-      } catch (_) {}
-      return null;
-    };
-    const inRect = (rect, x, y) => {
-      if (!rect) return false;
-      return x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h;
-    };
-
-    for (const obj of Object.values(st.objects)) {
-      if (!obj || obj.type !== 'root_door') continue;
-      const d = st.doors[obj.id];
-      if (!d || !d.closed) continue;
-
-      const ox = obj.x | 0;
-      const oy = obj.y | 0;
-
-      // Door normal (room -> corridor). Prefer authored/pushed metadata; infer from room rect if needed.
-      let odx = (obj._doorDx | 0) || 0;
-      let ody = (obj._doorDy | 0) || 0;
-      if (Math.abs(odx) + Math.abs(ody) !== 1) {
-        odx = 0; ody = 0;
-        const rect = roomRectOf(obj.roomId);
-        if (rect) {
-          // Door object lives on the corridor tile. The room-side tile is one step opposite to the normal.
-          const dirs = [ [0,-1], [0,1], [-1,0], [1,0] ];
-          for (const [ddx, ddy] of dirs) {
-            const rx = ox - ddx;
-            const ry = oy - ddy;
-            if (inRect(rect, rx, ry)) { odx = ddx; ody = ddy; break; }
-          }
-        }
-        if (Math.abs(odx) + Math.abs(ody) !== 1) { odx = 0; ody = 1; }
-      }
-
-      // Door span/width: reuse the same cross-tiles estimate used by rendering,
-      // but compute a *contiguous open-span* so even-width corridors are fully blocked.
-      const info = doorCrossInfoAt(ox, oy, obj);
-      const span = doorSpanOffsetsAt(ox, oy, info);
-      for (let off = span.minOff; off <= span.maxOff; off++) {
-        // Corridor side tile (door object lives on corridor tile)
-        const cx = span.spanX ? (ox + off) : ox;
-        const cy = span.spanX ? oy : (oy + off);
-        // Room side tile is one step opposite to the door normal.
-        const rx = cx - odx;
-        const ry = cy - ody;
-        if ((tx0 === cx && ty0 === cy && tx1 === rx && ty1 === ry) ||
-            (tx1 === cx && ty1 === cy && tx0 === rx && ty0 === ry)) return true;
-      }
-    }
-    return false;
-  }
-
-  function doorEdgeBlockedSegment(x0, y0, x1, y1) {
-    const dx = x1 - x0, dy = y1 - y0;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 0.5) return false;
-    const step = Math.max(4, TS * 0.25);
-    const n = Math.ceil(dist / step);
-
-    let ptx = Math.floor(x0 / TS);
-    let pty = Math.floor(y0 / TS);
-
-    for (let i = 1; i <= n; i++) {
-      const t = i / n;
-      const x = x0 + dx * t;
-      const y = y0 + dy * t;
-      const tx = Math.floor(x / TS);
-      const ty = Math.floor(y / TS);
-      if (tx !== ptx || ty !== pty) {
-        if (doorEdgeBlockedBetween(ptx, pty, tx, ty)) return true;
-        ptx = tx; pty = ty;
-      }
-    }
-    return false;
-  }
-
   // ---------- Door solid "invisible wall" ----------
 // Closed doors create temporary solid tiles on BOTH sides of the opening.
 // This guarantees you cannot pass room <-> corridor when a door is closed,
 // even if edge-based checks miss due to large dt or diagonal movement.
+
 function rebuildDoorSolidSet() {
   const st = G.state;
   if (!st) return;
@@ -3017,39 +2917,18 @@ function rebuildDoorSolidSet() {
     const ox = obj.x | 0;
     const oy = obj.y | 0;
 
-    // Door normal (room -> corridor). Prefer authored metadata; infer from room rect if needed.
-    let odx = (obj._doorDx | 0) || 0;
-    let ody = (obj._doorDy | 0) || 0;
-    if (Math.abs(odx) + Math.abs(ody) !== 1) {
-      odx = 0; ody = 0;
-      const rect = roomRectOf(obj.roomId);
-      if (rect) {
-        const dirs = [ [0,-1], [0,1], [-1,0], [1,0] ];
-        for (const [ddx, ddy] of dirs) {
-          const rx = ox - ddx;
-          const ry = oy - ddy;
-          if (inRect(rect, rx, ry)) { odx = ddx; ody = ddy; break; }
-        }
-      }
-      if (Math.abs(odx) + Math.abs(ody) !== 1) { odx = 0; ody = 1; }
-    }
-
     const info = doorCrossInfoAt(ox, oy, obj);
-    if (!info) continue;
+    if (!info) { set.add(ox + "," + oy); continue; }
     const span = doorSpanOffsetsAt(ox, oy, info);
 
-    // Mark all doorway tiles across the opening as solid (both sides).
+    // Mark the doorway tiles as solid while closed.
     for (let off = span.minOff; off <= span.maxOff; off++) {
       const cx = span.spanX ? (ox + off) : ox;
       const cy = span.spanX ? oy : (oy + off);
-      const rx = cx - odx;
-      const ry = cy - ody;
-
       set.add(cx + "," + cy);
-      set.add(rx + "," + ry);
     }
 
-    // Also include the authored door tile itself as a safety plug.
+    // Safety plug: include the authored door tile itself.
     set.add(ox + "," + oy);
   }
 }
@@ -3059,6 +2938,7 @@ function doorSolidAt(tx, ty) {
   if (!set || !set.size) return false;
   return set.has((tx | 0) + "," + (ty | 0));
 }
+
 
 
   function waterAtTile(tx, ty) {
@@ -3093,29 +2973,17 @@ function doorSolidAt(tx, ty) {
 
   
   function moveWithCollision(p, nx, ny) {
-    // axis-separated resolution + door-edge boundary blocking
+    // axis-separated resolution (tile solids + closed-door invisible walls)
     let x = nx;
     let y = p.y;
 
-    // door boundary check on X move (check a few points on the collision circle).
-    // (If we only check the center, players can "clip" through a closed door with their edge.)
-    const doorHitX = doorEdgeBlockedSegment(p.x, p.y, x, y)
-      || doorEdgeBlockedSegment(p.x, p.y - PLAYER_R + 2, x, y - PLAYER_R + 2)
-      || doorEdgeBlockedSegment(p.x, p.y + PLAYER_R - 2, x, y + PLAYER_R - 2);
-    if (doorHitX || collidesCircle(p, x, y, PLAYER_R)) {
+    if (collidesCircle(p, x, y, PLAYER_R)) {
       x = p.x;
       p.vx = 0;
     }
 
     y = ny;
-    // door boundary check on Y move (check a few points on the collision circle).
-    const doorHitY = doorEdgeBlockedSegment(x, p.y, x, y)
-      || doorEdgeBlockedSegment(x - PLAYER_R + 2, p.y, x - PLAYER_R + 2, y)
-      || doorEdgeBlockedSegment(x + PLAYER_R - 2, p.y, x + PLAYER_R - 2, y);
-    if (doorHitY) {
-      y = p.y;
-      p.vy = 0;
-    } else if (collidesCircle(p, x, y, PLAYER_R)) {
+    if (collidesCircle(p, x, y, PLAYER_R)) {
       y = p.y;
       p.vy = 0;
     }
@@ -4005,6 +3873,7 @@ function doorSolidAt(tx, ty) {
           }
         }
       }
+      try{ rebuildDoorSolidSet(); }catch(_){ }
       return;
     }
     if (kind === 'mul') {
@@ -4019,6 +3888,7 @@ function doorSolidAt(tx, ty) {
         if (p.id === st.teacherId) continue;
         p.frozenUntil = Math.max(p.frozenUntil, now() + 5_000);
       }
+      try{ rebuildDoorSolidSet(); }catch(_){ }
       return;
     }
     if (kind === 'shape') {
@@ -5541,7 +5411,7 @@ default:
       const tx = Math.floor(x / TS);
       const ty = Math.floor(y / TS);
       if (tx !== ptx || ty !== pty) {
-        if (doorEdgeBlockedBetween(ptx, pty, tx, ty)) return { x: lastX, y: lastY };
+        if (doorSolidAt(tx, ty) || doorSolidAt(ptx, pty)) return { x: lastX, y: lastY };
         ptx = tx; pty = ty;
       }
       if (opaqueAtTile(tx, ty)) return { x: lastX, y: lastY };
@@ -5569,7 +5439,7 @@ default:
       const gy = Math.floor(y / TS);
 
       if (gx !== ptx || gy !== pty) {
-        if (doorEdgeBlockedBetween(ptx, pty, gx, gy)) return false;
+        if (doorSolidAt(gx, gy) || doorSolidAt(ptx, pty)) return false;
         ptx = gx; pty = gy;
       }
 
@@ -5805,86 +5675,6 @@ default:
       }
     }
 
-    // -------- Closed-door visibility --------
-    // If a door is closed, the far side should be visible only as a dark interior
-    // (static), and we must not render dynamic entities (players) behind it.
-    // We implement this by:
-    // 1) Darkening the associated room rectangle when I'm outside it.
-    // 2) Hiding players whose line-of-sight segment from me crosses a closed-door edge.
-    const closedDoorEdges = new Set();
-    const closedRoomIds = new Set();
-    const meRoom = (me ? roomAtPixel(me.x, me.y) : null);
-    const meRoomId = meRoom ? meRoom.id : null;
-
-    for (const obj of Object.values(st.objects)) {
-      if (!obj || obj.type !== 'root_door') continue;
-      const d = st.doors && st.doors[obj.id];
-      if (!d || !d.closed) continue;
-
-      // room darkening (only when I'm not inside that room)
-      if (obj.roomId && obj.roomId !== meRoomId) closedRoomIds.add(obj.roomId);
-
-      // build blocked tile-to-tile edges for quick segment testing
-      const doorDx = (obj._doorDx|0)||0;
-      const doorDy = (obj._doorDy|0)||0;
-      const info = doorCrossInfoAt(obj.x|0, obj.y|0, obj);
-      if (!info) continue;
-      const span = doorSpanOffsetsAt(obj.x|0, obj.y|0, info);
-      for (let off = span.minOff; off <= span.maxOff; off++) {
-        const cx = span.spanX ? ((obj.x|0) + off) : (obj.x|0);
-        const cy = span.spanX ? (obj.y|0) : ((obj.y|0) + off);
-        const rx = cx - doorDx;
-        const ry = cy - doorDy;
-        const k1 = `${cx},${cy}|${rx},${ry}`;
-        const k2 = `${rx},${ry}|${cx},${cy}`;
-        closedDoorEdges.add(k1);
-        closedDoorEdges.add(k2);
-      }
-    }
-
-    // Darken the closed room interiors (static view only)
-    if (closedRoomIds.size) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'source-over';
-      // Keep far-side objects readable, but hide what players are doing.
-      // (Players behind a closed door are not rendered; this is the "privacy" tint.)
-      ctx.fillStyle = 'rgba(0,0,0,.38)';
-      for (const rid of closedRoomIds) {
-        const rr = getRoomById(rid);
-        if (!rr || !rr.rect) continue;
-        const [rx, ry, rw, rh] = rr.rect;
-        const x0 = rx * TS - cam.x;
-        const y0 = ry * TS - cam.y;
-        ctx.fillRect(x0, y0, rw * TS, rh * TS);
-      }
-      ctx.restore();
-    }
-
-    // Helper: does the segment cross any closed-door edge?
-    function segBlockedByClosedDoor(x0, y0, x1, y1) {
-      if (!closedDoorEdges.size) return false;
-      const step = TS * 0.25;
-      const dx = x1 - x0;
-      const dy = y1 - y0;
-      const dist = Math.hypot(dx, dy);
-      if (dist < 1e-3) return false;
-      const n = Math.max(1, Math.ceil(dist / step));
-      let tx = Math.floor(x0 / TS);
-      let ty = Math.floor(y0 / TS);
-      for (let i = 1; i <= n; i++) {
-        const t = i / n;
-        const xx = x0 + dx * t;
-        const yy = y0 + dy * t;
-        const ntx = Math.floor(xx / TS);
-        const nty = Math.floor(yy / TS);
-        if (ntx !== tx || nty !== ty) {
-          if (closedDoorEdges.has(`${tx},${ty}|${ntx},${nty}`)) return true;
-          tx = ntx; ty = nty;
-        }
-      }
-      return false;
-    }
-
     // 1회성 효과(파티클/뽁/땅굴)
     drawFx(cam);
 
@@ -5902,16 +5692,11 @@ default:
       if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
         const ex = G.netSmooth.players.get(p.id);
         if (ex) {
-          const a = clamp((now() - ex.t0) / 180, 0, 1);
+          const a = clamp((now() - ex.t0) / 260, 0, 1);
           wx = ex.px + (ex.tx - ex.px) * a;
           wy = ex.py + (ex.ty - ex.py) * a;
           pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
         }
-      }
-
-      // Hide movement behind closed doors.
-      if (me && p.id !== me.id) {
-        if (segBlockedByClosedDoor(me.x, me.y, wx, wy)) continue;
       }
 
       const px = wx - cam.x;
@@ -8513,7 +8298,7 @@ default:
               sm.set(pid, { px: pp.x, py: pp.y, tx: pp.x, ty: pp.y, t0: tNow, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent });
               continue;
             }
-            const a = clamp((tNow - ex.t0) / 180, 0, 1);
+            const a = clamp((tNow - ex.t0) / 260, 0, 1);
             const cx = ex.px + (ex.tx - ex.px) * a;
             const cy = ex.py + (ex.ty - ex.py) * a;
             const jump = (Math.hypot(pp.x - cx, pp.y - cy) > TS * 3) || (!!pp.vent) || (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive);

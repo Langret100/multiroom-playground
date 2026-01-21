@@ -18646,7 +18646,7 @@
       "id": "door_lab",
       "type": "root_door",
       "x": 18,
-      "y": 50,
+      "y": 48,
       "roomId": "lab"
     },
     {
