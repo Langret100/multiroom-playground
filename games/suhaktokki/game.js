@@ -8571,23 +8571,32 @@ G.state.missions = m.missions;
         startBtn.textContent = n >= 4 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
       }
 
+    
+
+      applyPhaseUI();
+    });
+
+
     // Fast player-motion updates (lighter than full state). Used for smooth remote movement.
+    // Host sends this frequently; non-host clients use it to render other players smoothly and to
+    // quickly reflect joins/leaves even if a full `state` snapshot is delayed.
     net.on('p', (m) => {
-      const players = m && m.players ? m.players : {};
+      if (net.isHost) return;
+
+      const players = (m && m.players) ? m.players : {};
       const st = G.state;
       if (!st.players) st.players = {};
 
-      // Non-host: keep a render buffer for other players.
+      // Keep a render buffer for other players.
       try{
-        if (!net.isHost) {
-          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
-        }
+        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
       }catch(_){ }
 
       const tNow = now();
-      const myPidNum = (!net.isHost && net.myPlayerId) ? Number(net.myPlayerId || 0) : 0;
-      const myPid = myPidNum ? String(myPidNum) : null;
+      const myPidNum = (net.myPlayerId) ? Number(net.myPlayerId || 0) : 0;
+      const myPidStr = myPidNum ? String(myPidNum) : null;
 
+      // Apply motion snapshots (create placeholders if needed).
       for (const [pidStr, up] of Object.entries(players || {})) {
         if (!up) continue;
         const pid = Number(pidStr || 0);
@@ -8597,11 +8606,18 @@ G.state.missions = m.missions;
         let p = st.players[pidStr];
         if (!p) {
           // Create a minimal placeholder; full snapshot will fill the rest.
-          p = st.players[pidStr] = { id: pid, nick: '토끼', alive: true, down: false, x: up.x||0, y: up.y||0, vx: up.vx||0, vy: up.vy||0, facing: up.facing||1, dir: up.dir||0 };
+          p = st.players[pidStr] = {
+            id: pid, nick: '토끼', alive: true, down: false,
+            x: up.x||0, y: up.y||0, vx: up.vx||0, vy: up.vy||0,
+            facing: up.facing||1, dir: up.dir||0
+          };
         }
 
-        if (myPid && pidStr === myPid && !net.isHost) {
-          // For myself on a non-host client: treat as soft correction target
+        // Mark freshness for leave pruning.
+        p._pAt = tNow;
+
+        // For myself: treat as soft correction target
+        if (myPidStr && pidStr === myPidStr) {
           const dx = (up.x || 0) - (p.x || 0);
           const dy = (up.y || 0) - (p.y || 0);
           const err = Math.hypot(dx, dy);
@@ -8629,7 +8645,7 @@ G.state.missions = m.missions;
           continue;
         }
 
-        // For other players: apply authoritative motion directly, and let render smoothing handle visuals
+        // For other players: update authoritative motion directly, and let render smoothing handle visuals
         p.x = up.x; p.y = up.y;
         p.vx = up.vx || 0; p.vy = up.vy || 0;
         if (typeof up.facing === 'number') p.facing = up.facing;
@@ -8642,9 +8658,8 @@ G.state.missions = m.missions;
         if (up.missionSiteId != null) p.missionSiteId = up.missionSiteId;
         if (typeof up.missionStage === 'number') p.missionStage = up.missionStage;
 
-        // Update smoothing buffer (non-host)
-        if (!net.isHost && G.remoteSmooth && G.remoteSmooth.remotes) {
-          if (pid === myPidNum) continue;
+        // Update smoothing buffer
+        if (G.remoteSmooth && G.remoteSmooth.remotes) {
           const sm = G.remoteSmooth.remotes;
           let ex = sm.get(pid);
           if (!ex) {
@@ -8663,19 +8678,38 @@ G.state.missions = m.missions;
         }
       }
 
-      // prune missing (best-effort)
+      // Prune players that disappeared from snapshots (join/leave robustness).
+      // Keep a short grace window so we don't flicker on packet loss.
       try{
-        if (!net.isHost && G.remoteSmooth && G.remoteSmooth.remotes) {
+        const graceMs = 1500;
+        for (const [pidStr, pp] of Object.entries(st.players || {})) {
+          if (!pp) continue;
+          if (myPidStr && pidStr === myPidStr) continue;
+          if (players[pidStr]) continue;
+          const last = (typeof pp._pAt === 'number') ? pp._pAt : 0;
+          if (!last || (tNow - last) > graceMs) {
+            delete st.players[pidStr];
+            const pid = Number(pidStr || 0);
+            if (pid && G.remoteSmooth && G.remoteSmooth.remotes) G.remoteSmooth.remotes.delete(pid);
+          }
+        }
+      }catch(_){ }
+
+      // Also prune smoothing buffer for ids not in the latest packet (best-effort).
+      try{
+        if (G.remoteSmooth && G.remoteSmooth.remotes) {
           const sm = G.remoteSmooth.remotes;
           for (const pid of Array.from(sm.keys())) {
-            if (!players[String(pid)]) sm.delete(pid);
+            if (!players[String(pid)]) {
+              // Keep it around briefly; it will be removed via st.players prune above.
+              // But if state already dropped it, remove immediately.
+              if (!st.players[String(pid)]) sm.delete(pid);
+            }
           }
         }
       }catch(_){ }
     });
 
-      applyPhaseUI();
-    });
 
     // UI events
     net.on('uiMissionOpen', (m) => {
