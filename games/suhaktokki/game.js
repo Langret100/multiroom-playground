@@ -1604,6 +1604,10 @@
       this.bc = new BroadcastChannel('mathtokki:' + roomCode);
       this.hostId = null;
       this.isHost = false;
+      // Once a host has initialized and started broadcasting authoritative state,
+      // do NOT allow host re-election/step-down. Mid-game host flips cause
+      // "host missing" and split-room behavior.
+      this.committedHost = false;
       this.myPlayerId = null;
       this.handlers = new Map();
       this.lastHostSeen = 0;
@@ -1629,8 +1633,10 @@
             // Always converge to the smallest known hostId
             const hid = String(msg.hostId);
             if (!this.hostId || hid < this.hostId) this.hostId = hid;
-            // If I'm host but another smaller host exists, step down.
-            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+            // If I'm host but another smaller host exists, step down ONLY before
+            // we commit to being the host (lobby only). Never flip hosts mid-game.
+            const started = !!(typeof G !== 'undefined' && ((G.state && G.state.started) || (G.host && G.host.started)));
+            if (!started && !this.committedHost && this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
               this.isHost = false;
             }
           }
@@ -1650,6 +1656,9 @@
       // Host watchdog: if host disappears, re-elect.
       this._watchTimer = setInterval(() => {
         if (this.isHost) return;
+        // Never re-elect host during an active match; clients should instead
+        // exit when the host is truly gone.
+        try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
         if (this.hostId && (Date.now() - this.lastHostSeen) <= 3500) return;
         this._electHost();
       }, 1000);
@@ -1675,12 +1684,23 @@
     }
 
     _electHost() {
+      // If we've committed to being host (initialized state), never change.
+      if (this.committedHost) {
+        this.isHost = true;
+        this.hostId = this.clientId;
+        this.lastHostSeen = Date.now();
+        return;
+      }
+
       const tNow = Date.now();
       // Keep peers fresh for ~3.5s
       const live = new Set([String(this.clientId)]);
       for (const [id, seen] of this.peers.entries()) {
         if ((tNow - (seen || 0)) <= 3500) live.add(String(id));
       }
+
+      // During an active match, do not try to elect a new host.
+      try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
       // If we already have a fresh host ping, prefer that.
       if (this.hostId && (tNow - this.lastHostSeen) <= 3500) {
         this.isHost = (this.hostId === this.clientId);
@@ -1733,6 +1753,8 @@
       this.clientId = randId();
       this.hostId = null;
       this.isHost = false;
+      // Once we have initialized as host, never switch away mid-session.
+      this.committedHost = false;
       this.myPlayerId = null;
       this.handlers = new Map();
       this.wsBase = wsBase;
@@ -1759,7 +1781,9 @@
           if (msg.hostId) {
             const hid = String(msg.hostId);
             if (!this.hostId || hid < this.hostId) this.hostId = hid;
-            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+            // Step down only before we commit to hosting (lobby only). Never flip hosts mid-game.
+            const started = !!(typeof G !== 'undefined' && ((G.state && G.state.started) || (G.host && G.host.started)));
+            if (!started && !this.committedHost && this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
               this.isHost = false;
             }
           }
@@ -1782,6 +1806,8 @@
       this._helloTimer = setInterval(() => this._sendHello(), 1500);
       this._watchTimer = setInterval(() => {
         if (this.isHost) return;
+        // Never re-elect host during an active match; clients should exit when host is gone.
+        try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
         if (this.hostId && (Date.now() - this.lastHostSeen) <= 4000) return;
         this._electHost();
       }, 1100);
@@ -1819,6 +1845,17 @@
     }
 
     _electHost() {
+      // If we've already initialized as host, do not ever switch.
+      if (this.committedHost) {
+        this.isHost = true;
+        this.hostId = this.clientId;
+        this.lastHostSeen = Date.now();
+        return;
+      }
+
+      // During an active match, never elect a new host.
+      try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
+
       const tNow = Date.now();
       const live = new Set([String(this.clientId)]);
       for (const [id, seen] of this.peers.entries()) {
@@ -8584,7 +8621,8 @@ try{
     try {
       if (G.net && !G.net.isHost && G.phase !== 'lobby') {
         const last = (G.net._lastHostSeenAt || 0);
-        if (last && (t - last) > 4500 && !(G.ui && (G.ui._hostExitHandled || G.ui._hostGoneHandled))) {
+        // Give a bit more tolerance for transient relay hiccups.
+        if (last && (t - last) > 9000 && !(G.ui && (G.ui._hostExitHandled || G.ui._hostGoneHandled))) {
           if (!G.ui) G.ui = {};
           G.ui._hostGoneHandled = true;
           try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
@@ -9613,12 +9651,29 @@ net.on('uiMeetingOpen', (m) => {
     try{ if (typeof net._electHost === 'function') net._electHost(); }catch(_){ }
 
 
-    // host 초기화
+    // host 초기화 (with convergence guard)
+    if (net.isHost) {
+      // Give other clients a short convergence window to announce an existing host.
+      // If we hear a different host during this window, we will not commit to hosting.
+      await new Promise(r => setTimeout(r, 700));
+      try{
+        if (net.hostId && String(net.hostId) !== String(net.clientId) && !net.committedHost) {
+          // Someone else is already the host.
+          net.isHost = false;
+        }
+      }catch(_){ }
+
+    }
+
     if (net.isHost) {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
       const pid = hostAddPlayer(nick, false, net.clientId);
       net.myPlayerId = pid;
+      // Commit: never allow host flip mid-session.
+      try{ net.committedHost = true; }catch(_){ }
+      try{ net.hostId = net.clientId; }catch(_){ }
+      try{ net.post({ t: 'host', hostId: net.clientId, at: Date.now() }); }catch(_){ }
       G.phase = 'lobby';
       setRolePill();
       setHUD();
