@@ -4014,7 +4014,43 @@ function doorSolidAt(tx, ty) {
       force,
     };
     broadcast(payload);
+    try{ G.host._lastStateBroadcast = now(); }catch(_){ }
   }
+
+  // Fast path: broadcast only player movement/animation state frequently.
+  // Full `state` snapshots are heavier (missions/doors/etc.) so we send them less often.
+  function broadcastPlayers() {
+    if (!G.net || !G.net.isHost) return;
+    const st = G.state;
+    const players = {};
+    try{
+      for (const [id, p] of Object.entries(st.players || {})) {
+        if (!p) continue;
+        // Keep payload tiny: only what other clients need to render smooth motion.
+        players[id] = {
+          x: Math.round((p.x || 0) * 100) / 100,
+          y: Math.round((p.y || 0) * 100) / 100,
+          vx: Math.round((p.vx || 0) * 100) / 100,
+          vy: Math.round((p.vy || 0) * 100) / 100,
+          dir: (p.dir|0) || 0,
+          facing: (p.facing|0) || 1,
+          alive: !!p.alive,
+          down: !!p.down,
+          vent: p.vent ? 1 : 0,
+          emoteKind: p.emoteKind || null,
+          emoteUntil: p.emoteUntil || 0,
+          missionSiteId: p.missionSiteId || null,
+          missionStage: p.missionStage || 0,
+        };
+      }
+    }catch(_){ }
+
+    broadcast({ t: 'p', players, at: now() });
+
+    // Track last send time so the host loop can pace traffic.
+    try{ G.host._lastPlayersBroadcast = now(); }catch(_){ }
+  }
+
 
   // ---------- Client input & UI ----------
   function setRolePill() {
@@ -8022,10 +8058,18 @@ function drawLightMask(cam, me, st){
       } else if (G.phase === 'play') {
         hostTick(dt);
       }
-      // 스냅샷
-      if (!G.host._lastBroadcast) G.host._lastBroadcast = 0;
-      if (t - G.host._lastBroadcast > 33) {
-        G.host._lastBroadcast = t;
+      // 스냅샷 (네트워크 트래픽 최적화)
+// - 33ms마다: 플레이어 이동만(가벼운 패킷) 전송
+// - 180ms마다: 전체 상태(미션/문/시간 등) 스냅샷 전송
+      if (!G.host._lastPlayersBroadcast) G.host._lastPlayersBroadcast = 0;
+      if (t - G.host._lastPlayersBroadcast > 33) {
+        G.host._lastPlayersBroadcast = t;
+        broadcastPlayers();
+      }
+
+      if (!G.host._lastStateBroadcast) G.host._lastStateBroadcast = 0;
+      if (t - G.host._lastStateBroadcast > 180) {
+        G.host._lastStateBroadcast = t;
         broadcastState();
       }
     }
@@ -8526,6 +8570,110 @@ G.state.missions = m.missions;
         const n = Object.keys(G.state.players).length;
         startBtn.textContent = n >= 4 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
       }
+
+    // Fast player-motion updates (lighter than full state). Used for smooth remote movement.
+    net.on('p', (m) => {
+      const players = m && m.players ? m.players : {};
+      const st = G.state;
+      if (!st.players) st.players = {};
+
+      // Non-host: keep a render buffer for other players.
+      try{
+        if (!net.isHost) {
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
+        }
+      }catch(_){ }
+
+      const tNow = now();
+      const myPidNum = (!net.isHost && net.myPlayerId) ? Number(net.myPlayerId || 0) : 0;
+      const myPid = myPidNum ? String(myPidNum) : null;
+
+      for (const [pidStr, up] of Object.entries(players || {})) {
+        if (!up) continue;
+        const pid = Number(pidStr || 0);
+        if (!pid) continue;
+
+        // Update local state copy (so UI logic like "근처 플레이어"도 최신에 가깝게 유지)
+        let p = st.players[pidStr];
+        if (!p) {
+          // Create a minimal placeholder; full snapshot will fill the rest.
+          p = st.players[pidStr] = { id: pid, nick: '토끼', alive: true, down: false, x: up.x||0, y: up.y||0, vx: up.vx||0, vy: up.vy||0, facing: up.facing||1, dir: up.dir||0 };
+        }
+
+        if (myPid && pidStr === myPid && !net.isHost) {
+          // For myself on a non-host client: treat as soft correction target
+          const dx = (up.x || 0) - (p.x || 0);
+          const dy = (up.y || 0) - (p.y || 0);
+          const err = Math.hypot(dx, dy);
+          const hard = (err > 64) || (!!up.down !== !!p.down) || (!!up.alive !== !!p.alive) || (!!up.vent) || (!!p.vent);
+
+          p._authX = (up.x || 0);
+          p._authY = (up.y || 0);
+          p._authAt = tNow;
+
+          // Copy non-pos fields
+          if (typeof up.alive === 'boolean') p.alive = !!up.alive;
+          if (typeof up.down === 'boolean') p.down = !!up.down;
+          p.vent = up.vent ? 1 : 0;
+          if (up.emoteKind != null) p.emoteKind = up.emoteKind;
+          if (typeof up.emoteUntil === 'number') p.emoteUntil = up.emoteUntil;
+          if (up.missionSiteId != null) p.missionSiteId = up.missionSiteId;
+          if (typeof up.missionStage === 'number') p.missionStage = up.missionStage;
+
+          if (hard) {
+            p.x = up.x; p.y = up.y;
+            p.vx = up.vx || 0; p.vy = up.vy || 0;
+            if (typeof up.facing === 'number') p.facing = up.facing;
+            if (typeof up.dir === 'number') p.dir = up.dir;
+          }
+          continue;
+        }
+
+        // For other players: apply authoritative motion directly, and let render smoothing handle visuals
+        p.x = up.x; p.y = up.y;
+        p.vx = up.vx || 0; p.vy = up.vy || 0;
+        if (typeof up.facing === 'number') p.facing = up.facing;
+        if (typeof up.dir === 'number') p.dir = up.dir;
+        if (typeof up.alive === 'boolean') p.alive = !!up.alive;
+        if (typeof up.down === 'boolean') p.down = !!up.down;
+        p.vent = up.vent ? 1 : 0;
+        if (up.emoteKind != null) p.emoteKind = up.emoteKind;
+        if (typeof up.emoteUntil === 'number') p.emoteUntil = up.emoteUntil;
+        if (up.missionSiteId != null) p.missionSiteId = up.missionSiteId;
+        if (typeof up.missionStage === 'number') p.missionStage = up.missionStage;
+
+        // Update smoothing buffer (non-host)
+        if (!net.isHost && G.remoteSmooth && G.remoteSmooth.remotes) {
+          if (pid === myPidNum) continue;
+          const sm = G.remoteSmooth.remotes;
+          let ex = sm.get(pid);
+          if (!ex) {
+            ex = { rx: p.x, ry: p.y, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0, at: tNow, alive: !!p.alive, down: !!p.down, vent: !!p.vent };
+            sm.set(pid, ex);
+          } else {
+            const special = (!!p.down !== !!ex.down) || (!!p.alive !== !!ex.alive) || (!!p.vent !== !!ex.vent);
+            ex.x = p.x; ex.y = p.y;
+            ex.vx = p.vx || 0; ex.vy = p.vy || 0;
+            ex.at = tNow;
+            ex.alive = !!p.alive;
+            ex.down = !!p.down;
+            ex.vent = !!p.vent;
+            if (special) { ex.rx = p.x; ex.ry = p.y; }
+          }
+        }
+      }
+
+      // prune missing (best-effort)
+      try{
+        if (!net.isHost && G.remoteSmooth && G.remoteSmooth.remotes) {
+          const sm = G.remoteSmooth.remotes;
+          for (const pid of Array.from(sm.keys())) {
+            if (!players[String(pid)]) sm.delete(pid);
+          }
+        }
+      }catch(_){ }
+    });
+
       applyPhaseUI();
     });
 
