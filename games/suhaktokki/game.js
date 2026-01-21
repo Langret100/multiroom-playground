@@ -2260,12 +2260,19 @@
     const H = (AS.map && AS.map.height) ? (AS.map.height | 0) : 0;
     const baseTx = (Number(sp.x) | 0);
     const baseTy = (Number(sp.y) | 0);
+    // Spread more aggressively (helps 4~8 players not overlap and appear "missing").
     const offsets = [
-      [0,0],[1,0],[-1,0],[0,1],[0,-1],
+      [0,0],
+      [1,0],[-1,0],[0,1],[0,-1],
       [1,1],[-1,1],[1,-1],[-1,-1],
       [2,0],[-2,0],[0,2],[0,-2],
       [2,1],[2,-1],[-2,1],[-2,-1],
       [1,2],[-1,2],[1,-2],[-1,-2],
+      [3,0],[-3,0],[0,3],[0,-3],
+      [3,1],[3,-1],[-3,1],[-3,-1],
+      [1,3],[-1,3],[1,-3],[-1,-3],
+      [2,2],[-2,2],[2,-2],[-2,-2],
+      [4,0],[-4,0],[0,4],[0,-4],
     ];
     const isWalk = (tx, ty) => {
       if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
@@ -2275,7 +2282,7 @@
 
     
     let chosenTx = baseTx, chosenTy = baseTy;
-    const minD2 = (TS * 0.55) * (TS * 0.55);
+    const minD2 = (TS * 0.85) * (TS * 0.85);
     const others = Object.values(st.players || {}).filter(pp => pp && pp.alive);
     for (let k = 0; k < offsets.length; k++) {
       const tx = baseTx + offsets[k][0];
@@ -2299,6 +2306,7 @@
       id,
       nick: String(nick || (isBot ? '봇' : '토끼')).slice(0, 16),
       clientId: clientId ? String(clientId) : null,
+      joinToken: null,
       isBot: !!isBot,
 
       role: 'crew',
@@ -8080,6 +8088,7 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
         if (p) {
           p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
           p.clientId = from;
+          p.joinToken = jt || p.joinToken || null;
           p.isBot = false;
           p.alive = true;
           p.lastSeen = now();
@@ -8095,7 +8104,7 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
         return;
       }
       const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
-      try{ const p = G.state.players && G.state.players[pid]; if (p) p.lastSeen = now(); }catch(_){ }
+      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.joinToken = jt || p.joinToken || null; } }catch(_){ }
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
       if (from) G.host._clientToPlayer.set(from, pid);
       net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
@@ -8117,7 +8126,8 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
     });
 
     net.on('joinAck', (m) => {
-      if (m.toClient !== net.clientId) return;
+      // Some relays may strip routing fields; only enforce toClient when it exists.
+      if (m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
       // If multiple clients share the same clientId (possible in embed/bridge),
       // only accept the ack that matches my joinToken.
       if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
@@ -8147,7 +8157,7 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
     });
 
     net.on('joinDenied', (m) => {
-      if (m.toClient !== net.clientId) return;
+      if (m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
       if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       showToast(m.reason || '참가 실패');
       try{ if (net._hb) { clearInterval(net._hb); net._hb = null; } }catch(_){}
@@ -8335,24 +8345,54 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
       }
       G.state.players = incomingPlayers;
 
-      // If joinAck was missed, recover myPlayerId by matching clientId.
-      if (!net.myPlayerId && m.players) {
-        for (const [pid, pp] of Object.entries(m.players)) {
-          if (pp && pp.clientId && String(pp.clientId) === String(net.clientId)) {
-            net.myPlayerId = parseInt(pid, 10);
-            break;
+      // Robustly recover / validate myPlayerId from authoritative state.
+      // (In some embed relays, joinAck can be dropped or routed inconsistently.)
+      try{
+        if (!net.isHost && m.players) {
+          const playersObj = m.players || {};
+          const cur = Number(net.myPlayerId || 0);
+          const curObj = cur ? playersObj[String(cur)] : null;
+
+          // If we don't have a valid id yet (or it disappeared), resolve it.
+          let need = (!cur) || !curObj;
+
+          // Also re-resolve if current id clearly belongs to someone else.
+          if (!need && curObj) {
+            if (net.joinToken && curObj.joinToken && String(curObj.joinToken) !== String(net.joinToken)) need = true;
+            else if (curObj.clientId && String(curObj.clientId) !== String(net.clientId)) {
+              // clientId mismatch can happen after reconnects; try to rebind.
+              need = true;
+            }
+          }
+
+          if (need) {
+            let found = 0;
+            // 1) Prefer joinToken match (works even if clientId is shared)
+            if (net.joinToken) {
+              for (const [pid, pp] of Object.entries(playersObj)) {
+                if (pp && pp.joinToken && String(pp.joinToken) === String(net.joinToken)) { found = Number(pid||0); break; }
+              }
+            }
+            // 2) Fallback to clientId match
+            if (!found) {
+              for (const [pid, pp] of Object.entries(playersObj)) {
+                if (pp && pp.clientId && String(pp.clientId) === String(net.clientId)) { found = Number(pid||0); break; }
+              }
+            }
+            if (found) net.myPlayerId = found;
           }
         }
-      }
+      }catch(_){ }
       
 
       // Smooth remote players on clients so other players look less 'choppy'.
 try {
   if (!net.isHost) {
-    if (!G.netSmooth) G.netSmooth = { players: new Map(), bufferMs: 140 };
+    if (!G.netSmooth) G.netSmooth = { players: new Map(), bufferMs: 180 };
     const sm = G.netSmooth.players;
     const tNow = now();
-    const stamp = (typeof m.at === 'number') ? m.at : tNow;
+    // Use local receipt time for interpolation (host performance.now() is not comparable across clients).
+    const stamp = tNow;
     const myId = Number(net.myPlayerId || 0);
     const playersObj = m.players || {};
 
@@ -8622,10 +8662,8 @@ net.on('uiMeetingOpen', (m) => {
     if (!G.net?.isHost) return;
     if (G.host.started) return;
     G.phase = 'play';
-    const n = Object.values(G.state.players).length;
-    // In embedded mode, let the parent decide practice/duel when available.
-    const forced = (EMBED && typeof window.__EMBED_PRACTICE__ === 'boolean') ? window.__EMBED_PRACTICE__ : null;
-    const practice = (forced !== null) ? forced : (n < 4);
+    const n = Object.values(G.state.players).filter(p => p && !p.isBot).length;
+    const practice = (n < 4);
     hostStartGame(practice);
     broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
     applyPhaseUI();
@@ -8648,8 +8686,6 @@ net.on('uiMeetingOpen', (m) => {
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
     // Host is decided by the room (avoid multiple-host races when more players join).
     window.__EMBED_IS_HOST__ = !!init.isHost;
-    // Parent can precompute whether this should be practice.
-    if (typeof init.practice === 'boolean') window.__EMBED_PRACTICE__ = init.practice;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,64); }catch(_){ }
