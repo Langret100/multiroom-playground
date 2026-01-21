@@ -130,7 +130,12 @@ this.st = {
 
       this.state.phase = "playing";
       this.setMetadata({ ...this.metadata, status: "playing" });
-      this.broadcast("started", { tickRate: this.tickRate });
+      this.broadcast("started", {
+        tickRate: this.tickRate,
+        playerCount: Number(this.state.playerCount || 0),
+        maxClients: Number(this.maxClients || this.state.maxClients || 0),
+        startedAt: Date.now(),
+      });
 
       // Reset transient co-op state (no persistence)
       if (this.state.mode === "togester"){

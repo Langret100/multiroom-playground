@@ -1604,10 +1604,6 @@
       this.bc = new BroadcastChannel('mathtokki:' + roomCode);
       this.hostId = null;
       this.isHost = false;
-      // Once a host has initialized and started broadcasting authoritative state,
-      // do NOT allow host re-election/step-down. Mid-game host flips cause
-      // "host missing" and split-room behavior.
-      this.committedHost = false;
       this.myPlayerId = null;
       this.handlers = new Map();
       this.lastHostSeen = 0;
@@ -1633,10 +1629,8 @@
             // Always converge to the smallest known hostId
             const hid = String(msg.hostId);
             if (!this.hostId || hid < this.hostId) this.hostId = hid;
-            // If I'm host but another smaller host exists, step down ONLY before
-            // we commit to being the host (lobby only). Never flip hosts mid-game.
-            const started = !!(typeof G !== 'undefined' && ((G.state && G.state.started) || (G.host && G.host.started)));
-            if (!started && !this.committedHost && this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+            // If I'm host but another smaller host exists, step down.
+            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
               this.isHost = false;
             }
           }
@@ -1656,9 +1650,6 @@
       // Host watchdog: if host disappears, re-elect.
       this._watchTimer = setInterval(() => {
         if (this.isHost) return;
-        // Never re-elect host during an active match; clients should instead
-        // exit when the host is truly gone.
-        try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
         if (this.hostId && (Date.now() - this.lastHostSeen) <= 3500) return;
         this._electHost();
       }, 1000);
@@ -1684,23 +1675,12 @@
     }
 
     _electHost() {
-      // If we've committed to being host (initialized state), never change.
-      if (this.committedHost) {
-        this.isHost = true;
-        this.hostId = this.clientId;
-        this.lastHostSeen = Date.now();
-        return;
-      }
-
       const tNow = Date.now();
       // Keep peers fresh for ~3.5s
       const live = new Set([String(this.clientId)]);
       for (const [id, seen] of this.peers.entries()) {
         if ((tNow - (seen || 0)) <= 3500) live.add(String(id));
       }
-
-      // During an active match, do not try to elect a new host.
-      try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
       // If we already have a fresh host ping, prefer that.
       if (this.hostId && (tNow - this.lastHostSeen) <= 3500) {
         this.isHost = (this.hostId === this.clientId);
@@ -1753,8 +1733,6 @@
       this.clientId = randId();
       this.hostId = null;
       this.isHost = false;
-      // Once we have initialized as host, never switch away mid-session.
-      this.committedHost = false;
       this.myPlayerId = null;
       this.handlers = new Map();
       this.wsBase = wsBase;
@@ -1781,9 +1759,7 @@
           if (msg.hostId) {
             const hid = String(msg.hostId);
             if (!this.hostId || hid < this.hostId) this.hostId = hid;
-            // Step down only before we commit to hosting (lobby only). Never flip hosts mid-game.
-            const started = !!(typeof G !== 'undefined' && ((G.state && G.state.started) || (G.host && G.host.started)));
-            if (!started && !this.committedHost && this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
+            if (this.isHost && this.hostId !== this.clientId && this.hostId < this.clientId) {
               this.isHost = false;
             }
           }
@@ -1806,8 +1782,6 @@
       this._helloTimer = setInterval(() => this._sendHello(), 1500);
       this._watchTimer = setInterval(() => {
         if (this.isHost) return;
-        // Never re-elect host during an active match; clients should exit when host is gone.
-        try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
         if (this.hostId && (Date.now() - this.lastHostSeen) <= 4000) return;
         this._electHost();
       }, 1100);
@@ -1845,17 +1819,6 @@
     }
 
     _electHost() {
-      // If we've already initialized as host, do not ever switch.
-      if (this.committedHost) {
-        this.isHost = true;
-        this.hostId = this.clientId;
-        this.lastHostSeen = Date.now();
-        return;
-      }
-
-      // During an active match, never elect a new host.
-      try{ if (typeof G !== 'undefined' && G.state && G.state.started && G.phase !== 'lobby') return; }catch(_){ }
-
       const tNow = Date.now();
       const live = new Set([String(this.clientId)]);
       for (const [id, seen] of this.peers.entries()) {
@@ -1909,9 +1872,6 @@
 	      this.clientId = randId();
       this.hostId = null;
       this.isHost = !!isHost;
-      // In embedded rooms, the parent decides the host. Lock it to avoid mid-session flips.
-      this.committedHost = !!isHost;
-      if (this.isHost) this.hostId = this.clientId;
       this.myPlayerId = null;
       this.handlers = new Map();
       this.lastHostSeen = 0;
@@ -1921,13 +1881,7 @@
         if (data.type !== "sk_msg") return;
         const msg = data.msg;
         if (!msg || (msg.room && msg.room !== this.room)) return;
-        if (msg.t === "host") {
-          // If I'm the committed host, ignore conflicting host announcements.
-          try{
-            if (this.committedHost && this.isHost && this.hostId && msg.hostId && String(msg.hostId) !== String(this.hostId)) return;
-          }catch(_){ }
-          this.lastHostSeen = Date.now();
-        }
+        if (msg.t === "host") this.lastHostSeen = Date.now();
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
       };
@@ -1943,15 +1897,13 @@
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
-      // In embed mode, the parent decides the host.
-      // If I'm marked as host, assert it immediately; otherwise just ask for discovery.
-      if (this.isHost) { this.becomeHost(); return; }
+      // In embed mode, do NOT auto-elect host on clients.
       this.post({ t:"discover", at: Date.now() });
       await new Promise(r => setTimeout(r, 300));
+      if (this.isHost && !this.hostId){ this.becomeHost(); }
     }
     becomeHost(){
       this.isHost = true;
-      this.committedHost = true;
       this.hostId = this.clientId;
       this.post({ t:"host", hostId: this.hostId, at: Date.now() });
     }
@@ -2469,6 +2421,17 @@
   function hostStartGame(practice = false) {
     const st = G.state;
     hostInitFromMap();
+
+    // In embed mode, decide practice based on the room's expected human count (from parent),
+    // not only on the instantaneous join count (which can be temporarily low due to relay timing).
+    try{
+      if (window.__EMBED_MODE__) {
+        const desired = (typeof window.__EMBED_PRACTICE__ === 'boolean') ? !!window.__EMBED_PRACTICE__ : !!practice;
+        const nHum = Object.values(st.players || {}).filter(p=>p && !p.isBot).length;
+        // Only start practice if the room is *actually* a practice room (<4 expected AND <4 currently).
+        practice = !!(desired && nHum < 4);
+      }
+    }catch(_){ }
 
     // Ensure the initial lighting state is fully bright (all lamps on) at game start.
     // This prevents an occasional "slightly dark" look reported on some devices.
@@ -3327,7 +3290,6 @@ function hostHandleInteract(playerId) {
           broadcast({ t: 'lightNotice', text: '누군가 불을 켰어요.', until: now() + 1500 });
         }
       }
-      broadcast({ t: 'lampUpdate', id: obj.id, on: !!lp.on, at: now() });
       broadcastState(true);
       return;
     }
@@ -3354,8 +3316,6 @@ function hostHandleInteract(playerId) {
 
       // Rebuild invisible-wall tiles for closed doors
       try{ rebuildDoorSolidSet(); }catch(_){ }
-
-      broadcast({ t: 'doorUpdate', id: obj.id, closed: !!d.closed, closedUntil: Number(d.closedUntil||0), anim: d.anim || null, at: now() });
 
       broadcastState(true);
       return;
@@ -3767,329 +3727,30 @@ function hostHandleInteract(playerId) {
   function genQuestion(kind) {
     // 난이도: 초3 무난
     if (kind === 'add') {
-      const a = 10 + Math.floor(Math.random() * 490);
-      const b = 10 + Math.floor(Math.random() * 490);
-      return { type: 'number', prompt: `${a} + ${b} = ?`, answer: a + b };
-    }
-    if (kind === 'sub') {
-      const a = 30 + Math.floor(Math.random() * 700);
-      const b = 10 + Math.floor(Math.random() * Math.min(200, a - 1));
-      return { type: 'number', prompt: `${a} - ${b} = ?`, answer: a - b };
-    }
-    if (kind === 'mul') {
-      const a = 2 + Math.floor(Math.random() * 8);
-      const b = 3 + Math.floor(Math.random() * 10);
-      return { type: 'number', prompt: `${a} × ${b} = ?`, answer: a * b };
-    }
-    if (kind === 'div') {
-      const b = 2 + Math.floor(Math.random() * 8);
-      const q = 2 + Math.floor(Math.random() * 9);
-      const a = b * q;
-      return { type: 'number', prompt: `${a} ÷ ${b} = ?`, answer: q };
-    }
-    if (kind === 'unit') {
-      const t = pick(['cm-m', 'm-cm', 'g-kg', 'kg-g', 'min-h', 'h-min', 'ml-l', 'l-ml']);
-      if (t === 'cm-m') {
-        const cm = (1 + Math.floor(Math.random() * 9)) * 100;
-        return { type: 'number', prompt: `${cm}cm = ? m`, answer: cm / 100 };
-      }
-      if (t === 'm-cm') {
-        const m = 1 + Math.floor(Math.random() * 9);
-        return { type: 'number', prompt: `${m}m = ? cm`, answer: m * 100 };
-      }
-      if (t === 'g-kg') {
-        const g = (1 + Math.floor(Math.random() * 9)) * 100;
-        return { type: 'number', prompt: `${g}g = ? kg`, answer: g / 1000 };
-      }
-      if (t === 'kg-g') {
-        const kg = 1 + Math.floor(Math.random() * 5);
-        return { type: 'number', prompt: `${kg}kg = ? g`, answer: kg * 1000 };
-      }
-      if (t === 'min-h') {
-        const min = pick([60, 120, 180]);
-        return { type: 'number', prompt: `${min}분 = ? 시간`, answer: min / 60 };
-      }
-      if (t === 'h-min') {
-        const h = pick([1, 2, 3]);
-        return { type: 'number', prompt: `${h}시간 = ? 분`, answer: h * 60 };
-      }
-      if (t === 'ml-l') {
-        const ml = pick([500, 1000, 1500, 2000]);
-        return { type: 'number', prompt: `${ml}mL = ? L`, answer: ml / 1000 };
-      }
-      // l-ml
-      const l = pick([1, 2, 3]);
-      return { type: 'number', prompt: `${l}L = ? mL`, answer: l * 1000 };
-    }
-    if (kind === 'pattern') {
-      const patternType = pick(['add', 'mul2', 'alt']);
-      if (patternType === 'add') {
-        const start = 2 + Math.floor(Math.random() * 10);
-        const step = 2 + Math.floor(Math.random() * 8);
-        const seq = [start, start + step, start + step * 2, start + step * 3];
-        return { type: 'number', prompt: `규칙찾기: ${seq.join(', ')} , 다음 수는?`, answer: start + step * 4 };
-      }
-      if (patternType === 'mul2') {
-        const start = 2 + Math.floor(Math.random() * 6);
-        const seq = [start, start * 2, start * 4, start * 8];
-        return { type: 'number', prompt: `규칙찾기: ${seq.join(', ')} , 다음 수는?`, answer: start * 16 };
-      }
-      // alt
-      const a = 3 + Math.floor(Math.random() * 10);
-      const b = 10 + Math.floor(Math.random() * 20);
-      const seq = [a, b, a, b];
-      return { type: 'choice', prompt: `규칙찾기: ${seq.join(', ')} , 다음은?`, answer: String(a), options: [String(a), String(b), String(a + 1), String(b + 1)].sort(() => Math.random() - 0.5) };
-    }
-    if (kind === 'shape') {
-      const shapes = [
-        { k: '삼각형', sides: 3 },
-        { k: '사각형', sides: 4 },
-        { k: '오각형', sides: 5 },
-        { k: '육각형', sides: 6 },
-        { k: '원', sides: 0 },
-      ];
-      const s = pick(shapes);
-      const opts = shapes.filter(x => x.k !== s.k).map(x => x.k);
-      const options = [s.k, pick(opts), pick(opts), pick(opts)].filter((v, i, a) => a.indexOf(v) === i);
-      while (options.length < 4) options.push(pick(opts));
-      options.sort(() => Math.random() - 0.5);
-      return { type: 'shape', prompt: '이 도형의 이름은?', answer: s.k, options, shapeKey: s.k };
-    }
-    // graph
-    const labels = ['당근', '버섯', '딸기', '감자'];
-    const vals = labels.map(() => 2 + Math.floor(Math.random() * 8));
-    const askType = pick(['max', 'sum']);
-    if (askType === 'max') {
-      let mi = 0;
-      for (let i = 1; i < vals.length; i++) if (vals[i] > vals[mi]) mi = i;
-      const ans = labels[mi];
-      const options = labels.slice().sort(() => Math.random() - 0.5);
-      return { type: 'graph', prompt: '그래프에서 가장 많은 것은?', answer: ans, options, labels, vals };
-    }
-    // sum
-    const a = Math.floor(Math.random() * 4);
-    let b = Math.floor(Math.random() * 4);
-    while (b === a) b = Math.floor(Math.random() * 4);
-    return { type: 'graphNum', prompt: `${labels[a]}와 ${labels[b]}의 합은?`, answer: vals[a] + vals[b], labels, vals };
-  }
-
-  function buildMissionUI(siteId, kind, practice) {
-    return {
-      siteId,
-      kind,
-      practice,
-      correct: 0,
-      question: genQuestion(kind),
-    };
-  }
-
-  function hostInitMissionProg(playerId, siteId, kind, practice) {
-    if (!G.host._missionProg) G.host._missionProg = new Map();
-    let mp = G.host._missionProg.get(playerId);
-    if (!mp) { mp = new Map(); G.host._missionProg.set(playerId, mp); }
-    mp.set(siteId, { correct: 0, hadWrong: false, kind, practice: !!practice });
-  }
-
-  function hostGetMissionProg(playerId, siteId) {
-    const mp = G.host._missionProg?.get(playerId);
-    return mp ? mp.get(siteId) : null;
-  }
-
-  function hostResetFlawless(playerId) {
-    if (!G.host._flawless) G.host._flawless = new Map();
-    G.host._flawless.set(playerId, new Set());
-    const p = G.state.players[playerId];
-    if (p) p.crown = false;
-  }
-
-  function hostAddFlawlessKind(playerId, kind) {
-    if (!G.host._flawless) G.host._flawless = new Map();
-    let set = G.host._flawless.get(playerId);
-    if (!set) { set = new Set(); G.host._flawless.set(playerId, set); }
-    set.add(kind);
-    return set.size;
-  }
-
-  function hostMissionSubmit(playerId, payload) {
-    const st = G.state;
-    const p = st.players[playerId];
-    if (!p || !p.alive) return;
-    const isGhost = (!!p.down && p.role !== 'teacher');
-    if (p.down && !isGhost) return;
-
-    const siteId = payload.siteId;
-    const m = st.missions[siteId];
-    if (!m) return;
-
-    // Mission lock: ignore submits from non-owner if another player is working on it.
-    if (m.inUseBy && Number(m.inUseBy) !== Number(playerId) && now() < (m.inUseUntil || 0)) return;
-    m.inUseBy = Number(playerId);
-    m.inUseUntil = now() + 45000;
-
-    // 진행 상태(호스트 권위)
-    let prog = hostGetMissionProg(playerId, siteId);
-    if (!prog) {
-      // 클라이언트가 새로고침 등으로 상태를 잃었을 때 대비
-      const practice = !!st.practice;
-      hostInitMissionProg(playerId, siteId, m.kind, practice);
-      prog = hostGetMissionProg(playerId, siteId);
-    }
-
-    // Practice mode is global (1~3 players). Keep per-player mission prog in sync.
-    const isPractice = !!st.practice;
-    if (prog.practice !== isPractice) {
-      hostInitMissionProg(playerId, siteId, m.kind, isPractice);
-      prog = hostGetMissionProg(playerId, siteId) || prog;
-    }
-    if (!isPractice && m.state === 'solved') return;
-
-    const q = payload.question;
-    const ans = payload.answer;
-
-    const ok = checkAnswer(q, ans);
-    if (!ok) {
-      // Wrong: immediately exit the mission UI (no lingering modal / darkness overlay).
-      prog.hadWrong = true;
-      if (!isPractice) {
-        // Active (real) mission: apply penalty.
-        applyPenalty(m.kind, playerId);
-        // Flawless crown condition resets on any mistake (crew only).
-        if (p.id !== st.teacherId) hostResetFlawless(playerId);
-        // Teacher mistake: 10s silly glasses.
-        if (p.id === st.teacherId) p.glassesUntil = Math.max(p.glassesUntil || 0, now() + 10_000);
-      }
-
-      // Reset this site's progress so reopening starts fresh.
-      hostInitMissionProg(playerId, siteId, m.kind, isPractice);
-
-      // Clear world marker quickly (client will also send missionClose).
-      p.missionSiteId = null;
-      p.missionStage = 0;
-      p.missionClearAt = 0;
-
-      // Release mission lock on failure (so someone else can try immediately).
-      try{ m.inUseBy = 0; m.inUseUntil = 0; }catch(_){ }
-
-      sendToPlayer(playerId, { t: 'uiMissionExit', siteId, toast: '틀렸어! 다시 시도해!' });
-      broadcastState(true);
-      return;
-    }
-
-    // Correct: progress toward 3 correct (practice + real share the same 3-question flow)
-    prog.correct += 1;
-
-    // Update world-space mission progress marker (33/66/100)
-    // Stage: (correct+1) -> 1:33%, 2:66%, 3:100%
-    p.missionSiteId = siteId;
-    p.missionStage = clamp(prog.correct + 1, 1, 3);
-    p.missionClearAt = 0;
-
-    if (prog.correct >= 3) {
-      // complete
-      if (!isPractice) {
-        m.state = 'solved';
-        m.expiresAt = 0;
-        m.sealedAt = now();
-        if (st.infiniteMissions) {
-          m.respawnAt = now() + (20_000 + Math.random() * 20_000);
-        }
-        st.solved += 1;
-      }
-
-      // Reward: +15 seconds (practice + real)
-      st.timeLeft += 15;
-      st.timeLeft = Math.min(st.timeLeft, 999);
-      st.maxTime = Math.max(st.maxTime || 0, st.timeLeft);
-      // Release mission lock on completion.
-      try{ m.inUseBy = 0; m.inUseUntil = 0; }catch(_){ }
-
-      sendToPlayer(playerId, { t: 'uiMissionExit', siteId, toast: isPractice ? '+15초! (연습)' : '+15초! 해결!' });
-
-      // Show 100% briefly, then clear the marker.
-      p.missionStage = 3;
-      p.missionClearAt = now() + 1200;
-
-      const siteObj = st.objects[siteId];
-      if (!isPractice && siteObj) broadcast({ t: 'fx', kind: 'seal', x: siteObj.x, y: siteObj.y, bornAt: now() });
-
-      // 누수(압박) 완화: (실전만) 미션을 해결하면 누수 레벨 1 감소 + 가장 오래된 물샘 흔적 1개 제거
-      if (!isPractice && (st.leakLevel || 0) > 0) {
-        st.leakLevel = Math.max(0, (st.leakLevel || 0) - 1);
-        const entries = Object.entries(st.leaks || {});
-        if (entries.length) {
-          entries.sort((a,b) => (a[1].bornAt||0) - (b[1].bornAt||0));
-          delete st.leaks[entries[0][0]];
-        }
-        broadcast({ t: 'toast', text: `당근으로 막았다! 누수가 줄었어. (누수 ${st.leakLevel})` });
-      }
-
-      // 왕관: (실전만) 서로 다른 활성 미션 3개를 '한 번도 틀림 없이' 해결
-      if (!isPractice && p.id !== st.teacherId && !p.crown && !prog.hadWrong) {
-        const size = hostAddFlawlessKind(playerId, m.kind);
-        if (size >= 3) {
-          p.crown = true;
-          // 다음 회의에서만 2표, 투표 후 사라짐
-          sendToPlayer(playerId, { t: 'toast', text: '👑 왕관 획득! 다음 회의에서 2표야!' });
-          broadcast({ t: 'toast', text: `${p.nick} 토끼가 왕관을 얻었다! (다음 회의 2표)` });
-          // 다음 왕관을 위해 리셋(중복 방지)
-          hostResetFlawless(playerId);
-          p.crown = true;
-        }
-      }
-
-      // 다음 시도 대비 진행 초기화
-      hostInitMissionProg(playerId, siteId, m.kind, isPractice);
-
-      // Show 100% briefly, then clear the marker.
-      p.missionStage = 3;
-      p.missionClearAt = now() + 1200;
-
-      broadcastState(true);
-    } else {
-      sendToPlayer(playerId, { t: 'uiMissionResult', ok: true, text: `정답! (${prog.correct}/3)` });
-      sendToPlayer(playerId, { t: 'uiMissionNext', question: genQuestion(m.kind), correct: prog.correct });
-      // Broadcast so others can see the % change above the player's head.
-      broadcastState(true);
-    }
-  }
-
-  function checkAnswer(q, ans) {
-    if (q.type === 'number' || q.type === 'graphNum') {
-      const a = Number(ans);
-      return Number.isFinite(a) && a === q.answer;
-    }
-    if (q.type === 'choice' || q.type === 'shape' || q.type === 'graph') {
-      return String(ans) === String(q.answer);
-    }
-    return false;
-  }
-
-  function applyPenalty(kind, playerId) {
-    const st = G.state;
-    const doors = Object.values(st.doors);
-    const victim = st.players[playerId];
-
-    if (kind === 'add') {
       // 무작위 "방" 10초 잠금 (중첩 시 시간은 늘어나고, 방은 유지)
       const endAt = now() + 10_000;
 
+      // Door state objects don't carry roomId. Use map door objects (root_door) to pick/close the correct room.
+      const doorObjs = Object.values(st.objects || {}).filter(o => o && o.type === 'root_door' && o.roomId);
+
       // 이미 잠긴 방이 없으면 새로 뽑기
       const hasActiveLock = !!(st.lockedRoomUntil && now() < st.lockedRoomUntil && st.lockedRoomId);
-      if (!hasActiveLock && doors.length) {
-        const picked = doors[Math.floor(Math.random() * doors.length)];
-        st.lockedRoomId = picked.roomId;
+      if (!hasActiveLock && doorObjs.length) {
+        const picked = doorObjs[Math.floor(Math.random() * doorObjs.length)];
+        st.lockedRoomId = picked ? (picked.roomId || null) : null;
       }
 
       if (st.lockedRoomId) {
         st.lockedRoomUntil = Math.max(st.lockedRoomUntil || 0, endAt);
-        for (const d of Object.values(st.doors)) {
-          if (d.roomId === st.lockedRoomId) {
-            d.closed = true;
-            d.closedUntil = Math.max(d.closedUntil || 0, endAt);
-          }
+        for (const obj of doorObjs) {
+          if (!obj || obj.roomId !== st.lockedRoomId) continue;
+          const d = st.doors && st.doors[String(obj.id)];
+          if (!d) continue;
+          d.closed = true;
+          d.closedUntil = Math.max(d.closedUntil || 0, endAt);
         }
       }
-      try{ rebuildDoorSolidSet(); }catch(_){ }
+      try{ rebuildDoorSolidSet(true); }catch(_){ }
       return;
     }
     if (kind === 'mul') {
@@ -4113,6 +3774,7 @@ function hostHandleInteract(playerId) {
         d.closed = true;
         d.closedUntil = Math.max(d.closedUntil, now() + 5_000);
       }
+      try{ rebuildDoorSolidSet(true); }catch(_){ }
       return;
     }
     if (kind === 'graph') {
@@ -4572,7 +4234,7 @@ function showToast(text) {
     // Tell host to clear the "mission in progress" marker above my head.
     try{
       if (ui && G.net && ui.siteId) {
-        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, siteId: ui.siteId });
+        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), siteId: ui.siteId });
       }
     }catch(_){ }
   }
@@ -4762,7 +4424,7 @@ function showToast(text) {
     if (!ui || !G.net) return;
     const payload = {
       t: 'missionSubmit',
-      playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null,
+      playerId: Number(G.net.myPlayerId || 0),
       siteId: ui.siteId,
       kind: ui.kind,
       practice: ui.practice,
@@ -5005,7 +4667,7 @@ function showToast(text) {
       btn.onclick = () => {
         if (!G.net) return;
         G.ui.meeting.voted = true;
-        G.net.post({ t: 'vote', playerId: meId, joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, target: p.id });
+        G.net.post({ t: 'vote', playerId: meId, target: p.id });
         renderVoteList();
       };
       row.appendChild(left);
@@ -5017,7 +4679,7 @@ function showToast(text) {
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
     G.ui.meeting.voted = true;
-    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, target: null });
+    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
     renderVoteList();
   });
 
@@ -5410,7 +5072,7 @@ function showToast(text) {
         hostHandleInteract(G.net.myPlayerId);
         broadcastState(true);
       } else {
-        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'interact' });
+        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
       }
       return true;
     } catch (_) {
@@ -5499,10 +5161,10 @@ function showToast(text) {
       case 'D':
         G.local.keys.right = true; break;
             case '1':
-        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'cry' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'cry' });
         handled = true; break;
       case '2':
-        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'tsk' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'tsk' });
         handled = true; break;
 default:
         handled = false;
@@ -5603,7 +5265,7 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'interact' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
   }
 
   // Primary action: X (PC) / 조작 버튼 (mobile). Context-sensitive:
@@ -5634,7 +5296,7 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'kill' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'kill' });
   }
 
   killBtn.addEventListener('click', () => sendKill());
@@ -5643,13 +5305,13 @@ default:
   function sendSabotage() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'sabotage' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'sabotage' });
   }
 
   function sendForceMission() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, kind: 'forceMission' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'forceMission' });
   }
 
   saboBtn?.addEventListener('click', () => sendSabotage());
@@ -5790,12 +5452,9 @@ default:
 function drawLightMask(cam, me, st){
   // Teacher and practice mode ignore vision limits.
   // Also, Among-Us style: dead/ghost players are NOT affected by lights.
-  if (!me || st.practice || (me.down && me.role !== 'teacher')) return;
+  if (!me || me.role === 'teacher' || st.practice || (me.down && me.role !== 'teacher')) return;
 
   let dark01 = getGlobalDarkness01(st);
-
-  // Teacher sees full light, but doors should still block visibility.
-  if (me.role === 'teacher') dark01 = 0;
 
   // Per-player darkness debuff (e.g., subtraction wrong): temporarily narrows vision more.
   try{
@@ -5806,20 +5465,7 @@ function drawLightMask(cam, me, st){
     }
   }catch(_){}
 
-  const needDark = dark01 > 0.001;
-
-  // Door-closed visibility occlusion should apply even when fully lit.
-  let hasClosedDoor = false;
-  try{
-    for (const obj of Object.values(st.objects || {})) {
-      if (obj && obj.type === 'root_door') {
-        const d = st.doors && st.doors[obj.id];
-        if (d && d.closed) { hasClosedDoor = true; break; }
-      }
-    }
-  }catch(_){ }
-
-  if (!needDark && !hasClosedDoor) return;
+  if (dark01 <= 0) return;
 
   const a = clamp(dark01, 0, 1);
 
@@ -5836,62 +5482,33 @@ function drawLightMask(cam, me, st){
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
 
-  // IMPORTANT:
-  // Some browsers/devices can end up with an active clip region on the main ctx (from other draw calls),
-  // which would invert vision (only the cone gets darkened). To make vision deterministic, render the
-  // darkness overlay on a dedicated offscreen canvas (fresh clip state), then blit it on top.
-  if (!G.ui) G.ui = {};
-  let vc = G.ui._visionCanvas;
-  let vctx = G.ui._visionCtx;
-  if (!vc || !vctx) {
-    vc = document.createElement('canvas');
-    vctx = vc.getContext('2d');
-    try{
-      vctx.imageSmoothingEnabled = false;
-      vctx.mozImageSmoothingEnabled = false;
-      vctx.webkitImageSmoothingEnabled = false;
-      vctx.msImageSmoothingEnabled = false;
-    }catch(_){ }
-    G.ui._visionCanvas = vc;
-    G.ui._visionCtx = vctx;
-  }
-  if (vc.width !== viewW || vc.height !== viewH) {
-    vc.width = viewW;
-    vc.height = viewH;
-    try{ vctx.imageSmoothingEnabled = false; }catch(_){ }
-  }
-
-  vctx.save();
-  try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
-  vctx.clearRect(0, 0, viewW, viewH);
-
-  if (needDark) {
-
   // darkness overlay
-  vctx.fillStyle = `rgba(0,0,0,${overlayA})`;
-  vctx.fillRect(0, 0, viewW, viewH);
+  ctx.save();
+  ctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+  ctx.fillRect(0, 0, viewW, viewH);
 
   // punch visible areas with soft gradients
-  vctx.globalCompositeOperation = 'destination-out';
+  ctx.globalCompositeOperation = 'destination-out';
 
-  // near body reveal: tiny circle around the player (so you can always see yourself)
-  try{
-    const r0 = Math.max(2, nearR);
-    const r1 = Math.max(r0 + 2, nearR + nearFeather);
-    const g0 = vctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
-    const mid = clamp(r0 / r1, 0, 1);
-    g0.addColorStop(0.00, 'rgba(0,0,0,1)');
-    g0.addColorStop(mid,  'rgba(0,0,0,1)');
-    g0.addColorStop(1.00, 'rgba(0,0,0,0)');
-    vctx.fillStyle = g0;
-    vctx.beginPath();
-    vctx.arc(cx, cy, r1, 0, Math.PI*2);
-    vctx.fill();
-  }catch(_){
-    vctx.beginPath();
-    vctx.arc(cx, cy, nearR, 0, Math.PI*2);
-    vctx.fill();
-  }
+  
+// near body reveal: tiny circle around the player (so you can always see yourself)
+try{
+  const r0 = Math.max(2, nearR);
+  const r1 = Math.max(r0 + 2, nearR + nearFeather);
+  const g0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
+  const mid = clamp(r0 / r1, 0, 1);
+  g0.addColorStop(0.00, 'rgba(0,0,0,1)');
+  g0.addColorStop(mid,  'rgba(0,0,0,1)');
+  g0.addColorStop(1.00, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g0;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1, 0, Math.PI*2);
+  ctx.fill();
+}catch(_){
+  ctx.beginPath();
+  ctx.arc(cx, cy, nearR, 0, Math.PI*2);
+  ctx.fill();
+}
 
   const layers = [
     { alpha: 1.00, widen: 1.00, dist: 1.00 },
@@ -5903,112 +5520,30 @@ function drawLightMask(cam, me, st){
     const half = baseHalf * L.widen;
     const r = baseDist * L.dist;
 
-    vctx.save();
-    vctx.translate(cx, cy);
-    vctx.rotate(look);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(look);
 
-    vctx.beginPath();
-    vctx.moveTo(0, 0);
-    vctx.arc(0, 0, r, -half, half);
-    vctx.closePath();
-    vctx.clip();
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, r, -half, half);
+    ctx.closePath();
+    ctx.clip();
 
     try{
-      const g = vctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
       g.addColorStop(0.00, `rgba(0,0,0,${1.00 * L.alpha})`);
       g.addColorStop(0.45, `rgba(0,0,0,${0.75 * L.alpha})`);
       g.addColorStop(1.00, 'rgba(0,0,0,0)');
-      vctx.fillStyle = g;
+      ctx.fillStyle = g;
     }catch(_){
-      vctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
+      ctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
     }
 
-    vctx.fillRect(-r, -r, r * 2, r * 2);
-    vctx.restore();
+    ctx.fillRect(-r, -r, r * 2, r * 2);
+    ctx.restore();
   }
 
-
-  }
-
-  vctx.restore();
-
-  // Door-closed visibility occlusion:
-  // When a door is closed, the area on the other side is treated as unseen until the door opens.
-  // This is applied *after* cutting the vision cone so it can override visibility.
-  try{
-    const occA = 0.92; // stronger than normal darkness (fog-of-war)
-    const myRoom = roomAtPixel(me.x, me.y);
-    const myRoomId = myRoom ? myRoom.id : null;
-
-    // Quick scan: if no closed doors, skip.
-    let hasClosed = false;
-    for (const obj of Object.values(st.objects || {})) {
-      if (obj && obj.type === 'root_door') {
-        const dd = st.doors && st.doors[obj.id];
-        const closed = !!(dd && (dd.closed || (dd.closedUntil && now() < dd.closedUntil)));
-        if (closed) { hasClosed = true; break; }
-      }
-    }
-
-    if (hasClosed) {
-      vctx.save();
-      try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
-      vctx.globalCompositeOperation = 'source-over';
-      vctx.fillStyle = `rgba(0,0,0,${occA})`;
-
-      for (const obj of Object.values(st.objects || {})) {
-        if (!obj || obj.type !== 'root_door') continue;
-        const dd = st.doors && st.doors[obj.id];
-        const closed = !!(dd && (dd.closed || (dd.closedUntil && now() < dd.closedUntil)));
-        if (!closed) continue;
-
-        const rid = obj.roomId;
-        if (!rid) continue;
-
-        // If I'm NOT in this room -> hide the whole room rectangle.
-        if (myRoomId !== rid) {
-          const rr = (AS.map.rooms || []).find(r => r.id === rid)?.rect || null;
-          if (!rr) continue;
-          const [rx, ry, rw, rh] = rr;
-          const sx = (rx * TS - cam.x) * ZOOM;
-          const sy = (ry * TS - cam.y) * ZOOM;
-          const sw = (rw * TS) * ZOOM;
-          const sh = (rh * TS) * ZOOM;
-          // Only draw if it intersects the viewport a bit.
-          if (sx > viewW || sy > viewH || (sx + sw) < 0 || (sy + sh) < 0) continue;
-          vctx.fillRect(Math.floor(sx), Math.floor(sy), Math.ceil(sw), Math.ceil(sh));
-          continue;
-        }
-
-        // If I'm IN this room -> hide a short corridor strip outside the door so I can't peek out.
-        const dx = (obj._doorDx|0)||0;
-        const dy = (obj._doorDy|0)||0;
-        if (Math.abs(dx) + Math.abs(dy) !== 1) continue;
-
-        const span = doorSpanOffsetsAt(obj.x|0, obj.y|0) || { spanX: true, offsets:[0] };
-        const offsets = span.offsets || [0];
-        const L = 7; // tiles to cover beyond the door
-
-        for (let s = 0; s <= L; s++) {
-          const tx = (obj.x|0) + dx * s;
-          const ty = (obj.y|0) + dy * s;
-          for (const off of offsets) {
-            const wx = ((span.spanX ? (tx + off) : tx) * TS - cam.x) * ZOOM;
-            const wy = ((span.spanX ? ty : (ty + off)) * TS - cam.y) * ZOOM;
-            if (wx > viewW || wy > viewH || (wx + TS*ZOOM) < 0 || (wy + TS*ZOOM) < 0) continue;
-            vctx.fillRect(Math.floor(wx), Math.floor(wy), Math.ceil(TS * ZOOM), Math.ceil(TS * ZOOM));
-          }
-        }
-      }
-
-      vctx.restore();
-    }
-  }catch(_){ }
-
-  // composite overlay onto main canvas (screen space)
-  ctx.save();
-  try{ ctx.setTransform(1,0,0,1,0,0); }catch(_){ }
-  ctx.drawImage(vc, 0, 0);
   ctx.restore();
 
   // When all lamps are off, show faint lamp positions so players can find them.
@@ -6034,8 +5569,105 @@ function drawLightMask(cam, me, st){
   }
 }
 
+// Closed doors should block visibility across the opening (so you can't "peek" the other side).
+// This runs regardless of lamp state (doors and lamps are independent mechanics).
+function drawClosedDoorOcclusion(cam, me, st){
+  if (!me || !st || !st.objects || !st.doors) return;
+
+  const myRoom = roomAtPixel(me.x, me.y);
+  const myRoomId = myRoom ? myRoom.id : null;
+
+  const fillRectClipped = (x, y, w, h) => {
+    if (w <= 0 || h <= 0) return;
+    const x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+    if (x1 <= 0 || y1 <= 0 || x0 >= viewW || y0 >= viewH) return;
+    const rx0 = Math.max(0, x0), ry0 = Math.max(0, y0);
+    const rx1 = Math.min(viewW, x1), ry1 = Math.min(viewH, y1);
+    if (rx1 <= rx0 || ry1 <= ry0) return;
+    ctx.fillRect(rx0, ry0, rx1 - rx0, ry1 - ry0);
+  };
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,0.92)';
+
+  // If a room is explicitly locked, hide its interior when I'm not inside it.
+  try{
+    if (st.lockedRoomId && st.lockedRoomUntil && now() < st.lockedRoomUntil && st.lockedRoomId !== myRoomId) {
+      const rr = getRoomById(st.lockedRoomId);
+      if (rr && rr.rect) {
+        const [tx, ty, tw, th] = rr.rect;
+        const x = (tx * TS - cam.x) * ZOOM;
+        const y = (ty * TS - cam.y) * ZOOM;
+        const w = (tw * TS) * ZOOM;
+        const h = (th * TS) * ZOOM;
+        fillRectClipped(x, y, w, h);
+      }
+    }
+  }catch(_){}
+
+  for (const obj of Object.values(st.objects)) {
+    if (!obj || obj.type !== 'root_door') continue;
+    const dd = st.doors[obj.id];
+    if (!dd || !dd.closed) continue;
+
+    const dx = (obj._doorDx|0)||0;
+    const dy = (obj._doorDy|0)||0;
+    if (!dx && !dy) continue;
+
+    // If I'm outside the room this door belongs to, hide that room's interior.
+    if (obj.roomId && obj.roomId !== myRoomId) {
+      const rr = getRoomById(obj.roomId);
+      if (rr && rr.rect) {
+        const [tx, ty, tw, th] = rr.rect;
+        const x = (tx * TS - cam.x) * ZOOM;
+        const y = (ty * TS - cam.y) * ZOOM;
+        const w = (tw * TS) * ZOOM;
+        const h = (th * TS) * ZOOM;
+        fillRectClipped(x, y, w, h);
+        continue;
+      }
+    }
+
+    // Otherwise: hide a short strip beyond the closed door on the far side.
+    const depth = 10; // tiles
+    const startTx = (obj.x|0) + dx;
+    const startTy = (obj.y|0) + dy;
+
+    const info = doorCrossInfoAt(obj.x|0, obj.y|0, obj);
+    const span = doorSpanOffsetsAt(obj.x|0, obj.y|0, info);
+
+    if (span.spanX) {
+      const tx0 = startTx + (span.minOff|0);
+      const tx1 = startTx + (span.maxOff|0) + 1;
+      const bandW = Math.max(1, tx1 - tx0);
+
+      if (dy) {
+        const yTile0 = (dy > 0) ? startTy : (startTy - depth + 1);
+        fillRectClipped((tx0 * TS - cam.x) * ZOOM, (yTile0 * TS - cam.y) * ZOOM, (bandW * TS) * ZOOM, (depth * TS) * ZOOM);
+      } else if (dx) {
+        const xTile0 = (dx > 0) ? startTx : (startTx - depth + 1);
+        fillRectClipped((xTile0 * TS - cam.x) * ZOOM, (startTy * TS - cam.y) * ZOOM, (depth * TS) * ZOOM, (bandW * TS) * ZOOM);
+      }
+    } else {
+      const ty0 = startTy + (span.minOff|0);
+      const ty1 = startTy + (span.maxOff|0) + 1;
+      const bandH = Math.max(1, ty1 - ty0);
+
+      if (dx) {
+        const xTile0 = (dx > 0) ? startTx : (startTx - depth + 1);
+        fillRectClipped((xTile0 * TS - cam.x) * ZOOM, (ty0 * TS - cam.y) * ZOOM, (depth * TS) * ZOOM, (bandH * TS) * ZOOM);
+      } else if (dy) {
+        const yTile0 = (dy > 0) ? startTy : (startTy - depth + 1);
+        fillRectClipped((startTx * TS - cam.x) * ZOOM, (yTile0 * TS - cam.y) * ZOOM, (bandH * TS) * ZOOM, (depth * TS) * ZOOM);
+      }
+    }
+  }
+
+  ctx.restore();
+}
 
 function drawLoadingScreen(extraText=null){
+
   ctx.save();
   try{
     if (AS.loadingImg && AS.loadingImg.width > 0) {
@@ -6314,6 +5946,7 @@ try{
     // global lighting / vision mask (crew only)
     if (G.phase === 'play') {
       try { drawLightMask(cam, me, st); } catch (_) {}
+      try { drawClosedDoorOcclusion(cam, me, st); } catch (_) {}
       // Among Us style: keep MY character readable even when the world is dark.
       try {
         if (me && me.role !== 'teacher' && !st.practice && !me.down && getGlobalDarkness01(st) > 0) {
@@ -8535,8 +8168,8 @@ try{
     if (!rs || !rs.remotes) return;
 
     // Interpolate slightly *in the past* to hide network jitter (Among Us style).
-    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 240);
-    const k = (rs.k || 18);
+    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 160);
+    const k = (rs.k || 30);
     const snapDist = (rs.snapDist || (TS * 6));
     const tNow = now();
     const targetT = tNow - bufferMs;
@@ -8596,49 +8229,6 @@ try{
     }
   }
 
-
-  // ---------- Client-side binding fallback ----------
-  // If joinAck/roster is delayed or dropped, some clients may not learn their playerId.
-  // We continuously try to bind myPlayerId using joinToken/clientId (and optionally nick).
-  function clientEnsureMyPlayerId() {
-    try{
-      const net = G.net;
-      if (!net || net.isHost) return;
-      const st = G.state;
-      if (!st || !st.players) return;
-
-      const cur = Number(net.myPlayerId || 0);
-      if (cur && st.players[String(cur)]) return;
-
-      const jt = (net.joinToken != null) ? String(net.joinToken) : '';
-      const cid = (net.clientId != null) ? String(net.clientId) : '';
-      const nick = (net._nick != null) ? String(net._nick) : '';
-
-      let found = 0;
-
-      if (jt) {
-        for (const [pid, p] of Object.entries(st.players)) {
-          if (p && p.joinToken != null && String(p.joinToken) === jt) { found = Number(pid); break; }
-        }
-      }
-      if (!found && cid) {
-        for (const [pid, p] of Object.entries(st.players)) {
-          if (p && p.clientId != null && String(p.clientId) === cid) { found = Number(pid); break; }
-        }
-      }
-      // Weak fallback: unique nickname match (only if exactly one).
-      if (!found && nick) {
-        let cand = 0, count = 0;
-        for (const [pid, p] of Object.entries(st.players)) {
-          if (p && p.nick != null && String(p.nick) === nick) { cand = Number(pid); count++; }
-        }
-        if (count === 1) found = cand;
-      }
-
-      if (found) net.myPlayerId = found;
-    }catch(_){ }
-  }
-
 // ---------- Main loop ----------
   let lastFrame = now();
   function frame() {
@@ -8646,16 +8236,11 @@ try{
     const dt = Math.min(0.05, (t - lastFrame) / 1000);
     lastFrame = t;
 
-
-    // Ensure non-host clients bind to their own player even if joinAck was delayed.
-    clientEnsureMyPlayerId();
-
     // Host disconnect watchdog (non-host clients): if we stop receiving host packets,
     // reset back to the room instead of getting stuck.
     try {
       if (G.net && !G.net.isHost && G.phase !== 'lobby') {
         const last = (G.net._lastHostSeenAt || 0);
-        // Give a bit more tolerance for transient relay hiccups.
         if (last && (t - last) > 9000 && !(G.ui && (G.ui._hostExitHandled || G.ui._hostGoneHandled))) {
           if (!G.ui) G.ui = {};
           G.ui._hostGoneHandled = true;
@@ -8686,13 +8271,13 @@ try{
 // - 33ms마다: 플레이어 이동만(가벼운 패킷) 전송
 // - 180ms마다: 전체 상태(미션/문/시간 등) 스냅샷 전송
       if (!G.host._lastPlayersBroadcast) G.host._lastPlayersBroadcast = 0;
-      if (t - G.host._lastPlayersBroadcast > 50) {
+      if (t - G.host._lastPlayersBroadcast > 33) {
         G.host._lastPlayersBroadcast = t;
         broadcastPlayers();
       }
 
       if (!G.host._lastStateBroadcast) G.host._lastStateBroadcast = 0;
-      if (t - G.host._lastStateBroadcast > 250) {
+      if (t - G.host._lastStateBroadcast > 180) {
         G.host._lastStateBroadcast = t;
         broadcastState();
       }
@@ -8700,7 +8285,7 @@ try{
       // Also broadcast a lightweight roster occasionally during play.
       // This lets clients who missed joinAck/state bind their playerId reliably (common on slow iframe loads).
       if (!G.host._lastRosterInPlay) G.host._lastRosterInPlay = 0;
-      if (t - G.host._lastRosterInPlay > 1200) {
+      if (t - G.host._lastRosterInPlay > 900) {
         G.host._lastRosterInPlay = t;
         try{ broadcastRoster(); }catch(_){ }
       }
@@ -8710,7 +8295,7 @@ try{
     // can still bind their playerId and render everyone reliably.
     if (G.net?.isHost && !G.host.started) {
       if (!G.host._lastRosterBroadcast) G.host._lastRosterBroadcast = 0;
-      if (t - G.host._lastRosterBroadcast > 350) {
+      if (t - G.host._lastRosterBroadcast > 250) {
         G.host._lastRosterBroadcast = t;
         try{ broadcastRoster(); }catch(_){ }
       }
@@ -8726,7 +8311,7 @@ try{
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
         if (t - G.local._lastInputAt > 33) {
           G.local._lastInputAt = t;
-          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, mvx: G.local.mvx, mvy: G.local.mvy });
+          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), mvx: G.local.mvx, mvy: G.local.mvy });
         }
       }
     }
@@ -8748,7 +8333,7 @@ try{
           const ox = (obj.x + 0.5) * TS;
           const oy = (obj.y + 0.5) * TS;
           if (dist2(me.x, me.y, ox, oy) <= INTERACT_RANGE ** 2) {
-            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), joinToken: (G.net && G.net.joinToken) ? String(G.net.joinToken) : null, siteId: rm.siteId });
+            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), siteId: rm.siteId });
           }
         }
         // attempt only once
@@ -8785,20 +8370,6 @@ try{
       net = new LocalNet(room);
     }
     G.net = net;
-
-    // Host keepalive (tiny packet): prevents some clients from falsely thinking the host is gone
-    // when relay queues are congested.
-    try{
-      if (!net._hostBeat){
-        net._hostBeat = setInterval(()=>{
-          try{
-            if (!G.net || G.net !== net) { clearInterval(net._hostBeat); net._hostBeat = null; return; }
-            if (net.isHost) net.post({ t: 'host', hostId: (net.hostId || net.clientId), at: Date.now() });
-          }catch(_){ }
-        }, 1000);
-      }
-    }catch(_){ }
-
 
     // host discovery
     net.on('host', (m) => {
@@ -8905,7 +8476,7 @@ try{
           if (net._hb) { clearInterval(net._hb); net._hb = null; }
           net._hbPid = Number(net.myPlayerId || 0);
           net._hb = setInterval(()=>{
-            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: (net.joinToken != null) ? String(net.joinToken) : null }); }catch(_){ }
+            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
           }, 1000);
         }
       }catch(_){ }
@@ -8952,38 +8523,14 @@ try{
     // leave/disconnect (host)
     net.on('leave', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (pid) hostRemovePlayer(pid, m.reason || 'left');
     });
-
-
-    // Host-side helper: resolve playerId even if the client hasn't bound yet.
-    // This prevents "spectator of host" cases where some clients never receive joinAck.
-    function hostResolvePidFromMsg(m) {
-      try{
-        const st = G.state;
-        let pid = Number((m && m.playerId) || 0);
-        if (pid && st && st.players && st.players[pid]) return pid;
-
-        const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
-        if (jt && G.host && G.host._joinTokenToPlayer && G.host._joinTokenToPlayer.has(jt)) {
-          const p2 = Number(G.host._joinTokenToPlayer.get(jt) || 0);
-          if (p2 && st.players && st.players[p2]) return p2;
-        }
-
-        const cid = String((m && (m.cid ?? m.from ?? m.clientId ?? m.sessionId)) || '');
-        if (cid && G.host && G.host._clientToPlayer && G.host._clientToPlayer.has(cid)) {
-          const p3 = Number(G.host._clientToPlayer.get(cid) || 0);
-          if (p3 && st.players && st.players[p3]) return p3;
-        }
-      }catch(_){ }
-      return 0;
-    }
 
     // heartbeat ping (host): keep lastSeen fresh even if player is idle
     net.on('ping', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
@@ -8992,7 +8539,7 @@ try{
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
@@ -9001,7 +8548,7 @@ try{
 
     net.on('emote', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       const p = G.state.players[pid];
       if (!p || !p.alive) return;
       const kind = (m.kind === 'cry' || m.kind === 'tsk') ? m.kind : null;
@@ -9013,7 +8560,7 @@ try{
 
     net.on('act', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (!pid) return;
       if (m.kind === 'interact') hostHandleInteract(pid);
       if (m.kind === 'kill') hostHandleKill(pid);
@@ -9023,7 +8570,7 @@ try{
     net.on('openMission', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       const p = st.players[pid];
       if (!p || !p.alive) return;
       const isGhost = (!!p.down && p.role !== 'teacher');
@@ -9078,14 +8625,14 @@ try{
 
     net.on('missionSubmit', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (!pid) return;
       hostMissionSubmit(pid, { ...m, playerId: pid });
     });
 
     net.on('missionClose', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (!pid) return;
       const st = G.state;
       const p = st.players[pid];
@@ -9108,7 +8655,7 @@ try{
 
     net.on('vote', (m) => {
       if (!net.isHost) return;
-      const pid = hostResolvePidFromMsg(m);
+      const pid = Number(m.playerId || 0);
       if (!pid) return;
       hostSubmitVote(pid, m.target);
     });
@@ -9215,7 +8762,7 @@ try{
             if (!net._hb) {
               net._hbPid = pid;
               net._hb = setInterval(()=>{
-                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: (net.joinToken != null) ? String(net.joinToken) : null }); }catch(_){ }
+                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
               }, 1000);
             }
             // stop join retry loop once bound
@@ -9228,7 +8775,7 @@ try{
       // Smooth remote players on clients so other players look less 'choppy'.
       try{
         if (!net.isHost) {
-          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 240, k: 18, snapDist: TS * 7 };
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 220, k: 20, snapDist: TS * 7 };
           const sm = G.remoteSmooth.remotes;
           const tNow = now();
           const myId = Number(net.myPlayerId || 0);
@@ -9296,7 +8843,14 @@ G.state.missions = m.missions;
       startBtn.disabled = !(net.isHost && Object.keys(G.state.players).length >= 1 && !G.host.started);
       if (net.isHost && !G.host.started) {
         const n = Object.keys(G.state.players).length;
-        startBtn.textContent = n >= 4 ? '게임 시작 (호스트)' : `연습 시작 (현재 ${n}명)`;
+        const exp = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
+        const desiredPractice = (typeof window.__EMBED_PRACTICE__ === 'boolean')
+          ? !!window.__EMBED_PRACTICE__
+          : ((exp > 0) ? (exp < 4) : (n < 4));
+        const willPractice = desiredPractice && n < 4;
+        startBtn.textContent = willPractice
+          ? `연습 시작 (현재 ${n}명)`
+          : (`게임 시작 (호스트)` + (exp > 0 ? ` / 목표 ${exp}명` : ''));
       }
 
     
@@ -9402,7 +8956,7 @@ G.state.missions = m.missions;
                 if (net._hb) { clearInterval(net._hb); net._hb = null; }
                 net._hbPid = Number(net.myPlayerId || 0);
                 net._hb = setInterval(()=>{
-                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: (net.joinToken != null) ? String(net.joinToken) : null }); }catch(_){ }
+                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
                 }, 1000);
               }
             }catch(_){ }
@@ -9431,7 +8985,7 @@ G.state.missions = m.missions;
 
       // Keep a render buffer for other players.
       try{
-        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 240, k: 18, snapDist: TS * 7 };
+        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 220, k: 20, snapDist: TS * 7 };
       }catch(_){ }
 
       const tNow = now();
@@ -9601,38 +9155,6 @@ G.state.missions = m.missions;
       G.ui.lightNoticeUntil = m.until || (now() + 1500);
       G.ui.lightNoticeText = m.text || '누군가 불을 껐어요.';
     });
-
-    // Small delta updates for lamps/doors (more reliable than waiting for full state snapshots)
-    net.on('lampUpdate', (m) => {
-      if (net.isHost) return;
-      try{
-        const st = G.state;
-        if (!st.lamps) st.lamps = {};
-        const id = String(m.id || '');
-        if (!id) return;
-        if (!st.lamps[id]) st.lamps[id] = { on: true, kind: null };
-        st.lamps[id].on = !!m.on;
-        st.lastUpdateAt = now();
-      }catch(_){ }
-    });
-
-    net.on('doorUpdate', (m) => {
-      if (net.isHost) return;
-      try{
-        const st = G.state;
-        if (!st.doors) st.doors = {};
-        const id = String(m.id || '');
-        if (!id) return;
-        if (!st.doors[id]) st.doors[id] = { closed: false, closedUntil: 0 };
-        st.doors[id].closed = !!m.closed;
-        st.doors[id].closedUntil = Number(m.closedUntil || 0);
-        if (m.anim != null) st.doors[id].anim = m.anim;
-        // rebuild solid set so collision + door-vision occlusion is consistent
-        try{ rebuildDoorSolidSet(); }catch(_){ }
-        st.lastUpdateAt = now();
-      }catch(_){ }
-    });
-
 net.on('uiMeetingOpen', (m) => {
       openMeetingUI(m.kind || 'emergency', m.reason || '회의!', m.endsAt || (now() + 20_000));
     });
@@ -9643,7 +9165,7 @@ net.on('uiMeetingOpen', (m) => {
       // If we already have an active meeting id, ignore messages from other meetings
       if (G.ui.meetingChat?.id && mid && mid !== Number(G.ui.meetingChat.id)) return;
 
-      const pid = (G.net && G.net.isHost) ? hostResolvePidFromMsg(m) : Number(m.playerId || 0);
+      const pid = Number(m.playerId || 0);
       const p = (G.state && G.state.players) ? G.state.players[pid] : null;
       const nick = String(m.nick || p?.nick || `#${pid}`).
         replace(/[\r\n\t]/g,' ').slice(0, 12);
@@ -9727,35 +9249,16 @@ net.on('uiMeetingOpen', (m) => {
     await net.discoverHost();
 
     // Give relays/devices a brief window to converge on the same host.
-    // NOTE: In embedded multiroom, the parent already decides the host, so we must NOT
-    // run local election/demotion here (it causes "host disappears" races).
-    if (!window.__USE_BRIDGE_NET__) {
-      await new Promise(r => setTimeout(r, 250));
-      try{ if (typeof net._electHost === 'function') net._electHost(); }catch(_){ }
+    await new Promise(r => setTimeout(r, 250));
+    try{ if (typeof net._electHost === 'function') net._electHost(); }catch(_){ }
 
-      // host 초기화 (with convergence guard)
-      if (net.isHost) {
-        // Give other clients a short convergence window to announce an existing host.
-        // If we hear a different host during this window, we will not commit to hosting.
-        await new Promise(r => setTimeout(r, 700));
-        try{
-          if (net.hostId && String(net.hostId) !== String(net.clientId) && !net.committedHost) {
-            // Someone else is already the host.
-            net.isHost = false;
-          }
-        }catch(_){ }
-      }
-    }
 
+    // host 초기화
     if (net.isHost) {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
       const pid = hostAddPlayer(nick, false, net.clientId);
       net.myPlayerId = pid;
-      // Commit: never allow host flip mid-session.
-      try{ net.committedHost = true; }catch(_){ }
-      try{ net.hostId = net.clientId; }catch(_){ }
-      try{ net.post({ t: 'host', hostId: net.clientId, at: Date.now() }); }catch(_){ }
       G.phase = 'lobby';
       setRolePill();
       setHUD();
@@ -9766,25 +9269,6 @@ net.on('uiMeetingOpen', (m) => {
       // join 요청
       if (!net.joinToken) net.joinToken = randId();
       net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken });
-
-      // Remember nick for client-side binding fallback (if joinAck/roster is delayed).
-      try{ net._nick = nick; }catch(_){}
-
-      // Start heartbeat immediately, even before joinAck. If myPlayerId is not yet known,
-      // the host can still resolve us via joinToken/clientId.
-      try{
-        if (!net._hb){
-          net._hbPid = 0;
-          net._hb = setInterval(() => {
-            try{
-              if (!G.net || G.net !== net) { clearInterval(net._hb); net._hb = null; return; }
-              const pid = Number(net.myPlayerId || 0);
-              net._hbPid = pid;
-              net.post({ t: 'ping', playerId: pid, joinToken: (net.joinToken != null) ? String(net.joinToken) : null });
-            }catch(_){}
-          }, 1200);
-        }
-      }catch(_){ }
 
       // If the first join packet is dropped (common when the iframe loads before the room
       // starts relaying packets), keep retrying until we get joinAck.
@@ -9857,6 +9341,12 @@ net.on('uiMeetingOpen', (m) => {
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
     // Host is decided by the room (avoid multiple-host races when more players join).
     window.__EMBED_IS_HOST__ = !!init.isHost;
+    // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
+    window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
+    window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
+    window.__EMBED_PRACTICE__ = (typeof init.practice === 'boolean')
+      ? !!init.practice
+      : ((window.__EMBED_EXPECTED_HUMANS__ > 0) ? (window.__EMBED_EXPECTED_HUMANS__ < 4) : false);
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,256); }catch(_){ }
@@ -9877,19 +9367,23 @@ net.on('uiMeetingOpen', (m) => {
     // (Prevents 4+ rooms from incorrectly starting in practice due to slow iframe loads.)
     if (window.__EMBED_IS_HOST__){
       const t0 = now();
-      const MAX_WAIT = 4500;   // ms
+      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
+      const minReal = 4;
+      const target = (expected > 0) ? expected : minReal;
+      // Give a bit more time in embed (iframe) so late joinAck/roster packets don't push the room into practice.
+      const MAX_WAIT = (expected > minReal) ? 9000 : 6500;   // ms
       const CHECK_MS = 120;    // ms
       const it = setInterval(()=>{
         try{
           if (!G.net || !G.net.isHost) { clearInterval(it); return; }
           if (G.host.started) { clearInterval(it); try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ } return; }
           const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
-          if (n >= 4 || (now() - t0) > MAX_WAIT){
+          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
+          if (ready || (now() - t0) > MAX_WAIT){
             clearInterval(it);
             try{ startBtn.click(); }catch(_){ }
-            try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ }
           }
-        }catch(_){ }
+        }catch(_){}
       }, CHECK_MS);
     } else {
       try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }

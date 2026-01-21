@@ -1591,7 +1591,13 @@ function sendCoopBridgeInit(){
       return cnt;
     }catch(_){ return 0; }
   })();
-  const solo = (humanCount <= 1);
+  const expectedHumans = (()=>{
+    try{
+      const v = Number(coop.expectedHumans || room?.state?.playerCount || humanCount || 0);
+      return (v > 0) ? v : humanCount;
+    }catch(_){ return humanCount; }
+  })();
+  const solo = (expectedHumans <= 1);
   const isHostFromState = (()=>{
     try{ return !!room?.state?.players?.get(mySessionId)?.isHost; }catch(_){ return false; }
   })();
@@ -1606,6 +1612,8 @@ function sendCoopBridgeInit(){
     seat,
     isHost: effectiveIsHost,
     solo,
+    expectedHumans,
+    humanCount,
     roomCode: roomId,
     level: coop.level || 1,
     practice: (() => {
@@ -1614,7 +1622,7 @@ function sendCoopBridgeInit(){
       // SuhakTokki: practice for 1~3 players, real game (teacher/crew) for 4+.
       // This also avoids a timing/race where bridge_init can be sent before all players
       // are present in state, incorrectly forcing practice in 4+ rooms.
-      if (coop.meta && coop.meta.id === "suhaktokki") return (humanCount < 4);
+      if (coop.meta && coop.meta.id === "suhaktokki") return (expectedHumans < 4);
       return false;
     })()
   });
@@ -1923,6 +1931,21 @@ function startSim(){
 		}catch(_){ }
 
 		renderPlayers();
+
+// Coop embed: propagate host changes to the iframe so mid-game host migration works.
+try{
+	if (coop.active && duel.iframeEl && room?.state?.players?.has?.(mySessionId)){
+		const me = room.state.players.get(mySessionId);
+		const meIsHost = !!me?.isHost;
+		let hostSid = null;
+		room.state.players.forEach((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
+		if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
+			coop._lastHostSid = hostSid;
+			coop._lastMeIsHost = meIsHost;
+			postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
+		}
+	}
+}catch(_){ }
       };
       room.state.players.onAdd = renderPlayers;
       room.state.players.onRemove = renderPlayers;
@@ -1936,6 +1959,7 @@ function startSim(){
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
+        try{ coop.expectedHumans = Number(m?.playerCount || room?.state?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
         // reset per-game transient UI/state
         try{ spec.last.clear(); }catch(_){ }
