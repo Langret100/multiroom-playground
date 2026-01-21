@@ -1628,6 +1628,8 @@
     post(msg) {
       msg.room = this.room;
       msg.from = this.clientId;
+      // Some relays may rewrite/strip `from`; keep a dedicated stable client id.
+      msg.cid = this.clientId;
       this.bc.postMessage(msg);
     }
 
@@ -1764,6 +1766,8 @@
       if (!this.ws || this.ws.readyState !== 1) return;
       msg.room = this.room;
       msg.from = this.clientId;
+      // Stable per-client id for robust routing/rebinding.
+      msg.cid = this.clientId;
       try { this.ws.send(JSON.stringify(msg)); } catch (_) {}
     }
 
@@ -1845,6 +1849,8 @@
     post(msg){
       msg.room = this.room;
       msg.from = this.clientId;
+	  // Stable per-iframe id for robust routing even if `from` is rewritten.
+	  msg.cid = this.clientId;
 	      if (this.sessionId) msg.sessionId = this.sessionId;
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
@@ -8080,7 +8086,10 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
     net.on('join', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const from = (m && m.from != null) ? String(m.from) : '';
+      // Robust sender identity: some relays rewrite/strip `from`, but we also carry `cid`.
+      const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
+        ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
+        : '';
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
 
       // Dedupe joins using a per-join token (NOT clientId), because embed sessionId can be shared
@@ -8092,27 +8101,27 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
         const p = st.players[pid];
         if (p) {
           p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
-          p.clientId = from;
+          p.clientId = from || p.clientId || null;
           p.joinToken = jt || p.joinToken || null;
           p.isBot = false;
           p.alive = true;
           p.lastSeen = now();
         }
-        net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
+        net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
         return;
       }
 
       const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
       if (playersCount >= 8) {
-        net.post({ t: 'joinDenied', toClient: from || m.from, reason: '방이 가득 찼어!', joinToken: jt });
+        net.post({ t: 'joinDenied', toCid: from || null, toClient: from || null, reason: '방이 가득 찼어!', joinToken: jt });
         return;
       }
-      const pid = hostAddPlayer(m.nick || '토끼', false, from || m.from);
+      const pid = hostAddPlayer(m.nick || '토끼', false, from || null);
       try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.joinToken = jt || p.joinToken || null; } }catch(_){ }
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
       if (from) G.host._clientToPlayer.set(from, pid);
-      net.post({ t: 'joinAck', toClient: from || m.from, playerId: pid, isHost: false, joinToken: jt });
+      net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
 
       // If we started in practice (e.g., embed auto-start) and now have enough players,
@@ -8122,19 +8131,25 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
         st.practice = false;
         st.timeLeft = 180;
         st.maxTime = 180;
+        st.infiniteMissions = !st.practice;
         hostAssignTeacher();
         for (const pp of Object.values(st.players)) {
           sendToPlayer(pp.id, { t: 'toast', text: (pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터)' : '당신은 학생토끼야! 미션을 해결해!' });
+          // Refresh role reveal for everyone on conversion.
+          sendToPlayer(pp.id, { t: 'uiRoleReveal', role: pp.role, practice: false });
         }
         broadcast({ t: 'toast', text: '인원이 모여서 본게임으로 전환! (선생토끼 배정)' });
+        broadcastState(true);
       }
     });
 
     net.on('joinAck', (m) => {
-      // Some relays may strip routing fields; only enforce toClient when it exists.
-      if (m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
-      // If multiple clients share the same clientId (possible in embed/bridge),
-      // only accept the ack that matches my joinToken.
+      // Prefer `toCid` routing when available; fall back to legacy `toClient`.
+      if (m.toCid != null && String(m.toCid) !== String(net.clientId)) return;
+      if (m.toCid == null && m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
+      // If ack doesn't include routing OR joinToken, it's ambiguous -> ignore and recover from `state`.
+      if (m.toCid == null && m.toClient == null && !m.joinToken) return;
+      // If joinToken is present, enforce it.
       if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       net.myPlayerId = Number(m.playerId || 0);
 
@@ -8142,6 +8157,7 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
       try{
         if (!net.isHost) {
           if (net._hb) { clearInterval(net._hb); net._hb = null; }
+          net._hbPid = Number(net.myPlayerId || 0);
           net._hb = setInterval(()=>{
             try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
           }, 1000);
@@ -8162,10 +8178,11 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
     });
 
     net.on('joinDenied', (m) => {
-      if (m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
+      if (m.toCid != null && String(m.toCid) !== String(net.clientId)) return;
+      if (m.toCid == null && m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
       if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
       showToast(m.reason || '참가 실패');
-      try{ if (net._hb) { clearInterval(net._hb); net._hb = null; } }catch(_){}
+      try{ if (net._hb) { clearInterval(net._hb); net._hb = null; } net._hbPid = 0; }catch(_){}
       net.close();
       G.net = null;
     });
@@ -8388,12 +8405,31 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
           }
         }
       }catch(_){ }
+
+      // If joinAck was dropped (common in embed relays), start heartbeat as soon as
+      // we can bind `myPlayerId` from authoritative state, so the host doesn't prune us.
+      try{
+        if (!net.isHost) {
+          const pid = Number(net.myPlayerId || 0);
+          if (pid) {
+            if (net._hb && net._hbPid !== pid) { try{ clearInterval(net._hb); }catch(_){} net._hb = null; }
+            if (!net._hb) {
+              net._hbPid = pid;
+              net._hb = setInterval(()=>{
+                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+              }, 1000);
+            }
+            // stop join retry loop once bound
+            if (net._joinRetry) { try{ clearInterval(net._joinRetry); }catch(_){} net._joinRetry = null; }
+          }
+        }
+      }catch(_){ }
       
 
       // Smooth remote players on clients so other players look less 'choppy'.
 try {
   if (!net.isHost) {
-    if (!G.netSmooth) G.netSmooth = { players: new Map(), bufferMs: 180 };
+    if (!G.netSmooth) G.netSmooth = { players: new Map(), bufferMs: 260 };
     const sm = G.netSmooth.players;
     const tNow = now();
     // Use local receipt time for interpolation (host performance.now() is not comparable across clients).
