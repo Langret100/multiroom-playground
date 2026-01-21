@@ -5763,7 +5763,7 @@ function drawLightMask(cam, me, st){
         if (ex && typeof ex.rx === 'number' && typeof ex.ry === 'number') {
           wx = ex.rx;
           wy = ex.ry;
-          if (wx !== p.x || wy !== p.y) pDraw = ({ ...p, x: wx, y: wy, vx: (typeof ex.rvx==='number'?ex.rvx:p.vx), vy: (typeof ex.rvy==='number'?ex.rvy:p.vy) });
+          if (wx !== p.x || wy !== p.y) pDraw = ({ ...p, x: wx, y: wy });
         }
       }
 
@@ -7956,88 +7956,47 @@ function drawLightMask(cam, me, st){
   
   // ---------- Remote player smoothing (non-host render) ----------
   // Non-host clients receive host snapshots with jitter and variable cadence.
-  // We buffer snapshots and render slightly in the past (interpolation) for smooth motion.
+  // We keep a per-player render state, dead-reckon using host velocities, and
+  // smooth towards the predicted position each frame.
   function clientUpdateRemoteRender(dt) {
     const net = G.net;
     if (!net || net.isHost) return;
     const rs = G.remoteSmooth;
     if (!rs || !rs.remotes) return;
 
-    const interpDelayMs = (rs.interpDelayMs || 240);
-    const maxExtrapMs = (rs.maxExtrapMs || 320);
-    const followK = (rs.k || 38);
-    const snapDist = (rs.snapDist || (TS * 8));
-
-    const tNow = now();
-    const renderT = tNow - interpDelayMs;
+    const lead = (rs.leadMs || 120) / 1000;     // small look-ahead to reduce visible lag
+    const k = (rs.k || 22);                     // smoothing strength
+    const snapDist = (rs.snapDist || (TS * 8)); // hard snap if too far
+    const t = now();
 
     for (const ex of rs.remotes.values()) {
       if (!ex) continue;
-      const buf = ex.buf;
-      if (!buf || !buf.length) continue;
+      const ageSec = clamp((t - (ex.at || t)) / 1000, 0, 1.2);
 
-      // Drop very old samples (keep enough to cover delay + jitter).
-      while (buf.length > 2 && buf[1].t < renderT - 1800) buf.shift();
-
-      // Find two samples around renderT
-      let a = null;
-      let b = null;
-      for (let i = 0; i < buf.length; i++) {
-        const s = buf[i];
-        if (s.t <= renderT) a = s;
-        if (s.t > renderT) { b = s; break; }
-      }
-
-      let tx, ty;
-      if (!a) {
-        const s0 = buf[0];
-        tx = s0.x; ty = s0.y;
-      } else if (b) {
-        const span = Math.max(1, b.t - a.t);
-        const u = clamp((renderT - a.t) / span, 0, 1);
-        tx = a.x + (b.x - a.x) * u;
-        ty = a.y + (b.y - a.y) * u;
-      } else {
-        // No future sample yet: short extrapolation from last known
-        const sl = buf[buf.length - 1];
-        const dtMs = clamp(renderT - sl.t, 0, maxExtrapMs);
-        tx = sl.x + (sl.vx || 0) * (dtMs / 1000);
-        ty = sl.y + (sl.vy || 0) * (dtMs / 1000);
-      }
+      // Predict where the player should be *now* given last snapshot + velocity.
+      const px = (ex.x || 0) + (ex.vx || 0) * (ageSec + lead);
+      const py = (ex.y || 0) + (ex.vy || 0) * (ageSec + lead);
 
       if (typeof ex.rx !== 'number' || typeof ex.ry !== 'number') {
-        ex.rx = tx; ex.ry = ty;
-        ex.rvx = 0; ex.rvy = 0;
+        ex.rx = px; ex.ry = py;
         continue;
       }
 
-      const prevRx = ex.rx;
-      const prevRy = ex.ry;
-
-      const dx = tx - ex.rx;
-      const dy = ty - ex.ry;
+      const dx = px - ex.rx;
+      const dy = py - ex.ry;
       const d = Math.hypot(dx, dy);
 
-      // Snap on large error or special states
+      // Snap on large error or special states (vents/down/death).
       if (d > snapDist || ex.vent || ex.down || !ex.alive) {
-        ex.rx = tx; ex.ry = ty;
-        ex.rvx = 0; ex.rvy = 0;
+        ex.rx = px; ex.ry = py;
         continue;
       }
 
-      // Smooth follow (hides packet jitter)
-      const a2 = 1 - Math.exp(-dt * followK);
-      ex.rx += dx * a2;
-      ex.ry += dy * a2;
-
-      // derive smooth velocity for animation/direction
-      if (dt > 1e-6) {
-        ex.rvx = (ex.rx - prevRx) / dt;
-        ex.rvy = (ex.ry - prevRy) / dt;
-      }
+      const a = 1 - Math.exp(-dt * k);
+      ex.rx += dx * a;
+      ex.ry += dy * a;
     }
   }
-
 
 // ---------- Main loop ----------
   let lastFrame = now();
@@ -8065,7 +8024,7 @@ function drawLightMask(cam, me, st){
       }
       // 스냅샷
       if (!G.host._lastBroadcast) G.host._lastBroadcast = 0;
-      if (t - G.host._lastBroadcast > 22) {
+      if (t - G.host._lastBroadcast > 33) {
         G.host._lastBroadcast = t;
         broadcastState();
       }
@@ -8497,7 +8456,7 @@ function drawLightMask(cam, me, st){
       // Smooth remote players on clients so other players look less 'choppy'.
       try{
         if (!net.isHost) {
-          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), interpDelayMs: 240, maxExtrapMs: 320, k: 38, snapDist: TS * 8 };
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
           const sm = G.remoteSmooth.remotes;
           const tNow = now();
           const myId = Number(net.myPlayerId || 0);
@@ -8514,7 +8473,7 @@ function drawLightMask(cam, me, st){
 
             let ex = sm.get(pid);
             if (!ex) {
-              ex = { rx: pp.x, ry: pp.y, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0, at: tNow, alive: !!pp.alive, down: !!pp.down, vent: !!pp.vent, buf: [{ t: tNow, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0 }] };
+              ex = { rx: pp.x, ry: pp.y, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0, at: tNow, alive: !!pp.alive, down: !!pp.down, vent: !!pp.vent };
               sm.set(pid, ex);
               continue;
             }
@@ -8527,15 +8486,7 @@ function drawLightMask(cam, me, st){
             ex.down = !!pp.down;
             ex.vent = !!pp.vent;
 
-            if (!ex.buf) ex.buf = [];
-            // append snapshot for interpolation
-            ex.buf.push({ t: tNow, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0 });
-            if (ex.buf.length > 32) ex.buf.splice(0, ex.buf.length - 32);
-
-            if (special) {
-              ex.rx = pp.x; ex.ry = pp.y;
-              ex.buf = [{ t: tNow, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0 }];
-            }
+            if (special) { ex.rx = pp.x; ex.ry = pp.y; }
           }
         }
       }catch(_){}
