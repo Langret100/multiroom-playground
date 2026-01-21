@@ -8397,13 +8397,30 @@ function drawLightMask(cam, me, st){
     });
 
     net.on('joinAck', (m) => {
-      // Prefer `toCid` routing when available; fall back to legacy `toClient`.
-      if (m.toCid != null && String(m.toCid) !== String(net.clientId)) return;
-      if (m.toCid == null && m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
-      // If ack doesn't include routing OR joinToken, it's ambiguous -> ignore and recover from `state`.
-      if (m.toCid == null && m.toClient == null && !m.joinToken) return;
-      // If joinToken is present, enforce it.
-      if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
+      // Robust routing: different relays may address clients by per-iframe clientId OR by sessionId.
+      const myCid = String(net.clientId || '');
+      const mySid = (net.sessionId != null) ? String(net.sessionId) : '';
+
+      // If joinToken is present, enforce it first (strongest signal).
+      const hasToken = (m.joinToken != null && String(m.joinToken) !== '');
+      if (hasToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
+      const tokenOk = (hasToken && net.joinToken && String(m.joinToken) === String(net.joinToken));
+
+      // If token matches, accept even if routing fields are rewritten by the room shell.
+      if (!tokenOk) {
+        // Prefer `toCid` routing when available; fall back to legacy `toClient`.
+        if (m.toCid != null) {
+          const to = String(m.toCid);
+          if (to !== myCid && (!mySid || to !== mySid)) return;
+        } else if (m.toClient != null) {
+          const to = String(m.toClient);
+          if (to !== myCid && (!mySid || to !== mySid)) return;
+        } else {
+          // If ack doesn't include routing OR joinToken, it's ambiguous -> ignore and recover from `state`.
+          return;
+        }
+      }
+
       net.myPlayerId = Number(m.playerId || 0);
 
       // heartbeat (client -> host)
@@ -8431,9 +8448,25 @@ function drawLightMask(cam, me, st){
     });
 
     net.on('joinDenied', (m) => {
-      if (m.toCid != null && String(m.toCid) !== String(net.clientId)) return;
-      if (m.toCid == null && m.toClient != null && String(m.toClient) !== String(net.clientId)) return;
-      if (m.joinToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
+      const myCid = String(net.clientId || '');
+      const mySid = (net.sessionId != null) ? String(net.sessionId) : '';
+
+      const hasToken = (m.joinToken != null && String(m.joinToken) !== '');
+      if (hasToken && net.joinToken && String(m.joinToken) !== String(net.joinToken)) return;
+      const tokenOk = (hasToken && net.joinToken && String(m.joinToken) === String(net.joinToken));
+
+      if (!tokenOk) {
+        if (m.toCid != null) {
+          const to = String(m.toCid);
+          if (to !== myCid && (!mySid || to !== mySid)) return;
+        } else if (m.toClient != null) {
+          const to = String(m.toClient);
+          if (to !== myCid && (!mySid || to !== mySid)) return;
+        } else {
+          return;
+        }
+      }
+
       showToast(m.reason || '참가 실패');
       try{ if (net._hb) { clearInterval(net._hb); net._hb = null; } net._hbPid = 0; }catch(_){}
       net.close();
