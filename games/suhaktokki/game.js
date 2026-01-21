@@ -21,6 +21,7 @@
       g.webkitImageSmoothingEnabled = false;
       g.msImageSmoothingEnabled = false;
     }catch(_){ }
+
     try{
       canvasEl.style.imageRendering = 'pixelated';
     }catch(_){ }
@@ -47,6 +48,25 @@
   } catch (_) {}
 
   const lobby = document.getElementById('lobby');
+  // Boot loading overlay (index.html). In embed mode, this prevents black/flicker frames while
+  // assets/join/start are still pending.
+  const bootLoading = document.getElementById('bootLoading');
+  const bootLoadingText = document.getElementById('bootLoadingText');
+  function bootShow(msg){
+    try{
+      if (!bootLoading) return;
+      bootLoading.classList.remove('hidden');
+      if (bootLoadingText && msg != null) bootLoadingText.textContent = String(msg);
+    }catch(_){ }
+  }
+  function bootHide(){
+    try{ if (bootLoading) bootLoading.classList.add('hidden'); }catch(_){ }
+  }
+
+  // Default behavior:
+  // - Non-embed: hide boot overlay immediately (show normal lobby UI).
+  // - Embed: keep it visible until assets + all players are ready, then hide once.
+  try{ if (!EMBED) bootHide(); else bootShow('로딩 중...'); }catch(_){ }
   const nickEl = document.getElementById('nick');
   const roomEl = document.getElementById('room');
   const joinBtn = document.getElementById('joinBtn');
@@ -1031,6 +1051,9 @@
   }
 
   async function loadAssets() {
+    // Kick off the loading/title image as early as possible so the first paint isn't black.
+    const _pLoadingImg = loadImage('assets/mathrabbitloading.png');
+
     // Ultra-defensive loading: Cloudflare Worker/PAGES routing or CSP can make asset fetch fail.
     // We always fall back to inline blobs or a minimal built-in map so the game can still run.
     const DEFAULT_TILES_META = { tileSize: 32, columns: 8, tiles: {} };
@@ -1059,7 +1082,8 @@
     if (!AS.objsMeta) AS.objsMeta = DEFAULT_OBJS_META;
     if (!AS.map || !AS.map.layers) AS.map = makeFallbackMap();
 
-    AS.loadingImg = await loadImage('assets/mathrabbitloading.png');
+    // Await after JSON so it can download in parallel.
+    AS.loadingImg = await _pLoadingImg;
 
     AS.tilesImg = await loadImage('assets/tiles_rabbithole.png');
     AS.objsImg = await loadImage('assets/objects_rabbithole.png');
@@ -3306,7 +3330,6 @@ function hostHandleInteract(playerId) {
 
       // Among-Us style quick door animation (vines spill down/up)
       const t0 = now();
-      try{ if (!G.ui) G.ui = {}; G.ui._embedWaitingStart = true; }catch(_){ }
       d.anim = { k: d.closed ? 'close' : 'open', s: t0, e: t0 + (d.closed ? 260 : 200) };
 
       if (d.closed) {
@@ -5764,6 +5787,8 @@ function drawCenterNoticeOverlay(){
     
 // Show a proper loading/title screen instead of a black canvas while assets/join/start are pending.
 if (!AS.map || !mapCanvas) {
+  // In embed mode, keep the HTML loading overlay visible from the first paint.
+  try{ if (EMBED) bootShow('로딩 중...'); }catch(_){ }
   drawLoadingScreen();
   drawCenterNoticeOverlay();
   return;
@@ -5773,14 +5798,33 @@ const st = G.state;
 
 // Embedded mode: while we're still in lobby / waiting for host start, show the loading/title art.
 try{
-  const isEmbed = !!(G.ui && G.ui.embedJoined);
+  // In iframe embed mode, treat ourselves as embed from the very first frame.
+  const isEmbed = !!EMBED || !!(G.ui && G.ui.embedJoined);
   if (isEmbed && (G.phase === 'lobby' || !st.started)) {
-    const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart) ? '플레이어 접속을 기다리는 중...' : null;
-    drawLoadingScreen(hint);
+    const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart)
+      ? '플레이어 접속을 기다리는 중...'
+      : '로딩 중...';
+    try{ if (!(G.ui && G.ui._bootHidden)) bootShow(hint); }catch(_){ }
+    // Keep drawing the canvas title art as a fallback (HTML overlay is on top in embed).
+    drawLoadingScreen((hint === '플레이어 접속을 기다리는 중...') ? hint : null);
     drawCenterNoticeOverlay();
     return;
   }
 }catch(_){}
+
+    // [boot] hide overlay once started
+    // In embed (iframe) mode: once the match is actually started, hide the HTML boot overlay.
+    // Keep this outside the waiting-early-return branch so it only runs when we are about to render the world.
+    if (EMBED) {
+      try{
+        if (!G.ui) G.ui = {};
+        if (!G.ui._bootHidden && G.phase !== 'lobby' && st && st.started) {
+          bootHide();
+          G.ui._bootHidden = true;
+        }
+      }catch(_){ }
+    }
+
 
     const me = st.players[G.net?.myPlayerId] || Object.values(st.players)[0];
     let cam = me ? getCamera(me) : { x: 0, y: 0, vw: viewW / ZOOM, vh: viewH / ZOOM };
