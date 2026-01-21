@@ -2235,6 +2235,9 @@
     } catch (_) {
       // non-fatal
     }
+
+    // Build initial door-solid set (for closed doors / future toggles)
+    try{ rebuildDoorSolidSet(); }catch(_){ }
   }
 
 
@@ -2588,12 +2591,17 @@
     }
 
     // 문 잠금 해제
+    let doorSolidDirty = false;
     for (const d of Object.values(st.doors)) {
       if (d.closedUntil && now() >= d.closedUntil) {
         d.closedUntil = 0;
-        d.closed = false;
+        if (d.closed) { d.closed = false; doorSolidDirty = true; }
       }
     }
+    if (doorSolidDirty) {
+      try{ rebuildDoorSolidSet(); }catch(_){ }
+    }
+
 
     // Clear mission progress % markers after a short delay (so 100% is briefly visible).
     for (const p of Object.values(st.players)) {
@@ -2616,6 +2624,7 @@
     }
 
     // 이동
+    const hostPid = (G.net && G.net.isHost) ? Number(G.net.myPlayerId || 0) : 0;
     for (const p of Object.values(st.players)) {
       if (!p.alive) continue;
       if (p.down) continue;
@@ -2643,9 +2652,20 @@
         }
       }
       const frozen = now() < p.frozenUntil;
-      const inp = G.host.inputs.get(p.id) || { mvx: 0, mvy: 0 };
-      let mvx = frozen ? 0 : (inp.mvx || 0);
-      let mvy = frozen ? 0 : (inp.mvy || 0);
+      const inpRec = G.host.inputs.get(p.id) || { mvx: 0, mvy: 0, at: 0 };
+      const age = inpRec.at ? (now() - inpRec.at) : 0;
+      let mvx = frozen ? 0 : (inpRec.mvx || 0);
+      let mvy = frozen ? 0 : (inpRec.mvy || 0);
+
+      // Network jitter/dropouts: avoid immediate "stop-start" on host view.
+      // After ~150ms without input updates, slowly fade movement to 0 over ~250ms.
+      if (!p.isBot && p.id !== hostPid) {
+        if (age > 150) {
+          const k = clamp(1 - (age - 150) / 250, 0, 1);
+          mvx *= k;
+          mvy *= k;
+        }
+      }
       if (now() < (p.invertUntil || 0)) { mvx = -mvx; mvy = -mvy; }
 
       // Save intended direction for rendering (prevents left/right input showing as back/front).
@@ -2712,10 +2732,10 @@
     const d = Math.hypot(dx, dy);
     if (d < 10) {
       p.botBrain.target = null;
-      G.host.inputs.set(p.id, { mvx: 0, mvy: 0 });
+      G.host.inputs.set(p.id, { mvx: 0, mvy: 0, at: now() });
       return;
     }
-    G.host.inputs.set(p.id, { mvx: dx / d, mvy: dy / d });
+    G.host.inputs.set(p.id, { mvx: dx / d, mvy: dy / d, at: now() });
   }
 
   
@@ -2978,8 +2998,68 @@ function tileAtPixel(x, y) {
     return false;
   }
 
-  // Legacy stub (kept for compatibility): closed doors no longer mark tiles solid.
-  function doorSolidAt(tx, ty) { return false; }
+  // ---------- Door solid "invisible wall" ----------
+// Closed doors create temporary solid tiles on BOTH sides of the opening.
+// This guarantees you cannot pass room <-> corridor when a door is closed,
+// even if edge-based checks miss due to large dt or diagonal movement.
+function rebuildDoorSolidSet() {
+  const st = G.state;
+  if (!st) return;
+  if (!G._doorSolidSet) G._doorSolidSet = new Set();
+  const set = G._doorSolidSet;
+  set.clear();
+
+  for (const obj of Object.values(st.objects || {})) {
+    if (!obj || obj.type !== 'root_door') continue;
+    const d = st.doors && st.doors[obj.id];
+    if (!d || !d.closed) continue;
+
+    const ox = obj.x | 0;
+    const oy = obj.y | 0;
+
+    // Door normal (room -> corridor). Prefer authored metadata; infer from room rect if needed.
+    let odx = (obj._doorDx | 0) || 0;
+    let ody = (obj._doorDy | 0) || 0;
+    if (Math.abs(odx) + Math.abs(ody) !== 1) {
+      odx = 0; ody = 0;
+      const rect = roomRectOf(obj.roomId);
+      if (rect) {
+        const dirs = [ [0,-1], [0,1], [-1,0], [1,0] ];
+        for (const [ddx, ddy] of dirs) {
+          const rx = ox - ddx;
+          const ry = oy - ddy;
+          if (inRect(rect, rx, ry)) { odx = ddx; ody = ddy; break; }
+        }
+      }
+      if (Math.abs(odx) + Math.abs(ody) !== 1) { odx = 0; ody = 1; }
+    }
+
+    const info = doorCrossInfoAt(ox, oy, obj);
+    if (!info) continue;
+    const span = doorSpanOffsetsAt(ox, oy, info);
+
+    // Mark all doorway tiles across the opening as solid (both sides).
+    for (let off = span.minOff; off <= span.maxOff; off++) {
+      const cx = span.spanX ? (ox + off) : ox;
+      const cy = span.spanX ? oy : (oy + off);
+      const rx = cx - odx;
+      const ry = cy - ody;
+
+      set.add(cx + "," + cy);
+      set.add(rx + "," + ry);
+    }
+
+    // Also include the authored door tile itself as a safety plug.
+    set.add(ox + "," + oy);
+  }
+}
+
+function doorSolidAt(tx, ty) {
+  const set = G._doorSolidSet;
+  if (!set || !set.size) return false;
+  return set.has((tx | 0) + "," + (ty | 0));
+}
+
 
   function waterAtTile(tx, ty) {
     const st = G.state;
@@ -3006,6 +3086,7 @@ function tileAtPixel(x, y) {
   function isSolidPixelFor(player, x, y) {
     const t = tileAtPixel(x, y);
     if (t.solid) return true;
+    if (doorSolidAt(t.tx, t.ty)) return true;
     if (waterBlockSolidAt(t.tx, t.ty, player)) return true;
     return false;
   }
@@ -3209,6 +3290,10 @@ function tileAtPixel(x, y) {
       if (d.closed) {
         broadcast({ t: 'fx', kind: 'doorClose', x: obj.x, y: obj.y, bornAt: t0, id: obj.id });
       }
+
+
+      // Rebuild invisible-wall tiles for closed doors
+      try{ rebuildDoorSolidSet(); }catch(_){ }
 
       broadcastState(true);
       return;
@@ -7591,7 +7676,11 @@ default:
       else if (Math.abs(avx) > 0.2) dir = 2;
     }
 
-    const row = ((p.color || 0) % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS) + motionMap[motion] * DIR_ROWS + dir;
+    const colorRowsAvail = (AS.charsImg && AS.charsImg.height)
+      ? Math.max(1, Math.floor((AS.charsImg.height / SPR_H) / (MOTION_ROWS * DIR_ROWS)))
+      : COLOR_ROWS;
+    const colorIdx = (((p.color || 0) % colorRowsAvail) + colorRowsAvail) % colorRowsAvail;
+    const row = colorIdx * (MOTION_ROWS * DIR_ROWS) + motionMap[motion] * DIR_ROWS + dir;
 
     // Slight y offset when fainted so the body lies on the ground (and doesn't look like it's floating).
     const ySprite = y + (p.down ? 14 : 0);
@@ -8048,7 +8137,7 @@ default:
       // If I'm the host, apply my input locally (do NOT rely on server echo)
       // so solo/practice play always responds.
       if (G.net.isHost && G.net.myPlayerId){
-        G.host.inputs.set(Number(G.net.myPlayerId || 0), { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1) });
+        G.host.inputs.set(Number(G.net.myPlayerId || 0), { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1), at: now() });
       } else {
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
         if (t - G.local._lastInputAt > 33) {
@@ -8234,7 +8323,7 @@ default:
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
-      G.host.inputs.set(pid, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1) });
+      G.host.inputs.set(pid, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1), at: now() });
     });
 
     net.on('emote', (m) => {
@@ -8442,6 +8531,7 @@ default:
 
       G.state.missions = m.missions;
       G.state.doors = m.doors;
+      try{ rebuildDoorSolidSet(); }catch(_){ }
       G.state.waterBlocks = m.waterBlocks;
       G.state.lamps = m.lamps || {};
       G.state.leaks = m.leaks || {};
