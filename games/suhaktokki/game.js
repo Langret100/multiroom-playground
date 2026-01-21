@@ -5769,59 +5769,50 @@ function drawLightMask(cam, me, st){
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
 
-  // IMPORTANT:
-  // Some browsers/devices can end up with an active clip region on the main ctx (from other draw calls),
-  // which would invert vision (only the cone gets darkened). To make vision deterministic, render the
-  // darkness overlay on a dedicated offscreen canvas (fresh clip state), then blit it on top.
+  // IMPORTANT: Do NOT use destination-out directly on the main canvas.
+  // It would erase the already-rendered world (making the visible region look inverted).
+  // Instead, render the darkness/vision mask on an offscreen canvas, then draw it on top.
   if (!G.ui) G.ui = {};
-  let vc = G.ui._visionCanvas;
-  let vctx = G.ui._visionCtx;
-  if (!vc || !vctx) {
-    vc = document.createElement('canvas');
-    vctx = vc.getContext('2d');
-    try{
-      vctx.imageSmoothingEnabled = false;
-      vctx.mozImageSmoothingEnabled = false;
-      vctx.webkitImageSmoothingEnabled = false;
-      vctx.msImageSmoothingEnabled = false;
-    }catch(_){ }
-    G.ui._visionCanvas = vc;
-    G.ui._visionCtx = vctx;
+  if (!G.ui._lightMaskC) {
+    G.ui._lightMaskC = document.createElement('canvas');
+    G.ui._lightMaskCtx = G.ui._lightMaskC.getContext('2d');
   }
-  if (vc.width !== viewW || vc.height !== viewH) {
-    vc.width = viewW;
-    vc.height = viewH;
-    try{ vctx.imageSmoothingEnabled = false; }catch(_){ }
+  const mC = G.ui._lightMaskC;
+  const mctx = G.ui._lightMaskCtx;
+  if (!mctx) return;
+
+  if (mC.width !== viewW || mC.height !== viewH) {
+    mC.width = viewW;
+    mC.height = viewH;
   }
 
-  vctx.save();
-  try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
-  vctx.clearRect(0, 0, viewW, viewH);
+  // 1) draw darkness overlay to mask canvas
+  mctx.save();
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.clearRect(0, 0, viewW, viewH);
+  mctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+  mctx.fillRect(0, 0, viewW, viewH);
 
-  // darkness overlay
-  vctx.fillStyle = `rgba(0,0,0,${overlayA})`;
-  vctx.fillRect(0, 0, viewW, viewH);
+  // 2) punch visible areas out of the darkness mask
+  mctx.globalCompositeOperation = 'destination-out';
 
-  // punch visible areas with soft gradients
-  vctx.globalCompositeOperation = 'destination-out';
-
-  // near body reveal: tiny circle around the player (so you can always see yourself)
+  // near body reveal: small circle around the player (so you can always see yourself)
   try{
     const r0 = Math.max(2, nearR);
     const r1 = Math.max(r0 + 2, nearR + nearFeather);
-    const g0 = vctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
+    const g0 = mctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
     const mid = clamp(r0 / r1, 0, 1);
     g0.addColorStop(0.00, 'rgba(0,0,0,1)');
     g0.addColorStop(mid,  'rgba(0,0,0,1)');
     g0.addColorStop(1.00, 'rgba(0,0,0,0)');
-    vctx.fillStyle = g0;
-    vctx.beginPath();
-    vctx.arc(cx, cy, r1, 0, Math.PI*2);
-    vctx.fill();
+    mctx.fillStyle = g0;
+    mctx.beginPath();
+    mctx.arc(cx, cy, r1, 0, Math.PI*2);
+    mctx.fill();
   }catch(_){
-    vctx.beginPath();
-    vctx.arc(cx, cy, nearR, 0, Math.PI*2);
-    vctx.fill();
+    mctx.beginPath();
+    mctx.arc(cx, cy, nearR, 0, Math.PI*2);
+    mctx.fill();
   }
 
   const layers = [
@@ -5834,36 +5825,37 @@ function drawLightMask(cam, me, st){
     const half = baseHalf * L.widen;
     const r = baseDist * L.dist;
 
-    vctx.save();
-    vctx.translate(cx, cy);
-    vctx.rotate(look);
+    mctx.save();
+    mctx.translate(cx, cy);
+    mctx.rotate(look);
 
-    vctx.beginPath();
-    vctx.moveTo(0, 0);
-    vctx.arc(0, 0, r, -half, half);
-    vctx.closePath();
-    vctx.clip();
+    // cone clip
+    mctx.beginPath();
+    mctx.moveTo(0, 0);
+    mctx.arc(0, 0, r, -half, half);
+    mctx.closePath();
+    mctx.clip();
 
     try{
-      const g = vctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      const g = mctx.createRadialGradient(0, 0, 0, 0, 0, r);
       g.addColorStop(0.00, `rgba(0,0,0,${1.00 * L.alpha})`);
       g.addColorStop(0.45, `rgba(0,0,0,${0.75 * L.alpha})`);
       g.addColorStop(1.00, 'rgba(0,0,0,0)');
-      vctx.fillStyle = g;
+      mctx.fillStyle = g;
     }catch(_){
-      vctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
+      mctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
     }
 
-    vctx.fillRect(-r, -r, r * 2, r * 2);
-    vctx.restore();
+    mctx.fillRect(-r, -r, r * 2, r * 2);
+    mctx.restore();
   }
 
-  vctx.restore();
+  mctx.restore();
 
-  // composite overlay onto main canvas (screen space)
+  // 3) draw the mask canvas on top of the already-rendered world
   ctx.save();
-  try{ ctx.setTransform(1,0,0,1,0,0); }catch(_){ }
-  ctx.drawImage(vc, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(mC, 0, 0);
   ctx.restore();
 
   // When all lamps are off, show faint lamp positions so players can find them.
@@ -5888,7 +5880,6 @@ function drawLightMask(cam, me, st){
     ctx.restore();
   }
 }
-
 
 function drawLoadingScreen(extraText=null){
   ctx.save();
