@@ -2486,6 +2486,7 @@
     }catch(_){ }
 
     broadcastState(true);
+    try{ broadcastRoster(true); }catch(_){ }
 
     if (reason) {
       broadcast({ t: 'toast', text: `${nick} 퇴장` });
@@ -4154,6 +4155,39 @@ function hostHandleInteract(playerId) {
 
     // Track last send time so the host loop can pace traffic.
     try{ G.host._lastPlayersBroadcast = now(); }catch(_){ }
+  }
+
+  // Roster packet: small-but-robust snapshot used in lobby and on join.
+  // Includes joinToken/clientId so clients can bind even if joinAck/state is missed.
+  function broadcastRoster(force=false){
+    if (!G.net || !G.net.isHost) return;
+    const st = G.state;
+    const players = {};
+    try{
+      for (const [id, p] of Object.entries(st.players || {})){
+        if (!p) continue;
+        players[id] = {
+          id: p.id,
+          nick: p.nick || '토끼',
+          color: p.color || 0,
+          role: p.role || 'crew',
+          alive: !!p.alive,
+          down: !!p.down,
+          isBot: !!p.isBot,
+          clientId: (p.clientId != null) ? String(p.clientId) : null,
+          joinToken: p.joinToken || null,
+          x: Math.round((p.x || 0) * 100) / 100,
+          y: Math.round((p.y || 0) * 100) / 100,
+          vx: Math.round((p.vx || 0) * 100) / 100,
+          vy: Math.round((p.vy || 0) * 100) / 100,
+          dir: (p.dir|0) || 0,
+          facing: (p.facing|0) || 1,
+          vent: p.vent ? 1 : 0,
+        };
+      }
+    }catch(_){ }
+    broadcast({ t:'roster', phase: G.phase, practice: !!st.practice, teacherId: st.teacherId, players, at: now(), force: !!force });
+    try{ G.host._lastRosterBroadcast = now(); }catch(_){ }
   }
 
 
@@ -8168,18 +8202,46 @@ function drawLightMask(cam, me, st){
     const rs = G.remoteSmooth;
     if (!rs || !rs.remotes) return;
 
-    const lead = (rs.leadMs || 120) / 1000;     // small look-ahead to reduce visible lag
-    const k = (rs.k || 22);                     // smoothing strength
-    const snapDist = (rs.snapDist || (TS * 8)); // hard snap if too far
-    const t = now();
+    // Interpolate slightly *in the past* to hide network jitter (Among Us style).
+    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 130);
+    const k = (rs.k || 30);
+    const snapDist = (rs.snapDist || (TS * 6));
+    const tNow = now();
+    const targetT = tNow - bufferMs;
 
     for (const ex of rs.remotes.values()) {
       if (!ex) continue;
-      const ageSec = clamp((t - (ex.at || t)) / 1000, 0, 1.2);
+      const samples = ex.samples || (ex.samples = []);
+      if (!samples.length) continue;
 
-      // Predict where the player should be *now* given last snapshot + velocity.
-      const px = (ex.x || 0) + (ex.vx || 0) * (ageSec + lead);
-      const py = (ex.y || 0) + (ex.vy || 0) * (ageSec + lead);
+      // Keep a small window of samples.
+      while (samples.length > 8) samples.shift();
+      while (samples.length >= 3 && samples[1].t < targetT - 600) samples.shift();
+
+      let px, py;
+
+      const first = samples[0];
+      const last = samples[samples.length - 1];
+
+      if (targetT <= first.t) {
+        px = first.x; py = first.y;
+      } else if (targetT >= last.t) {
+        // If we're ahead of the newest sample (rare), lightly dead-reckon.
+        const dtSec = clamp((targetT - last.t) / 1000, 0, 0.25);
+        px = last.x + (last.vx || 0) * dtSec;
+        py = last.y + (last.vy || 0) * dtSec;
+      } else {
+        // Find two samples around targetT and lerp.
+        let s0 = first, s1 = last;
+        for (let i = 0; i < samples.length - 1; i++) {
+          const a = samples[i], b = samples[i + 1];
+          if (a.t <= targetT && targetT <= b.t) { s0 = a; s1 = b; break; }
+        }
+        const denom = (s1.t - s0.t) || 1;
+        const u = clamp((targetT - s0.t) / denom, 0, 1);
+        px = s0.x + (s1.x - s0.x) * u;
+        py = s0.y + (s1.y - s0.y) * u;
+      }
 
       if (typeof ex.rx !== 'number' || typeof ex.ry !== 'number') {
         ex.rx = px; ex.ry = py;
@@ -8190,8 +8252,8 @@ function drawLightMask(cam, me, st){
       const dy = py - ex.ry;
       const d = Math.hypot(dx, dy);
 
-      // Snap on large error or special states (vents/down/death).
-      if (d > snapDist || ex.vent || !ex.alive) {
+      // Snap on big error or special states (vents/death/down).
+      if (d > snapDist || ex.vent || !ex.alive || ex.down) {
         ex.rx = px; ex.ry = py;
         continue;
       }
@@ -8256,6 +8318,16 @@ function drawLightMask(cam, me, st){
       }
     }
 
+    // host lobby: broadcast a small roster snapshot periodically so guests who miss joinAck/state
+    // can still bind their playerId and render everyone reliably.
+    if (G.net?.isHost && !G.host.started) {
+      if (!G.host._lastRosterBroadcast) G.host._lastRosterBroadcast = 0;
+      if (t - G.host._lastRosterBroadcast > 250) {
+        G.host._lastRosterBroadcast = t;
+        try{ broadcastRoster(); }catch(_){ }
+      }
+    }
+
     // client input send
     if (G.net && G.phase === 'play') {
       // If I'm the host, apply my input locally (do NOT rely on server echo)
@@ -8313,7 +8385,7 @@ function drawLightMask(cam, me, st){
   async function joinRoom() {
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); applyPhaseUI(); return; }
     const nick = (nickEl.value || '토끼').trim().slice(0, 10);
-    const room = (roomEl.value || '1234').trim().slice(0, 64);
+    const room = (roomEl.value || '1234').trim().slice(0, 256);
 
     const wsBase = (window.__ONLINE_WS_BASE__ || '').trim();
     let net;
@@ -8362,6 +8434,7 @@ function drawLightMask(cam, me, st){
         }
         net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
+        try{ broadcastRoster(true); }catch(_){ }
         return;
       }
 
@@ -8376,6 +8449,7 @@ function drawLightMask(cam, me, st){
       if (from) G.host._clientToPlayer.set(from, pid);
       net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
+      try{ broadcastRoster(true); }catch(_){ }
 
       // If we started in practice (e.g., embed auto-start) and now have enough players,
       // switch to the real game by assigning a teacher and notifying roles.
@@ -8727,7 +8801,7 @@ function drawLightMask(cam, me, st){
       // Smooth remote players on clients so other players look less 'choppy'.
       try{
         if (!net.isHost) {
-          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 130, k: 30, snapDist: TS * 6 };
           const sm = G.remoteSmooth.remotes;
           const tNow = now();
           const myId = Number(net.myPlayerId || 0);
@@ -8744,20 +8818,20 @@ function drawLightMask(cam, me, st){
 
             let ex = sm.get(pid);
             if (!ex) {
-              ex = { rx: pp.x, ry: pp.y, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0, at: tNow, alive: !!pp.alive, down: !!pp.down, vent: !!pp.vent };
+              ex = { rx: pp.x, ry: pp.y, samples: [{ t: tNow, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0 }], alive: !!pp.alive, down: !!pp.down, vent: !!pp.vent };
               sm.set(pid, ex);
               continue;
             }
 
             const special = (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive) || (!!pp.vent !== !!ex.vent);
-            ex.x = pp.x; ex.y = pp.y;
-            ex.vx = pp.vx || 0; ex.vy = pp.vy || 0;
-            ex.at = tNow;
             ex.alive = !!pp.alive;
             ex.down = !!pp.down;
             ex.vent = !!pp.vent;
 
-            if (special) { ex.rx = pp.x; ex.ry = pp.y; }
+            if (!ex.samples) ex.samples = [];
+            ex.samples.push({ t: tNow, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0 });
+            if (ex.samples.length > 8) ex.samples.shift();
+            if (special) { ex.rx = pp.x; ex.ry = pp.y; ex.samples = [{ t: tNow, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0 }]; }
           }
         }
       }catch(_){}
@@ -8804,6 +8878,84 @@ G.state.missions = m.missions;
     });
 
 
+    // Lightweight roster snapshots (sent in lobby and on join/leave). Helps clients bind even if joinAck/state is missed.
+    net.on('roster', (m) => {
+      try { net._lastHostSeenAt = now(); } catch (_) {}
+      if (net.isHost) return;
+      const st = G.state;
+      if (!st.players) st.players = {};
+      try{
+        if (m && typeof m.phase === 'string') G.phase = m.phase;
+        if (m && typeof m.practice === 'boolean') st.practice = !!m.practice;
+        if (m && m.teacherId != null) st.teacherId = m.teacherId;
+      }catch(_){ }
+
+      const players = (m && m.players) ? m.players : {};
+      const tNow = now();
+
+      for (const [pidStr, up] of Object.entries(players || {})) {
+        if (!up) continue;
+        const pid = Number(pidStr || up.id || 0);
+        if (!pid) continue;
+        let p = st.players[String(pid)];
+        if (!p) {
+          p = st.players[String(pid)] = { id: pid };
+        }
+        p.id = pid;
+        if (up.nick != null) p.nick = String(up.nick || '토끼').slice(0, 10);
+        if (up.color != null) p.color = up.color;
+        if (up.role != null) p.role = up.role;
+        if (typeof up.alive === 'boolean') p.alive = !!up.alive;
+        if (typeof up.down === 'boolean') p.down = !!up.down;
+        if (typeof up.isBot === 'boolean') p.isBot = !!up.isBot;
+        if (up.clientId != null) p.clientId = String(up.clientId);
+        if (up.joinToken != null) p.joinToken = up.joinToken;
+        if (typeof up.x === 'number') p.x = up.x;
+        if (typeof up.y === 'number') p.y = up.y;
+        if (typeof up.vx === 'number') p.vx = up.vx;
+        if (typeof up.vy === 'number') p.vy = up.vy;
+        if (typeof up.facing === 'number') p.facing = up.facing;
+        if (typeof up.dir === 'number') p.dir = up.dir;
+        p.vent = up.vent ? 1 : 0;
+        p._pAt = tNow;
+      }
+
+      // prune missing players (best-effort)
+      try{
+        const graceMs = 2000;
+        for (const [pidStr, pp] of Object.entries(st.players || {})) {
+          if (!pp) continue;
+          if (players[pidStr]) continue;
+          const last = (typeof pp._pAt === 'number') ? pp._pAt : 0;
+          if (last && (tNow - last) > graceMs) {
+            delete st.players[pidStr];
+          }
+        }
+      }catch(_){ }
+
+      // Bind my playerId if joinAck/state was missed.
+      try{
+        if (!net.myPlayerId) {
+          const jt = net.joinToken || null;
+          const cid = net.clientId || null;
+          if (jt || cid) {
+            for (const pp of Object.values(st.players || {})) {
+              if (!pp) continue;
+              if (jt && pp.joinToken && String(pp.joinToken) === String(jt)) { net.myPlayerId = String(pp.id); break; }
+              if (cid && pp.clientId && String(pp.clientId) === String(cid)) { net.myPlayerId = String(pp.id); break; }
+            }
+          }
+          if (net.myPlayerId) {
+            try{ startHeartbeat(); }catch(_){ }
+          }
+        }
+      }catch(_){ }
+
+      applyPhaseUI();
+    });
+
+
+
     // Fast player-motion updates (lighter than full state). Used for smooth remote movement.
     // Host sends this frequently; non-host clients use it to render other players smoothly and to
     // quickly reflect joins/leaves even if a full `state` snapshot is delayed.
@@ -8817,7 +8969,7 @@ G.state.missions = m.missions;
 
       // Keep a render buffer for other players.
       try{
-        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
+        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 130, k: 30, snapDist: TS * 6 };
       }catch(_){ }
 
       const tNow = now();
@@ -8891,17 +9043,17 @@ G.state.missions = m.missions;
           const sm = G.remoteSmooth.remotes;
           let ex = sm.get(pid);
           if (!ex) {
-            ex = { rx: p.x, ry: p.y, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0, at: tNow, alive: !!p.alive, down: !!p.down, vent: !!p.vent };
+            ex = { rx: p.x, ry: p.y, samples: [{ t: tNow, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0 }], alive: !!p.alive, down: !!p.down, vent: !!p.vent };
             sm.set(pid, ex);
           } else {
             const special = (!!p.down !== !!ex.down) || (!!p.alive !== !!ex.alive) || (!!p.vent !== !!ex.vent);
-            ex.x = p.x; ex.y = p.y;
-            ex.vx = p.vx || 0; ex.vy = p.vy || 0;
-            ex.at = tNow;
             ex.alive = !!p.alive;
             ex.down = !!p.down;
             ex.vent = !!p.vent;
-            if (special) { ex.rx = p.x; ex.ry = p.y; }
+            if (!ex.samples) ex.samples = [];
+            ex.samples.push({ t: tNow, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0 });
+            if (ex.samples.length > 8) ex.samples.shift();
+            if (special) { ex.rx = p.x; ex.ry = p.y; ex.samples = [{ t: tNow, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0 }]; }
           }
         }
       }
@@ -9170,7 +9322,7 @@ net.on('uiMeetingOpen', (m) => {
     window.__EMBED_IS_HOST__ = !!init.isHost;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
-    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,64); }catch(_){ }
+    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,256); }catch(_){ }
 
     // hide local lobby controls (room UI is handled by parent)
     try{ joinBtn.style.display = 'none'; }catch(_){ }
@@ -9184,9 +9336,23 @@ net.on('uiMeetingOpen', (m) => {
     try{ lobby?.classList.add('hidden'); }catch(_){ }
     try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
 
-    // host: start immediately (practice if <4, duel if >=4). This matches the parent room's UX.
+    // host: auto-start, but wait a short moment for other players to finish joining.
+    // (Prevents 4+ rooms from incorrectly starting in practice due to slow iframe loads.)
     if (window.__EMBED_IS_HOST__){
-      setTimeout(()=>{ try{ startBtn.click(); }catch(_){ } }, 180);
+      const t0 = now();
+      const MAX_WAIT = 4500;   // ms
+      const CHECK_MS = 120;    // ms
+      const it = setInterval(()=>{
+        try{
+          if (!G.net || !G.net.isHost) { clearInterval(it); return; }
+          if (G.host.started) { clearInterval(it); return; }
+          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
+          if (n >= 4 || (now() - t0) > MAX_WAIT){
+            clearInterval(it);
+            try{ startBtn.click(); }catch(_){ }
+          }
+        }catch(_){ }
+      }, CHECK_MS);
     } else {
       try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
     }
