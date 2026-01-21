@@ -1909,6 +1909,9 @@
 	      this.clientId = randId();
       this.hostId = null;
       this.isHost = !!isHost;
+      // In embedded rooms, the parent decides the host. Lock it to avoid mid-session flips.
+      this.committedHost = !!isHost;
+      if (this.isHost) this.hostId = this.clientId;
       this.myPlayerId = null;
       this.handlers = new Map();
       this.lastHostSeen = 0;
@@ -1918,7 +1921,13 @@
         if (data.type !== "sk_msg") return;
         const msg = data.msg;
         if (!msg || (msg.room && msg.room !== this.room)) return;
-        if (msg.t === "host") this.lastHostSeen = Date.now();
+        if (msg.t === "host") {
+          // If I'm the committed host, ignore conflicting host announcements.
+          try{
+            if (this.committedHost && this.isHost && this.hostId && msg.hostId && String(msg.hostId) !== String(this.hostId)) return;
+          }catch(_){ }
+          this.lastHostSeen = Date.now();
+        }
         const h = this.handlers.get(msg.t);
         if (h) h(msg);
       };
@@ -1934,13 +1943,15 @@
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
-      // In embed mode, do NOT auto-elect host on clients.
+      // In embed mode, the parent decides the host.
+      // If I'm marked as host, assert it immediately; otherwise just ask for discovery.
+      if (this.isHost) { this.becomeHost(); return; }
       this.post({ t:"discover", at: Date.now() });
       await new Promise(r => setTimeout(r, 300));
-      if (this.isHost && !this.hostId){ this.becomeHost(); }
     }
     becomeHost(){
       this.isHost = true;
+      this.committedHost = true;
       this.hostId = this.clientId;
       this.post({ t:"host", hostId: this.hostId, at: Date.now() });
     }
@@ -3316,6 +3327,7 @@ function hostHandleInteract(playerId) {
           broadcast({ t: 'lightNotice', text: '누군가 불을 켰어요.', until: now() + 1500 });
         }
       }
+      broadcast({ t: 'lampUpdate', id: obj.id, on: !!lp.on, at: now() });
       broadcastState(true);
       return;
     }
@@ -3342,6 +3354,8 @@ function hostHandleInteract(playerId) {
 
       // Rebuild invisible-wall tiles for closed doors
       try{ rebuildDoorSolidSet(); }catch(_){ }
+
+      broadcast({ t: 'doorUpdate', id: obj.id, closed: !!d.closed, closedUntil: Number(d.closedUntil||0), anim: d.anim || null, at: now() });
 
       broadcastState(true);
       return;
@@ -5776,9 +5790,12 @@ default:
 function drawLightMask(cam, me, st){
   // Teacher and practice mode ignore vision limits.
   // Also, Among-Us style: dead/ghost players are NOT affected by lights.
-  if (!me || me.role === 'teacher' || st.practice || (me.down && me.role !== 'teacher')) return;
+  if (!me || st.practice || (me.down && me.role !== 'teacher')) return;
 
   let dark01 = getGlobalDarkness01(st);
+
+  // Teacher sees full light, but doors should still block visibility.
+  if (me.role === 'teacher') dark01 = 0;
 
   // Per-player darkness debuff (e.g., subtraction wrong): temporarily narrows vision more.
   try{
@@ -5789,7 +5806,20 @@ function drawLightMask(cam, me, st){
     }
   }catch(_){}
 
-  if (dark01 <= 0) return;
+  const needDark = dark01 > 0.001;
+
+  // Door-closed visibility occlusion should apply even when fully lit.
+  let hasClosedDoor = false;
+  try{
+    for (const obj of Object.values(st.objects || {})) {
+      if (obj && obj.type === 'root_door') {
+        const d = st.doors && st.doors[obj.id];
+        if (d && d.closed) { hasClosedDoor = true; break; }
+      }
+    }
+  }catch(_){ }
+
+  if (!needDark && !hasClosedDoor) return;
 
   const a = clamp(dark01, 0, 1);
 
@@ -5834,6 +5864,8 @@ function drawLightMask(cam, me, st){
   vctx.save();
   try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
   vctx.clearRect(0, 0, viewW, viewH);
+
+  if (needDark) {
 
   // darkness overlay
   vctx.fillStyle = `rgba(0,0,0,${overlayA})`;
@@ -5895,6 +5927,8 @@ function drawLightMask(cam, me, st){
     vctx.restore();
   }
 
+
+  }
 
   vctx.restore();
 
@@ -8501,8 +8535,8 @@ try{
     if (!rs || !rs.remotes) return;
 
     // Interpolate slightly *in the past* to hide network jitter (Among Us style).
-    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 220);
-    const k = (rs.k || 22);
+    const bufferMs = (rs.bufferMs != null ? rs.bufferMs : 240);
+    const k = (rs.k || 18);
     const snapDist = (rs.snapDist || (TS * 6));
     const tNow = now();
     const targetT = tNow - bufferMs;
@@ -8652,13 +8686,13 @@ try{
 // - 33ms마다: 플레이어 이동만(가벼운 패킷) 전송
 // - 180ms마다: 전체 상태(미션/문/시간 등) 스냅샷 전송
       if (!G.host._lastPlayersBroadcast) G.host._lastPlayersBroadcast = 0;
-      if (t - G.host._lastPlayersBroadcast > 33) {
+      if (t - G.host._lastPlayersBroadcast > 50) {
         G.host._lastPlayersBroadcast = t;
         broadcastPlayers();
       }
 
       if (!G.host._lastStateBroadcast) G.host._lastStateBroadcast = 0;
-      if (t - G.host._lastStateBroadcast > 180) {
+      if (t - G.host._lastStateBroadcast > 250) {
         G.host._lastStateBroadcast = t;
         broadcastState();
       }
@@ -8666,7 +8700,7 @@ try{
       // Also broadcast a lightweight roster occasionally during play.
       // This lets clients who missed joinAck/state bind their playerId reliably (common on slow iframe loads).
       if (!G.host._lastRosterInPlay) G.host._lastRosterInPlay = 0;
-      if (t - G.host._lastRosterInPlay > 900) {
+      if (t - G.host._lastRosterInPlay > 1200) {
         G.host._lastRosterInPlay = t;
         try{ broadcastRoster(); }catch(_){ }
       }
@@ -8676,7 +8710,7 @@ try{
     // can still bind their playerId and render everyone reliably.
     if (G.net?.isHost && !G.host.started) {
       if (!G.host._lastRosterBroadcast) G.host._lastRosterBroadcast = 0;
-      if (t - G.host._lastRosterBroadcast > 250) {
+      if (t - G.host._lastRosterBroadcast > 350) {
         G.host._lastRosterBroadcast = t;
         try{ broadcastRoster(); }catch(_){ }
       }
@@ -8751,6 +8785,20 @@ try{
       net = new LocalNet(room);
     }
     G.net = net;
+
+    // Host keepalive (tiny packet): prevents some clients from falsely thinking the host is gone
+    // when relay queues are congested.
+    try{
+      if (!net._hostBeat){
+        net._hostBeat = setInterval(()=>{
+          try{
+            if (!G.net || G.net !== net) { clearInterval(net._hostBeat); net._hostBeat = null; return; }
+            if (net.isHost) net.post({ t: 'host', hostId: (net.hostId || net.clientId), at: Date.now() });
+          }catch(_){ }
+        }, 1000);
+      }
+    }catch(_){ }
+
 
     // host discovery
     net.on('host', (m) => {
@@ -9180,7 +9228,7 @@ try{
       // Smooth remote players on clients so other players look less 'choppy'.
       try{
         if (!net.isHost) {
-          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 160, k: 24, snapDist: TS * 7 };
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 240, k: 18, snapDist: TS * 7 };
           const sm = G.remoteSmooth.remotes;
           const tNow = now();
           const myId = Number(net.myPlayerId || 0);
@@ -9383,7 +9431,7 @@ G.state.missions = m.missions;
 
       // Keep a render buffer for other players.
       try{
-        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 160, k: 24, snapDist: TS * 7 };
+        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 240, k: 18, snapDist: TS * 7 };
       }catch(_){ }
 
       const tNow = now();
@@ -9553,6 +9601,38 @@ G.state.missions = m.missions;
       G.ui.lightNoticeUntil = m.until || (now() + 1500);
       G.ui.lightNoticeText = m.text || '누군가 불을 껐어요.';
     });
+
+    // Small delta updates for lamps/doors (more reliable than waiting for full state snapshots)
+    net.on('lampUpdate', (m) => {
+      if (net.isHost) return;
+      try{
+        const st = G.state;
+        if (!st.lamps) st.lamps = {};
+        const id = String(m.id || '');
+        if (!id) return;
+        if (!st.lamps[id]) st.lamps[id] = { on: true, kind: null };
+        st.lamps[id].on = !!m.on;
+        st.lastUpdateAt = now();
+      }catch(_){ }
+    });
+
+    net.on('doorUpdate', (m) => {
+      if (net.isHost) return;
+      try{
+        const st = G.state;
+        if (!st.doors) st.doors = {};
+        const id = String(m.id || '');
+        if (!id) return;
+        if (!st.doors[id]) st.doors[id] = { closed: false, closedUntil: 0 };
+        st.doors[id].closed = !!m.closed;
+        st.doors[id].closedUntil = Number(m.closedUntil || 0);
+        if (m.anim != null) st.doors[id].anim = m.anim;
+        // rebuild solid set so collision + door-vision occlusion is consistent
+        try{ rebuildDoorSolidSet(); }catch(_){ }
+        st.lastUpdateAt = now();
+      }catch(_){ }
+    });
+
 net.on('uiMeetingOpen', (m) => {
       openMeetingUI(m.kind || 'emergency', m.reason || '회의!', m.endsAt || (now() + 20_000));
     });
@@ -9647,22 +9727,24 @@ net.on('uiMeetingOpen', (m) => {
     await net.discoverHost();
 
     // Give relays/devices a brief window to converge on the same host.
-    await new Promise(r => setTimeout(r, 250));
-    try{ if (typeof net._electHost === 'function') net._electHost(); }catch(_){ }
+    // NOTE: In embedded multiroom, the parent already decides the host, so we must NOT
+    // run local election/demotion here (it causes "host disappears" races).
+    if (!window.__USE_BRIDGE_NET__) {
+      await new Promise(r => setTimeout(r, 250));
+      try{ if (typeof net._electHost === 'function') net._electHost(); }catch(_){ }
 
-
-    // host 초기화 (with convergence guard)
-    if (net.isHost) {
-      // Give other clients a short convergence window to announce an existing host.
-      // If we hear a different host during this window, we will not commit to hosting.
-      await new Promise(r => setTimeout(r, 700));
-      try{
-        if (net.hostId && String(net.hostId) !== String(net.clientId) && !net.committedHost) {
-          // Someone else is already the host.
-          net.isHost = false;
-        }
-      }catch(_){ }
-
+      // host 초기화 (with convergence guard)
+      if (net.isHost) {
+        // Give other clients a short convergence window to announce an existing host.
+        // If we hear a different host during this window, we will not commit to hosting.
+        await new Promise(r => setTimeout(r, 700));
+        try{
+          if (net.hostId && String(net.hostId) !== String(net.clientId) && !net.committedHost) {
+            // Someone else is already the host.
+            net.isHost = false;
+          }
+        }catch(_){ }
+      }
     }
 
     if (net.isHost) {
