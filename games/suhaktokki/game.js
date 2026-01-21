@@ -5758,35 +5758,14 @@ function drawLightMask(cam, me, st){
       let wx = p.x, wy = p.y;
       let pDraw = p;
       // Client-side smoothing for remote players (render-only)
-if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
-  const ex = G.netSmooth.players.get(p.id);
-  if (ex) {
-    const buf = (G.netSmooth.bufferMs || 140);
-    const rt = now() - buf;
-    const t0 = (typeof ex.t0 === 'number') ? ex.t0 : rt;
-    const t1 = (typeof ex.t1 === 'number') ? ex.t1 : rt;
-    let sx = ex.x1, sy = ex.y1;
-
-    if (t1 > t0) {
-      const u = clamp((rt - t0) / (t1 - t0), 0, 1);
-      sx = (ex.x0 || 0) + ((ex.x1 || 0) - (ex.x0 || 0)) * u;
-      sy = (ex.y0 || 0) + ((ex.y1 || 0) - (ex.y0 || 0)) * u;
-
-      // tiny extrapolation when we're past the latest sample
-      const dtMs = rt - t1;
-      if (dtMs > 0 && dtMs <= 180) {
-        const vx = ((ex.x1 || 0) - (ex.x0 || 0)) / (t1 - t0);
-        const vy = ((ex.y1 || 0) - (ex.y0 || 0)) / (t1 - t0);
-        sx = (ex.x1 || 0) + vx * dtMs;
-        sy = (ex.y1 || 0) + vy * dtMs;
+      if (G.net && !G.net.isHost && G.remoteSmooth && G.remoteSmooth.remotes) {
+        const ex = G.remoteSmooth.remotes.get(p.id);
+        if (ex && typeof ex.rx === 'number' && typeof ex.ry === 'number') {
+          wx = ex.rx;
+          wy = ex.ry;
+          if (wx !== p.x || wy !== p.y) pDraw = ({ ...p, x: wx, y: wy });
+        }
       }
-    }
-
-    wx = sx;
-    wy = sy;
-    pDraw = (wx === p.x && wy === p.y) ? p : ({ ...p, x: wx, y: wy });
-  }
-}
 
       const px = wx - cam.x;
       const py = wy - cam.y;
@@ -7974,7 +7953,52 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
       }
     }catch(_){ }
   }
-  // ---------- Main loop ----------
+  
+  // ---------- Remote player smoothing (non-host render) ----------
+  // Non-host clients receive host snapshots with jitter and variable cadence.
+  // We keep a per-player render state, dead-reckon using host velocities, and
+  // smooth towards the predicted position each frame.
+  function clientUpdateRemoteRender(dt) {
+    const net = G.net;
+    if (!net || net.isHost) return;
+    const rs = G.remoteSmooth;
+    if (!rs || !rs.remotes) return;
+
+    const lead = (rs.leadMs || 120) / 1000;     // small look-ahead to reduce visible lag
+    const k = (rs.k || 22);                     // smoothing strength
+    const snapDist = (rs.snapDist || (TS * 8)); // hard snap if too far
+    const t = now();
+
+    for (const ex of rs.remotes.values()) {
+      if (!ex) continue;
+      const ageSec = clamp((t - (ex.at || t)) / 1000, 0, 1.2);
+
+      // Predict where the player should be *now* given last snapshot + velocity.
+      const px = (ex.x || 0) + (ex.vx || 0) * (ageSec + lead);
+      const py = (ex.y || 0) + (ex.vy || 0) * (ageSec + lead);
+
+      if (typeof ex.rx !== 'number' || typeof ex.ry !== 'number') {
+        ex.rx = px; ex.ry = py;
+        continue;
+      }
+
+      const dx = px - ex.rx;
+      const dy = py - ex.ry;
+      const d = Math.hypot(dx, dy);
+
+      // Snap on large error or special states (vents/down/death).
+      if (d > snapDist || ex.vent || ex.down || !ex.alive) {
+        ex.rx = px; ex.ry = py;
+        continue;
+      }
+
+      const a = 1 - Math.exp(-dt * k);
+      ex.rx += dx * a;
+      ex.ry += dy * a;
+    }
+  }
+
+// ---------- Main loop ----------
   let lastFrame = now();
   function frame() {
     const t = now();
@@ -8023,6 +8047,9 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
 
     // predict my movement locally when I'm not the host (prevents choppy self-move)
     try { clientPredictLocalMove(dt); } catch (_) {}
+
+    // smooth remote players (non-host) every frame
+    try { clientUpdateRemoteRender(dt); } catch (_) {}
 
     // graph penalty: reopen mission UI after lock ends (if player stayed near)
     if (G.ui.reopenMission && !G.ui.mission && G.net && G.net.myPlayerId) {
@@ -8427,49 +8454,42 @@ if (G.net && !G.net.isHost && G.netSmooth && G.netSmooth.players) {
       
 
       // Smooth remote players on clients so other players look less 'choppy'.
-try {
-  if (!net.isHost) {
-    if (!G.netSmooth) G.netSmooth = { players: new Map(), bufferMs: 260 };
-    const sm = G.netSmooth.players;
-    const tNow = now();
-    // Use local receipt time for interpolation (host performance.now() is not comparable across clients).
-    const stamp = tNow;
-    const myId = Number(net.myPlayerId || 0);
-    const playersObj = m.players || {};
+      try{
+        if (!net.isHost) {
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), leadMs: 120, k: 22, snapDist: TS * 8 };
+          const sm = G.remoteSmooth.remotes;
+          const tNow = now();
+          const myId = Number(net.myPlayerId || 0);
+          const playersObj = m.players || {};
 
-    // prune missing players
-    for (const pid of Array.from(sm.keys())) {
-      if (!playersObj[String(pid)]) sm.delete(pid);
-    }
+          // prune missing players
+          for (const pid of Array.from(sm.keys())) {
+            if (!playersObj[String(pid)]) sm.delete(pid);
+          }
 
-    for (const [pidStr, pp] of Object.entries(playersObj)) {
-      const pid = Number(pidStr || 0);
-      if (!pid || pid === myId || !pp) continue;
+          for (const [pidStr, pp] of Object.entries(playersObj)) {
+            const pid = Number(pidStr || 0);
+            if (!pid || pid === myId || !pp) continue;
 
-      let ex = sm.get(pid);
-      if (!ex) {
-        ex = { x0: pp.x, y0: pp.y, t0: stamp, x1: pp.x, y1: pp.y, t1: stamp, down: !!pp.down, alive: !!pp.alive, vent: !!pp.vent };
-        sm.set(pid, ex);
-        continue;
-      }
+            let ex = sm.get(pid);
+            if (!ex) {
+              ex = { rx: pp.x, ry: pp.y, x: pp.x, y: pp.y, vx: pp.vx || 0, vy: pp.vy || 0, at: tNow, alive: !!pp.alive, down: !!pp.down, vent: !!pp.vent };
+              sm.set(pid, ex);
+              continue;
+            }
 
-      // shift history (keep last segment)
-      if (ex.t1 !== stamp) {
-        ex.x0 = ex.x1; ex.y0 = ex.y1; ex.t0 = ex.t1;
-      }
-      ex.x1 = pp.x; ex.y1 = pp.y; ex.t1 = stamp;
-      ex.down = !!pp.down;
-      ex.alive = !!pp.alive;
-      ex.vent = !!pp.vent;
+            const special = (!!pp.down !== !!ex.down) || (!!pp.alive !== !!ex.alive) || (!!pp.vent !== !!ex.vent);
+            ex.x = pp.x; ex.y = pp.y;
+            ex.vx = pp.vx || 0; ex.vy = pp.vy || 0;
+            ex.at = tNow;
+            ex.alive = !!pp.alive;
+            ex.down = !!pp.down;
+            ex.vent = !!pp.vent;
 
-      // hard snap on large jumps / special states
-      const segD = Math.hypot((ex.x1 || 0) - (ex.x0 || 0), (ex.y1 || 0) - (ex.y0 || 0));
-      if (segD > TS * 6 || ex.vent || ex.down || !ex.alive) {
-        ex.x0 = ex.x1; ex.y0 = ex.y1; ex.t0 = ex.t1;
-      }
-    }
-  }
-} catch (_) {}
+            if (special) { ex.rx = pp.x; ex.ry = pp.y; }
+          }
+        }
+      }catch(_){}
 G.state.missions = m.missions;
       G.state.doors = m.doors;
       try{ rebuildDoorSolidSet(); }catch(_){ }
