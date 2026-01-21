@@ -5505,33 +5505,53 @@ function drawLightMask(cam, me, st){
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
 
+  // IMPORTANT:
+  // Do NOT use destination-out on the main canvas, or it will punch holes through the world
+  // (making the "visible" area transparent/black and the outside bright = inverted effect).
+  // Instead, draw the darkness mask on an offscreen canvas and then blit it over the world.
+  if (!G.ui) G.ui = {};
+  let mcv = G.ui._lightMaskCanvas;
+  if (!mcv) {
+    mcv = document.createElement('canvas');
+    G.ui._lightMaskCanvas = mcv;
+    try { mcv.width = viewW; mcv.height = viewH; } catch(_) {}
+  }
+  if (mcv.width !== viewW || mcv.height !== viewH) {
+    mcv.width = viewW; mcv.height = viewH;
+  }
+  const mctx = mcv.getContext('2d');
+  setCrisp(mcv, mctx);
+
+  mctx.save();
+  mctx.clearRect(0, 0, viewW, viewH);
+
   // darkness overlay
-  ctx.save();
-  ctx.fillStyle = `rgba(0,0,0,${overlayA})`;
-  ctx.fillRect(0, 0, viewW, viewH);
+  mctx.globalCompositeOperation = 'source-over';
+  mctx.globalAlpha = 1;
+  mctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+  mctx.fillRect(0, 0, viewW, viewH);
 
   // punch visible areas with soft gradients
-  ctx.globalCompositeOperation = 'destination-out';
+  mctx.globalCompositeOperation = 'destination-out';
 
-  
-// near body reveal: tiny circle around the player (so you can always see yourself)
-try{
-  const r0 = Math.max(2, nearR);
-  const r1 = Math.max(r0 + 2, nearR + nearFeather);
-  const g0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
-  const mid = clamp(r0 / r1, 0, 1);
-  g0.addColorStop(0.00, 'rgba(0,0,0,1)');
-  g0.addColorStop(mid,  'rgba(0,0,0,1)');
-  g0.addColorStop(1.00, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g0;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r1, 0, Math.PI*2);
-  ctx.fill();
-}catch(_){
-  ctx.beginPath();
-  ctx.arc(cx, cy, nearR, 0, Math.PI*2);
-  ctx.fill();
-}
+  // near body reveal: tiny circle around the player (so you can always see yourself)
+  try{
+    const r0 = Math.max(2, nearR);
+    const r1 = Math.max(r0 + 2, nearR + nearFeather);
+    const g0 = mctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
+    const mid = clamp(r0 / r1, 0, 1);
+    g0.addColorStop(0.00, 'rgba(0,0,0,1)');
+    g0.addColorStop(mid,  'rgba(0,0,0,1)');
+    g0.addColorStop(1.00, 'rgba(0,0,0,0)');
+    mctx.fillStyle = g0;
+    mctx.beginPath();
+    mctx.arc(cx, cy, r1, 0, Math.PI*2);
+    mctx.fill();
+  }catch(_){
+    mctx.beginPath();
+    mctx.arc(cx, cy, nearR, 0, Math.PI*2);
+    mctx.fill();
+  }
 
   const layers = [
     { alpha: 1.00, widen: 1.00, dist: 1.00 },
@@ -5543,30 +5563,37 @@ try{
     const half = baseHalf * L.widen;
     const r = baseDist * L.dist;
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(look);
+    mctx.save();
+    mctx.translate(cx, cy);
+    mctx.rotate(look);
 
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.arc(0, 0, r, -half, half);
-    ctx.closePath();
-    ctx.clip();
+    mctx.beginPath();
+    mctx.moveTo(0, 0);
+    mctx.arc(0, 0, r, -half, half);
+    mctx.closePath();
+    mctx.clip();
 
     try{
-      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      const g = mctx.createRadialGradient(0, 0, 0, 0, 0, r);
       g.addColorStop(0.00, `rgba(0,0,0,${1.00 * L.alpha})`);
       g.addColorStop(0.45, `rgba(0,0,0,${0.75 * L.alpha})`);
       g.addColorStop(1.00, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
+      mctx.fillStyle = g;
     }catch(_){
-      ctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
+      mctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
     }
 
-    ctx.fillRect(-r, -r, r * 2, r * 2);
-    ctx.restore();
+    mctx.fillRect(-r, -r, r * 2, r * 2);
+    mctx.restore();
   }
 
+  mctx.restore();
+
+  // Blit the mask over the world
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.drawImage(mcv, 0, 0);
   ctx.restore();
 
   // When all lamps are off, show faint lamp positions so players can find them.
@@ -5611,7 +5638,9 @@ function drawClosedDoorOcclusion(cam, me, st){
   };
 
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,0.92)';
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = 'rgba(0,0,0,0.995)';
 
   // If a room is explicitly locked, hide its interior when I'm not inside it.
   try{
@@ -8713,6 +8742,16 @@ try{
       }
       G.phase = m.phase;
       if (typeof m.started !== 'undefined') G.state.started = !!m.started;
+      // Embed: hide the HTML boot loading overlay as soon as the match is running.
+      try{
+        if (EMBED) {
+          if (!G.ui) G.ui = {};
+          if (!G.ui._bootHidden && (G.phase !== 'lobby')) {
+            bootHide();
+            G.ui._bootHidden = true;
+          }
+        }
+      }catch(_){ }
       G.state.timeLeft = m.timeLeft;
       G.state.maxTime = m.maxTime;
       G.state.solved = m.solved;
@@ -8912,6 +8951,16 @@ G.state.missions = m.missions;
       try{
         if (m && typeof m.phase === 'string') G.phase = m.phase;
         if (m && typeof m.started !== 'undefined') st.started = !!m.started;
+        // Embed: once we learn the match is running (from lightweight roster), hide boot overlay.
+        try{
+          if (EMBED) {
+            if (!G.ui) G.ui = {};
+            if (!G.ui._bootHidden && (G.phase !== 'lobby')) {
+              bootHide();
+              G.ui._bootHidden = true;
+            }
+          }
+        }catch(_){ }
         if (m && typeof m.practice === 'boolean') st.practice = !!m.practice;
         if (m && m.teacherId != null) st.teacherId = m.teacherId;
       }catch(_){ }

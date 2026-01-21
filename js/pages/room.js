@@ -1593,8 +1593,11 @@ function sendCoopBridgeInit(){
   })();
   const expectedHumans = (()=>{
     try{
-      const v = Number(coop.expectedHumans || room?.state?.playerCount || humanCount || 0);
-      return (v > 0) ? v : humanCount;
+      // SuhakTokki: 시작 대기 인원을 "현재 들어온 사람 수"로 두어,
+      // max playerCount(예: 8) 때문에 무한 대기/로딩이 되는 문제를 방지한다.
+      const explicit = Number(coop.expectedHumans || 0);
+      if (explicit > 0) return explicit;
+      return humanCount;
     }catch(_){ return humanCount; }
   })();
   const solo = (expectedHumans <= 1);
@@ -1959,7 +1962,7 @@ try{
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
-        try{ coop.expectedHumans = Number(m?.playerCount || room?.state?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
+        try{ coop.expectedHumans = Number(m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
         // reset per-game transient UI/state
         try{ spec.last.clear(); }catch(_){ }
