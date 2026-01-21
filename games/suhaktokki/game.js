@@ -451,7 +451,34 @@
     startBtn.disabled = true;
   }
 
-  exitBtn.addEventListener('click', () => leaveRoom());
+  function hostExitAll() {
+    // Host-confirmed exit: end the match for everyone and go back to the room after 1.5s.
+    try { showToast('호스트 이탈로 게임이 종료되었습니다.'); } catch (_) {}
+    try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'host_exit', at: now() }); } catch (_) {}
+    setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
+  }
+
+  function tryHostLeave() {
+    const t = now();
+    if (!G.ui) G.ui = {};
+    const armedAt = G.ui._hostLeaveArmedAt || 0;
+    const within = (armedAt && (t - armedAt) < 4500);
+    if (!within) {
+      G.ui._hostLeaveArmedAt = t;
+      try { showToast('당신이 호스트입니다. 게임이 종료될 때 까지 나가면 안됩니다'); } catch (_) {}
+      return;
+    }
+    // second press
+    hostExitAll();
+  }
+
+  exitBtn.addEventListener('click', () => {
+    // If host tries to leave mid-game, require a second press and end the match for everyone.
+    try {
+      if (G.net && G.net.isHost && G.phase !== 'lobby') { tryHostLeave(); return; }
+    } catch (_) {}
+    leaveRoom();
+  });
 
   // ---------- Lobby/Phase UI helpers ----------
   function setLobbyStatus(text, kind) {
@@ -2325,6 +2352,8 @@
       color: (id - 1) % 8,
       alive: true,
       down: false,
+      bodyX: null,
+      bodyY: null,
 
       x: px,
       y: py,
@@ -2421,6 +2450,13 @@
 
     // Remove from state
     delete st.players[pid];
+
+    // Release any mission locks held by this player.
+    try{
+      for (const m of Object.values(st.missions || {})) {
+        if (m && Number(m.inUseBy) === pid) { m.inUseBy = 0; m.inUseUntil = 0; }
+      }
+    }catch(_){ }
 
     // Cleanup host caches
     try{ G.host.inputs && G.host.inputs.delete(pid); }catch(_){ }
@@ -2602,6 +2638,12 @@
         hostFailMission(id, 'timeout');
       }
     }
+
+    // Mission concurrency lock timeout: if a player disappears mid-mission,
+    // release the lock so others can use it.
+    for (const m of Object.values(st.missions || {})) {
+      if (m && m.inUseBy && now() >= (m.inUseUntil || 0)) { m.inUseBy = 0; m.inUseUntil = 0; }
+    }
     for (const [wbId, wb] of Object.entries(st.waterBlocks)) {
       if (now() >= wb.until) delete st.waterBlocks[wbId];
     }
@@ -2646,7 +2688,7 @@
     const hostPid = (G.net && G.net.isHost) ? Number(G.net.myPlayerId || 0) : 0;
     for (const p of Object.values(st.players)) {
       if (!p.alive) continue;
-      if (p.down) continue;
+      if (p.down && p.role === 'teacher') continue;
 
       // During the teacher "0점" emote, freeze movement so the pose doesn't look broken
       // if we slow down the animation duration.
@@ -2702,6 +2744,8 @@
 
       let spd = SPEED;
       if (now() < p.slowUntil) spd *= 0.6;
+      // Ghosts move slightly faster (Among Us feel).
+      if (p.down && p.role !== 'teacher' && !st.practice) spd *= 1.22;
 
       const len = Math.hypot(mvx, mvy);
       const tvx = len > 1e-6 ? (mvx / len) * spd : 0;
@@ -3006,6 +3050,18 @@ function doorSolidAt(tx, ty) {
 
   
   function moveWithCollision(p, nx, ny) {
+    // Among-Us style ghosts: downed non-teacher players can pass through walls/doors/water.
+    // (Their body stays at bodyX/bodyY; p.x/p.y represents the roaming ghost.)
+    try{
+      if (p && p.down && p.role !== 'teacher' && !G.state.practice) {
+        const maxX = (AS.map?.width ? AS.map.width * TS : 999999);
+        const maxY = (AS.map?.height ? AS.map.height * TS : 999999);
+        p.x = clamp(nx, PLAYER_R, maxX - PLAYER_R);
+        p.y = clamp(ny, PLAYER_R, maxY - PLAYER_R);
+        return;
+      }
+    }catch(_){}
+
     // axis-separated resolution (tile solids + closed-door invisible walls)
     let x = nx;
     let y = p.y;
@@ -3073,10 +3129,14 @@ function doorSolidAt(tx, ty) {
       for (const bp of Object.values(st.players)) {
         if (!bp.alive || !bp.down) continue;
         if (bp.id === player.id) continue;
-        const d2 = dist2(player.x, player.y, bp.x, bp.y);
+        const bx = (bp.bodyX != null) ? bp.bodyX : bp.x;
+
+        const by = (bp.bodyY != null) ? bp.bodyY : bp.y;
+
+        const d2 = dist2(player.x, player.y, bx, by);
         if (d2 < bestD2) {
           bestD2 = d2;
-          best = { id: 'body:' + bp.id, type: 'body_report', victimId: bp.id, px: bp.x, py: bp.y };
+          best = { id: 'body:' + bp.id, type: 'body_report', victimId: bp.id, px: bx, py: by };
         }
       }
     }
@@ -3092,13 +3152,36 @@ function doorSolidAt(tx, ty) {
     return null;
   }
 
-  function hostHandleInteract(playerId) {
+  
+  // Ghost interaction: allow downed (non-teacher) players to do missions only.
+  function hostNearestMission(player) {
+    const st = G.state;
+    let best = null;
+    let bestD2 = Infinity;
+    for (const obj of Object.values(st.objects)) {
+      if (!obj || obj.type !== 'mission') continue;
+      const ox = (obj.x + 0.5) * TS;
+      const oy = (obj.y + 0.5) * TS;
+      const d2 = dist2(player.x, player.y, ox, oy);
+      if (d2 > (MISSION_INTERACT_RANGE ** 2)) continue;
+      if (d2 < bestD2) { bestD2 = d2; best = obj; }
+    }
+    return best;
+  }
+
+function hostHandleInteract(playerId) {
     const st = G.state;
     const p = st.players[playerId];
-    if (!p || !p.alive || p.down) return;
+    if (!p || !p.alive) return;
+    const isGhost = (!!p.down && p.role !== 'teacher' && !st.practice);
+    // Teacher (or practice) ghosts do nothing; student ghosts can do missions only.
+    if (p.down && !isGhost) return;
 
-    const obj = hostNearestInteractable(p);
+
+    const obj = isGhost ? hostNearestMission(p) : hostNearestInteractable(p);
     if (!obj) return;
+
+    if (isGhost && obj.type !== 'mission') return;
 
     if (obj.type === 'meeting_bell') {
       if (st.practice || !st.teacherId) {
@@ -3211,6 +3294,13 @@ function doorSolidAt(tx, ty) {
         sendToPlayer(playerId, { t: 'toast', text: '이미 당근으로 막았어!' });
         return;
       }
+      // Mission concurrency lock (site-specific): only one player can work on a mission at a time.
+      if (m.inUseBy && Number(m.inUseBy) !== Number(playerId) && now() < (m.inUseUntil || 0)) {
+        sendToPlayer(playerId, { t: 'toast', text: '이미 미션 수행중입니다.' });
+        return;
+      }
+      m.inUseBy = Number(playerId);
+      m.inUseUntil = now() + 45000;
       const practice = m.state !== 'active';
       const ui = buildMissionUI(obj.id, m.kind, practice);
 
@@ -3264,6 +3354,8 @@ function doorSolidAt(tx, ty) {
     if (bestD2 > KILL_RANGE ** 2) return;
 
     target.down = true;
+    // Freeze the body position once (so a ghost can roam while the fainted body stays).
+    if (target.bodyX == null || target.bodyY == null) { target.bodyX = target.x; target.bodyY = target.y; }
 
     // brief kill animation (shown to everyone)
     killer.emoteKind = 'kill0';
@@ -3743,11 +3835,18 @@ function doorSolidAt(tx, ty) {
   function hostMissionSubmit(playerId, payload) {
     const st = G.state;
     const p = st.players[playerId];
-    if (!p || !p.alive || p.down) return;
+    if (!p || !p.alive) return;
+    const isGhost = (!!p.down && p.role !== 'teacher');
+    if (p.down && !isGhost) return;
 
     const siteId = payload.siteId;
     const m = st.missions[siteId];
     if (!m) return;
+
+    // Mission lock: ignore submits from non-owner if another player is working on it.
+    if (m.inUseBy && Number(m.inUseBy) !== Number(playerId) && now() < (m.inUseUntil || 0)) return;
+    m.inUseBy = Number(playerId);
+    m.inUseUntil = now() + 45000;
 
     // 진행 상태(호스트 권위)
     let prog = hostGetMissionProg(playerId, siteId);
@@ -3790,6 +3889,9 @@ function doorSolidAt(tx, ty) {
       p.missionStage = 0;
       p.missionClearAt = 0;
 
+      // Release mission lock on failure (so someone else can try immediately).
+      try{ m.inUseBy = 0; m.inUseUntil = 0; }catch(_){ }
+
       sendToPlayer(playerId, { t: 'uiMissionExit', siteId, toast: '틀렸어! 다시 시도해!' });
       broadcastState(true);
       return;
@@ -3820,6 +3922,9 @@ function doorSolidAt(tx, ty) {
       st.timeLeft += 15;
       st.timeLeft = Math.min(st.timeLeft, 999);
       st.maxTime = Math.max(st.maxTime || 0, st.timeLeft);
+      // Release mission lock on completion.
+      try{ m.inUseBy = 0; m.inUseUntil = 0; }catch(_){ }
+
       sendToPlayer(playerId, { t: 'uiMissionExit', siteId, toast: isPractice ? '+15초! (연습)' : '+15초! 해결!' });
 
       // Show 100% briefly, then clear the marker.
@@ -5134,7 +5239,9 @@ function doorSolidAt(tx, ty) {
       if (!G.net) return false;
       const st = G.state;
       const me = st.players[G.net?.myPlayerId];
-      if (!me || !me.alive || me.down) return false;
+      if (!me || !me.alive) return false;
+      const isGhost = (!!me.down && me.role !== 'teacher' && !st.practice);
+      if (me.down && !isGhost) return false;
       const cam = getCamera(me);
       const wx = cam.x + px;
       const wy = cam.y + py;
@@ -5144,6 +5251,7 @@ function doorSolidAt(tx, ty) {
       let bestD2 = Infinity;
       for (const obj of Object.values(st.objects || {})) {
         if (!['meeting_bell', 'mission', 'root_door', 'vent_hole', 'lamp'].includes(obj.type)) continue;
+        if (isGhost && obj.type !== 'mission') continue;
         if (obj.type === 'vent_hole' && (me.role !== 'teacher' || st.practice)) continue;
         if (obj.type === 'lamp') {
           const lp = st.lamps && st.lamps[obj.id];
@@ -5161,13 +5269,15 @@ function doorSolidAt(tx, ty) {
       }
 
       // body report (click near a downed player)
-      if (!best && !st.practice && st.teacherId) {
+      if (!best && !isGhost && !st.practice && st.teacherId) {
         for (const p of Object.values(st.players || {})) {
           if (!p.alive || !p.down) continue;
           if (p.id === me.id) continue;
-          const clickD2 = dist2(wx, wy, p.x, p.y);
+          const bx = (p.bodyX != null) ? p.bodyX : p.x;
+          const by = (p.bodyY != null) ? p.bodyY : p.y;
+          const clickD2 = dist2(wx, wy, bx, by);
           if (clickD2 > (TS * 0.9) ** 2) continue;
-          const meD2 = dist2(me.x, me.y, p.x, p.y);
+          const meD2 = dist2(me.x, me.y, bx, by);
           if (meD2 > (INTERACT_RANGE + 10) ** 2) continue;
           best = { type: 'body_report' };
           break;
@@ -5383,8 +5493,11 @@ default:
   function sendPrimaryAction() {
     if (!G.net) return;
     if (G.phase !== 'play') return;
-    const me = G.state?.players?.[G.net.myPlayerId];
-    if (!me || !me.alive || me.down) return;
+    const st = G.state;
+    const me = st?.players?.[G.net.myPlayerId];
+    if (!me || !me.alive) return;
+    const isGhost = (!!me.down && me.role !== 'teacher' && !st.practice);
+    if (me.down && !isGhost) return;
     const near = nearestHint(me);
     const canKill = (me.role === 'teacher') && near.canKill && !!near.killTarget && !G.state.practice;
     if (canKill) sendKill();
@@ -5548,7 +5661,9 @@ default:
     return G.ui._lookAng || 0;
   }
 function drawLightMask(cam, me, st){
-  if (!me || me.role === 'teacher' || st.practice) return;
+  // Teacher and practice mode ignore vision limits.
+  // Also, Among-Us style: dead/ghost players are NOT affected by lights.
+  if (!me || me.role === 'teacher' || st.practice || (me.down && me.role !== 'teacher')) return;
 
   let dark01 = getGlobalDarkness01(st);
 
@@ -5569,9 +5684,10 @@ function drawLightMask(cam, me, st){
   const overlayA = 0.20 + 0.72 * a;
   const look = getLookAngle(me);
 
-  const baseHalf = (Math.PI/180) * (165 - 110 * a);   // ~165deg -> ~55deg
-  const baseDist = (640 - 420 * a) * ZOOM;            // ~640px -> ~220px (screen space)
-  const nearR    = (220 - 120 * a) * ZOOM;            // close-by soft circle
+  // Among Us-like: fixed 60° cone. Darkness shrinks distance.
+  const baseHalf = (Math.PI/180) * 30;                // 60° total
+  const baseDist = (520 - 320 * a) * ZOOM;            // ~520px -> ~200px (screen space)
+  const nearR    = (170 - 70 * a) * ZOOM;             // close-by soft circle
 
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
@@ -5788,6 +5904,8 @@ function drawLightMask(cam, me, st){
       .slice()
       .sort((a, b) => (a.y - b.y));
 
+    const viewerIsGhost = (!!me && !!me.down && me.role !== 'teacher' && !st.practice);
+
     for (const p of players) {
       if (!p.alive) continue;
 
@@ -5805,7 +5923,27 @@ function drawLightMask(cam, me, st){
 
       const px = wx - cam.x;
       const py = wy - cam.y;
-      drawPlayer(pDraw, px, py);
+      const isGhostBody = (!!p.down && p.role !== 'teacher' && !st.practice);
+      if (isGhostBody && (p.bodyX != null || p.bodyY != null)) {
+        const bxw = (p.bodyX != null) ? p.bodyX : p.x;
+        const byw = (p.bodyY != null) ? p.bodyY : p.y;
+
+        // 1) fainted body stays where it fell
+        const body = { ...p, x: bxw, y: byw, vx: 0, vy: 0, down: true, vent: null };
+        drawPlayer(body, bxw - cam.x, byw - cam.y);
+
+        // 2) ghost clone roams & does missions (semi-transparent)
+        // Visible ONLY to dead/ghost players (Among Us).
+        if (viewerIsGhost) {
+          ctx.save();
+          ctx.globalAlpha = 0.38;
+          const ghostDraw = (pDraw === p) ? ({ ...p, down: false }) : ({ ...pDraw, down: false });
+          drawPlayer(ghostDraw, wx - cam.x, wy - cam.y);
+          ctx.restore();
+        }
+      } else {
+        drawPlayer(pDraw, px, py);
+      }
     }
 
     ctx.restore();
@@ -5813,6 +5951,28 @@ function drawLightMask(cam, me, st){
     // global lighting / vision mask (crew only)
     if (G.phase === 'play') {
       try { drawLightMask(cam, me, st); } catch (_) {}
+      // Among Us style: keep MY character readable even when the world is dark.
+      try {
+        if (me && me.role !== 'teacher' && !st.practice && !me.down && getGlobalDarkness01(st) > 0) {
+          ctx.save();
+          ctx.scale(ZOOM, ZOOM);
+          const my = st.players[G.net?.myPlayerId];
+          if (my && my.alive) {
+            const isGhostBody = (!!my.down && my.role !== 'teacher' && !st.practice);
+            if (isGhostBody && (my.bodyX != null || my.bodyY != null)) {
+              // redraw only the roaming ghost (body can stay in the dark)
+              ctx.save();
+              ctx.globalAlpha = 0.38;
+              const ghost = { ...my, down: false };
+              drawPlayer(ghost, (my.x - cam.x), (my.y - cam.y));
+              ctx.restore();
+            } else {
+              drawPlayer(my, (my.x - cam.x), (my.y - cam.y));
+            }
+          }
+          ctx.restore();
+        }
+      } catch (_) {}
     }
 
     // Emergency meeting screen flash
@@ -7840,6 +8000,7 @@ function drawLightMask(cam, me, st){
 
   function nearestHint(me) {
     const st = G.state;
+    const isGhost = (!!me.down && me.role !== 'teacher' && !st.practice);
     let canInteract = false;
     let canKill = false;
     let killTarget = null;
@@ -7849,6 +8010,7 @@ function drawLightMask(cam, me, st){
     // interactable (pick the closest target for better UI/label)
     for (const obj of Object.values(st.objects)) {
       if (!obj || !['meeting_bell', 'mission', 'root_door', 'vent_hole', 'lamp'].includes(obj.type)) continue;
+      if (isGhost && obj.type !== 'mission') continue;
       if (obj.type === 'vent_hole' && (me.role !== 'teacher' || st.practice)) continue;
 
       // Lamp rules: teacher can ONLY turn OFF, students can ONLY turn ON
@@ -7884,14 +8046,16 @@ function drawLightMask(cam, me, st){
       }
     }
     // bodies (report)
-    for (const p of Object.values(st.players)) {
+    if (!isGhost) for (const p of Object.values(st.players)) {
       if (!p || !p.down || !p.alive) continue;
-      const d2 = dist2(me.x, me.y, p.x, p.y);
+      const bx = (p.bodyX != null) ? p.bodyX : p.x;
+      const by = (p.bodyY != null) ? p.bodyY : p.y;
+      const d2 = dist2(me.x, me.y, bx, by);
       if (d2 <= (INTERACT_RANGE + 10) ** 2) {
         canInteract = true;
         if (d2 < bestD2) {
           bestD2 = d2;
-          target = { type: 'body', id: p.id, label: '신고', wx: p.x, wy: p.y };
+          target = { type: 'body', id: p.id, label: '신고', wx: bx, wy: by };
         }
       }
     }
@@ -7931,7 +8095,9 @@ function drawLightMask(cam, me, st){
     if (!myId) return;
     const st = G.state;
     const me = st.players && st.players[myId];
-    if (!me || !me.alive || me.down) return;
+    if (!me || !me.alive) return;
+    const isGhost = (!!me.down && me.role !== 'teacher' && !st.practice);
+    if (me.down && !isGhost) return;
     if (me.vent) return;
 
     const frozen = now() < (me.frozenUntil || 0);
@@ -7953,6 +8119,8 @@ function drawLightMask(cam, me, st){
 
     let spd = SPEED;
     if (now() < (me.slowUntil || 0)) spd *= 0.6;
+    // Ghosts move slightly faster (Among Us feel).
+    if (me.down && me.role !== 'teacher' && !st.practice) spd *= 1.22;
     const len = Math.hypot(mvx, mvy);
     const tvx = len > 1e-6 ? (mvx / len) * spd : 0;
     const tvy = len > 1e-6 ? (mvy / len) * spd : 0;
@@ -8023,7 +8191,7 @@ function drawLightMask(cam, me, st){
       const d = Math.hypot(dx, dy);
 
       // Snap on large error or special states (vents/down/death).
-      if (d > snapDist || ex.vent || ex.down || !ex.alive) {
+      if (d > snapDist || ex.vent || !ex.alive) {
         ex.rx = px; ex.ry = py;
         continue;
       }
@@ -8040,6 +8208,20 @@ function drawLightMask(cam, me, st){
     const t = now();
     const dt = Math.min(0.05, (t - lastFrame) / 1000);
     lastFrame = t;
+
+    // Host disconnect watchdog (non-host clients): if we stop receiving host packets,
+    // reset back to the room instead of getting stuck.
+    try {
+      if (G.net && !G.net.isHost && G.phase !== 'lobby') {
+        const last = (G.net._lastHostSeenAt || 0);
+        if (last && (t - last) > 4500 && !(G.ui && (G.ui._hostExitHandled || G.ui._hostGoneHandled))) {
+          if (!G.ui) G.ui = {};
+          G.ui._hostGoneHandled = true;
+          try { showToast('호스트 이탈로 게임이 종료되었습니다.'); } catch (_) {}
+          setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
+        }
+      }
+    } catch (_) {}
 
     // host sim
     if (G.net?.isHost && G.host.started) {
@@ -8310,7 +8492,9 @@ function drawLightMask(cam, me, st){
       const st = G.state;
       const pid = Number(m.playerId || 0);
       const p = st.players[pid];
-      if (!p || !p.alive || p.down) return;
+      if (!p || !p.alive) return;
+      const isGhost = (!!p.down && p.role !== 'teacher');
+      if (p.down && !isGhost) return;
       const obj = st.objects[m.siteId];
       if (!obj || obj.type !== 'mission') return;
       const ox = (obj.x + 0.5) * TS;
@@ -8327,6 +8511,13 @@ function drawLightMask(cam, me, st){
         sendToPlayer(pid, { t: 'toast', text: '이미 당근으로 막았어!' });
         return;
       }
+      // Mission concurrency lock (site-specific)
+      if (mm.inUseBy && Number(mm.inUseBy) !== Number(pid) && now() < (mm.inUseUntil || 0)) {
+        sendToPlayer(pid, { t: 'toast', text: '이미 미션 수행중입니다.' });
+        return;
+      }
+      mm.inUseBy = Number(pid);
+      mm.inUseUntil = now() + 45000;
       // In real game (4+), missions are always treated as real missions (not practice).
       // In practice mode, every mission is treated as practice regardless of activation state.
       if (!st.practice && mm.state === 'idle') {
@@ -8373,6 +8564,8 @@ function drawLightMask(cam, me, st){
       if (mm && mm.kind) {
         hostInitMissionProg(pid, siteId, mm.kind, !!st.practice);
       }
+      // Release mission lock when UI closes.
+      if (mm && Number(mm.inUseBy) === Number(pid)) { mm.inUseBy = 0; mm.inUseUntil = 0; }
       // clear mission marker
       p.missionSiteId = null;
       p.missionStage = 0;
@@ -8389,6 +8582,7 @@ function drawLightMask(cam, me, st){
 
     // state (all clients)
     net.on('state', (m) => {
+      try { net._lastHostSeenAt = now(); } catch (_) {}
       // client에선 state를 그대로 반영
       if (net.isHost) {
         // 호스트도 UI 반영을 위해 받아도 됨
@@ -8581,6 +8775,7 @@ G.state.missions = m.missions;
     // Host sends this frequently; non-host clients use it to render other players smoothly and to
     // quickly reflect joins/leaves even if a full `state` snapshot is delayed.
     net.on('p', (m) => {
+      try { net._lastHostSeenAt = now(); } catch (_) {}
       if (net.isHost) return;
 
       const players = (m && m.players) ? m.players : {};
@@ -8795,6 +8990,17 @@ net.on('uiMeetingOpen', (m) => {
       showToast(m.text || '');
     });
 
+
+
+    // Host exited -> everyone returns to the room (avoid "stuck" clients).
+    net.on('hostExit', (m) => {
+      if (net.isHost) return; // host handles its own exit flow
+      if (G.ui && G.ui._hostExitHandled) return;
+      if (!G.ui) G.ui = {};
+      G.ui._hostExitHandled = true;
+      try { showToast('호스트 이탈로 게임이 종료되었습니다.'); } catch (_) {}
+      setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
+    });
     net.on('uiRoleReveal', (m) => {
       if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;
       // role reveal is per-player; keep it deterministic even if state arrives slightly later.
@@ -8976,6 +9182,8 @@ net.on('uiMeetingOpen', (m) => {
       // Parent -> iframe: leaving the embedded game view (go back to room)
       if (d.type === 'bridge_leave') {
         try {
+          // If host tries to leave the embedded game mid-match, require confirmation.
+          if (G.net && G.net.isHost && G.phase !== 'lobby') { tryHostLeave(); return; }
           if (G.net) {
             const pid = Number(G.net.myPlayerId || 0);
             if (pid) G.net.post({ t: 'leave', playerId: pid, reason: (d.reason || 'leave') });
