@@ -5769,33 +5769,60 @@ function drawLightMask(cam, me, st){
   const cx = (me.x - cam.x) * ZOOM;
   const cy = (me.y - cam.y) * ZOOM;
 
+  // IMPORTANT:
+  // Some browsers/devices can end up with an active clip region on the main ctx (from other draw calls),
+  // which would invert vision (only the cone gets darkened). To make vision deterministic, render the
+  // darkness overlay on a dedicated offscreen canvas (fresh clip state), then blit it on top.
+  if (!G.ui) G.ui = {};
+  let vc = G.ui._visionCanvas;
+  let vctx = G.ui._visionCtx;
+  if (!vc || !vctx) {
+    vc = document.createElement('canvas');
+    vctx = vc.getContext('2d');
+    try{
+      vctx.imageSmoothingEnabled = false;
+      vctx.mozImageSmoothingEnabled = false;
+      vctx.webkitImageSmoothingEnabled = false;
+      vctx.msImageSmoothingEnabled = false;
+    }catch(_){ }
+    G.ui._visionCanvas = vc;
+    G.ui._visionCtx = vctx;
+  }
+  if (vc.width !== viewW || vc.height !== viewH) {
+    vc.width = viewW;
+    vc.height = viewH;
+    try{ vctx.imageSmoothingEnabled = false; }catch(_){ }
+  }
+
+  vctx.save();
+  try{ vctx.setTransform(1,0,0,1,0,0); }catch(_){ }
+  vctx.clearRect(0, 0, viewW, viewH);
+
   // darkness overlay
-  ctx.save();
-  ctx.fillStyle = `rgba(0,0,0,${overlayA})`;
-  ctx.fillRect(0, 0, viewW, viewH);
+  vctx.fillStyle = `rgba(0,0,0,${overlayA})`;
+  vctx.fillRect(0, 0, viewW, viewH);
 
   // punch visible areas with soft gradients
-  ctx.globalCompositeOperation = 'destination-out';
+  vctx.globalCompositeOperation = 'destination-out';
 
-  
-// near body reveal: tiny circle around the player (so you can always see yourself)
-try{
-  const r0 = Math.max(2, nearR);
-  const r1 = Math.max(r0 + 2, nearR + nearFeather);
-  const g0 = ctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
-  const mid = clamp(r0 / r1, 0, 1);
-  g0.addColorStop(0.00, 'rgba(0,0,0,1)');
-  g0.addColorStop(mid,  'rgba(0,0,0,1)');
-  g0.addColorStop(1.00, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g0;
-  ctx.beginPath();
-  ctx.arc(cx, cy, r1, 0, Math.PI*2);
-  ctx.fill();
-}catch(_){
-  ctx.beginPath();
-  ctx.arc(cx, cy, nearR, 0, Math.PI*2);
-  ctx.fill();
-}
+  // near body reveal: tiny circle around the player (so you can always see yourself)
+  try{
+    const r0 = Math.max(2, nearR);
+    const r1 = Math.max(r0 + 2, nearR + nearFeather);
+    const g0 = vctx.createRadialGradient(cx, cy, 0, cx, cy, r1);
+    const mid = clamp(r0 / r1, 0, 1);
+    g0.addColorStop(0.00, 'rgba(0,0,0,1)');
+    g0.addColorStop(mid,  'rgba(0,0,0,1)');
+    g0.addColorStop(1.00, 'rgba(0,0,0,0)');
+    vctx.fillStyle = g0;
+    vctx.beginPath();
+    vctx.arc(cx, cy, r1, 0, Math.PI*2);
+    vctx.fill();
+  }catch(_){
+    vctx.beginPath();
+    vctx.arc(cx, cy, nearR, 0, Math.PI*2);
+    vctx.fill();
+  }
 
   const layers = [
     { alpha: 1.00, widen: 1.00, dist: 1.00 },
@@ -5807,30 +5834,36 @@ try{
     const half = baseHalf * L.widen;
     const r = baseDist * L.dist;
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(look);
+    vctx.save();
+    vctx.translate(cx, cy);
+    vctx.rotate(look);
 
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.arc(0, 0, r, -half, half);
-    ctx.closePath();
-    ctx.clip();
+    vctx.beginPath();
+    vctx.moveTo(0, 0);
+    vctx.arc(0, 0, r, -half, half);
+    vctx.closePath();
+    vctx.clip();
 
     try{
-      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+      const g = vctx.createRadialGradient(0, 0, 0, 0, 0, r);
       g.addColorStop(0.00, `rgba(0,0,0,${1.00 * L.alpha})`);
       g.addColorStop(0.45, `rgba(0,0,0,${0.75 * L.alpha})`);
       g.addColorStop(1.00, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g;
+      vctx.fillStyle = g;
     }catch(_){
-      ctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
+      vctx.fillStyle = `rgba(0,0,0,${0.8 * L.alpha})`;
     }
 
-    ctx.fillRect(-r, -r, r * 2, r * 2);
-    ctx.restore();
+    vctx.fillRect(-r, -r, r * 2, r * 2);
+    vctx.restore();
   }
 
+  vctx.restore();
+
+  // composite overlay onto main canvas (screen space)
+  ctx.save();
+  try{ ctx.setTransform(1,0,0,1,0,0); }catch(_){ }
+  ctx.drawImage(vc, 0, 0);
   ctx.restore();
 
   // When all lamps are off, show faint lamp positions so players can find them.
@@ -5855,6 +5888,7 @@ try{
     ctx.restore();
   }
 }
+
 
 function drawLoadingScreen(extraText=null){
   ctx.save();
