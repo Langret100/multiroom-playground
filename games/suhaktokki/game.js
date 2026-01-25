@@ -670,6 +670,18 @@
     if (e.key === 'Escape') { closeRulesUI(); closeMapUI(); }
   });
 
+  // ---------- Phase helpers ----------
+  // Embed relays can occasionally drop the phase/state packet right at match start.
+  // If the match has started but the local phase still reads 'lobby', treat it as
+  // 'play' for movement/input gating so players can move immediately.
+  function effectivePhase(){
+    try{
+      if (G && G.phase === 'lobby' && G.state && G.state.started) return 'play';
+    }catch(_){ }
+    return (G && G.phase) ? G.phase : 'lobby';
+  }
+  function inPlay(){ return effectivePhase() === 'play'; }
+
   // ---------- Assets ----------
   const AS = {
     loadingImg: null,
@@ -2823,6 +2835,7 @@
     const hostPid = (G.net && G.net.isHost) ? Number(G.net.myPlayerId || 0) : 0;
     for (const p of Object.values(st.players)) {
       if (!p.alive) continue;
+      // Teacher is never a ghost. If the teacher is caught, the match ends immediately.
       if (p.down && p.role === 'teacher') continue;
 
       // During the teacher "0점" emote, freeze movement so the pose doesn't look broken
@@ -3192,6 +3205,8 @@ function doorSolidAt(tx, ty) {
     // Among-Us style ghosts: downed non-teacher players can pass through walls/doors/water.
     // (Their body stays at bodyX/bodyY; p.x/p.y represents the roaming ghost.)
     try{
+      // Roaming ghosts can pass through walls/doors/water.
+      // Applies to downed students (ghost roam).
       if (p && p.down && p.role !== 'teacher' && !G.state.practice) {
         const maxX = (AS.map?.width ? AS.map.width * TS : 999999);
         const maxY = (AS.map?.height ? AS.map.height * TS : 999999);
@@ -3787,8 +3802,19 @@ function hostHandleInteract(playerId) {
     if (winner != null) {
       const ejected = st.players[winner];
       if (ejected) {
-        ejected.alive = false;
-        ejected.down = false;
+        // Don't delete the player from the match immediately.
+        // - Ejected 학생토끼: 0점 맞은 것처럼 바디를 남기고 유령으로 돌아다닌다.
+        // - Ejected 선생토끼: 게임 즉시 종료(학생 승)라서 유령 상태가 필요 없다.
+        ejected.alive = true;
+        ejected.down = true;
+        if (winner === st.teacherId) {
+          ejected.ghost = false;
+          // Freeze so no accidental movement before we end/return.
+          ejected.frozenUntil = Math.max(ejected.frozenUntil || 0, now() + 60_000);
+        } else {
+          ejected.ghost = true;
+          if (ejected.bodyX == null || ejected.bodyY == null) { ejected.bodyX = ejected.x; ejected.bodyY = ejected.y; }
+        }
       }
       hostShowEjectScene(winner);
 
@@ -4119,7 +4145,7 @@ function hostHandleInteract(playerId) {
 
     // 타이머 경고(60/30/10초): 점멸 + (가능하면) 비프/진동
     const tl = G.state.timeLeft || 0;
-    const stage = (G.phase === 'play' && tl > 0) ? (tl <= 10 ? 3 : (tl <= 30 ? 2 : (tl <= 60 ? 1 : 0))) : 0;
+    const stage = (inPlay() && tl > 0) ? (tl <= 10 ? 3 : (tl <= 30 ? 2 : (tl <= 60 ? 1 : 0))) : 0;
 
     // 60초 이하는 텍스트 점멸
     if (stage >= 1) {
@@ -4177,7 +4203,7 @@ function hostHandleInteract(playerId) {
       const nearIdle = hasIdleMissionNearby(me);
 
       const remSabo = Math.ceil(Math.max(0, ((me.saboCdUntil || 0) - now())) / 1000);
-      const saboReady = (remSabo <= 0) && (G.phase === 'play');
+      const saboReady = (remSabo <= 0) && inPlay();
       if (saboBtn) {
         saboBtn.disabled = !saboReady;
         saboBtn.textContent = remSabo > 0 ? `물채우기 ${remSabo}s` : '물채우기';
@@ -4188,7 +4214,7 @@ function hostHandleInteract(playerId) {
       }
 
       const remForce = Math.ceil(Math.max(0, ((me.forceCdUntil || 0) - now())) / 1000);
-      const forceReady = (remForce <= 0) && (G.phase === 'play') && nearIdle;
+      const forceReady = (remForce <= 0) && inPlay() && nearIdle;
       const forceText = remForce > 0 ? `강제미션 ${remForce}s` : (nearIdle ? '강제미션' : '강제미션(근처X)');
       if (forceBtn) {
         forceBtn.disabled = !forceReady;
@@ -5291,7 +5317,7 @@ function showToast(text) {
 
   canvas.addEventListener('pointerdown', (ev) => {
     if (isMobile) return; // 모바일은 조이스틱
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     G.local.mouseDown = true;
     const p = canvasPoint(ev);
     // If the click is on an interactable and I'm in range, interact instead of moving.
@@ -5307,7 +5333,7 @@ function showToast(text) {
   window.addEventListener('pointermove', (ev) => {
     if (isMobile) return;
     if (!G.local.mouseDown) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     const p = canvasPoint(ev);
     setMoveFromPointer(p.x, p.y);
   });
@@ -5349,7 +5375,7 @@ function showToast(text) {
 
   window.addEventListener('keydown', (e) => {
     if (isMobile) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     if (isTyping()) return;
     let handled = true;
     switch (e.key){
@@ -5419,7 +5445,7 @@ default:
 
   window.addEventListener('pointerdown', (ev) => {
     if (!isMobile) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     const jc = joyCenter();
     const d = Math.hypot(ev.clientX - jc.cx, ev.clientY - jc.cy);
     if (d <= jc.rad * 1.3) {
@@ -5467,7 +5493,7 @@ default:
 
   function sendInteract() {
     if (!G.net) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     // Host shortcut (solo/practice)
     if (G.net.isHost && G.net.myPlayerId) {
       hostHandleInteract(G.net.myPlayerId);
@@ -5482,7 +5508,7 @@ default:
   // - Otherwise, X -> interact (doors, missions, meeting, etc.)
   function sendPrimaryAction() {
     if (!G.net) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     const st = G.state;
     const me = st?.players?.[G.net.myPlayerId];
     if (!me || !me.alive) return;
@@ -5498,7 +5524,7 @@ default:
 
   function sendKill() {
     if (!G.net) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     // Host shortcut (solo/practice)
     if (G.net.isHost && G.net.myPlayerId) {
       hostHandleKill(G.net.myPlayerId);
@@ -5513,13 +5539,13 @@ default:
 
   function sendSabotage() {
     if (!G.net) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'sabotage' });
   }
 
   function sendForceMission() {
     if (!G.net) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'forceMission' });
   }
 
@@ -5531,7 +5557,7 @@ default:
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
     // keyboard actions (PC)
-    if (!isMobile && G.phase === 'play' && !isTyping()) {
+    if (!isMobile && inPlay() && !isTyping()) {
       if (e.key === 'x' || e.key === 'X') {
         e.preventDefault();
         sendPrimaryAction();
@@ -6057,7 +6083,7 @@ try{
     let cam = me ? getCamera(me) : { x: 0, y: 0, vw: viewW / ZOOM, vh: viewH / ZOOM };
 
     // time warning shake (10초 이하)
-    if (G.phase === 'play' && st.timeLeft > 0 && st.timeLeft <= 10) {
+    if (inPlay() && st.timeLeft > 0 && st.timeLeft <= 10) {
       const amp = (1 - st.timeLeft / 10) * 3.0;
       cam = { ...cam,
         x: cam.x + Math.sin(now() * 0.07) * amp,
@@ -6215,7 +6241,7 @@ try{
     ctx.restore();
 
     // global lighting / vision mask (crew only)
-    if (G.phase === 'play') {
+    if (inPlay()) {
       try { drawLightMask(cam, me, st); } catch (_) {}
       try { drawClosedDoorOcclusion(cam, me, st); } catch (_) {}
       // Among Us style: keep MY character readable even when the world is dark.
@@ -6277,7 +6303,7 @@ try{
     }
 
     // UI hints
-    if (G.phase === 'play' && me) {
+    if (inPlay() && me) {
       const near = nearestHint(me);
       const canI = near.canInteract;
       interactBtn.style.display = canI ? 'flex' : 'none';
@@ -6378,7 +6404,7 @@ try{
       }
 
       // 시간 경고: 30초 이하 비네트(테두리 경고)
-      if (G.phase === 'play' && st.timeLeft > 0 && st.timeLeft <= 30) {
+      if (inPlay() && st.timeLeft > 0 && st.timeLeft <= 30) {
         const k = clamp((30 - st.timeLeft) / 30, 0, 1);
         const g2 = ctx.createRadialGradient(viewW * 0.5, viewH * 0.5, 80, viewW * 0.5, viewH * 0.5, Math.max(viewW, viewH) * 0.7);
         g2.addColorStop(0, 'rgba(0,0,0,0)');
@@ -8367,14 +8393,14 @@ try{
   function clientPredictLocalMove(dt) {
     const net = G.net;
     if (!net || net.isHost) return;
-    if (G.phase !== 'play') return;
+    if (!inPlay()) return;
     const myId = Number(net.myPlayerId || 0);
     if (!myId) return;
     const st = G.state;
     const me = st.players && st.players[myId];
     if (!me || !me.alive) return;
-    const isGhost = (!!me.down && me.role !== 'teacher' && !st.practice);
-    if (me.down && !isGhost) return;
+    const canRoamGhost = (!!me.down && me.role !== 'teacher' && !st.practice);
+    if (me.down && !canRoamGhost) return;
     if (me.vent) return;
 
     const frozen = now() < (me.frozenUntil || 0);
@@ -8580,16 +8606,27 @@ try{
     }
 
     // client input send
-    if (G.net && G.phase === 'play') {
+    if (G.net && inPlay()) {
       // If I'm the host, apply my input locally (do NOT rely on server echo)
       // so solo/practice play always responds.
-      if (G.net.isHost && G.net.myPlayerId){
-        G.host.inputs.set(Number(G.net.myPlayerId || 0), { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1), at: now() });
+      const pid = Number(G.net.myPlayerId || 0);
+      if (G.net.isHost && pid){
+        G.host.inputs.set(pid, { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1), at: now() });
       } else {
-        if (!G.local._lastInputAt) G.local._lastInputAt = 0;
-        if (t - G.local._lastInputAt > 33) {
-          G.local._lastInputAt = t;
-          G.net.post({ t: 'input', playerId: Number(G.net.myPlayerId || 0), mvx: G.local.mvx, mvy: G.local.mvy });
+        // If we haven't bound our playerId yet (missed joinAck/state), request a resync
+        // and skip sending meaningless inputs with playerId=0.
+        if (!pid) {
+          if (!G.local._needPidAt) G.local._needPidAt = 0;
+          if (t - G.local._needPidAt > 500) {
+            G.local._needPidAt = t;
+            try{ requestHostSync('needPlayerId'); }catch(_){ }
+          }
+        } else {
+          if (!G.local._lastInputAt) G.local._lastInputAt = 0;
+          if (t - G.local._lastInputAt > 33) {
+            G.local._lastInputAt = t;
+            G.net.post({ t: 'input', playerId: pid, mvx: G.local.mvx, mvy: G.local.mvy });
+          }
         }
       }
     }
@@ -9145,7 +9182,7 @@ G.state.missions = m.missions;
       // 내 role 업데이트
       setRolePill();
 
-      if (G.phase === 'play') {
+      if (inPlay()) {
         meetingModal.classList.remove('show');
         sceneModal.classList.remove('show');
         stopSceneAnim();
