@@ -682,6 +682,34 @@
   }
   function inPlay(){ return effectivePhase() === 'play'; }
 
+  // ---------- Identity helpers (embed/network robustness) ----------
+  // In embed mode, some clients may fail to receive joinAck and therefore
+  // don't know their playerId yet. However, they still have a stable joinToken.
+  // We accept joinToken/clientId-based routing on the host so movement/input
+  // works immediately even before the client binds a numeric playerId.
+  function resolvePlayerIdFromMsg(m){
+    try{
+      const pid = Number(m && m.playerId || 0);
+      if (pid) return pid;
+      // joinToken -> playerId (strongest)
+      const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
+      if (jt && G.host && G.host._joinTokenToPlayer && G.host._joinTokenToPlayer.has(jt)) {
+        return Number(G.host._joinTokenToPlayer.get(jt) || 0);
+      }
+      // embed sessionId -> playerId (stable per browser tab, unlike joinAck which can be dropped)
+      const sid = (m && m.sessionId != null) ? String(m.sessionId) : '';
+      if (sid && G.host && G.host._sidToPlayer && G.host._sidToPlayer.has(sid)) {
+        return Number(G.host._sidToPlayer.get(sid) || 0);
+      }
+      // clientId/cid -> playerId
+      const cid = (m && (m.cid != null || m.from != null)) ? String(m.cid ?? m.from) : '';
+      if (cid && G.host && G.host._clientToPlayer && G.host._clientToPlayer.has(cid)) {
+        return Number(G.host._clientToPlayer.get(cid) || 0);
+      }
+    }catch(_){ }
+    return 0;
+  }
+
   // ---------- Assets ----------
   const AS = {
     loadingImg: null,
@@ -2469,6 +2497,9 @@
       id,
       nick: String(nick || (isBot ? '봇' : '토끼')).slice(0, 16),
       clientId: clientId ? String(clientId) : null,
+	      // In embed mode, the parent room provides a stable Colyseus sessionId.
+	      // We store it to make host-side input routing resilient even when joinAck is dropped.
+	      sessionId: null,
       joinToken: null,
       isBot: !!isBot,
 
@@ -2506,6 +2537,12 @@
       // connection (host heartbeat)
       lastSeen: now(),
     };
+
+    // Maintain lookup maps for robust routing (joinToken/clientId -> playerId)
+    try{
+      if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
+      if (clientId) G.host._clientToPlayer.set(String(clientId), id);
+    }catch(_){ }
 
     return id;
   }
@@ -2590,6 +2627,8 @@
     const p = st.players[pid];
     const nick = p.nick || ('#' + pid);
     const cid = (p.clientId != null) ? String(p.clientId) : null;
+	    const jt = (p.joinToken != null) ? String(p.joinToken) : '';
+	    const sid = (p.sessionId != null) ? String(p.sessionId) : '';
 
     // Remove from state
     delete st.players[pid];
@@ -2605,6 +2644,8 @@
     try{ G.host.inputs && G.host.inputs.delete(pid); }catch(_){ }
     try{ G.host.votes && G.host.votes.delete(pid); }catch(_){ }
     try{ if (G.host._clientToPlayer && cid) G.host._clientToPlayer.delete(cid); }catch(_){ }
+	    try{ if (G.host._joinTokenToPlayer && jt) G.host._joinTokenToPlayer.delete(jt); }catch(_){ }
+	    try{ if (G.host._sidToPlayer && sid) G.host._sidToPlayer.delete(sid); }catch(_){ }
 
     // Win rule: if the teacher leaves/disconnects, students win immediately.
     // (Ghost/down players are allowed to exist and do NOT affect win conditions.)
@@ -4389,7 +4430,7 @@ function showToast(text) {
     // Tell host to clear the "mission in progress" marker above my head.
     try{
       if (ui && G.net && ui.siteId) {
-        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), siteId: ui.siteId });
+        G.net.post({ t: 'missionClose', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, siteId: ui.siteId });
       }
     }catch(_){ }
   }
@@ -4580,6 +4621,7 @@ function showToast(text) {
     const payload = {
       t: 'missionSubmit',
       playerId: Number(G.net.myPlayerId || 0),
+      joinToken: G.net.joinToken || null,
       siteId: ui.siteId,
       kind: ui.kind,
       practice: ui.practice,
@@ -4723,7 +4765,7 @@ function showToast(text) {
     G.ui.meetingChat.lastSentAt = tNow;
     const meetingId = G.ui.meetingChat?.id || 0;
     const meId = Number(G.net.myPlayerId || 0);
-    G.net.post({ t:'meetingChat', meetingId, playerId: meId, text });
+	  G.net.post({ t:'meetingChat', meetingId, playerId: meId, joinToken: G.net.joinToken || null, text });
     if (meetingChatText) meetingChatText.value = '';
   }
 
@@ -4854,7 +4896,7 @@ function showToast(text) {
         if (!canVoteTime) return;
         if (isGhost) return;
         G.ui.meeting.myVote = p.id;
-        G.net.post({ t: 'vote', playerId: meId, target: p.id });
+	        G.net.post({ t: 'vote', playerId: meId, joinToken: G.net.joinToken || null, target: p.id });
         renderVoteList();
       };
       row.appendChild(left);
@@ -4889,7 +4931,7 @@ function showToast(text) {
       if (!me || !me.alive || me.down) return;
     }catch(_){ }
     G.ui.meeting.myVote = null;
-    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
+    G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, target: null });
     renderVoteList();
   });
 
@@ -5307,7 +5349,7 @@ function showToast(text) {
         hostHandleInteract(G.net.myPlayerId);
         broadcastState(true);
       } else {
-        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
+        G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'interact' });
       }
       return true;
     } catch (_) {
@@ -5396,10 +5438,10 @@ function showToast(text) {
       case 'D':
         G.local.keys.right = true; break;
             case '1':
-        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'cry' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'cry' });
         handled = true; break;
       case '2':
-        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), kind: 'tsk' });
+        if (G.net) G.net.post({ t: 'emote', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'tsk' });
         handled = true; break;
 default:
         handled = false;
@@ -5500,7 +5542,7 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'interact' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'interact' });
   }
 
   // Primary action: X (PC) / 조작 버튼 (mobile). Context-sensitive:
@@ -5531,7 +5573,7 @@ default:
       broadcastState(true);
       return;
     }
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'kill' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'kill' });
   }
 
   killBtn.addEventListener('click', () => sendKill());
@@ -5540,13 +5582,13 @@ default:
   function sendSabotage() {
     if (!G.net) return;
     if (!inPlay()) return;
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'sabotage' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'sabotage' });
   }
 
   function sendForceMission() {
     if (!G.net) return;
     if (!inPlay()) return;
-    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), kind: 'forceMission' });
+    G.net.post({ t: 'act', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, kind: 'forceMission' });
   }
 
   saboBtn?.addEventListener('click', () => sendSabotage());
@@ -8613,19 +8655,21 @@ try{
       if (G.net.isHost && pid){
         G.host.inputs.set(pid, { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1), at: now() });
       } else {
-        // If we haven't bound our playerId yet (missed joinAck/state), request a resync
-        // and skip sending meaningless inputs with playerId=0.
+        // Always send movement intent using joinToken as fallback.
+        // This fixes: "방장 외 이동이 안 됨" when joinAck was dropped and the client
+        // never bound myPlayerId (pid=0). The host can resolve pid via joinToken.
+        if (!G.local._lastInputAt) G.local._lastInputAt = 0;
+        if (t - G.local._lastInputAt > 33) {
+          G.local._lastInputAt = t;
+          const jt = G.net.joinToken || null;
+          G.net.post({ t: 'input', playerId: pid || 0, joinToken: jt, mvx: G.local.mvx, mvy: G.local.mvy });
+        }
+        // Best-effort: if we still haven't bound our id, occasionally request a resync.
         if (!pid) {
           if (!G.local._needPidAt) G.local._needPidAt = 0;
-          if (t - G.local._needPidAt > 500) {
+          if (t - G.local._needPidAt > 900) {
             G.local._needPidAt = t;
             try{ requestHostSync('needPlayerId'); }catch(_){ }
-          }
-        } else {
-          if (!G.local._lastInputAt) G.local._lastInputAt = 0;
-          if (t - G.local._lastInputAt > 33) {
-            G.local._lastInputAt = t;
-            G.net.post({ t: 'input', playerId: pid, mvx: G.local.mvx, mvy: G.local.mvy });
           }
         }
       }
@@ -8648,7 +8692,7 @@ try{
           const ox = (obj.x + 0.5) * TS;
           const oy = (obj.y + 0.5) * TS;
           if (dist2(me.x, me.y, ox, oy) <= INTERACT_RANGE ** 2) {
-            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), siteId: rm.siteId });
+            G.net.post({ t: 'openMission', playerId: Number(G.net.myPlayerId || 0), joinToken: G.net.joinToken || null, siteId: rm.siteId });
           }
         }
         // attempt only once
@@ -8725,11 +8769,14 @@ try{
     net.on('join', (m) => {
       if (!net.isHost) return;
       const st = G.state;
+	    const sid = (m && m.sessionId != null) ? String(m.sessionId) : '';
       // Robust sender identity: some relays rewrite/strip `from`, but we also carry `cid`.
       const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
         ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
         : '';
+      const rawClientId = (m && m.clientId != null) ? String(m.clientId) : '';
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
+	    if (!G.host._sidToPlayer) G.host._sidToPlayer = new Map();
 
       // Dedupe joins using a per-join token (NOT clientId), because embed sessionId can be shared
       // across iframes. Clients retry join until joinAck arrives, reusing the same joinToken.
@@ -8740,12 +8787,20 @@ try{
         const p = st.players[pid];
         if (p) {
           p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
-          p.clientId = from || p.clientId || null;
+          p.clientId = rawClientId || from || p.clientId || null;
+	        p.sessionId = sid || p.sessionId || null;
           p.joinToken = jt || p.joinToken || null;
           p.isBot = false;
           p.alive = true;
           p.lastSeen = now();
         }
+        // refresh routing maps
+        try{
+          if (jt) G.host._joinTokenToPlayer.set(jt, pid);
+	        if (sid) G.host._sidToPlayer.set(sid, pid);
+          if (from) G.host._clientToPlayer.set(from, pid);
+          if (rawClientId) G.host._clientToPlayer.set(rawClientId, pid);
+        }catch(_){ }
         net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
         try{ broadcastRoster(true); }catch(_){ }
@@ -8757,10 +8812,19 @@ try{
         net.post({ t: 'joinDenied', toCid: from || null, toClient: from || null, reason: '방이 가득 찼어!', joinToken: jt });
         return;
       }
-      const pid = hostAddPlayer(m.nick || '토끼', false, from || null);
-      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.joinToken = jt || p.joinToken || null; } }catch(_){ }
+	    const pid = hostAddPlayer(m.nick || '토끼', false, rawClientId || from || null);
+	    try{
+	      const p = G.state.players && G.state.players[pid];
+	      if (p) {
+	        p.lastSeen = now();
+	        p.joinToken = jt || p.joinToken || null;
+	        p.sessionId = sid || p.sessionId || null;
+	      }
+	    }catch(_){ }
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
+	    if (sid) G.host._sidToPlayer.set(sid, pid);
       if (from) G.host._clientToPlayer.set(from, pid);
+      if (rawClientId) G.host._clientToPlayer.set(rawClientId, pid);
       net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
       try{ broadcastRoster(true); }catch(_){ }
@@ -8817,7 +8881,7 @@ try{
           if (net._hb) { clearInterval(net._hb); net._hb = null; }
           net._hbPid = Number(net.myPlayerId || 0);
           net._hb = setInterval(()=>{
-            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+            try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: net.joinToken || null }); }catch(_){ }
           }, 1000);
         }
       }catch(_){ }
@@ -8864,14 +8928,14 @@ try{
     // leave/disconnect (host)
     net.on('leave', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (pid) hostRemovePlayer(pid, m.reason || 'left');
     });
 
     // heartbeat ping (host): keep lastSeen fresh even if player is idle
     net.on('ping', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
@@ -8880,7 +8944,7 @@ try{
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (!pid) return;
       const p = G.state.players && G.state.players[pid];
       if (p) p.lastSeen = now();
@@ -8889,7 +8953,7 @@ try{
 
     net.on('emote', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       const p = G.state.players[pid];
       if (!p || !p.alive) return;
       const kind = (m.kind === 'cry' || m.kind === 'tsk') ? m.kind : null;
@@ -8901,7 +8965,7 @@ try{
 
     net.on('act', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (!pid) return;
       if (m.kind === 'interact') hostHandleInteract(pid);
       if (m.kind === 'kill') hostHandleKill(pid);
@@ -8911,7 +8975,7 @@ try{
     net.on('openMission', (m) => {
       if (!net.isHost) return;
       const st = G.state;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       const p = st.players[pid];
       if (!p || !p.alive) return;
       const isGhost = (!!p.down && p.role !== 'teacher');
@@ -8966,14 +9030,14 @@ try{
 
     net.on('missionSubmit', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (!pid) return;
       hostMissionSubmit(pid, { ...m, playerId: pid });
     });
 
     net.on('missionClose', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (!pid) return;
       const st = G.state;
       const p = st.players[pid];
@@ -8996,7 +9060,7 @@ try{
 
     net.on('vote', (m) => {
       if (!net.isHost) return;
-      const pid = Number(m.playerId || 0);
+      const pid = resolvePlayerIdFromMsg(m);
       if (!pid) return;
       hostSubmitVote(pid, m.target);
     });
@@ -9113,7 +9177,7 @@ try{
             if (!net._hb) {
               net._hbPid = pid;
               net._hb = setInterval(()=>{
-                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+                try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: net.joinToken || null }); }catch(_){ }
               }, 1000);
             }
             // stop join retry loop once bound
@@ -9320,7 +9384,7 @@ G.state.missions = m.missions;
                 if (net._hb) { clearInterval(net._hb); net._hb = null; }
                 net._hbPid = Number(net.myPlayerId || 0);
                 net._hb = setInterval(()=>{
-                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0) }); }catch(_){ }
+                  try{ net.post({ t: 'ping', playerId: Number(net.myPlayerId || 0), joinToken: net.joinToken || null }); }catch(_){ }
                 }, 1000);
               }
             }catch(_){ }
