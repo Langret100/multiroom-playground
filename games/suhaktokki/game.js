@@ -2420,6 +2420,9 @@
       missionStage: 0,
       missionClearAt: 0,
 
+      // readiness (prevents starting before slow clients fully load)
+      ready: !!isBot,
+
       // connection (host heartbeat)
       lastSeen: now(),
     };
@@ -3939,6 +3942,7 @@ function hostHandleInteract(playerId) {
           isBot: !!p.isBot,
           clientId: (p.clientId != null) ? String(p.clientId) : null,
           joinToken: p.joinToken || null,
+          ready: !!p.ready,
           x: Math.round((p.x || 0) * 100) / 100,
           y: Math.round((p.y || 0) * 100) / 100,
           vx: Math.round((p.vx || 0) * 100) / 100,
@@ -8428,6 +8432,28 @@ try{
   }
 
   // ---------- Join flow ----------
+  // In embed/multi-relay environments, some clients may load slower than others.
+  // We mark clients as "ready" once their iframe has joined/bound, and the host
+  // prefers to start when all expected humans are ready. This prevents the classic
+  // "4명인데 1명은 연습모드/캐릭터 없음" race.
+  function clientStartReadyPing(net){
+    try{
+      if (!net || net.isHost) return;
+      if (net._readyPing) return;
+      net._readyPing = setInterval(()=>{
+        try{
+          if (!G.net || G.net !== net) { clearInterval(net._readyPing); net._readyPing = null; return; }
+          const pid = Number(net.myPlayerId || 0);
+          if (!pid) return;
+          const me = (G.state && G.state.players) ? G.state.players[String(pid)] : null;
+          // stop once host has acknowledged (roster/state reflects ready)
+          if (me && me.ready) { clearInterval(net._readyPing); net._readyPing = null; return; }
+          net.post({ t:'ready', playerId: pid, joinToken: net.joinToken || null });
+        }catch(_){ }
+      }, 700);
+    }catch(_){ }
+  }
+
   async function joinRoom() {
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); applyPhaseUI(); return; }
     const nick = (nickEl.value || '토끼').trim().slice(0, 10);
@@ -8481,6 +8507,8 @@ try{
         net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
         try{ broadcastRoster(true); }catch(_){ }
+        // If the match already started, immediately reveal the current role/mode to this (re)joining client.
+        try{ if (G.host.started) sendToPlayer(pid, { t: 'uiRoleReveal', role: (p && p.role) ? p.role : 'crew', practice: !!st.practice }); }catch(_){ }
         return;
       }
 
@@ -8496,6 +8524,11 @@ try{
       net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
       try{ broadcastRoster(true); }catch(_){ }
+      // If the match already started, immediately reveal the current role/mode to the late joiner.
+      try{ if (G.host.started) {
+        const p = st.players && st.players[pid];
+        if (p) sendToPlayer(pid, { t: 'uiRoleReveal', role: p.role || 'crew', practice: !!st.practice });
+      } }catch(_){ }
 
       // If we started in practice (e.g., embed auto-start) and now have enough players,
       // switch to the real game by assigning a teacher and notifying roles.
@@ -8556,6 +8589,8 @@ try{
 
       // stop join retry loop
       try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
+      // notify host that this client is fully loaded/bound
+      try{ clientStartReadyPing(net); }catch(_){ }
 
       G.phase = 'lobby';
       setRolePill();
@@ -8567,7 +8602,44 @@ try{
       }
     });
 
-    net.on('joinDenied', (m) => {
+    
+    // Client ready signal: helps host wait for slow iframes and prevents accidental practice starts.
+    net.on('ready', (m) => {
+      if (!net.isHost) return;
+      const st = G.state;
+      const pid = Number(m.playerId || 0);
+      const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
+      let p = null;
+
+      try{
+        if (pid && st.players && st.players[pid]) p = st.players[pid];
+      }catch(_){ }
+
+      // Fallback: resolve by joinToken (more reliable in embed where clientId/sessionId may be shared/re-written)
+      try{
+        if (!p && jt && G.host && G.host._joinTokenToPlayer && G.host._joinTokenToPlayer.has(jt)) {
+          const pid2 = Number(G.host._joinTokenToPlayer.get(jt) || 0);
+          if (pid2 && st.players && st.players[pid2]) p = st.players[pid2];
+        }
+      }catch(_){ }
+
+      if (!p) return;
+
+      p.ready = true;
+      try{ p.lastSeen = now(); }catch(_){ }
+
+      // Keep clientId fresh if available (helps debugging/roster binding)
+      try{
+        const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
+          ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
+          : '';
+        if (from) p.clientId = from;
+      }catch(_){ }
+
+      try{ broadcastRoster(true); }catch(_){ }
+    });
+
+net.on('joinDenied', (m) => {
       const myCid = String(net.clientId || '');
       const mySid = (net.sessionId != null) ? String(net.sessionId) : '';
 
@@ -8853,6 +8925,8 @@ try{
           }
         }
       }catch(_){ }
+      // notify host that this client is fully loaded/bound
+      try{ clientStartReadyPing(net); }catch(_){ }
       
 
       // Smooth remote players on clients so other players look less 'choppy'.
@@ -8938,6 +9012,23 @@ G.state.missions = m.missions;
 
     
 
+      // Embed: if I'm not yet fully bound to a player, keep the boot overlay so it doesn't look like "no character".
+      try{
+        if (EMBED) {
+          const pid = Number(net.myPlayerId || 0);
+          const me = (pid && G.state.players) ? G.state.players[String(pid)] : null;
+          if (G.phase !== 'lobby' && !me) {
+            bootShow('참가 중... (캐릭터 생성 대기)');
+            if (!G.ui) G.ui = {};
+            G.ui._bootHidden = false;
+          } else if (G.phase !== 'lobby' && me) {
+            bootHide();
+            if (!G.ui) G.ui = {};
+            G.ui._bootHidden = true;
+          }
+        }
+      }catch(_){ }
+
       applyPhaseUI();
     });
 
@@ -8983,6 +9074,7 @@ G.state.missions = m.missions;
         if (typeof up.alive === 'boolean') p.alive = !!up.alive;
         if (typeof up.down === 'boolean') p.down = !!up.down;
         if (typeof up.isBot === 'boolean') p.isBot = !!up.isBot;
+        if (typeof up.ready === 'boolean') p.ready = !!up.ready;
         if (up.clientId != null) p.clientId = String(up.clientId);
         if (up.joinToken != null) p.joinToken = up.joinToken;
         if (typeof up.x === 'number') p.x = up.x;
@@ -9056,6 +9148,25 @@ G.state.missions = m.missions;
 
             // Stop join retry loop (if running).
             try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
+          }
+        }
+      }catch(_){ }
+      // notify host that this client is fully loaded/bound
+      try{ clientStartReadyPing(net); }catch(_){ }
+
+      // Embed: if I'm not yet fully bound to a player, keep the boot overlay so it doesn't look like "no character".
+      try{
+        if (EMBED) {
+          const pid = Number(net.myPlayerId || 0);
+          const me = (pid && G.state.players) ? G.state.players[String(pid)] : null;
+          if (G.phase !== 'lobby' && !me) {
+            bootShow('참가 중... (캐릭터 생성 대기)');
+            if (!G.ui) G.ui = {};
+            G.ui._bootHidden = false;
+          } else if (G.phase !== 'lobby' && me) {
+            bootHide();
+            if (!G.ui) G.ui = {};
+            G.ui._bootHidden = true;
           }
         }
       }catch(_){ }
@@ -9351,6 +9462,7 @@ net.on('uiMeetingOpen', (m) => {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
       const pid = hostAddPlayer(nick, false, net.clientId);
+      try{ const p = G.state.players && G.state.players[pid]; if (p) p.ready = true; }catch(_){ }
       net.myPlayerId = pid;
       G.phase = 'lobby';
       setRolePill();
@@ -9470,8 +9582,11 @@ net.on('uiMeetingOpen', (m) => {
         try{
           if (!G.net || !G.net.isHost) { clearInterval(it); return; }
           if (G.host.started) { clearInterval(it); try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ } return; }
-          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
-          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
+          const humans = Object.values(G.state.players || {}).filter(p=>p && !p.isBot);
+          const n = humans.length;
+          const nReady = humans.filter(p=>p && p.ready).length;
+          // Prefer readiness to avoid starting before some iframes have actually joined.
+          const ready = (expected > 0) ? (nReady >= target) : (nReady >= minReal);
           if (ready || (now() - t0) > MAX_WAIT){
             clearInterval(it);
             try{ startBtn.click(); }catch(_){ }
