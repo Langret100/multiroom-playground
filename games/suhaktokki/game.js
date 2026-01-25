@@ -66,8 +66,7 @@
   // Default behavior:
   // - Non-embed: hide boot overlay immediately (show normal lobby UI).
   // - Embed: keep it visible until assets + all players are ready, then hide once.
-  // In embed mode we keep the HTML boot overlay hidden so it never masks the lobby.
-  try{ bootHide(); if (G.ui) G.ui._bootHidden = true; }catch(_){ }
+  try{ if (!EMBED) bootHide(); else bootShow('로딩 중...'); }catch(_){ }
   const nickEl = document.getElementById('nick');
   const roomEl = document.getElementById('room');
   const joinBtn = document.getElementById('joinBtn');
@@ -1922,26 +1921,10 @@
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
-      // Embed(iframe) mode: prefer room-provided host flag, but be resilient.
-      // If no host is observed shortly after discovery, let seat-0 (or explicit isHost) take host.
+      // In embed mode, do NOT auto-elect host on clients.
       this.post({ t:"discover", at: Date.now() });
-      await new Promise(r => setTimeout(r, 320));
-
-      // If a host has already announced, stop here.
-      if (this.hostId) return;
-
-      // Primary: explicit host flag from parent.
-      let shouldHost = !!this.isHost;
-
-      // Fallback: seat 0 becomes host (prevents "no host" deadlock if parent init is late/wrong).
-      try{
-        const seat = Number(window.__EMBED_SEAT__);
-        if (!Number.isNaN(seat) && seat === 0) shouldHost = true;
-      }catch(_){}
-
-      if (shouldHost && !this.hostId){
-        this.becomeHost();
-      }
+      await new Promise(r => setTimeout(r, 300));
+      if (this.isHost && !this.hostId){ this.becomeHost(); }
     }
     becomeHost(){
       this.isHost = true;
@@ -5834,8 +5817,7 @@ function drawCenterNoticeOverlay(){
 // Show a proper loading/title screen instead of a black canvas while assets/join/start are pending.
 if (!AS.map || !mapCanvas) {
   // In embed mode, keep the HTML loading overlay visible from the first paint.
-  // embed: no HTML boot overlay (canvas + lobby is enough)
-  try{ /* no-op */ }catch(_){ }
+  try{ if (EMBED) bootShow('로딩 중...'); }catch(_){ }
   drawLoadingScreen();
   drawCenterNoticeOverlay();
   return;
@@ -9450,9 +9432,8 @@ net.on('uiMeetingOpen', (m) => {
 
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
-    // Host: prefer room-provided flag, but fall back to seat 0 to avoid "no host" deadlock.
-    window.__EMBED_SEAT__ = (typeof init.seat === 'number') ? init.seat : (Number(init.seat) || 0);
-    window.__EMBED_IS_HOST__ = !!init.isHost || (Number(window.__EMBED_SEAT__) === 0);
+    // Host is decided by the room (avoid multiple-host races when more players join).
+    window.__EMBED_IS_HOST__ = !!init.isHost;
     // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
     window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
     window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
@@ -9470,76 +9451,41 @@ net.on('uiMeetingOpen', (m) => {
 
     await joinRoom();
 
-    // Embedded UX:
-    // - show the internal lobby so the host can always start manually (togester-style).
-    // - hide the HTML boot/loading overlay (it can mask the lobby on some devices).
+    // Embedded UX: never show the internal lobby overlay. The parent already has it.
     try{ G.ui.embedJoined = true; }catch(_){ }
-    try{ bootHide(); if (G.ui) G.ui._bootHidden = true; }catch(_){ }
+    try{ lobby?.classList.add('hidden'); }catch(_){ }
+    try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
 
-    try{
-      // Keep lobby visible in embed so Start is always reachable.
-      lobby?.classList.remove('hidden');
-      // Inputs are set from parent; prevent accidental edits.
-      if (nickEl) nickEl.disabled = true;
-      if (roomEl) roomEl.disabled = true;
-      // Hide join/bot controls (parent already joined the room).
-      if (joinBtn) joinBtn.style.display = 'none';
-      if (addBotBtn) addBotBtn.style.display = 'none';
-      // Only host sees Start button.
-      if (startBtn) startBtn.style.display = (G.net && G.net.isHost) ? '' : 'none';
-      if (hud) hud.style.display = 'none';
-    }catch(_){ }
-
-    // host: auto-start (best-effort).
-    // In some environments bridge_init can arrive with a wrong/late isHost flag.
-    // We therefore (1) elect seat-0 as host in BridgeNet.discoverHost and (2) always allow manual start via lobby.
-    if (G.net && G.net.isHost){
-      try{ if (G.ui) G.ui._embedWaitingStart = true; }catch(_){ }
-      // Give other clients a brief moment to join, then start regardless (late join is allowed).
-      setTimeout(()=>{
+    // host: auto-start, but wait a short moment for other players to finish joining.
+    // (Prevents 4+ rooms from incorrectly starting in practice due to slow iframe loads.)
+    if (window.__EMBED_IS_HOST__){
+      const t0 = now();
+      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
+      const minReal = 4;
+      const target = (expected > 0) ? expected : minReal;
+      // Give a bit more time in embed (iframe) so late joinAck/roster packets don't push the room into practice.
+      const MAX_WAIT = (expected > minReal) ? 9000 : 6500;   // ms
+      const CHECK_MS = 120;    // ms
+      const it = setInterval(()=>{
         try{
-          if (!G.net || !G.net.isHost) return;
-          if (G.host.started) return;
-
-          // Determine practice mode: prefer parent hint, otherwise use <4 humans.
-          const nHum = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
-          let practice = (nHum < 4);
-          try{
-            if (typeof window.__EMBED_PRACTICE__ === 'boolean') practice = !!window.__EMBED_PRACTICE__;
-          }catch(_){ }
-
-          G.phase = 'play';
-          hostStartGame(practice);
-          broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
-          applyPhaseUI();
-          try{ if (startBtn) startBtn.style.display = 'none'; }catch(_){ }
-          try{ setLobbyStatus('', null); }catch(_){ }
+          if (!G.net || !G.net.isHost) { clearInterval(it); return; }
+          if (G.host.started) { clearInterval(it); try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ } return; }
+          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
+          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
+          if (ready || (now() - t0) > MAX_WAIT){
+            clearInterval(it);
+            try{ startBtn.click(); }catch(_){ }
+          }
         }catch(_){}
-      }, 900);
+      }, CHECK_MS);
     } else {
-      try{ if (startBtn) startBtn.style.display = 'none'; }catch(_){ }
-      try{ setLobbyStatus('호스트가 게임을 시작하는 중...', 'info'); }catch(_){ }
+      try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
     }
-
   }
 
   if (EMBED){
     // Tell parent we're ready for bridge_init
     bridgeSend('bridge_ready', {});
-
-    // Resilient init: if bridge_init was missed (race on slow devices),
-    // periodically ask the parent to resend it until we successfully join.
-    // This avoids being stuck on the static loading art forever.
-    try{
-      let tries = 0;
-      const t = setInterval(()=>{
-        try{
-          if (G.net) { clearInterval(t); return; }
-          if (tries++ > 40) { clearInterval(t); return; } // ~20s max
-          bridgeSend('bridge_request_init', { at: Date.now() });
-        }catch(_){ }
-      }, 500);
-    }catch(_){ }
 
     // bridge_init가 listener보다 먼저 도착하는 레이스를 방지하기 위해
     // index.html에서 window.__PENDING_BRIDGE_INIT__에 버퍼링해둘 수 있다.

@@ -739,22 +739,6 @@ function updatePreview(modeId){
       }
       return;
     }
-
-    // Some embedded coop games depend on receiving bridge_init reliably.
-    // On slower devices or on hot reloads, the initial bridge_ready/init handshake
-    // can race and the init can be missed. Embedded games can ask for a resend.
-    if (d.type === "bridge_request_init"){
-      if (!fromMain) return;
-      try{
-        if (coop.active && coop.meta && coop.iframeLoaded){
-          sendCoopBridgeInit();
-        } else if (duel.active && duel.meta && duel.iframeLoaded){
-          // Fallback for duel embeds if ever needed.
-          sendBridgeInit();
-        }
-      }catch(_){ }
-      return;
-    }
     if (!room) return;
 
     // In-game "나가기" from embedded duel iframe (forfeit & return to room UI)
@@ -1575,33 +1559,15 @@ function sendCpuBridgeInit(){
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
 
-  // Wait until the room state has my player entry (so host/seat can be derived reliably).
-  // Some environments can load the iframe faster than the first room_state snapshot.
-  // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
+  // Wait until the room state has my player entry.
+  // This avoids transient "solo" / host mis-detection that can break 4+ player coop.
   try{
-    const players = room?.state?.players;
-    const hasMe = !!(players && typeof players.get === "function" && players.get(mySessionId));
-    if (!hasMe){
+    if (!room?.state?.players?.has?.(mySessionId)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
-
-      // Small backoff to avoid spamming the event loop while waiting for the snapshot.
-      const n = coop._bridgeInitRetry;
-      const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
-
-      // Keep only one retry timer at a time (multiple triggers can happen: iframe onload, bridge_ready, etc.)
-      if (coop._bridgeInitTimer) return;
-      coop._bridgeInitTimer = setTimeout(()=>{
-        try{ coop._bridgeInitTimer = null; }catch(_){ }
-        try{
-          if (!coop.active || !coop.meta) return;
-          if (!duel.iframeEl) return;
-        }catch(_){ return; }
-        sendCoopBridgeInit();
-      }, delay);
+      if (coop._bridgeInitRetry < 30) setTimeout(sendCoopBridgeInit, 80);
       return;
     }
     coop._bridgeInitRetry = 0;
-    try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
   }catch(_){ }
 
   const seat = (()=>{
@@ -1627,11 +1593,8 @@ function sendCoopBridgeInit(){
   })();
   const expectedHumans = (()=>{
     try{
-      // SuhakTokki: 시작 대기 인원을 "현재 들어온 사람 수"로 두어,
-      // max playerCount(예: 8) 때문에 무한 대기/로딩이 되는 문제를 방지한다.
-      const explicit = Number(coop.expectedHumans || 0);
-      if (explicit > 0) return explicit;
-      return humanCount;
+      const v = Number(coop.expectedHumans || room?.state?.playerCount || humanCount || 0);
+      return (v > 0) ? v : humanCount;
     }catch(_){ return humanCount; }
   })();
   const solo = (expectedHumans <= 1);
@@ -1996,7 +1959,7 @@ try{
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
-        try{ coop.expectedHumans = Number(m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
+        try{ coop.expectedHumans = Number(m?.playerCount || room?.state?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
         // reset per-game transient UI/state
         try{ spec.last.clear(); }catch(_){ }
