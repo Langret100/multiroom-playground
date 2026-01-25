@@ -154,10 +154,12 @@
     /* Canvas sizing */
     #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
 
-    /* Boot loading overlay: shown from the very first paint in embed mode.
-       Prevents black/flicker frames (black -> game -> loading -> game). */
+    /* Boot loading overlay (deprecated): users requested removing the blocking
+       overlay entirely, because any asset/join hiccup would leave the iframe
+       stuck forever behind it. We keep the DOM nodes for compatibility but
+       never display them. */
     #bootLoading{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:#000;pointer-events:none;}
-    html.embed #bootLoading{display:flex;}
+    html.embed #bootLoading{display:none;}
     #bootLoading.hidden{display:none;}
     #bootLoading .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
     #bootLoading .hint{position:relative;z-index:1;margin-top:32vh;padding:10px 14px;border-radius:14px;

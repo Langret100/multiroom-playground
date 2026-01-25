@@ -73,6 +73,9 @@
   const bootLoadingText = document.getElementById('bootLoadingText');
   function bootShow(msg){
     try{
+      // User request: never block the game with a full-screen loading overlay.
+      // Even if assets/join are slow, keep rendering on the canvas and/or show lobby UI.
+      if (EMBED) { bootHide(); return; }
       if (!bootLoading) return;
       bootLoading.classList.remove('hidden');
       if (bootLoadingText && msg != null) bootLoadingText.textContent = String(msg);
@@ -82,10 +85,9 @@
     try{ if (bootLoading) bootLoading.classList.add('hidden'); }catch(_){ }
   }
 
-  // Default behavior:
-  // - Non-embed: hide boot overlay immediately (show normal lobby UI).
-  // - Embed: keep it visible until assets + all players are ready, then hide once.
-  try{ if (!EMBED) bootHide(); else bootShow('로딩 중...'); }catch(_){ }
+  // Default behavior: always hide the HTML boot overlay.
+  // (We still show loading/title art on the canvas when needed.)
+  try{ bootHide(); }catch(_){ }
   const nickEl = document.getElementById('nick');
   const roomEl = document.getElementById('room');
   const joinBtn = document.getElementById('joinBtn');
