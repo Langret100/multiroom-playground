@@ -499,6 +499,19 @@
     setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
   }
 
+  // When the match ends (winner decided), automatically return everyone back to the room.
+  // This keeps the multiroom UX consistent with Together-style games.
+  function scheduleMatchEndReturn() {
+    if (!EMBED) return;
+    if (!G.ui) G.ui = {};
+    if (G.ui._matchEndReturnScheduled) return;
+    G.ui._matchEndReturnScheduled = true;
+    try { showCenterNotice('게임이 종료되었습니다. 잠시 후 방으로 돌아갑니다.', 1600); } catch (_) {}
+    // Tell all clients to quit (they handle hostExit by calling leaveRoom).
+    try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'match_end', at: now() }); } catch (_) {}
+    setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1700);
+  }
+
   function tryHostLeave() {
     const t = now();
     if (!G.ui) G.ui = {};
@@ -2556,6 +2569,7 @@
       G.phase = 'end';
       broadcast({ t: 'toast', text: '선생토끼가 퇴장해서 학생토끼 승리!' });
       broadcastState(true);
+      try { scheduleMatchEndReturn(); } catch (_) {}
       return;
     }
 
@@ -2685,6 +2699,8 @@
         st.timeLeft = 0;
         st.winner = 'teacher';
         G.phase = 'end';
+        try { broadcastState(true); } catch (_) {}
+        try { scheduleMatchEndReturn(); } catch (_) {}
         return;
       }
     }
@@ -2854,12 +2870,16 @@
       if (crewAlive === 0 && st.teacherId && st.players[st.teacherId]?.alive) {
         st.winner = 'teacher';
         G.phase = 'end';
+        try { broadcastState(true); } catch (_) {}
+        try { scheduleMatchEndReturn(); } catch (_) {}
         return;
       }
 
       if (!st.infiniteMissions && st.solved >= st.total) {
         st.winner = 'crew';
         G.phase = 'end';
+        try { broadcastState(true); } catch (_) {}
+        try { scheduleMatchEndReturn(); } catch (_) {}
         return;
       }
     }
@@ -3716,6 +3736,7 @@ function hostHandleInteract(playerId) {
       if (winner === st.teacherId) {
         st.winner = 'crew';
         G.phase = 'end';
+        try { scheduleMatchEndReturn(); } catch (_) {}
       }
     } else {
       hostShowEjectScene(null);
@@ -5466,7 +5487,10 @@ default:
     if (!total) return 0;
     let off = 0;
     for (const id of ids){ if (!lamps[id]?.on) off++; }
-    return clamp(off / total, 0, 1);
+    // Make each lamp toggle noticeably impactful.
+    // Empirically, the default linear mapping felt too subtle; amplify.
+    const LIGHT_DARK_MULT = 3.0;
+    return clamp((off / total) * LIGHT_DARK_MULT, 0, 1);
   }
 
   function getLookAngle(me){
@@ -6231,11 +6255,18 @@ try{
       ctx.fillStyle = 'rgba(0,0,0,.55)';
       ctx.fillRect(0, 0, viewW, viewH);
       ctx.fillStyle = 'rgba(255,255,255,.95)';
-      ctx.font = '900 28px system-ui';
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = '900 32px system-ui';
       const msg = st.winner === 'crew' ? '학생토끼 승리!' : '선생토끼 승리!';
-      ctx.fillText(msg, 18, 48);
+      const cx = viewW * 0.5;
+      const cy = viewH * 0.5;
+      ctx.fillText(msg, cx, cy - 14);
       ctx.font = '800 14px system-ui';
-      ctx.fillText('새로고침하면 다시 시작할 수 있어요.', 18, 74);
+      const sub = EMBED ? '잠시 후 방으로 돌아갑니다.' : '새로고침하면 다시 시작할 수 있어요.';
+      ctx.fillText(sub, cx, cy + 18);
+      ctx.restore();
     }
   }
 
@@ -8981,7 +9012,8 @@ G.state.missions = m.missions;
       }
 
       if (G.phase === 'end' && G.state.winner) {
-        // end
+        // end: if we are embedded in multiroom, auto-return to the room (late joiners too)
+        try { scheduleMatchEndReturn(); } catch (_) {}
       }
 
       // 호스트 권한 UI
