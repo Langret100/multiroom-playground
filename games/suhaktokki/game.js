@@ -8884,7 +8884,10 @@ try{
           if (!G.ui) G.ui = {};
           G.ui._hostGoneHandled = true;
           try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
-          setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
+          // IMPORTANT (multiroom embed): include an explicit reason so the parent
+          // room page can notify the server (sk_over) and avoid getting stuck in
+          // "게임중" state.
+          setTimeout(() => { try { leaveRoom('host_exit'); } catch (_) {} }, 1500);
         }
       }
     } catch (_) {}

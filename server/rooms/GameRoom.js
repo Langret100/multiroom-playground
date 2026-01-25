@@ -130,6 +130,17 @@ this.st = {
   interval: null,
 };
 
+    // ---- SuhakTokki (embedded iframe) transient end-signal tracking ----
+    // The SuhakTokki iframe broadcasts a "hostExit" packet (reason: match_end/host_exit)
+    // before it returns to the room UI. If the host's sk_over message is missed, the
+    // room can get stuck in "playing". We record the end-signal here and allow a
+    // short window where any client can successfully request a reset.
+    this.sk = {
+      ended: false,
+      endedAt: 0,
+      endedReason: "",
+    };
+
     this.onMessage("ready", (client, { ready }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || this.state.phase !== "lobby") return;
@@ -259,6 +270,19 @@ this.st = {
         inner.text = String(inner.text || "").replace(/[\r\n\t]/g, " ").slice(0, 120);
       }
 
+      // Track match end / host exit signals so the room can be reset even if the
+      // host's sk_over packet is missed.
+      try{
+        if (t === "hostExit") {
+          const r = String(inner.reason || "").slice(0, 32);
+          if (r === "match_end" || r === "host_exit") {
+            this.sk.ended = true;
+            this.sk.endedAt = Date.now();
+            this.sk.endedReason = r;
+          }
+        }
+      }catch(_){ }
+
       this.broadcast("sk_msg", { msg: inner });
     });
 
@@ -274,7 +298,14 @@ this.st = {
         if (ps?.isHost){ hostSid = sid; break; }
       }
       const isHost = (!hostSid) || (client.sessionId === hostSid);
-      if (!isHost) return;
+
+      // If the game already signaled an end (via hostExit relayed in sk_msg),
+      // allow any client to request the reset within a short grace window.
+      // This prevents the room from getting stuck in "playing" when the host
+      // returns to lobby UI without successfully sending sk_over.
+      const graceMs = 15000;
+      const inGrace = !!(this.sk?.ended && this.sk.endedAt && (Date.now() - this.sk.endedAt) < graceMs);
+      if (!isHost && !inGrace) return;
 
       const reason = String(payload?.reason || "match_end").slice(0, 32);
       const keepHost = hostSid || client.sessionId;
@@ -945,6 +976,15 @@ try{
         this.st.scores = {};
         this.st.startedAt = 0;
         this.st.durationMs = 180000;
+      }
+    }catch(_){ }
+
+    // Clear SuhakTokki end-signal tracking
+    try{
+      if (this.sk){
+        this.sk.ended = false;
+        this.sk.endedAt = 0;
+        this.sk.endedReason = "";
       }
     }catch(_){ }
 
