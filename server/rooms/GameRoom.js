@@ -270,20 +270,30 @@ this.st = {
         inner.text = String(inner.text || "").replace(/[\r\n\t]/g, " ").slice(0, 120);
       }
 
-      // Track match end / host exit signals so the room can be reset even if the
-      // host's sk_over packet is missed.
-      try{
-        if (t === "hostExit") {
-          const r = String(inner.reason || "").slice(0, 32);
-          if (r === "match_end" || r === "host_exit") {
-            this.sk.ended = true;
-            this.sk.endedAt = Date.now();
-            this.sk.endedReason = r;
-          }
-        }
-      }catch(_){ }
+      
+// Track match end / host exit signals so the room can be reset even if the
+// host's sk_over packet is missed.
+// NOTE: We also end the match server-side immediately on this signal to avoid
+// "stuck playing" when the parent page fails to deliver sk_over (e.g. fast navigation).
+try{
+  if (t === "hostExit") {
+    const r = String(inner.reason || "").slice(0, 32);
+    if (r === "match_end" || r === "host_exit") {
+      this.sk.ended = true;
+      this.sk.endedAt = Date.now();
+      this.sk.endedReason = r;
 
-      this.broadcast("sk_msg", { msg: inner });
+      // Only honor end signal from the current host when known.
+      let hostSid = null;
+      for (const [sid, ps] of this.state.players.entries()){
+        if (ps?.isHost){ hostSid = sid; break; }
+      }
+      if (!hostSid || client.sessionId === hostSid){
+        this._endSuhakTokki(r, hostSid || client.sessionId);
+      }
+    }
+  }
+}catch(_){ }this.broadcast("sk_msg", { msg: inner });
     });
 
     // SuhakTokki match end -> reset room back to lobby (like Together)
@@ -929,6 +939,38 @@ try{
       this.state.allReady = (humans >= minHumans) && nonHostHumansReady;
     }
   }
+
+
+
+_endSuhakTokki(reason = "match_end", keepHostSid = null){
+  // Idempotent: only transition when currently playing SuhakTokki.
+  if (this.state.mode !== "suhaktokki") return;
+  if (this.state.phase !== "playing") return;
+
+  const r = String(reason || "match_end").slice(0, 32);
+  const keep = keepHostSid;
+
+  this.resetToLobby(r);
+
+  // Restore host ownership so the room remains controllable after returning.
+  try{
+    let chosen = keep;
+    if (!chosen){
+      for (const [sid, ps] of this.state.players.entries()){
+        if (ps){ chosen = sid; break; }
+      }
+    }
+    for (const ps of this.state.players.values()) ps.isHost = false;
+    const hp = chosen ? this.state.players.get(chosen) : null;
+    if (hp) hp.isHost = true;
+    const hostNick = hp?.nick || "-";
+    this.setMetadata({ ...this.metadata, hostNick });
+  }catch(_){ }
+
+  try{ this.recomputeReady(); }catch(_){ }
+  try{ this.syncMetadata(); }catch(_){ }
+  try{ this.broadcast("backToRoom", { mode: "suhaktokki", reason: r }); }catch(_){ }
+}
 
   syncMetadata(){
     const status = (this.state.phase === "playing") ? "playing" : "waiting";
