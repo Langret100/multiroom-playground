@@ -2437,7 +2437,11 @@
       for (const p of Object.values(st.players)) p.role = 'crew';
       return;
     }
-    const aliveIds = Object.values(st.players).filter(p => p.alive).map(p => p.id);
+    // 선생토끼(임포스터) 배정은 **무작위**로 하되, 실제 사람(봇 제외) 중에서만 뽑는다.
+    // (연습/봇 방에서 봇이 선생이 되는 걸 방지)
+    const aliveIds = Object.values(st.players)
+      .filter(p => p && p.alive && !p.isBot)
+      .map(p => p.id);
     if (aliveIds.length < 2) return;
     const idx = Math.floor(Math.random() * aliveIds.length);
     const tid = aliveIds[idx];
