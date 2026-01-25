@@ -5829,7 +5829,10 @@ const st = G.state;
 try{
   // In iframe embed mode, treat ourselves as embed from the very first frame.
   const isEmbed = !!EMBED || !!(G.ui && G.ui.embedJoined);
-  if (isEmbed && (G.phase === 'lobby' || !st.started)) {
+  // In embed mode, only block rendering while truly in lobby.
+  // Practice/solo sessions may not flip st.started reliably, so don't gate solely on that.
+  const isPractice = !!(st && st.practice);
+  if (isEmbed && (G.phase === 'lobby' || (!st.started && !isPractice))) {
     const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart)
       ? '플레이어 접속을 기다리는 중...'
       : '로딩 중...';
@@ -5847,7 +5850,7 @@ try{
     if (EMBED) {
       try{
         if (!G.ui) G.ui = {};
-        if (!G.ui._bootHidden && G.phase !== 'lobby' && st && st.started) {
+        if (!G.ui._bootHidden && G.phase !== 'lobby' && st && (st.started || st.practice)) {
           bootHide();
           G.ui._bootHidden = true;
         }
@@ -9424,15 +9427,10 @@ net.on('uiMeetingOpen', (m) => {
     if (!init || !init.roomCode) return;
     if (G.net) return;
 
-    // Wait for assets (they load asynchronously).
-    // In embed mode, mobile devices can take >8s; timing out here can permanently
-    // prevent join/start and leave the boot loading screen stuck.
+    // wait assets (they load asynchronously)
+    // Do not time out here: slow networks/devices can take >8s on first load.
     while(!G.assetsReady && !G.assetsError){
       await new Promise(r => setTimeout(r, 50));
-    }
-    if (G.assetsError){
-      try{ showToast('에셋 로딩 실패'); }catch(_){ }
-      return;
     }
 
     window.__USE_BRIDGE_NET__ = true;

@@ -238,9 +238,7 @@ function setupBgm(audioElId, btnId){
     suika: "assets/audio/suikamusic.mp3",
     stackga: "assets/audio/stackmusic.mp3",
   };
-  // Track only the last selected mode so we can avoid restarting the same track.
-  // Autoplay / unmute is handled by AudioManager via first user gesture.
-  const _gameBgm = { el: null, handle: null, lastMode: null };
+  const _gameBgm = { el: null, handle: null, lastMode: null, primed: false };
 
   function _ensureGameBgm(){
     if (_gameBgm.el) return;
@@ -255,21 +253,45 @@ function setupBgm(audioElId, btnId){
     _ensureGameBgm();
     const el = _gameBgm.el;
     if (!el) return;
+
     const src = GAME_BGM_MAP[modeId];
     if (!src){
       stopGameBgm();
       return;
     }
-    const srcChanged = (_gameBgm.lastMode !== modeId || el.getAttribute("src") !== src);
-    if (srcChanged){
+
+    const changed = (_gameBgm.lastMode !== modeId || el.getAttribute("src") !== src);
+    if (changed){
       try{ el.src = src; }catch(_){ }
       _gameBgm.lastMode = modeId;
-      // Only restart when switching tracks. (Avoid restarting on every in-iframe gesture ping.)
       try{ el.currentTime = 0; }catch(_){ }
     }
 
-    // Let AudioManager handle first-gesture unlock and mute state.
-    try{ el.play().catch(()=>{}); }catch(_){ }
+    function armGestureRetry(){
+      if (_gameBgm.gestureHooked) return;
+      _gameBgm.gestureHooked = true;
+
+      const retry = ()=>{
+        try{ el.play().catch(()=>{}); }catch(_){ }
+        _gameBgm.gestureHooked = false;
+        window.removeEventListener("pointerdown", retry, true);
+        window.removeEventListener("touchstart", retry, true);
+        window.removeEventListener("keydown", retry, true);
+      };
+
+      window.addEventListener("pointerdown", retry, true);
+      window.addEventListener("touchstart", retry, true);
+      window.addEventListener("keydown", retry, true);
+    }
+
+    try{
+      const p = el.play();
+      if (p && typeof p.catch === "function"){
+        p.catch(()=> armGestureRetry());
+      }
+    }catch(_){
+      armGestureRetry();
+    }
   }
 
   function stopGameBgm(){
@@ -277,7 +299,8 @@ function setupBgm(audioElId, btnId){
     if (!el) return;
     try{ el.pause(); }catch(_){ }
     try{ el.currentTime = 0; }catch(_){ }
-    // Don't force-mute here; AudioManager owns the mute preference.
+    // Do not force mute here; let AudioManager/user setting control it.
+    _gameBgm.gestureHooked = false;
   }
 
   // Expose for fullscreen helpers outside this closure
