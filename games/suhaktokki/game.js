@@ -3919,17 +3919,118 @@ function hostHandleInteract(playerId) {
   };
 
   function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+  function randi(a, b){ a = Math.ceil(a); b = Math.floor(b); return Math.floor(Math.random() * (b - a + 1)) + a; }
+  function shuffle(arr){
+    const a = arr.slice();
+    for (let i = a.length - 1; i > 0; i--){
+      const j = Math.floor(Math.random() * (i + 1));
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+    }
+    return a;
+  }
 
   function genQuestion(kind) {
-    // 난이도: 초3 무난
+    // 초등 저학년 수준의 간단 문제 (3문제 연속)
+    if (kind === 'add') {
+      const a = randi(3, 25), b = randi(3, 25);
+      return { type: 'input', prompt: `${a} + ${b} = ?`, answer: String(a + b) };
+    }
+    if (kind === 'sub') {
+      let a = randi(6, 30), b = randi(1, 24);
+      if (b > a) { const t = a; a = b; b = t; }
+      return { type: 'input', prompt: `${a} - ${b} = ?`, answer: String(a - b) };
+    }
+    if (kind === 'mul') {
+      const a = randi(2, 9), b = randi(2, 9);
+      return { type: 'input', prompt: `${a} × ${b} = ?`, answer: String(a * b) };
+    }
+    if (kind === 'div') {
+      const b = randi(2, 9), ans = randi(2, 9);
+      const a = b * ans;
+      return { type: 'input', prompt: `${a} ÷ ${b} = ?`, answer: String(ans) };
+    }
+    if (kind === 'shape') {
+      const shapes = ['원','삼각형','사각형','오각형','육각형'];
+      const shapeKey = pick(shapes);
+      const opts = shuffle(shapes);
+      return { type: 'shape', prompt: '이 도형은 무엇일까요?', shapeKey, options: opts, answer: shapeKey };
+    }
+    if (kind === 'graph') {
+      const labels = shuffle(['A','B','C','D']).slice(0, 4);
+      const vals = labels.map(()=>randi(1, 9));
+      let bestI = 0;
+      for (let i=1;i<vals.length;i++) if (vals[i] > vals[bestI]) bestI = i;
+      const answer = labels[bestI];
+      return {
+        type: 'graph',
+        prompt: '가장 큰 값의 항목은?',
+        labels, vals,
+        options: shuffle(labels),
+        answer,
+      };
+    }
+    if (kind === 'unit') {
+      // cm <-> m
+      const cm = randi(30, 250);
+      const m = (cm / 100);
+      // 답은 소수 2자리 이내로
+      const ans = (Math.round(m * 100) / 100).toString();
+      return { type: 'input', prompt: `${cm}cm = ?m (숫자만)`, answer: ans };
+    }
+    // pattern
+    {
+      const start = randi(1, 9);
+      const step = randi(2, 7);
+      const seq = [start, start + step, start + step * 2, start + step * 3];
+      return { type: 'input', prompt: `${seq[0]}, ${seq[1]}, ${seq[2]}, ?  (다음 수는?)`, answer: String(seq[3]) };
+    }
+  }
+
+  function hostGetMissionProg(playerId, siteId){
+    try{
+      if (!G.host._missionProg) G.host._missionProg = new Map();
+      const pid = Number(playerId||0);
+      if (!pid) return null;
+      let mp = G.host._missionProg.get(pid);
+      if (!mp) { mp = new Map(); G.host._missionProg.set(pid, mp); }
+      return mp.get(String(siteId));
+    }catch(_){ }
+    return null;
+  }
+
+  function hostSetMissionProg(playerId, siteId, prog){
+    try{
+      if (!G.host._missionProg) G.host._missionProg = new Map();
+      const pid = Number(playerId||0);
+      if (!pid) return;
+      let mp = G.host._missionProg.get(pid);
+      if (!mp) { mp = new Map(); G.host._missionProg.set(pid, mp); }
+      mp.set(String(siteId), prog);
+    }catch(_){ }
+  }
+
+  function hostInitMissionProg(playerId, siteId, kind, practice){
+    hostSetMissionProg(playerId, siteId, { correct: 0, hadWrong: false, practice: !!practice, kind: kind || null });
+  }
+
+  function buildMissionUI(siteId, kind, practice){
+    const q = genQuestion(kind);
+    return { siteId, kind, practice: !!practice, question: q };
+  }
+
+  function _ansNorm(x){
+    return String(x ?? '').trim().replace(/\s+/g,'');
+  }
+
+  function hostApplyWrongPenalty(kind, playerId){
+    const st = G.state;
+    const victim = st.players && st.players[playerId];
+    // 공통: "틀리면 UI 닫힘 + 초기화" (호스트쪽에서 처리)
     if (kind === 'add') {
       // 무작위 "방" 10초 잠금 (중첩 시 시간은 늘어나고, 방은 유지)
       const endAt = now() + 10_000;
-
-      // Door state objects don't carry roomId. Use map door objects (root_door) to pick/close the correct room.
       const doorObjs = Object.values(st.objects || {}).filter(o => o && o.type === 'root_door' && o.roomId);
 
-      // 이미 잠긴 방이 없으면 새로 뽑기
       const hasActiveLock = !!(st.lockedRoomUntil && now() < st.lockedRoomUntil && st.lockedRoomId);
       if (!hasActiveLock && doorObjs.length) {
         const picked = doorObjs[Math.floor(Math.random() * doorObjs.length)];
@@ -3945,6 +4046,7 @@ function hostHandleInteract(playerId) {
           d.closed = true;
           d.closedUntil = Math.max(d.closedUntil || 0, endAt);
         }
+        broadcast({ t:'toast', text:`덧셈을 틀렸다! ${st.lockedRoomId} 방이 10초 잠겼어!` });
       }
       try{ rebuildDoorSolidSet(true); }catch(_){ }
       return;
@@ -3952,64 +4054,203 @@ function hostHandleInteract(playerId) {
     if (kind === 'mul') {
       // 전체 위치 공개 8초(중첩 시 더 길게)
       G.host.revealUntil = Math.max(G.host.revealUntil || 0, now() + 8_000);
+      broadcast({ t:'toast', text:'곱셈을 틀렸다! 8초간 모두의 위치가 보여!' });
       return;
     }
     if (kind === 'div') {
       // 선생토끼 제외 5초 정지
-      for (const p of Object.values(st.players)) {
-        if (!p.alive || p.down) continue;
+      for (const p of Object.values(st.players || {})) {
+        if (!p || !p.alive || p.down) continue;
         if (p.id === st.teacherId) continue;
-        p.frozenUntil = Math.max(p.frozenUntil, now() + 5_000);
+        p.frozenUntil = Math.max(p.frozenUntil || 0, now() + 5_000);
       }
-      try{ rebuildDoorSolidSet(); }catch(_){ }
+      broadcast({ t:'toast', text:'나눗셈을 틀렸다! 5초간 모두 멈췄어!' });
       return;
     }
     if (kind === 'shape') {
       // 모든 문 닫힘 5초
-      for (const d of Object.values(st.doors)) {
+      for (const d of Object.values(st.doors || {})) {
+        if (!d) continue;
         d.closed = true;
-        d.closedUntil = Math.max(d.closedUntil, now() + 5_000);
+        d.closedUntil = Math.max(d.closedUntil || 0, now() + 5_000);
       }
+      broadcast({ t:'toast', text:'도형을 틀렸다! 5초간 문이 전부 닫혔어!' });
       try{ rebuildDoorSolidSet(true); }catch(_){ }
       return;
     }
     if (kind === 'graph') {
       // 모든 미션 7초 잠금
-      G.host.missionDisabledUntil = Math.max(G.host.missionDisabledUntil, now() + 7_000);
-      // 진행 중 UI 닫기는 클라이언트 쪽에서 처리
+      G.host.missionDisabledUntil = Math.max(G.host.missionDisabledUntil || 0, now() + 7_000);
       broadcast({ t: 'uiForceCloseMission', ms: 7_000 });
+      broadcast({ t:'toast', text:'그래프를 틀렸다! 7초간 미션이 잠겼어!' });
       return;
     }
     if (kind === 'pattern') {
       // 규칙찾기 오답: 모든 미션 발생 + 전역 경보
       const endAt = now() + 60_000;
-      for (const m of Object.values(st.missions)) {
+      for (const m of Object.values(st.missions || {})) {
+        if (!m) continue;
         if (m.state === 'idle') {
           m.state = 'active';
           m.expiresAt = endAt;
+          m.activatedAt = now();
+          if (m.sealedAt) m.sealedAt = 0;
         } else if (m.state === 'active') {
           m.expiresAt = Math.max(m.expiresAt || 0, endAt);
         }
       }
-      // 경보(표시/연출): 6초
       G.host.alarmUntil = Math.max(G.host.alarmUntil || 0, now() + 6_000);
       G.host.alarmText = '🚨 규칙찾기 오답! 모든 미션이 발생했어!';
       broadcast({ t: 'toast', text: '🚨 규칙찾기 오답! 모든 미션이 발생했어!' });
+      broadcastState(true);
       return;
     }
     if (kind === 'unit') {
       // 단위변환: 해당 플레이어 10초 조작 반전
       if (victim) victim.invertUntil = Math.max(victim.invertUntil || 0, now() + 10_000);
       sendToPlayer(playerId, { t: 'toast', text: '단위변환을 틀렸다! 10초간 방향이 반대야!' });
+      broadcastState(true);
       return;
     }
     if (kind === 'sub') {
       // 뺄셈: 해당 플레이어 8초 시야 감소
       if (victim) victim.darkUntil = Math.max(victim.darkUntil || 0, now() + 8_000);
       sendToPlayer(playerId, { t: 'toast', text: '뺄셈을 틀렸다! 8초간 굴이 어두워져…' });
+      broadcastState(true);
       return;
     }
   }
+
+  function hostMissionSubmit(playerId, m){
+    const st = G.state;
+    const pid = Number(playerId||0);
+    if (!pid || !st.players || !st.players[pid]) return;
+    const p = st.players[pid];
+    if (!p.alive) return;
+
+    const siteId = String(m.siteId || '');
+    if (!siteId || !st.missions || !st.missions[siteId]) return;
+    const mm = st.missions[siteId];
+    if (mm.state === 'solved') {
+      sendToPlayer(pid, { t:'uiMissionExit', siteId, toast:'이미 해결된 미션이야!' });
+      return;
+    }
+
+    // Practice rules:
+    const practice = !!st.practice || (mm.state !== 'active');
+
+    // Ensure we have progress state
+    let prog = hostGetMissionProg(pid, siteId);
+    if (!prog || prog.practice !== !!practice) {
+      hostInitMissionProg(pid, siteId, mm.kind, practice);
+      prog = hostGetMissionProg(pid, siteId);
+    }
+
+    const q = m.question || null;
+    const ans = _ansNorm(m.answer);
+
+    // Validate: only accept if this mission is currently "in use" by this player (prevents ghost double submit).
+    try{
+      if (mm.inUseBy && Number(mm.inUseBy) !== pid && now() < (mm.inUseUntil||0)) return;
+      mm.inUseBy = pid;
+      mm.inUseUntil = Math.max(mm.inUseUntil||0, now()+8000);
+    }catch(_){}
+
+    // Determine correctness
+    let correct = false;
+    try{
+      const expected = _ansNorm(q && (q.answer != null ? q.answer : ''));
+      if ((q && (q.type === 'choice' || q.type === 'shape' || q.type === 'graph'))){
+        correct = (ans === expected);
+      } else {
+        // numeric
+        const an = Number(ans);
+        const ex = Number(expected);
+        if (!Number.isNaN(an) && !Number.isNaN(ex)) correct = (an === ex);
+        else correct = (ans === expected);
+      }
+    }catch(_){
+      correct = false;
+    }
+
+    if (!correct) {
+      prog.correct = 0;
+      prog.hadWrong = true;
+      hostSetMissionProg(pid, siteId, prog);
+
+      // clear marker + release lock
+      try{
+        p.missionSiteId = null;
+        p.missionStage = 0;
+        p.missionClearAt = 0;
+        if (Number(mm.inUseBy) === pid) { mm.inUseBy = 0; mm.inUseUntil = 0; }
+      }catch(_){}
+
+      // penalty
+      try{ hostApplyWrongPenalty(mm.kind, pid); }catch(_){ }
+
+      sendToPlayer(pid, { t:'uiMissionExit', siteId, toast:'오답! 미션이 초기화됐어.' });
+      broadcastState(true);
+      return;
+    }
+
+    // Correct answer
+    prog.correct = (prog.correct|0) + 1;
+    hostSetMissionProg(pid, siteId, prog);
+
+    // Update mission stage marker (33/66/100)
+    p.missionSiteId = siteId;
+    p.missionStage = clamp((prog.correct||0) + 1, 1, 3);
+    p.missionClearAt = 0;
+    broadcastState(true);
+
+    // If completed 3 correct
+    if (prog.correct >= 3) {
+      // reward: +15s
+      st.timeLeft = Math.min((st.timeLeft || 0) + 15, (st.maxTime || 180) + 60);
+
+      // clear marker
+      p.missionClearAt = now() + 900;
+      p.missionSiteId = null;
+      p.missionStage = 0;
+
+      // Release lock
+      if (Number(mm.inUseBy) === pid) { mm.inUseBy = 0; mm.inUseUntil = 0; }
+
+      if (!practice) {
+        mm.state = 'solved';
+        mm.solvedAt = now();
+        mm.sealedAt = now();
+        st.solved = (st.solved|0) + 1;
+        // Activate one more mission to keep tension.
+        try{ hostActivateRandomMission(); }catch(_){ }
+        sendToPlayer(pid, { t:'uiMissionExit', siteId, toast:'미션 해결! +15초' });
+      } else {
+        // practice: do not seal; allow repeated attempts
+        sendToPlayer(pid, { t:'uiMissionExit', siteId, toast:'연습 성공! +15초' });
+      }
+
+      // Reset progress for next run
+      hostInitMissionProg(pid, siteId, mm.kind, practice);
+
+      broadcastState(true);
+      return;
+    }
+
+    // Next question
+    const nextQ = genQuestion(mm.kind);
+    sendToPlayer(pid, { t:'uiMissionResult', text:'정답!' });
+
+    // Swap question shortly after showing the result
+    setTimeout(() => {
+      try{
+        sendToPlayer(pid, { t:'uiMissionNext', siteId, correct: prog.correct, question: nextQ });
+      }catch(_){ }
+    }, 220);
+
+    return;
+  }
+
 
   // ---------- Broadcast helpers ----------
   function broadcast(msg) {
@@ -5750,12 +5991,12 @@ function drawLightMask(cam, me, st){
   const a = clamp(dark01, 0, 1);
 
   // Darkness overlay alpha and vision params (more off lamps => narrower & shorter vision)
-  const overlayA = 0.20 + 0.72 * a;
+  const overlayA = clamp((0.20 + 0.72 * a) * 2.0, 0, 0.92);
   const look = getLookAngle(me);
 
   // Among Us-like: fixed 60° cone. Darkness shrinks distance.
   const baseHalf = (Math.PI/180) * 30;                // 60° total
-  const baseDist = (520 - 320 * a) * ZOOM;            // ~520px -> ~200px (screen space)
+  const baseDist = (520 - 380 * a) * ZOOM;            // ~520px -> ~200px (screen space)
   const nearR    = (26) * ZOOM;                       // tiny always-visible circle around my body
   const nearFeather = (14) * ZOOM;                    // feather for the small circle
 
