@@ -1558,17 +1558,68 @@ function sendCpuBridgeInit(){
 
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
+const isSuhak = (coop.meta && coop.meta.id === "suhaktokki");
 
-  // Wait until the room state has my player entry (so host/seat can be derived reliably).
-  // Some environments can load the iframe faster than the first room_state snapshot.
-  // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
+if (isSuhak){
+  // SuhakTokki: wait for the first room_state snapshot so host/seat can be derived reliably.
+  // But never allow infinite loading if the snapshot is delayed.
+  const now = Date.now();
+  if (!coop._bridgeInitStartAt) coop._bridgeInitStartAt = now;
+
+  const players = room?.state?.players;
+  const hasMe = (()=>{
+    try{
+      if (!players) return false;
+      if (typeof players.has === "function") return !!players.has(mySessionId);
+      if (typeof players.get === "function") return !!players.get(mySessionId);
+      return !!players?.[mySessionId];
+    }catch(_){ return false; }
+  })();
+
+  if (!hasMe){
+    coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
+
+    const n = coop._bridgeInitRetry;
+    const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
+
+    // After a grace period, fall back to best-effort init to avoid infinite loading.
+    const waitedMs = now - coop._bridgeInitStartAt;
+    if (waitedMs < 8000){
+      try{
+        const wantAt = now + delay;
+        const nextAt = coop._bridgeInitNextAt || 0;
+
+        // Keep a single timer, but allow rescheduling sooner.
+        if (coop._bridgeInitTimer && nextAt && nextAt <= wantAt) return;
+        if (coop._bridgeInitTimer) clearTimeout(coop._bridgeInitTimer);
+
+        coop._bridgeInitNextAt = wantAt;
+        coop._bridgeInitTimer = setTimeout(()=>{
+          try{ coop._bridgeInitTimer = null; coop._bridgeInitNextAt = 0; }catch(_){ }
+          sendCoopBridgeInit();
+        }, delay);
+      }catch(_){ }
+      return;
+    }
+    // Timeout reached -> continue with best-effort values below.
+  }
+
+  // Snapshot is ready (or we timed out) -> stop retries.
+  try{
+    coop._bridgeInitRetry = 0;
+    coop._bridgeInitStartAt = 0;
+    if (coop._bridgeInitTimer) clearTimeout(coop._bridgeInitTimer);
+    coop._bridgeInitTimer = null;
+    coop._bridgeInitNextAt = 0;
+  }catch(_){ }
+} else {
+  // Other games: keep existing behaviour (single retry timer guard).
   try{
     const players = room?.state?.players;
     const hasMe = !!(players && typeof players.get === "function" && players.get(mySessionId));
     if (!hasMe){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
-      // Small backoff to avoid spamming the event loop while waiting for the snapshot.
       const n = coop._bridgeInitRetry;
       const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
 
@@ -1587,6 +1638,9 @@ function sendCoopBridgeInit(){
     coop._bridgeInitRetry = 0;
     try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
   }catch(_){ }
+}
+
+
 
   const seat = (()=>{
     try{
@@ -1611,12 +1665,22 @@ function sendCoopBridgeInit(){
   })();
   const expectedHumans = (()=>{
     try{
-      // SuhakTokki: 시작 대기 인원을 "현재 들어온 사람 수"로 두어,
-      // max playerCount(예: 8) 때문에 무한 대기/로딩이 되는 문제를 방지한다.
       const explicit = Number(coop.expectedHumans || 0);
       if (explicit > 0) return explicit;
-      return humanCount;
-    }catch(_){ return humanCount; }
+  
+      const stateCount = Number(room?.state?.playerCount || 0);
+  
+      // SuhakTokki: playerCount can be max(예: 8)로 고정되는 경우가 있어,
+      // 실제 입장한 인원(humanCount)을 우선한다. (0은 절대 보내지 않음)
+      if (coop.meta && coop.meta.id === "suhaktokki"){
+        return (humanCount > 0) ? humanCount : 1;
+      }
+  
+      const v = Number(stateCount || humanCount || 0);
+      return (v > 0) ? v : 1;
+    }catch(_){
+      return (humanCount > 0) ? humanCount : 1;
+    }
   })();
   const solo = (expectedHumans <= 1);
   const isHostFromState = (()=>{
@@ -1654,10 +1718,9 @@ function sendCoopBridgeInit(){
       room?.send?.("st_sync", {});
     }
   }catch(_){ }
-// Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
+  // Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
   try{ duel.iframeEl?.contentWindow?.focus?.(); }catch(_){ }
 }
-
 function handleDuelMatch(m){
   // New match begins -> hide previous result overlay (no persistence)
   try{ hideResultOverlay(); }catch(_){ }
