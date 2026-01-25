@@ -238,7 +238,9 @@ function setupBgm(audioElId, btnId){
     suika: "assets/audio/suikamusic.mp3",
     stackga: "assets/audio/stackmusic.mp3",
   };
-  const _gameBgm = { el: null, handle: null, lastMode: null, primed: false };
+  // Track only the last selected mode so we can avoid restarting the same track.
+  // Autoplay / unmute is handled by AudioManager via first user gesture.
+  const _gameBgm = { el: null, handle: null, lastMode: null };
 
   function _ensureGameBgm(){
     if (_gameBgm.el) return;
@@ -266,15 +268,7 @@ function setupBgm(audioElId, btnId){
       try{ el.currentTime = 0; }catch(_){ }
     }
 
-    // Prime muted playback once (autoplay is usually allowed only when muted).
-    // After that, keep the current mute state so we don't accidentally re-mute on later calls.
-    if (!_gameBgm.primed){
-      try{ el.muted = true; }catch(_){ }
-      try{ el.play().catch(()=>{}); }catch(_){ }
-      _gameBgm.primed = true;
-      return;
-    }
-
+    // Let AudioManager handle first-gesture unlock and mute state.
     try{ el.play().catch(()=>{}); }catch(_){ }
   }
 
@@ -283,8 +277,7 @@ function setupBgm(audioElId, btnId){
     if (!el) return;
     try{ el.pause(); }catch(_){ }
     try{ el.currentTime = 0; }catch(_){ }
-    try{ el.muted = true; }catch(_){ }
-    _gameBgm.primed = false;
+    // Don't force-mute here; AudioManager owns the mute preference.
   }
 
   // Expose for fullscreen helpers outside this closure
