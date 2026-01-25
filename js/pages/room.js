@@ -1593,7 +1593,14 @@ function sendCoopBridgeInit(){
   // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
   try{
     const hasMe = !!getPlayer(mySessionId);
-    if (!hasMe){
+
+    // SuhakTokki: do NOT block on `players.get(mySessionId)`.
+    // In some deployments the initial room state schema does not expose `players` reliably
+    // at the moment we need to send bridge_init. Waiting here caused the iframe to never
+    // receive bridge_init (=> infinite loading). We will still compute seat/host from
+    // `order` and deterministic fallbacks below.
+    const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
+    if (!hasMe && !isSuhak){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
