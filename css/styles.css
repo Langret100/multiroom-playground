@@ -535,6 +535,34 @@ body.tg-mode.in-game #duelFrame{
 }
 #loginStatus{ min-height: 1.2em; }
 
+/* Login brand logo (above the login modal) */
+#loginModal.modalBackdrop{
+  /* place the modal a bit lower so the logo is always visible (mobile included) */
+  align-items:flex-start;
+  padding-top: calc(14px + env(safe-area-inset-top));
+}
+#loginModal .loginBrand{
+  position:absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  left:50%;
+  transform: translateX(-50%);
+  width: min(72vw, 420px);
+  max-width: 420px;
+  pointer-events:none;
+  display:flex;
+  justify-content:center;
+}
+#loginModal .loginBrand img{
+  width:100%;
+  height:auto;
+  max-height: 22vh;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 22px rgba(0,0,0,.35));
+}
+#loginModal .modal{
+  margin-top: clamp(90px, 18vh, 150px);
+}
+
 .modalBackdrop.show{ display:flex; }
 
 /* Responsive - mobile first */

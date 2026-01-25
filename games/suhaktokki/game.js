@@ -5829,10 +5829,7 @@ const st = G.state;
 try{
   // In iframe embed mode, treat ourselves as embed from the very first frame.
   const isEmbed = !!EMBED || !!(G.ui && G.ui.embedJoined);
-  // In embed mode, only block rendering while truly in lobby.
-  // Practice/solo sessions may not flip st.started reliably, so don't gate solely on that.
-  const isPractice = !!(st && st.practice);
-  if (isEmbed && (G.phase === 'lobby' || (!st.started && !isPractice))) {
+  if (isEmbed && (G.phase === 'lobby' || !st.started)) {
     const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart)
       ? '플레이어 접속을 기다리는 중...'
       : '로딩 중...';
@@ -5850,7 +5847,7 @@ try{
     if (EMBED) {
       try{
         if (!G.ui) G.ui = {};
-        if (!G.ui._bootHidden && G.phase !== 'lobby' && st && (st.started || st.practice)) {
+        if (!G.ui._bootHidden && G.phase !== 'lobby' && st && st.started) {
           bootHide();
           G.ui._bootHidden = true;
         }
@@ -9428,9 +9425,15 @@ net.on('uiMeetingOpen', (m) => {
     if (G.net) return;
 
     // wait assets (they load asynchronously)
-    // Do not time out here: slow networks/devices can take >8s on first load.
+    // IMPORTANT (embed): joinRoom() early-returns when assets aren't ready.
+    // If we proceed with a timeout here, slow networks can leave the iframe stuck
+    // forever on the HTML "로딩 중..." overlay because we never retry join.
     while(!G.assetsReady && !G.assetsError){
       await new Promise(r => setTimeout(r, 50));
+    }
+    if (G.assetsError){
+      try{ setLobbyStatus('에셋을 불러오지 못했어. 새로고침하거나 잠시 후 다시 시도해줘!', 'danger'); }catch(_){ }
+      return;
     }
 
     window.__USE_BRIDGE_NET__ = true;

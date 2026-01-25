@@ -253,45 +253,34 @@ function setupBgm(audioElId, btnId){
     _ensureGameBgm();
     const el = _gameBgm.el;
     if (!el) return;
-
     const src = GAME_BGM_MAP[modeId];
     if (!src){
       stopGameBgm();
       return;
     }
-
-    const changed = (_gameBgm.lastMode !== modeId || el.getAttribute("src") !== src);
-    if (changed){
-      try{ el.src = src; }catch(_){ }
+    let changed = false;
+    if (_gameBgm.lastMode !== modeId || el.getAttribute("src") !== src){
+      try{ el.src = src; changed = true; }catch(_){ }
       _gameBgm.lastMode = modeId;
+    }
+    // IMPORTANT:
+    // This function can be called repeatedly (e.g., every gesture ping from an iframe).
+    // Never restart the track unless the mode actually changed.
+    if (changed){
       try{ el.currentTime = 0; }catch(_){ }
     }
 
-    function armGestureRetry(){
-      if (_gameBgm.gestureHooked) return;
-      _gameBgm.gestureHooked = true;
-
-      const retry = ()=>{
-        try{ el.play().catch(()=>{}); }catch(_){ }
-        _gameBgm.gestureHooked = false;
-        window.removeEventListener("pointerdown", retry, true);
-        window.removeEventListener("touchstart", retry, true);
-        window.removeEventListener("keydown", retry, true);
-      };
-
-      window.addEventListener("pointerdown", retry, true);
-      window.addEventListener("touchstart", retry, true);
-      window.addEventListener("keydown", retry, true);
+    // Prime muted playback once (autoplay is usually allowed only when muted).
+    // After that, keep the current mute state so we don't accidentally re-mute on later calls.
+    if (!_gameBgm.primed){
+      try{ el.muted = true; }catch(_){ }
+      try{ el.play().catch(()=>{}); }catch(_){ }
+      _gameBgm.primed = true;
+      return;
     }
 
-    try{
-      const p = el.play();
-      if (p && typeof p.catch === "function"){
-        p.catch(()=> armGestureRetry());
-      }
-    }catch(_){
-      armGestureRetry();
-    }
+    // If it's already playing, don't interrupt.
+    try{ if (el.paused) el.play().catch(()=>{}); }catch(_){ }
   }
 
   function stopGameBgm(){
@@ -299,8 +288,8 @@ function setupBgm(audioElId, btnId){
     if (!el) return;
     try{ el.pause(); }catch(_){ }
     try{ el.currentTime = 0; }catch(_){ }
-    // Do not force mute here; let AudioManager/user setting control it.
-    _gameBgm.gestureHooked = false;
+    try{ el.muted = true; }catch(_){ }
+    _gameBgm.primed = false;
   }
 
   // Expose for fullscreen helpers outside this closure
