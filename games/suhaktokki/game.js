@@ -710,6 +710,47 @@
     return 0;
   }
 
+  // ---------- Host-side input routing (movement) ----------
+  // Movement is host-authoritative. Guests send only an intent (mvx/mvy),
+  // and the host applies it to the right player.
+  //
+  // In embed mode, numeric playerId can temporarily be 0 (joinAck missed),
+  // and some relays rewrite/strip routing fields. To make movement robust,
+  // we additionally keep an input map keyed by the player's joinToken.
+  // The host applies input using this key first, then falls back to playerId.
+  function hostRecordMoveIntent(msg){
+    try{
+      if (!G || !G.net || !G.net.isHost) return;
+      if (!G.host) G.host = {};
+      if (!G.host.inputs) G.host.inputs = new Map();
+      if (!G.host._moveByToken) G.host._moveByToken = new Map();
+
+      const pid = resolvePlayerIdFromMsg(msg);
+      const mvx = clamp(msg.mvx || 0, -1, 1);
+      const mvy = clamp(msg.mvy || 0, -1, 1);
+      const at = now();
+
+      // Primary key: joinToken (per-iframe unique)
+      let key = (msg && msg.joinToken != null) ? String(msg.joinToken) : '';
+      if (!key && pid) {
+        const p = G.state && G.state.players && G.state.players[pid];
+        if (p && p.joinToken) key = String(p.joinToken);
+      }
+      // Fallback: cid/from (still stable per iframe)
+      if (!key) {
+        const cid = (msg && (msg.cid != null || msg.from != null)) ? String(msg.cid ?? msg.from) : '';
+        if (cid) key = `cid:${cid}`;
+      }
+
+      if (key) G.host._moveByToken.set(key, { mvx, mvy, at });
+      if (pid) {
+        const p = G.state.players && G.state.players[pid];
+        if (p) p.lastSeen = at;
+        G.host.inputs.set(pid, { mvx, mvy, at });
+      }
+    }catch(_){ }
+  }
+
   // ---------- Assets ----------
   const AS = {
     loadingImg: null,
@@ -2902,7 +2943,18 @@
         }
       }
       const frozen = now() < p.frozenUntil;
-      const inpRec = G.host.inputs.get(p.id) || { mvx: 0, mvy: 0, at: 0 };
+
+      // Prefer movement intent keyed by joinToken (more robust than numeric playerId in embed mode).
+      // Fallback to the legacy playerId-keyed inputs map.
+      let inpRec = G.host.inputs.get(p.id) || { mvx: 0, mvy: 0, at: 0 };
+      try{
+        const key = (p.joinToken != null && String(p.joinToken) !== '') ? String(p.joinToken)
+          : ((p.clientId != null && String(p.clientId) !== '') ? `cid:${String(p.clientId)}` : '');
+        if (key && G.host._moveByToken && G.host._moveByToken.has(key)) {
+          const rec = G.host._moveByToken.get(key);
+          if (rec && (!inpRec.at || (rec.at || 0) >= inpRec.at)) inpRec = rec;
+        }
+      }catch(_){ }
       const age = inpRec.at ? (now() - inpRec.at) : 0;
       let mvx = frozen ? 0 : (inpRec.mvx || 0);
       let mvy = frozen ? 0 : (inpRec.mvy || 0);
@@ -8903,7 +8955,8 @@ try{
         if (t - G.local._lastInputAt > 33) {
           G.local._lastInputAt = t;
           const jt = G.net.joinToken || null;
-          G.net.post({ t: 'input', playerId: pid || 0, joinToken: jt, mvx: G.local.mvx, mvy: G.local.mvy });
+          // Send movement intent (host-authoritative). joinToken is the primary identity in embed.
+          G.net.post({ t: 'moveIntent', playerId: pid || 0, joinToken: jt, mvx: G.local.mvx, mvy: G.local.mvy });
         }
         // Best-effort: if we still haven't bound our id, occasionally request a resync.
         if (!pid) {
@@ -9185,11 +9238,13 @@ try{
     // inputs (host)
     net.on('input', (m) => {
       if (!net.isHost) return;
-      const pid = resolvePlayerIdFromMsg(m);
-      if (!pid) return;
-      const p = G.state.players && G.state.players[pid];
-      if (p) p.lastSeen = now();
-      G.host.inputs.set(pid, { mvx: clamp(m.mvx || 0, -1, 1), mvy: clamp(m.mvy || 0, -1, 1), at: now() });
+      hostRecordMoveIntent(m);
+    });
+
+    // movement intent (host) - preferred over legacy 'input'
+    net.on('moveIntent', (m) => {
+      if (!net.isHost) return;
+      hostRecordMoveIntent(m);
     });
 
     net.on('emote', (m) => {
