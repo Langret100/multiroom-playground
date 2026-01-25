@@ -536,11 +536,9 @@ body.tg-mode.in-game #duelFrame{
   padding: 10px 8px;
   font-size: 13px;
   line-height: 1.15;
+  white-space: nowrap;
 }
-.authRow.three #guestBtn{
-  flex: 1.6 1 0;
-  white-space: normal;
-}
+
 
 .authRow .btn{
   border:1px solid rgba(0,0,0,.12);
@@ -573,12 +571,14 @@ body.tg-mode.in-game #duelFrame{
 #loginModal .loginBrand img{
   width:100%;
   height:auto;
-  max-height: 34vh;
+  /* Make the logo noticeably larger while still staying within the viewport */
+  max-height: 48vh;
   object-fit: contain;
   filter: drop-shadow(0 10px 22px rgba(0,0,0,.35));
 }
 #loginModal .modal{
-  margin-top: clamp(180px, 32vh, 300px);
+  /* Bring the login box up a bit on mobile while leaving room for the logo */
+  margin-top: clamp(120px, 22vh, 220px);
 }
 
 .modalBackdrop.show{ display:flex; }

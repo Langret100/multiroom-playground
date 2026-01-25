@@ -9499,9 +9499,14 @@ net.on('uiMeetingOpen', (m) => {
     // bridge_init가 listener보다 먼저 도착하는 레이스를 방지하기 위해
     // index.html에서 window.__PENDING_BRIDGE_INIT__에 버퍼링해둘 수 있다.
     try{
-      const pending = window.__PENDING_BRIDGE_INIT__;
+      const pendingRaw = window.__PENDING_BRIDGE_INIT__;
+      let pending = pendingRaw;
+      if (typeof pendingRaw === 'string'){
+        try{ pending = JSON.parse(pendingRaw); }catch(_){ pending = null; }
+      }
       if (pending && typeof pending === 'object' && pending.type === 'bridge_init'){
         window.__PENDING_BRIDGE_INIT__ = null;
+        window.__EMBED_INITED__ = true;
         startEmbedded(pending).catch((e)=>{
           try{ console.error(e); }catch(_){ }
           try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
@@ -9510,7 +9515,10 @@ net.on('uiMeetingOpen', (m) => {
     }catch(_){ }
 
     window.addEventListener('message', (ev)=>{
-      const d = ev.data || {};
+      let d = ev.data;
+      if (typeof d === 'string'){
+        try{ d = JSON.parse(d); }catch(_){ return; }
+      }
       if (!d || typeof d !== 'object') return;
       // Parent -> iframe: leaving the embedded game view (go back to room)
       if (d.type === 'bridge_leave') {
@@ -9529,12 +9537,40 @@ net.on('uiMeetingOpen', (m) => {
         return;
       }
       if (d.type === 'bridge_init'){
+        try{ window.__EMBED_INITED__ = true; }catch(_){ }
         startEmbedded(d).catch((e)=>{
           try{ console.error(e); }catch(_){ }
           try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
         });
       }
     });
+
+    // Fallback: if the parent never delivers bridge_init (schema mismatch / race / caching),
+    // start a local practice session so the game doesn't get stuck on the title screen.
+    // This is only used when no init arrives for a while.
+    try{
+      setTimeout(()=>{
+        try{
+          if (!EMBED) return;
+          if (window.__EMBED_INITED__) return;
+          window.__EMBED_INITED__ = true;
+          startEmbedded({
+            type: 'bridge_init',
+            gameId: 'suhaktokki',
+            sessionId: 'local',
+            nick: 'Player',
+            seat: 0,
+            isHost: true,
+            solo: true,
+            expectedHumans: 1,
+            humanCount: 1,
+            roomCode: 'local',
+            level: 1,
+            practice: true
+          }).catch(()=>{});
+        }catch(_){ }
+      }, 2500);
+    }catch(_){ }
   }
 
     // Best-effort: if the iframe is being unloaded/hidden, notify host to remove this player.

@@ -1566,12 +1566,33 @@ function sendCpuBridgeInit(){
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
 
+  const playersObj = room?.state?.players;
+  const getPlayer = (sid)=>{
+    try{
+      if (!playersObj) return null;
+      if (typeof playersObj.get === "function") return playersObj.get(sid) || null;
+      if (typeof playersObj.has === "function") return playersObj.has(sid) ? (playersObj.get ? playersObj.get(sid) : null) : null;
+      return playersObj[sid] || null;
+    }catch(_){ return null; }
+  };
+  const forEachPlayer = (fn)=>{
+    try{
+      if (!playersObj) return;
+      if (typeof playersObj.forEach === "function"){
+        // MapSchema/Map
+        playersObj.forEach((v,k)=>fn(v,k));
+        return;
+      }
+      // Plain object
+      Object.keys(playersObj).forEach((k)=>fn(playersObj[k], k));
+    }catch(_){ }
+  };
+
   // Wait until the room state has my player entry (so host/seat can be derived reliably).
   // Some environments can load the iframe faster than the first room_state snapshot.
   // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
   try{
-    const players = room?.state?.players;
-    const hasMe = !!(players && typeof players.get === "function" && players.get(mySessionId));
+    const hasMe = !!getPlayer(mySessionId);
     if (!hasMe){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
@@ -1579,8 +1600,9 @@ function sendCoopBridgeInit(){
       const n = coop._bridgeInitRetry;
       const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
 
-      // Keep only one retry timer at a time (multiple triggers can happen: iframe onload, bridge_ready, etc.)
-      if (coop._bridgeInitTimer) return;
+      // Keep only one retry timer at a time, but always ensure the latest call
+      // can schedule the next retry.
+      try{ if (coop._bridgeInitTimer) clearTimeout(coop._bridgeInitTimer); }catch(_){ }
       coop._bridgeInitTimer = setTimeout(()=>{
         try{ coop._bridgeInitTimer = null; }catch(_){ }
         try{
@@ -1589,7 +1611,15 @@ function sendCoopBridgeInit(){
         }catch(_){ return; }
         sendCoopBridgeInit();
       }, delay);
-      return;
+
+      // After enough retries, stop blocking on "hasMe" and send a best-effort init.
+      // This prevents infinite loading if the state schema is different than expected.
+      if (coop._bridgeInitRetry > 200) {
+        try{ coop._bridgeInitRetry = 0; }catch(_){ }
+        try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
+      } else {
+        return;
+      }
     }
     coop._bridgeInitRetry = 0;
     try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
@@ -1609,7 +1639,7 @@ function sendCoopBridgeInit(){
   const humanCount = (()=>{
     try{
       let cnt = 0;
-      room?.state?.players?.forEach?.((_, sid)=>{
+      forEachPlayer((_, sid)=>{
         if (String(sid) === CPU_SID) return;
         cnt++;
       });
@@ -1627,7 +1657,7 @@ function sendCoopBridgeInit(){
   })();
   const solo = (expectedHumans <= 1);
   const isHostFromState = (()=>{
-    try{ return !!room?.state?.players?.get(mySessionId)?.isHost; }catch(_){ return false; }
+    try{ return !!getPlayer(mySessionId)?.isHost; }catch(_){ return false; }
   })();
 
   // Host must be decided by the room (avoid multiple hosts).
