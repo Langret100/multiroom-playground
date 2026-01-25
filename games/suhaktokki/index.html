@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
   <title>수학토끼</title>
   <link rel="icon" href="../../favicon.ico" />
+  <link rel="preload" as="image" href="assets/mathrabbitloading.png" />
+  <script>
+  // Decide embed-mode as early as possible (before first paint) so we can show the boot overlay
+  // immediately in the iframe, without flashing it in normal standalone mode.
+  (function(){
+    try{
+      const sp = new URLSearchParams(location.search);
+      if (sp.get('embed') === '1') document.documentElement.classList.add('embed');
+    }catch(_){ }
+  })();
+  </script>
   <style>
     :root{--bg:#0c1220;--panel:#121a2e;--line:rgba(255,255,255,.12);--txt:#f4f7ff;--muted:rgba(244,247,255,.72);--accent:#66e0a3;--danger:#ff5a7a;--actW:200px;--actH:88px;--actGap:16px;--actStep:calc(var(--actH) + var(--actGap))}
     *{box-sizing:border-box;touch-action:none;-webkit-user-select:none;user-select:none;}
@@ -142,9 +153,25 @@
 
     /* Canvas sizing */
     #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;}
+
+    /* Boot loading overlay: shown from the very first paint in embed mode.
+       Prevents black/flicker frames (black -> game -> loading -> game). */
+    #bootLoading{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:#000;pointer-events:none;}
+    html.embed #bootLoading{display:flex;}
+    #bootLoading.hidden{display:none;}
+    #bootLoading .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+    #bootLoading .hint{position:relative;z-index:1;margin-top:32vh;padding:10px 14px;border-radius:14px;
+      background:rgba(0,0,0,.42);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(6px);
+      color:rgba(255,255,255,.95);font-weight:950;font-size:14px;letter-spacing:-.2px;}
   </style>
 </head>
 <body>
+  <!-- Boot overlay (embed): keep this visible until assets + all players are ready, then hide once. -->
+  <div id="bootLoading">
+    <img class="bg" src="assets/mathrabbitloading.png" alt="loading" />
+    <div class="hint" id="bootLoadingText">로딩 중...</div>
+  </div>
+
   <div id="wrap"><canvas id="gameCanvas" width="960" height="540"></canvas></div>
 
   <div id="hud" style="display:none">

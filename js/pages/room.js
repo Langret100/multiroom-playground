@@ -258,11 +258,17 @@ function setupBgm(audioElId, btnId){
       stopGameBgm();
       return;
     }
+    let changed = false;
     if (_gameBgm.lastMode !== modeId || el.getAttribute("src") !== src){
-      try{ el.src = src; }catch(_){ }
+      try{ el.src = src; changed = true; }catch(_){ }
       _gameBgm.lastMode = modeId;
     }
-    try{ el.currentTime = 0; }catch(_){ }
+    // IMPORTANT:
+    // This function can be called repeatedly (e.g., every gesture ping from an iframe).
+    // Never restart the track unless the mode actually changed.
+    if (changed){
+      try{ el.currentTime = 0; }catch(_){ }
+    }
 
     // Prime muted playback once (autoplay is usually allowed only when muted).
     // After that, keep the current mute state so we don't accidentally re-mute on later calls.
@@ -273,7 +279,8 @@ function setupBgm(audioElId, btnId){
       return;
     }
 
-    try{ el.play().catch(()=>{}); }catch(_){ }
+    // If it's already playing, don't interrupt.
+    try{ if (el.paused) el.play().catch(()=>{}); }catch(_){ }
   }
 
   function stopGameBgm(){
@@ -1559,32 +1566,87 @@ function sendCpuBridgeInit(){
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
 
-  // Wait until the room state has my player entry.
-  // This avoids transient "solo" / host mis-detection that can break 4+ player coop.
+  const playersObj = room?.state?.players;
+  const getPlayer = (sid)=>{
+    try{
+      if (!playersObj) return null;
+      if (typeof playersObj.get === "function") return playersObj.get(sid) || null;
+      if (typeof playersObj.has === "function") return playersObj.has(sid) ? (playersObj.get ? playersObj.get(sid) : null) : null;
+      return playersObj[sid] || null;
+    }catch(_){ return null; }
+  };
+  const forEachPlayer = (fn)=>{
+    try{
+      if (!playersObj) return;
+      if (typeof playersObj.forEach === "function"){
+        // MapSchema/Map
+        playersObj.forEach((v,k)=>fn(v,k));
+        return;
+      }
+      // Plain object
+      Object.keys(playersObj).forEach((k)=>fn(playersObj[k], k));
+    }catch(_){ }
+  };
+
+  // Wait until the room state has my player entry (so host/seat can be derived reliably).
+  // Some environments can load the iframe faster than the first room_state snapshot.
+  // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
   try{
-    if (!room?.state?.players?.has?.(mySessionId)){
+    const hasMe = !!getPlayer(mySessionId);
+
+    // SuhakTokki: do NOT block on `players.get(mySessionId)`.
+    // In some deployments the initial room state schema does not expose `players` reliably
+    // at the moment we need to send bridge_init. Waiting here caused the iframe to never
+    // receive bridge_init (=> infinite loading). We will still compute seat/host from
+    // `order` and deterministic fallbacks below.
+    const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
+    if (!hasMe && !isSuhak){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
-      if (coop._bridgeInitRetry < 30) setTimeout(sendCoopBridgeInit, 80);
-      return;
+
+      // Small backoff to avoid spamming the event loop while waiting for the snapshot.
+      const n = coop._bridgeInitRetry;
+      const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
+
+      // Keep only one retry timer at a time, but always ensure the latest call
+      // can schedule the next retry.
+      try{ if (coop._bridgeInitTimer) clearTimeout(coop._bridgeInitTimer); }catch(_){ }
+      coop._bridgeInitTimer = setTimeout(()=>{
+        try{ coop._bridgeInitTimer = null; }catch(_){ }
+        try{
+          if (!coop.active || !coop.meta) return;
+          if (!duel.iframeEl) return;
+        }catch(_){ return; }
+        sendCoopBridgeInit();
+      }, delay);
+
+      // After enough retries, stop blocking on "hasMe" and send a best-effort init.
+      // This prevents infinite loading if the state schema is different than expected.
+      if (coop._bridgeInitRetry > 200) {
+        try{ coop._bridgeInitRetry = 0; }catch(_){ }
+        try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
+      } else {
+        return;
+      }
     }
     coop._bridgeInitRetry = 0;
+    try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
   }catch(_){ }
 
   const seat = (()=>{
-    try{
-      if (room?.state?.order?.has?.(mySessionId)){
-        const s = room.state.order.get(mySessionId);
-        return (typeof s === "number") ? s : 0;
-      }
-      return 0;
-    }catch(_){ return 0; }
-  })();
+  try{
+    if (room?.state?.order?.has?.(mySessionId)){
+      const s = room.state.order.get(mySessionId);
+      return (typeof s === "number") ? s : -1;
+    }
+    return -1;
+  }catch(_){ return -1; }
+})();
 
   const CPU_SID = "__cpu__";
   const humanCount = (()=>{
     try{
       let cnt = 0;
-      room?.state?.players?.forEach?.((_, sid)=>{
+      forEachPlayer((_, sid)=>{
         if (String(sid) === CPU_SID) return;
         cnt++;
       });
@@ -1593,17 +1655,65 @@ function sendCoopBridgeInit(){
   })();
   const expectedHumans = (()=>{
     try{
-      const v = Number(coop.expectedHumans || room?.state?.playerCount || humanCount || 0);
-      return (v > 0) ? v : humanCount;
+      // SuhakTokki: 시작 대기 인원을 "현재 들어온 사람 수"로 두어,
+      // max playerCount(예: 8) 때문에 무한 대기/로딩이 되는 문제를 방지한다.
+      const explicit = Number(coop.expectedHumans || 0);
+      if (explicit > 0) return explicit;
+      return humanCount;
     }catch(_){ return humanCount; }
   })();
   const solo = (expectedHumans <= 1);
-  const isHostFromState = (()=>{
-    try{ return !!room?.state?.players?.get(mySessionId)?.isHost; }catch(_){ return false; }
+  const isHostFromState = (()=>{ 
+    try{ return !!getPlayer(mySessionId)?.isHost; }catch(_){ return false; }
   })();
 
-  // Host must be decided by the room (avoid multiple hosts).
-  const effectiveIsHost = isHostFromState;
+  // Determine the single effective host for the embedded coop game.
+  // If the room state doesn't yet expose isHost reliably (or schema differs),
+  // fall back to the lowest seat (order) / deterministic sid to avoid "no host" deadlocks.
+  const hostSid = (()=>{
+    try{
+      // 1) Explicit host flag in state
+      let hs = null;
+      forEachPlayer((pp, sid)=>{ if (pp?.isHost) hs = sid; });
+      if (hs) return String(hs);
+
+      // 2) Lowest seat in order map (if available)
+      let best = null;
+      let bestSeat = 1e9;
+      const ord = room?.state?.order;
+      if (ord){
+        if (typeof ord.forEach === "function"){
+          ord.forEach((seat, sid)=>{
+            if (String(sid) === CPU_SID) return;
+            const n = Number(seat);
+            if (!Number.isFinite(n)) return;
+            if (n < bestSeat){ bestSeat = n; best = sid; }
+          });
+        } else {
+          Object.keys(ord).forEach((sid)=>{
+            if (String(sid) === CPU_SID) return;
+            const n = Number(ord[sid]);
+            if (!Number.isFinite(n)) return;
+            if (n < bestSeat){ bestSeat = n; best = sid; }
+          });
+        }
+      }
+      if (best) return String(best);
+
+      // 3) Deterministic smallest sid among players
+      let min = null;
+      forEachPlayer((_, sid)=>{
+        if (String(sid) === CPU_SID) return;
+        const s = String(sid);
+        if (min === null || s < min) min = s;
+      });
+      return min || String(mySessionId || "");
+    }catch(_){
+      return String(mySessionId || "");
+    }
+  })();
+
+  const effectiveIsHost = isHostFromState || (String(mySessionId) === String(hostSid));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
@@ -1934,18 +2044,70 @@ function startSim(){
 
 // Coop embed: propagate host changes to the iframe so mid-game host migration works.
 try{
-	if (coop.active && duel.iframeEl && room?.state?.players?.has?.(mySessionId)){
-		const me = room.state.players.get(mySessionId);
-		const meIsHost = !!me?.isHost;
-		let hostSid = null;
-		room.state.players.forEach((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
-		if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
-			coop._lastHostSid = hostSid;
-			coop._lastMeIsHost = meIsHost;
-			postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
-		}
-	}
+  if (coop.active && duel.iframeEl && room?.state?.players){
+    const playersObj = room.state.players;
+    const getP = (sid)=>{
+      try{
+        if (!playersObj) return null;
+        if (typeof playersObj.get === "function") return playersObj.get(sid) || null;
+        return playersObj[String(sid)] || null;
+      }catch(_){ return null; }
+    };
+    const forEachP = (fn)=>{
+      try{
+        if (!playersObj) return;
+        if (typeof playersObj.forEach === "function"){ playersObj.forEach((v,k)=>fn(v,k)); return; }
+        Object.keys(playersObj).forEach((k)=>fn(playersObj[k], k));
+      }catch(_){ }
+    };
+
+    const meP = getP(mySessionId);
+    let meIsHost = !!meP?.isHost;
+
+    // Find the room's current host sid (or a deterministic fallback).
+    let hostSid = null;
+    forEachP((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
+
+    if (!hostSid){
+      // Fallback: lowest seat in order
+      try{
+        const ord = room?.state?.order;
+        let best = null, bestSeat = 1e9;
+        if (ord){
+          if (typeof ord.forEach === "function"){
+            ord.forEach((seat, sid)=>{
+              const n = Number(seat);
+              if (!Number.isFinite(n)) return;
+              if (n < bestSeat){ bestSeat = n; best = sid; }
+            });
+          } else {
+            Object.keys(ord).forEach((sid)=>{
+              const n = Number(ord[sid]);
+              if (!Number.isFinite(n)) return;
+              if (n < bestSeat){ bestSeat = n; best = sid; }
+            });
+          }
+        }
+        if (best) hostSid = best;
+      }catch(_){ }
+    }
+    if (!hostSid){
+      // Fallback: smallest sid
+      let min = null;
+      forEachP((_, sid)=>{ const s = String(sid); if (min === null || s < min) min = s; });
+      hostSid = min || mySessionId;
+    }
+
+    if (!meIsHost && String(hostSid) === String(mySessionId)) meIsHost = true;
+
+    if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
+      coop._lastHostSid = hostSid;
+      coop._lastMeIsHost = meIsHost;
+      postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
+    }
+  }
 }catch(_){ }
+
       };
       room.state.players.onAdd = renderPlayers;
       room.state.players.onRemove = renderPlayers;
@@ -1959,7 +2121,7 @@ try{
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
-        try{ coop.expectedHumans = Number(m?.playerCount || room?.state?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
+        try{ coop.expectedHumans = Number(m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
         // reset per-game transient UI/state
         try{ spec.last.clear(); }catch(_){ }

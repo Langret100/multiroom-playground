@@ -33,6 +33,25 @@
   function bridgeSend(type, payload){
     try{ window.parent && window.parent.postMessage({ type, ...(payload||{}) }, "*"); }catch(_){ }
   }
+  // In embed mode, request an authoritative snapshot from the host.
+  // This prevents "stuck loading" / missing avatars when early broadcasts are lost during iframe boot.
+  function requestHostSync(reason){
+    try{
+      if (!EMBED) return;
+      const net = G && G.net;
+      if (!net || net.isHost) return;
+      if (!net.joinToken) net.joinToken = randId();
+      net.post({ t:'syncReq', reason: reason || 'boot', joinToken: net.joinToken, at: Date.now() });
+    }catch(_){ }
+  }
+  function stopHostSyncRetry(net){
+    try{
+      net = net || (G && G.net);
+      if (net && net._syncRetry){ clearInterval(net._syncRetry); net._syncRetry = null; }
+    }catch(_){ }
+  }
+
+
 
   // ---------- DOM ----------
   const canvas = document.getElementById('gameCanvas');
@@ -535,9 +554,10 @@
     const inGame = !!(G.net && G.phase !== 'lobby');
     // lobby vs game
     if (EMBED) {
-      // Embedded: never show the internal lobby overlay once we've joined.
-      const joined = !!G.net || !!G.ui?.embedJoined;
-      if (joined || inGame) {
+      // Embedded: keep the in-iframe lobby visible until the match actually starts,
+      // so the host can always press Start if auto-start fails for any reason.
+      const started = !!(G.state && G.state.started) || !!(G.host && G.host.started);
+      if (started || inGame) {
         lobby?.classList.add('hidden');
         if (hud) hud.style.display = 'flex';
       } else {
@@ -1768,8 +1788,11 @@
       const url = this._makeWsUrl(wsBase, roomCode);
       this.ws = new WebSocket(url);
       this.ws.addEventListener('message', (ev) => {
-        let msg = null;
-        try { msg = JSON.parse(ev.data); } catch (_) { return; }
+        let msg = ev.data;
+        if (typeof msg === 'string'){
+          try{ msg = JSON.parse(msg); }catch(_){ return; }
+        }
+        if (!msg || typeof msg !== 'object') return;
         if (!msg || (msg.room && msg.room !== this.room)) return;
         const tNow = Date.now();
         if (msg.from) this.peers.set(String(msg.from), tNow);
@@ -1917,7 +1940,7 @@
       msg.from = this.clientId;
 	  // Stable per-iframe id for robust routing even if `from` is rewritten.
 	  msg.cid = this.clientId;
-	      if (this.sessionId) { msg.sessionId = this.sessionId; msg.sid = this.sessionId; }
+	      if (this.sessionId) msg.sessionId = this.sessionId;
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
@@ -2420,9 +2443,6 @@
       missionStage: 0,
       missionClearAt: 0,
 
-      // readiness (prevents starting before slow clients fully load)
-      ready: !!isBot,
-
       // connection (host heartbeat)
       lastSeen: now(),
     };
@@ -2437,11 +2457,7 @@
       for (const p of Object.values(st.players)) p.role = 'crew';
       return;
     }
-    // 선생토끼(임포스터) 배정은 **무작위**로 하되, 실제 사람(봇 제외) 중에서만 뽑는다.
-    // (연습/봇 방에서 봇이 선생이 되는 걸 방지)
-    const aliveIds = Object.values(st.players)
-      .filter(p => p && p.alive && !p.isBot)
-      .map(p => p.id);
+    const aliveIds = Object.values(st.players).filter(p => p.alive).map(p => p.id);
     if (aliveIds.length < 2) return;
     const idx = Math.floor(Math.random() * aliveIds.length);
     const tid = aliveIds[idx];
@@ -3946,8 +3962,6 @@ function hostHandleInteract(playerId) {
           isBot: !!p.isBot,
           clientId: (p.clientId != null) ? String(p.clientId) : null,
           joinToken: p.joinToken || null,
-          sid: (p.sid != null) ? String(p.sid) : null,
-          ready: !!p.ready,
           x: Math.round((p.x || 0) * 100) / 100,
           y: Math.round((p.y || 0) * 100) / 100,
           vx: Math.round((p.vx || 0) * 100) / 100,
@@ -5842,7 +5856,16 @@ try{
     const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart)
       ? '플레이어 접속을 기다리는 중...'
       : '로딩 중...';
-    try{ if (!(G.ui && G.ui._bootHidden)) bootShow(hint); }catch(_){ }
+    // Boot overlay should not block the lobby UI.
+    // Show it only until assets are loaded; then hide it even if we are still waiting in lobby.
+    try{
+      if (!G.ui) G.ui = {};
+      if (!G.assetsReady){
+        if (!(G.ui && G.ui._bootHidden)) bootShow(hint);
+      } else {
+        if (!G.ui._bootHidden){ bootHide(); G.ui._bootHidden = true; }
+      }
+    }catch(_){ }
     // Keep drawing the canvas title art as a fallback (HTML overlay is on top in embed).
     drawLoadingScreen((hint === '플레이어 접속을 기다리는 중...') ? hint : null);
     drawCenterNoticeOverlay();
@@ -8437,28 +8460,6 @@ try{
   }
 
   // ---------- Join flow ----------
-  // In embed/multi-relay environments, some clients may load slower than others.
-  // We mark clients as "ready" once their iframe has joined/bound, and the host
-  // prefers to start when all expected humans are ready. This prevents the classic
-  // "4명인데 1명은 연습모드/캐릭터 없음" race.
-  function clientStartReadyPing(net){
-    try{
-      if (!net || net.isHost) return;
-      if (net._readyPing) return;
-      net._readyPing = setInterval(()=>{
-        try{
-          if (!G.net || G.net !== net) { clearInterval(net._readyPing); net._readyPing = null; return; }
-          const pid = Number(net.myPlayerId || 0);
-          if (!pid) return;
-          const me = (G.state && G.state.players) ? G.state.players[String(pid)] : null;
-          // stop once host has acknowledged (roster/state reflects ready)
-          if (me && me.ready) { clearInterval(net._readyPing); net._readyPing = null; return; }
-          net.post({ t:'ready', playerId: pid, joinToken: net.joinToken || null });
-        }catch(_){ }
-      }, 700);
-    }catch(_){ }
-  }
-
   async function joinRoom() {
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); applyPhaseUI(); return; }
     const nick = (nickEl.value || '토끼').trim().slice(0, 10);
@@ -8484,6 +8485,32 @@ try{
       if (net.isHost) net.post({ t: 'host', hostId: net.hostId, at: Date.now() });
     });
 
+    // Embed fallback: if clients are stuck in lobby (host didn't auto-start),
+    // allow any client to request the host to start.
+    net.on('embedStart', (_m) => {
+      try{
+        if (!net.isHost) return;
+        if (G.host.started) return;
+        _embedHostStartNow().catch(()=>{});
+      }catch(_){ }
+    });
+    // Snapshot resync (clients -> host): used in embed mode when the first roster/state broadcasts
+    // can be missed during iframe boot. Host responds by broadcasting fresh snapshots.
+    net.on('syncReq', (m) => {
+      try{
+        if (!net.isHost) return;
+        const tNow = now();
+        if (!G.host) G.host = {};
+        // throttle to avoid spam if multiple clients request at once
+        if (G.host._lastSyncReqAt && (tNow - G.host._lastSyncReqAt) < 180) return;
+        G.host._lastSyncReqAt = tNow;
+        try{ broadcastRoster(true); }catch(_){ }
+        try{ broadcastState(true); }catch(_){ }
+      }catch(_){ }
+    });
+
+
+
     // join
     net.on('join', (m) => {
       if (!net.isHost) return;
@@ -8492,11 +8519,7 @@ try{
       const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
         ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
         : '';
-      const sid = (m && (m.sid != null || m.sessionId != null || m._fromSid != null))
-        ? String(m.sid ?? m.sessionId ?? m._fromSid)
-        : '';
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
-      if (!G.host._sidToPlayer) G.host._sidToPlayer = new Map();
 
       // Dedupe joins using a per-join token (NOT clientId), because embed sessionId can be shared
       // across iframes. Clients retry join until joinAck arrives, reusing the same joinToken.
@@ -8508,40 +8531,29 @@ try{
         if (p) {
           p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
           p.clientId = from || p.clientId || null;
-          p.sid = sid || p.sid || null;
           p.joinToken = jt || p.joinToken || null;
           p.isBot = false;
           p.alive = true;
           p.lastSeen = now();
         }
-        try{ if (sid) G.host._sidToPlayer.set(sid, pid); }catch(_){ }
-        try{ if (from) G.host._clientToPlayer.set(from, pid); }catch(_){ }
-        net.post({ t: 'joinAck', toSid: sid || null, toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
+        net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
         try{ broadcastRoster(true); }catch(_){ }
-        // If the match already started, immediately reveal the current role/mode to this (re)joining client.
-        try{ if (G.host.started) sendToPlayer(pid, { t: 'uiRoleReveal', role: (p && p.role) ? p.role : 'crew', practice: !!st.practice }); }catch(_){ }
         return;
       }
 
       const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
       if (playersCount >= 8) {
-        net.post({ t: 'joinDenied', toSid: sid || null, toCid: from || null, toClient: from || null, reason: '방이 가득 찼어!', joinToken: jt });
+        net.post({ t: 'joinDenied', toCid: from || null, toClient: from || null, reason: '방이 가득 찼어!', joinToken: jt });
         return;
       }
       const pid = hostAddPlayer(m.nick || '토끼', false, from || null);
-      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.sid = sid || p.sid || null; p.joinToken = jt || p.joinToken || null; } }catch(_){ }
+      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.joinToken = jt || p.joinToken || null; } }catch(_){ }
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
       if (from) G.host._clientToPlayer.set(from, pid);
-      if (sid) G.host._sidToPlayer.set(sid, pid);
-      net.post({ t: 'joinAck', toSid: sid || null, toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
+      net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
       try{ broadcastRoster(true); }catch(_){ }
-      // If the match already started, immediately reveal the current role/mode to the late joiner.
-      try{ if (G.host.started) {
-        const p = st.players && st.players[pid];
-        if (p) sendToPlayer(pid, { t: 'uiRoleReveal', role: p.role || 'crew', practice: !!st.practice });
-      } }catch(_){ }
 
       // If we started in practice (e.g., embed auto-start) and now have enough players,
       // switch to the real game by assigning a teacher and notifying roles.
@@ -8574,11 +8586,6 @@ try{
 
       // If token matches, accept even if routing fields are rewritten by the room shell.
       if (!tokenOk) {
-        // Strong routing by stable session id when available.
-        if (m.toSid != null) {
-          const to = String(m.toSid);
-          if (!mySid || to !== mySid) return;
-        } else
         // Prefer `toCid` routing when available; fall back to legacy `toClient`.
         if (m.toCid != null) {
           const to = String(m.toCid);
@@ -8607,8 +8614,6 @@ try{
 
       // stop join retry loop
       try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
-      // notify host that this client is fully loaded/bound
-      try{ clientStartReadyPing(net); }catch(_){ }
 
       G.phase = 'lobby';
       setRolePill();
@@ -8620,54 +8625,7 @@ try{
       }
     });
 
-    
-    // Client ready signal: helps host wait for slow iframes and prevents accidental practice starts.
-    net.on('ready', (m) => {
-      if (!net.isHost) return;
-      const st = G.state;
-      const pid = Number(m.playerId || 0);
-      const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
-      const sid = (m && (m.sid != null || m.sessionId != null || m._fromSid != null)) ? String(m.sid ?? m.sessionId ?? m._fromSid) : '';
-      let p = null;
-
-      try{
-        if (pid && st.players && st.players[pid]) p = st.players[pid];
-      }catch(_){ }
-
-      // Fallback: resolve by joinToken (more reliable in embed where clientId/sessionId may be shared/re-written)
-      try{
-        if (!p && jt && G.host && G.host._joinTokenToPlayer && G.host._joinTokenToPlayer.has(jt)) {
-          const pid2 = Number(G.host._joinTokenToPlayer.get(jt) || 0);
-          if (pid2 && st.players && st.players[pid2]) p = st.players[pid2];
-        }
-      }catch(_){ }
-
-      // Fallback: resolve by stable session id (room sessionId)
-      try{
-        if (!p && sid && G.host && G.host._sidToPlayer && G.host._sidToPlayer.has(sid)) {
-          const pid3 = Number(G.host._sidToPlayer.get(sid) || 0);
-          if (pid3 && st.players && st.players[pid3]) p = st.players[pid3];
-        }
-      }catch(_){ }
-
-      if (!p) return;
-
-      p.ready = true;
-      try{ p.lastSeen = now(); }catch(_){ }
-
-      // Keep clientId fresh if available (helps debugging/roster binding)
-      try{
-        const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
-          ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
-          : '';
-        if (from) { p.clientId = from; try{ if (from) G.host._clientToPlayer.set(from, p.id); }catch(_){ } }
-        if (sid) { p.sid = sid; try{ G.host._sidToPlayer && G.host._sidToPlayer.set(sid, p.id); }catch(_){ } }
-      }catch(_){ }
-
-      try{ broadcastRoster(true); }catch(_){ }
-    });
-
-net.on('joinDenied', (m) => {
+    net.on('joinDenied', (m) => {
       const myCid = String(net.clientId || '');
       const mySid = (net.sessionId != null) ? String(net.sessionId) : '';
 
@@ -8676,10 +8634,7 @@ net.on('joinDenied', (m) => {
       const tokenOk = (hasToken && net.joinToken && String(m.joinToken) === String(net.joinToken));
 
       if (!tokenOk) {
-        if (m.toSid != null) {
-          const to = String(m.toSid);
-          if (!mySid || to !== mySid) return;
-        } else if (m.toCid != null) {
+        if (m.toCid != null) {
           const to = String(m.toCid);
           if (to !== myCid && (!mySid || to !== mySid)) return;
         } else if (m.toClient != null) {
@@ -8927,15 +8882,7 @@ net.on('joinDenied', (m) => {
                 if (pp && pp.joinToken && String(pp.joinToken) === String(net.joinToken)) { found = Number(pid||0); break; }
               }
             }
-
-            // 2) Fallback to sid (room sessionId) match
-            const sid = (net.sessionId != null) ? String(net.sessionId) : '';
-            if (!found && sid) {
-              for (const [pid, pp] of Object.entries(playersObj)) {
-                if (pp && pp.sid && String(pp.sid) === String(sid)) { found = Number(pid||0); break; }
-              }
-            }
-            // 3) Fallback to clientId match
+            // 2) Fallback to clientId match
             if (!found) {
               for (const [pid, pp] of Object.entries(playersObj)) {
                 if (pp && pp.clientId && String(pp.clientId) === String(net.clientId)) { found = Number(pid||0); break; }
@@ -8961,11 +8908,11 @@ net.on('joinDenied', (m) => {
             }
             // stop join retry loop once bound
             if (net._joinRetry) { try{ clearInterval(net._joinRetry); }catch(_){} net._joinRetry = null; }
+            try{ stopHostSyncRetry(net); }catch(_){ }
+
           }
         }
       }catch(_){ }
-      // notify host that this client is fully loaded/bound
-      try{ clientStartReadyPing(net); }catch(_){ }
       
 
       // Smooth remote players on clients so other players look less 'choppy'.
@@ -9051,23 +8998,6 @@ G.state.missions = m.missions;
 
     
 
-      // Embed: if I'm not yet fully bound to a player, keep the boot overlay so it doesn't look like "no character".
-      try{
-        if (EMBED) {
-          const pid = Number(net.myPlayerId || 0);
-          const me = (pid && G.state.players) ? G.state.players[String(pid)] : null;
-          if (G.phase !== 'lobby' && !me) {
-            bootShow('참가 중... (캐릭터 생성 대기)');
-            if (!G.ui) G.ui = {};
-            G.ui._bootHidden = false;
-          } else if (G.phase !== 'lobby' && me) {
-            bootHide();
-            if (!G.ui) G.ui = {};
-            G.ui._bootHidden = true;
-          }
-        }
-      }catch(_){ }
-
       applyPhaseUI();
     });
 
@@ -9113,7 +9043,6 @@ G.state.missions = m.missions;
         if (typeof up.alive === 'boolean') p.alive = !!up.alive;
         if (typeof up.down === 'boolean') p.down = !!up.down;
         if (typeof up.isBot === 'boolean') p.isBot = !!up.isBot;
-        if (typeof up.ready === 'boolean') p.ready = !!up.ready;
         if (up.clientId != null) p.clientId = String(up.clientId);
         if (up.joinToken != null) p.joinToken = up.joinToken;
         if (typeof up.x === 'number') p.x = up.x;
@@ -9163,15 +9092,7 @@ G.state.missions = m.missions;
               if (pp.joinToken && String(pp.joinToken) === String(jt)) { found = Number(pp.id || 0); break; }
             }
           }
-          // 2) Fallback to sid (room sessionId) match
-          const sid = (net.sessionId != null) ? String(net.sessionId) : '';
-          if (!found && sid) {
-            for (const pp of Object.values(st.players || {})) {
-              if (!pp) continue;
-              if (pp.sid && String(pp.sid) === String(sid)) { found = Number(pp.id || 0); break; }
-            }
-          }
-          // 3) Fallback to clientId match
+          // 2) Fallback to clientId match
           if (!found && cid) {
             for (const pp of Object.values(st.players || {})) {
               if (!pp) continue;
@@ -9195,25 +9116,8 @@ G.state.missions = m.missions;
 
             // Stop join retry loop (if running).
             try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
-          }
-        }
-      }catch(_){ }
-      // notify host that this client is fully loaded/bound
-      try{ clientStartReadyPing(net); }catch(_){ }
+            try{ stopHostSyncRetry(net); }catch(_){ }
 
-      // Embed: if I'm not yet fully bound to a player, keep the boot overlay so it doesn't look like "no character".
-      try{
-        if (EMBED) {
-          const pid = Number(net.myPlayerId || 0);
-          const me = (pid && G.state.players) ? G.state.players[String(pid)] : null;
-          if (G.phase !== 'lobby' && !me) {
-            bootShow('참가 중... (캐릭터 생성 대기)');
-            if (!G.ui) G.ui = {};
-            G.ui._bootHidden = false;
-          } else if (G.phase !== 'lobby' && me) {
-            bootHide();
-            if (!G.ui) G.ui = {};
-            G.ui._bootHidden = true;
           }
         }
       }catch(_){ }
@@ -9509,7 +9413,6 @@ net.on('uiMeetingOpen', (m) => {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
       const pid = hostAddPlayer(nick, false, net.clientId);
-      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.ready = true; if (net.sessionId) p.sid = String(net.sessionId); } }catch(_){ }
       net.myPlayerId = pid;
       G.phase = 'lobby';
       setRolePill();
@@ -9520,7 +9423,7 @@ net.on('uiMeetingOpen', (m) => {
     } else {
       // join 요청
       if (!net.joinToken) net.joinToken = randId();
-      net.post({ t: 'join', nick, clientId: net.clientId, sid: net.sessionId || null, joinToken: net.joinToken });
+      net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken });
 
       // If the first join packet is dropped (common when the iframe loads before the room
       // starts relaying packets), keep retrying until we get joinAck.
@@ -9531,9 +9434,30 @@ net.on('uiMeetingOpen', (m) => {
               if (!G.net || G.net !== net) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
               if (net.isHost || net.myPlayerId) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
               if (!net.joinToken) net.joinToken = randId();
-              net.post({ t: 'join', nick, clientId: net.clientId, sid: net.sessionId || null, joinToken: net.joinToken, retry: true });
+              net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken, retry: true });
             }catch(_){ }
           }, 900);
+        }
+      }catch(_){ }
+
+      // Also request a fresh snapshot from the host a few times.
+      // This is the main fix for: "로딩에서 안 넘어감 / 일부 유저 캐릭터가 안 뜸" (초기 브로드캐스트 유실).
+      try{
+        if (EMBED && !net._syncRetry){
+          let tries = 0;
+          // Slight delay: ensure iframe message bridge + room relay are fully up.
+          setTimeout(()=>{ try{ requestHostSync('boot'); }catch(_){} }, 420);
+          net._syncRetry = setInterval(()=>{
+            try{
+              if (!G.net || G.net !== net) { stopHostSyncRetry(net); return; }
+              if (net.isHost) { stopHostSyncRetry(net); return; }
+              // Stop once we are bound and visible in the authoritative player list.
+              const pid = Number(net.myPlayerId || 0);
+              if (pid && G.state && G.state.players && G.state.players[String(pid)]) { stopHostSyncRetry(net); return; }
+              if (++tries > 8) { stopHostSyncRetry(net); return; }
+              requestHostSync('retry');
+            }catch(_){ stopHostSyncRetry(net); }
+          }, 650);
         }
       }catch(_){ }
     }
@@ -9577,22 +9501,96 @@ net.on('uiMeetingOpen', (m) => {
   });
 
 
+  // Programmatic start used by embedded mode (avoids relying on a DOM click on a disabled button).
+  async function _embedHostStartNow() {
+    if (!G.assetsReady) return;
+    if (!G.net) {
+      try { await joinRoom(); } catch (_) { return; }
+    }
+    if (!G.net?.isHost) return;
+    if (G.host.started) return;
+    G.phase = 'play';
+    const n = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
+    const practice = (n < 4);
+    hostStartGame(practice);
+    try{ broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
+    applyPhaseUI();
+  }
+
+  function _armEmbedHostAutostart(){
+    try{
+      if (!EMBED) return;
+      if (!window.__EMBED_IS_HOST__) return;
+      if (G.ui && G.ui._embedHostAutoTimer){ clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; }
+      const t0 = now();
+      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
+      // In embed rooms we must avoid deadlocks (no one can press the in-iframe start button).
+      // Start quickly even for small rooms; late joiners are supported.
+      const minReal = 1;
+      const target = (expected > 0) ? expected : minReal;
+      const MAX_WAIT = 1800;
+      const CHECK_MS = 120;
+      if (!G.ui) G.ui = {};
+      G.ui._embedWaitingStart = true;
+      G.ui._embedHostAutoTimer = setInterval(()=>{
+        try{
+          if (!G.net) return;
+          if (!G.net.isHost) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
+          if (G.host.started) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
+          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
+          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
+          if (ready || (now() - t0) > MAX_WAIT){
+            clearInterval(G.ui._embedHostAutoTimer);
+            G.ui._embedHostAutoTimer = null;
+            _embedHostStartNow().catch(()=>{});
+          }
+        }catch(_){ }
+      }, CHECK_MS);
+    }catch(_){ }
+  }
+
+
 
   // ---------- Embed bridge (multiroom) ----------
   async function startEmbedded(init){
-    if (!init || !init.roomCode) return;
+    if (!init) return;
+    // Some parents may omit/rename the room code field; be tolerant.
+    const roomCode = String(init.roomCode || init.roomId || init.room || '').trim() || 'local';
     if (G.net) return;
 
     // wait assets (they load asynchronously)
-    const until = Date.now() + 8000;
-    while(!G.assetsReady && !G.assetsError && Date.now() < until){
+    // IMPORTANT (embed): joinRoom() early-returns when assets aren't ready.
+    // If we proceed with a timeout here, slow networks can leave the iframe stuck
+    // forever on the HTML "로딩 중..." overlay because we never retry join.
+    while(!G.assetsReady && !G.assetsError){
       await new Promise(r => setTimeout(r, 50));
+    }
+    if (G.assetsError){
+      try{ setLobbyStatus('에셋을 불러오지 못했어. 새로고침하거나 잠시 후 다시 시도해줘!', 'danger'); }catch(_){ }
+      return;
     }
 
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
     // Host is decided by the room (avoid multiple-host races when more players join).
-    window.__EMBED_IS_HOST__ = !!init.isHost;
+    
+// Host is ideally decided by the room, but some room states don't expose isHost reliably.
+// For SuhakTokki embed we elect host deterministically to avoid "no host => infinite loading":
+// - spectators are never host
+// Host selection in embed mode:
+// - Prefer the explicit boolean `init.isHost` from the parent room shell.
+// - Only fall back to `seat===0` when `init.isHost` is *missing* (undefined),
+//   because seat can temporarily be 0 for everyone before the room's order map arrives.
+const __seat = (init.seat != null) ? Number(init.seat)
+            : (init.order != null) ? Number(init.order)
+            : (init.slot != null) ? Number(init.slot)
+            : -1;
+const __role = String(init.role || '');
+const __hasHintHost = (typeof init.isHost === 'boolean');
+const __hintHost = __hasHintHost ? !!init.isHost : false;
+const __electedHost = (__role !== 'spectator') && (__hasHintHost ? __hintHost : (__seat === 0));
+window.__EMBED_SEAT__ = (Number.isFinite(__seat) ? __seat : -1);
+window.__EMBED_IS_HOST__ = !!__electedHost;
     // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
     window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
     window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
@@ -9601,7 +9599,7 @@ net.on('uiMeetingOpen', (m) => {
       : ((window.__EMBED_EXPECTED_HUMANS__ > 0) ? (window.__EMBED_EXPECTED_HUMANS__ < 4) : false);
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
-    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,256); }catch(_){ }
+    try{ roomEl.value = String(roomCode).slice(0,256); }catch(_){ }
 
     // hide local lobby controls (room UI is handled by parent)
     try{ joinBtn.style.display = 'none'; }catch(_){ }
@@ -9612,34 +9610,45 @@ net.on('uiMeetingOpen', (m) => {
 
     // Embedded UX: never show the internal lobby overlay. The parent already has it.
     try{ G.ui.embedJoined = true; }catch(_){ }
-    try{ lobby?.classList.add('hidden'); }catch(_){ }
-    try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
+    // Let applyPhaseUI decide whether to show lobby/hud (we keep lobby visible until started in embed).
+    try{ applyPhaseUI(); }catch(_){ }
 
-    // host: auto-start, but wait a short moment for other players to finish joining.
-    // (Prevents 4+ rooms from incorrectly starting in practice due to slow iframe loads.)
+    // If we are a non-host client and the room ends up with no host auto-start (rare relay/host flag issues),
+    // ask the host to start after a short grace period.
+    setTimeout(() => {
+      try{
+        if (!EMBED) return;
+        if (!G.net || G.net.isHost) return;
+        if (G.state && G.state.started) return;
+        if (G.phase !== 'lobby') return;
+        G.net.post({ t: 'embedStart' });
+      }catch(_){ }
+    }, 2200);
+
+    // Safety net: on some hosts/relays the "isHost" flag can be missing or delayed.
+    // If a solo player gets stuck forever at the title/loading screen waiting for the host,
+    // force-start a local practice session after a short delay.
+    setTimeout(() => {
+      try{
+        if (!EMBED) return;
+        if (!G.net || G.host.started) return;
+        // Only intervene when there is effectively a single human in the room.
+        const humans = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
+        if (humans > 1) return;
+        // If still not started, promote to host locally and begin practice.
+        try{ G.net.isHost = true; }catch(_){ }
+        try{ window.__EMBED_IS_HOST__ = true; }catch(_){ }
+        if (G.phase === 'lobby') G.phase = 'play';
+        try{ hostStartGame(true); }catch(_){ }
+        try{ broadcastState(true); }catch(_){ }
+        try{ broadcastRoster(true); }catch(_){ }
+      }catch(_){ }
+    }, 3500);
+
+    // host: auto-start (embedded).
+    // NOTE: never rely on button.click() because disabled buttons do not dispatch click events.
     if (window.__EMBED_IS_HOST__){
-      const t0 = now();
-      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
-      const minReal = 4;
-      const target = (expected > 0) ? expected : minReal;
-      // Give a bit more time in embed (iframe) so late joinAck/roster packets don't push the room into practice.
-      const MAX_WAIT = (expected > minReal) ? 9000 : 6500;   // ms
-      const CHECK_MS = 120;    // ms
-      const it = setInterval(()=>{
-        try{
-          if (!G.net || !G.net.isHost) { clearInterval(it); return; }
-          if (G.host.started) { clearInterval(it); try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ } return; }
-          const humans = Object.values(G.state.players || {}).filter(p=>p && !p.isBot);
-          const n = humans.length;
-          const nReady = humans.filter(p=>p && p.ready).length;
-          // Prefer readiness to avoid starting before some iframes have actually joined.
-          const ready = (expected > 0) ? (nReady >= target) : (nReady >= minReal);
-          if (ready || (now() - t0) > MAX_WAIT){
-            clearInterval(it);
-            try{ startBtn.click(); }catch(_){ }
-          }
-        }catch(_){}
-      }, CHECK_MS);
+      _armEmbedHostAutostart();
     } else {
       try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
     }
@@ -9652,9 +9661,14 @@ net.on('uiMeetingOpen', (m) => {
     // bridge_init가 listener보다 먼저 도착하는 레이스를 방지하기 위해
     // index.html에서 window.__PENDING_BRIDGE_INIT__에 버퍼링해둘 수 있다.
     try{
-      const pending = window.__PENDING_BRIDGE_INIT__;
+      const pendingRaw = window.__PENDING_BRIDGE_INIT__;
+      let pending = pendingRaw;
+      if (typeof pendingRaw === 'string'){
+        try{ pending = JSON.parse(pendingRaw); }catch(_){ pending = null; }
+      }
       if (pending && typeof pending === 'object' && pending.type === 'bridge_init'){
         window.__PENDING_BRIDGE_INIT__ = null;
+        window.__EMBED_INITED__ = true;
         startEmbedded(pending).catch((e)=>{
           try{ console.error(e); }catch(_){ }
           try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
@@ -9663,8 +9677,25 @@ net.on('uiMeetingOpen', (m) => {
     }catch(_){ }
 
     window.addEventListener('message', (ev)=>{
-      const d = ev.data || {};
+      let d = ev.data;
+      if (typeof d === 'string'){
+        try{ d = JSON.parse(d); }catch(_){ return; }
+      }
       if (!d || typeof d !== 'object') return;
+      // Parent -> iframe: host ownership update (avoids no-host deadlocks).
+      if (d.type === 'bridge_host') {
+        try{
+          window.__EMBED_IS_HOST__ = !!d.isHost;
+          if (G.net) G.net.isHost = !!d.isHost;
+          // If we just became host, arm auto-start and ensure lobby UI updates.
+          if (window.__EMBED_IS_HOST__){
+            try{ applyPhaseUI(); }catch(_){ }
+            try{ _armEmbedHostAutostart(); }catch(_){ }
+          }
+        }catch(_){ }
+        return;
+      }
+
       // Parent -> iframe: leaving the embedded game view (go back to room)
       if (d.type === 'bridge_leave') {
         try {
@@ -9682,12 +9713,40 @@ net.on('uiMeetingOpen', (m) => {
         return;
       }
       if (d.type === 'bridge_init'){
+        try{ window.__EMBED_INITED__ = true; }catch(_){ }
         startEmbedded(d).catch((e)=>{
           try{ console.error(e); }catch(_){ }
           try{ setLobbyStatus('임베드 연결 실패...','danger'); }catch(_){ }
         });
       }
     });
+
+    // Fallback: if the parent never delivers bridge_init (schema mismatch / race / caching),
+    // start a local practice session so the game doesn't get stuck on the title screen.
+    // This is only used when no init arrives for a while.
+    try{
+      setTimeout(()=>{
+        try{
+          if (!EMBED) return;
+          if (window.__EMBED_INITED__) return;
+          window.__EMBED_INITED__ = true;
+          startEmbedded({
+            type: 'bridge_init',
+            gameId: 'suhaktokki',
+            sessionId: 'local',
+            nick: 'Player',
+            seat: 0,
+            isHost: true,
+            solo: true,
+            expectedHumans: 1,
+            humanCount: 1,
+            roomCode: 'local',
+            level: 1,
+            practice: true
+          }).catch(()=>{});
+        }catch(_){ }
+      }, 2500);
+    }catch(_){ }
   }
 
     // Best-effort: if the iframe is being unloaded/hidden, notify host to remove this player.

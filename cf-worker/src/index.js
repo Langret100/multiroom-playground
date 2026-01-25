@@ -919,49 +919,14 @@ export class RoomDO{
       // ----- SuhakTokki relay (generic packet) -----
       if (t === "sk_msg"){
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
-
-        // --- IMPORTANT: host-authoritative gating for SuhakTokki ---
-        // SuhakTokki internally runs a "host-sim" model. If multiple clients briefly think
-        // they are host (common during 4-player joins / slow iframes), non-hosts can start
-        // broadcasting `state`/`roster` and split the room, which results in
-        // "4명인데 2명만 캐릭터 뜸" 같은 증상.
-        //
-        // Fix: only the room's designated host (meta.ownerUserId) may broadcast host-type
-        // packets. Non-hosts may only send client->host intent packets.
-        const hostUid = this.meta.ownerUserId || "";
-        const senderUid = uid || "";
-        const it = String(inner.t || "");
-
-        // Attach a stable sender id so the game can bind players even if the iframe omitted it.
-        // (SuhakTokki looks at `sid/sessionId/_fromSid` and `cid/from`.)
-        try{
-          if (inner && typeof inner === "object"){
-            if (inner._fromSid == null) inner._fromSid = senderUid;
-            if (inner._fromUid == null) inner._fromUid = senderUid;
-          }
-        }catch(_){ }
-
-        const CLIENT_TO_HOST = new Set([
-          // joining/lifecycle (client -> host)
-          "discover","hello","join","leave","ping","ready",
-          // gameplay intents (client -> host)
-          "input","act","openMission","missionSubmit","missionClose","vote","meetingChat","emote"
-        ]);
-
-        // Allow only host to broadcast everything except the explicit client->host intents.
-        if (hostUid && senderUid !== hostUid && !CLIENT_TO_HOST.has(it)){
-          return;
-        }
-
-        // throttle high-frequency state packets (host-only)
-        if (it === "state"){
+        // throttle high-frequency state packets
+        if (String(inner.t||"") === "state"){
           const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0 };
           const n = now();
           if (n - (lim.skTs||0) < 70) return;
           lim.skTs = n;
           this._relayLimiter.set(uid, lim);
         }
-
         this._broadcast("sk_msg", { msg: inner });
         return;
       }

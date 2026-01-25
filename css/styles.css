@@ -524,6 +524,22 @@ body.tg-mode.in-game #duelFrame{
 /* Auth (login modal) */
 .authForm{ margin:0; }
 .authRow{ display:flex; gap:10px; margin-top:8px; }
+
+.authRow.three{
+  display:flex;
+  gap:10px;
+  flex-wrap:nowrap;
+}
+.authRow.three .btn{
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 8px;
+  font-size: 13px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+
 .authRow .btn{
   border:1px solid rgba(0,0,0,.12);
   background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
@@ -534,6 +550,55 @@ body.tg-mode.in-game #duelFrame{
   cursor:pointer;
 }
 #loginStatus{ min-height: 1.2em; }
+
+/* Login brand logo (above the login modal) */
+#loginModal.modalBackdrop{
+  /* place the modal a bit lower so the logo is always visible (mobile included) */
+  align-items:flex-start;
+  padding-top: calc(14px + env(safe-area-inset-top));
+}
+#loginModal .loginBrand{
+  position:absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  left:50%;
+  transform: translateX(-50%);
+  width: min(96vw, 840px);
+  max-width: 840px;
+  /* Ensure the logo is never visually covered by the login panel (desktop). */
+  z-index: 3;
+  pointer-events:none;
+  display:flex;
+  justify-content:center;
+}
+#loginModal .loginBrand img{
+  width:100%;
+  height:auto;
+  /* Make the logo noticeably larger while still staying within the viewport */
+  max-height: 48vh;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 22px rgba(0,0,0,.35));
+}
+#loginModal .modal{
+  /* Bring the login box up a bit on mobile while leaving room for the logo */
+  margin-top: clamp(120px, 22vh, 220px);
+  z-index: 2;
+}
+
+/* Desktop: prevent the enlarged logo from being covered by the login box. */
+@media (min-width: 921px){
+  #loginModal .loginBrand{
+    width: min(88vw, 900px);
+    max-width: 900px;
+  }
+  #loginModal .loginBrand img{
+    /* keep it big, but not so tall that it collides with the modal */
+    max-height: 30vh;
+  }
+  #loginModal .modal{
+    /* push the login panel down a bit more on desktop */
+    margin-top: clamp(240px, 34vh, 360px);
+  }
+}
 
 .modalBackdrop.show{ display:flex; }
 
