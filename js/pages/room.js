@@ -1025,6 +1025,21 @@ function updatePreview(modeId){
 
   let client = null;
   let room = null;
+  // Room-level heartbeat (prevents ghost sessions when page navigation doesn't close WS)
+  let __roomPingTimer = null;
+  function startRoomPing(){
+    try{
+      if (!room) return;
+      if (__roomPingTimer) clearInterval(__roomPingTimer);
+      __roomPingTimer = setInterval(()=>{
+        try{ room && room.send && room.send('client_ping', { at: Date.now() }); }catch(_){ }
+      }, 5000);
+    }catch(_){ }
+  }
+  function stopRoomPing(){
+    try{ if (__roomPingTimer){ clearInterval(__roomPingTimer); __roomPingTimer = null; } }catch(_){ }
+  }
+
   let prevPhase = null;
 
   let myNick = sessionStorage.getItem("nick") || "Player";
@@ -2001,6 +2016,10 @@ function startSim(){
 
       mySessionId = room.sessionId;
 
+      // start room heartbeat immediately
+      try{ startRoomPing(); room.send('client_ping', { at: Date.now() }); }catch(_){ }
+
+
       // cache for fullscreen helpers (togester dock, etc.)
       try{ window.__roomRef = room; }catch(_){ }
       try{ window.__roomModeId = room?.state?.mode || ""; }catch(_){ }
@@ -2382,8 +2401,8 @@ try{
       els.leaveBtn.addEventListener("click", leaveToLobby);
 
       // Ensure WS closes even on tab close / navigation (auto-delete empty rooms)
-      window.addEventListener("pagehide", ()=>{ try{ room?.leave(); }catch(_){} });
-      window.addEventListener("beforeunload", ()=>{ try{ room?.leave(); }catch(_){} });
+      window.addEventListener("pagehide", ()=>{ try{ stopRoomPing(); room?.send?.('client_leave', { at: Date.now() }); }catch(_){} try{ room?.leave(); }catch(_){} });
+      window.addEventListener("beforeunload", ()=>{ try{ stopRoomPing(); room?.send?.('client_leave', { at: Date.now() }); }catch(_){} try{ room?.leave(); }catch(_){} });
 
       // start loop
       setInterval(()=> maybeSendInputDelta(true), 500); // keepalive (최대 2회/초) - 방을 나가면 기록 없음

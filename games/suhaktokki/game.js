@@ -2713,7 +2713,7 @@
           if (p.isBot) { p.lastSeen = now(); continue; }
           if (hostPid && pid === hostPid) { p.lastSeen = now(); continue; }
           const ls = Number(p.lastSeen || 0);
-          if (ls && (now() - ls > 12000)) toKick.push(pid);
+          if (ls && (now() - ls > 120000)) toKick.push(pid);
         }
         for (const pid of toKick) {
           hostRemovePlayer(pid, 'timeout');

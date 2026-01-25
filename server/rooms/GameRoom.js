@@ -21,6 +21,56 @@ function clearClockTimer(t){
 export class GameRoom extends Room {
   onCreate(options){
     this.setState(new GameState());
+    // room-level liveness tracking (handles ghost sessions if browser doesn't close WS)
+    this._lastClientPing = new Map();
+    this.clock.setInterval(()=>{
+      try{
+        const now = Date.now();
+        const stale = [];
+        for (const [sid, ps] of this.state.players.entries()){
+          if (sid === CPU_SID) continue;
+          const t = this._lastClientPing.get(sid) || 0;
+          // If we never got a ping, be lenient (allow join/boot).
+          // IMPORTANT: Browsers can throttle timers while a tab is backgrounded,
+          // so we allow a much longer grace period during gameplay (missions/meetings).
+          const timeoutMs = (this.state.phase === 'playing') ? 180000 : 30000;
+          if (t && (now - t > timeoutMs)) stale.push(sid);
+        }
+        if (stale.length){
+          for (const sid of stale){
+            this.state.players.delete(sid);
+            this.state.order.delete(sid);
+            this.inputs.delete(sid);
+            this._lastClientPing.delete(sid);
+          }
+          this.recomputeReady();
+          if (this.state.playerCount <= 0){
+            this.resetToLobby('empty');
+          } else {
+            // if host missing, promote smallest seat
+            let hostSid = null;
+            for (const [sid, ps] of this.state.players.entries()){
+              if (ps?.isHost){ hostSid = sid; break; }
+            }
+            if (!hostSid){
+              let best = 999; let pick = null;
+              for (const sid of this.state.players.keys()){
+                if (sid === CPU_SID) continue;
+                const seat = this.state.order.get(sid);
+                if (seat !== undefined && seat < best){ best = seat; pick = sid; }
+              }
+              if (pick){
+                for (const ps of this.state.players.values()) ps.isHost = false;
+                const hp = this.state.players.get(pick);
+                if (hp) hp.isHost = true;
+                try{ this.setMetadata({ ...this.metadata, hostNick: hp?.nick || '-' }); }catch(_){ }
+              }
+            }
+          }
+        }
+      }catch(_){ }
+    }, 5000);
+
     // maxClients computed after mode/modeType
 
     this.state.title = String(options?.title || "새 방").slice(0, 30);
@@ -176,7 +226,17 @@ this.st = {
       this.broadcast("chat", msg);
     });
 
-    // ---- SuhakTokki relay (embedded iframe) ----
+    
+    // Client liveness: room.js sends client_ping every few seconds.
+    // This prevents "ghost" sessions keeping the room stuck in playing after users navigate away.
+    this.onMessage("client_ping", (client, payload) => {
+      try{ this._lastClientPing.set(client.sessionId, Date.now()); }catch(_){ }
+    });
+    this.onMessage("client_leave", (client, payload) => {
+      try{ this._lastClientPing.set(client.sessionId, 0); }catch(_){ }
+    });
+
+// ---- SuhakTokki relay (embedded iframe) ----
     // The game runs inside an iframe and communicates with the room via "sk_msg" packets.
     // We simply broadcast these packets to all clients in the room so every iframe sees them.
     // (This enables emergency meeting, voting, and meeting chat.)
@@ -660,6 +720,8 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
   }
 
   onJoin(client, options){
+    try{ this._lastClientPing.set(client.sessionId, Date.now()); }catch(_){ }
+
     const nick = String(options?.nick || "Player").slice(0, 20);
     const p = new PlayerState();
     p.nick = nick;
@@ -709,6 +771,8 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
   }
 
   onLeave(client){
+    try{ this._lastClientPing.delete(client.sessionId); }catch(_){ }
+
     const leaving = this.state.players.get(client.sessionId);
     const nick = leaving?.nick || "Player";
     this.state.players.delete(client.sessionId);
