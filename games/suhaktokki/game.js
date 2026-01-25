@@ -5836,7 +5836,16 @@ try{
     const hint = (G.net && G.net.isHost && G.ui && G.ui._embedWaitingStart)
       ? '플레이어 접속을 기다리는 중...'
       : '로딩 중...';
-    try{ if (!(G.ui && G.ui._bootHidden)) bootShow(hint); }catch(_){ }
+    // Boot overlay should not block the lobby UI.
+    // Show it only until assets are loaded; then hide it even if we are still waiting in lobby.
+    try{
+      if (!G.ui) G.ui = {};
+      if (!G.assetsReady){
+        if (!(G.ui && G.ui._bootHidden)) bootShow(hint);
+      } else {
+        if (!G.ui._bootHidden){ bootHide(); G.ui._bootHidden = true; }
+      }
+    }catch(_){ }
     // Keep drawing the canvas title art as a fallback (HTML overlay is on top in embed).
     drawLoadingScreen((hint === '플레이어 접속을 기다리는 중...') ? hint : null);
     drawCenterNoticeOverlay();
@@ -8456,6 +8465,16 @@ try{
       if (net.isHost) net.post({ t: 'host', hostId: net.hostId, at: Date.now() });
     });
 
+    // Embed fallback: if clients are stuck in lobby (host didn't auto-start),
+    // allow any client to request the host to start.
+    net.on('embedStart', (_m) => {
+      try{
+        if (!net.isHost) return;
+        if (G.host.started) return;
+        _embedHostStartNow().catch(()=>{});
+      }catch(_){ }
+    });
+
     // join
     net.on('join', (m) => {
       if (!net.isHost) return;
@@ -9444,9 +9463,11 @@ net.on('uiMeetingOpen', (m) => {
       if (G.ui && G.ui._embedHostAutoTimer){ clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; }
       const t0 = now();
       const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
-      const minReal = 4;
+      // In embed rooms we must avoid deadlocks (no one can press the in-iframe start button).
+      // Start quickly even for small rooms; late joiners are supported.
+      const minReal = 1;
       const target = (expected > 0) ? expected : minReal;
-      const MAX_WAIT = (expected > minReal) ? 9000 : 6500;
+      const MAX_WAIT = 1800;
       const CHECK_MS = 120;
       if (!G.ui) G.ui = {};
       G.ui._embedWaitingStart = true;
@@ -9513,6 +9534,18 @@ net.on('uiMeetingOpen', (m) => {
     try{ G.ui.embedJoined = true; }catch(_){ }
     try{ lobby?.classList.add('hidden'); }catch(_){ }
     try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
+
+    // If we are a non-host client and the room ends up with no host auto-start (rare relay/host flag issues),
+    // ask the host to start after a short grace period.
+    setTimeout(() => {
+      try{
+        if (!EMBED) return;
+        if (!G.net || G.net.isHost) return;
+        if (G.state && G.state.started) return;
+        if (G.phase !== 'lobby') return;
+        G.net.post({ t: 'embedStart' });
+      }catch(_){ }
+    }, 2200);
 
     // Safety net: on some hosts/relays the "isHost" flag can be missing or delayed.
     // If a solo player gets stuck forever at the title/loading screen waiting for the host,
