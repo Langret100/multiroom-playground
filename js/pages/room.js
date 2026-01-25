@@ -2019,7 +2019,23 @@ function startSim(){
             else if (prevPhase === "playing") exitGameFullscreen();
             prevPhase = ph;
           }
-        }catch(_){}
+        }catch(_){ }
+
+		// Late-join fix: if a client joins after the match already started,
+		// they might miss the server's "started" message and get stuck in lobby UI.
+		// When phase is already "playing", enter the game locally once.
+		try{
+			const ph2 = room.state.phase;
+			if (ph2 === "playing"){
+				if (!forceLobbyUI && !window.__enteredPlaying){
+					window.__enteredPlaying = true;
+					startSim();
+				}
+			} else {
+				window.__enteredPlaying = false;
+			}
+		}catch(_){ }
+
 		// DrawAnswer: if everyone else left, automatically return to lobby UI.
 		// (We keep the room connection; only exit the embedded gameplay screen.)
 		try{
@@ -2113,6 +2129,14 @@ try{
       room.state.players.onRemove = renderPlayers;
       room.state.order.onAdd = renderPlayers;
       room.state.order.onRemove = renderPlayers;
+      // If we joined a room that is already playing, immediately enter the game once.
+      try{
+        if (room.state && room.state.phase === "playing" && !forceLobbyUI && !window.__enteredPlaying){
+          window.__enteredPlaying = true;
+          startSim();
+        }
+      }catch(_){ }
+
 
       room.onMessage("started", (m)=> {
         try{ enterGameFullscreen(); }catch(_){ }
