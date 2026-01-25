@@ -739,6 +739,22 @@ function updatePreview(modeId){
       }
       return;
     }
+
+    // Some embedded coop games depend on receiving bridge_init reliably.
+    // On slower devices or on hot reloads, the initial bridge_ready/init handshake
+    // can race and the init can be missed. Embedded games can ask for a resend.
+    if (d.type === "bridge_request_init"){
+      if (!fromMain) return;
+      try{
+        if (coop.active && coop.meta && coop.iframeLoaded){
+          sendCoopBridgeInit();
+        } else if (duel.active && duel.meta && duel.iframeLoaded){
+          // Fallback for duel embeds if ever needed.
+          sendBridgeInit();
+        }
+      }catch(_){ }
+      return;
+    }
     if (!room) return;
 
     // In-game "나가기" from embedded duel iframe (forfeit & return to room UI)

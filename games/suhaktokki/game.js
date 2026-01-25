@@ -9527,6 +9527,20 @@ net.on('uiMeetingOpen', (m) => {
     // Tell parent we're ready for bridge_init
     bridgeSend('bridge_ready', {});
 
+    // Resilient init: if bridge_init was missed (race on slow devices),
+    // periodically ask the parent to resend it until we successfully join.
+    // This avoids being stuck on the static loading art forever.
+    try{
+      let tries = 0;
+      const t = setInterval(()=>{
+        try{
+          if (G.net) { clearInterval(t); return; }
+          if (tries++ > 40) { clearInterval(t); return; } // ~20s max
+          bridgeSend('bridge_request_init', { at: Date.now() });
+        }catch(_){ }
+      }, 500);
+    }catch(_){ }
+
     // bridge_init가 listener보다 먼저 도착하는 레이스를 방지하기 위해
     // index.html에서 window.__PENDING_BRIDGE_INIT__에 버퍼링해둘 수 있다.
     try{
