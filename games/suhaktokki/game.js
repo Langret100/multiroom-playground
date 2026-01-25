@@ -535,9 +535,10 @@
     const inGame = !!(G.net && G.phase !== 'lobby');
     // lobby vs game
     if (EMBED) {
-      // Embedded: never show the internal lobby overlay once we've joined.
-      const joined = !!G.net || !!G.ui?.embedJoined;
-      if (joined || inGame) {
+      // Embedded: keep the in-iframe lobby visible until the match actually starts,
+      // so the host can always press Start if auto-start fails for any reason.
+      const started = !!(G.state && G.state.started) || !!(G.host && G.host.started);
+      if (started || inGame) {
         lobby?.classList.add('hidden');
         if (hud) hud.style.display = 'flex';
       } else {
@@ -9512,7 +9513,21 @@ net.on('uiMeetingOpen', (m) => {
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
     // Host is decided by the room (avoid multiple-host races when more players join).
-    window.__EMBED_IS_HOST__ = !!init.isHost;
+    
+// Host is ideally decided by the room, but some room states don't expose isHost reliably.
+// For SuhakTokki embed we elect host deterministically to avoid "no host => infinite loading":
+// - spectators are never host
+// - seat 0 becomes host (room ordering)
+// - otherwise fall back to init.isHost when available
+const __seat = (init.seat != null) ? Number(init.seat)
+            : (init.order != null) ? Number(init.order)
+            : (init.slot != null) ? Number(init.slot)
+            : -1;
+const __role = String(init.role || '');
+const __hintHost = !!init.isHost;
+const __electedHost = (__role !== 'spectator') && (__hintHost || (__seat === 0));
+window.__EMBED_SEAT__ = (Number.isFinite(__seat) ? __seat : -1);
+window.__EMBED_IS_HOST__ = !!__electedHost;
     // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
     window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
     window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
@@ -9532,8 +9547,8 @@ net.on('uiMeetingOpen', (m) => {
 
     // Embedded UX: never show the internal lobby overlay. The parent already has it.
     try{ G.ui.embedJoined = true; }catch(_){ }
-    try{ lobby?.classList.add('hidden'); }catch(_){ }
-    try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
+    // Let applyPhaseUI decide whether to show lobby/hud (we keep lobby visible until started in embed).
+    try{ applyPhaseUI(); }catch(_){ }
 
     // If we are a non-host client and the room ends up with no host auto-start (rare relay/host flag issues),
     // ask the host to start after a short grace period.
