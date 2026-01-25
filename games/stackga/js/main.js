@@ -53,10 +53,10 @@ try{
 }catch(_){ }
 
 // --- Audio (BGM + SFX)
-// In the multiroom embed (iframe) we play per-game BGM from the parent page (room.html).
-// If we also play the game's internal music/SFX here, users will hear an extra rhythm/click track.
-// So: in embed mode disable internal audio and only send a "gesture" ping to the parent to unlock autoplay.
-const audio = createAudio({ musicUrl: EMBED ? null : "./assets/arcade-music.mp3" });
+// NOTE:
+// - iframe 내부 제스처는 부모(window)로 전파되지 않아서, "첫 판만 음악 안 나옴" 이슈가 자주 발생했습니다.
+// - 그래서 게임 자체가 mp3 BGM을 직접 재생하도록 하고, 종료 시에는 반드시 정지합니다.
+const audio = createAudio({ musicUrl: "./assets/arcade-music.mp3" });
 // 소리 버튼은 제거됨. (필요 시 내부에서 음소거 토글만 유지)
 
 // "매칭" 버튼(단독) / "나가기" 버튼(로비-임베드)
@@ -73,14 +73,9 @@ if (!EMBED){
     });
   }
 }
-function notifyParentGesture(){
-  if (!EMBED) return;
-  try{ window.parent?.postMessage({ type: "gesture" }, "*"); }catch(_){ }
-}
-
 // start/retry audio on user gestures (mobile: 첫 play()가 실패할 수 있어 재시도 필요)
-window.addEventListener("pointerdown", ()=>{ notifyParentGesture(); audio.gestureStart(); }, { passive:true });
-window.addEventListener("keydown", ()=>{ notifyParentGesture(); audio.gestureStart(); });
+window.addEventListener("pointerdown", ()=>audio.gestureStart(), { passive:true });
+window.addEventListener("keydown", ()=>audio.gestureStart());
 
 // Ensure BGM stops immediately when leaving the game to prevent room BGM overlap.
 const _stopBgmNow = ()=>{ try{ audio.stopMusic?.(); }catch{} };
@@ -166,7 +161,6 @@ function performAction(action){
   if(!meGame || meGame.dead || !started) return;
 
   // Audio starts only after a gesture; this call is safe even if blocked.
-  notifyParentGesture();
   audio.gestureStart();
 
   const now = Date.now();
@@ -175,15 +169,15 @@ function performAction(action){
   const right = invert ? -1 : 1;
 
   if(action==="left"){
-    if(meGame.move(left) && !EMBED) audio.sfx("move");
+    if(meGame.move(left)) audio.sfx("move");
   }else if(action==="right"){
-    if(meGame.move(right) && !EMBED) audio.sfx("move");
+    if(meGame.move(right)) audio.sfx("move");
   }else if(action==="down"){
-    meGame.softDrop(); if(!EMBED) audio.sfx("soft");
+    meGame.softDrop(); audio.sfx("soft");
   }else if(action==="rotate"){
-    if(meGame.rotate(1) && !EMBED) audio.sfx("rotate");
+    if(meGame.rotate(1)) audio.sfx("rotate");
   }else if(action==="drop"){
-    meGame.hardDrop(); if(!EMBED) audio.sfx("hard");
+    meGame.hardDrop(); audio.sfx("hard");
   }else if(action==="pause"){
     meGame.paused = !meGame.paused;
   }
