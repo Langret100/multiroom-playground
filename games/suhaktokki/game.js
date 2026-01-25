@@ -9424,10 +9424,15 @@ net.on('uiMeetingOpen', (m) => {
     if (!init || !init.roomCode) return;
     if (G.net) return;
 
-    // wait assets (they load asynchronously)
-    const until = Date.now() + 8000;
-    while(!G.assetsReady && !G.assetsError && Date.now() < until){
+    // Wait for assets (they load asynchronously).
+    // In embed mode, mobile devices can take >8s; timing out here can permanently
+    // prevent join/start and leave the boot loading screen stuck.
+    while(!G.assetsReady && !G.assetsError){
       await new Promise(r => setTimeout(r, 50));
+    }
+    if (G.assetsError){
+      try{ showToast('에셋 로딩 실패'); }catch(_){ }
+      return;
     }
 
     window.__USE_BRIDGE_NET__ = true;
