@@ -1768,8 +1768,11 @@
       const url = this._makeWsUrl(wsBase, roomCode);
       this.ws = new WebSocket(url);
       this.ws.addEventListener('message', (ev) => {
-        let msg = null;
-        try { msg = JSON.parse(ev.data); } catch (_) { return; }
+        let msg = ev.data;
+        if (typeof msg === 'string'){
+          try{ msg = JSON.parse(msg); }catch(_){ return; }
+        }
+        if (!msg || typeof msg !== 'object') return;
         if (!msg || (msg.room && msg.room !== this.room)) return;
         const tNow = Date.now();
         if (msg.from) this.peers.set(String(msg.from), tNow);

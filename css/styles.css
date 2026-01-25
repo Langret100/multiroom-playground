@@ -524,6 +524,24 @@ body.tg-mode.in-game #duelFrame{
 /* Auth (login modal) */
 .authForm{ margin:0; }
 .authRow{ display:flex; gap:10px; margin-top:8px; }
+
+.authRow.three{
+  display:flex;
+  gap:10px;
+  flex-wrap:nowrap;
+}
+.authRow.three .btn{
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 8px;
+  font-size: 13px;
+  line-height: 1.15;
+}
+.authRow.three #guestBtn{
+  flex: 1.6 1 0;
+  white-space: normal;
+}
+
 .authRow .btn{
   border:1px solid rgba(0,0,0,.12);
   background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
@@ -546,8 +564,8 @@ body.tg-mode.in-game #duelFrame{
   top: calc(14px + env(safe-area-inset-top));
   left:50%;
   transform: translateX(-50%);
-  width: min(72vw, 420px);
-  max-width: 420px;
+  width: min(96vw, 840px);
+  max-width: 840px;
   pointer-events:none;
   display:flex;
   justify-content:center;
@@ -555,12 +573,12 @@ body.tg-mode.in-game #duelFrame{
 #loginModal .loginBrand img{
   width:100%;
   height:auto;
-  max-height: 22vh;
+  max-height: 34vh;
   object-fit: contain;
   filter: drop-shadow(0 10px 22px rgba(0,0,0,.35));
 }
 #loginModal .modal{
-  margin-top: clamp(90px, 18vh, 150px);
+  margin-top: clamp(180px, 32vh, 300px);
 }
 
 .modalBackdrop.show{ display:flex; }
