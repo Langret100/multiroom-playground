@@ -9424,7 +9424,9 @@ net.on('uiMeetingOpen', (m) => {
 
   // ---------- Embed bridge (multiroom) ----------
   async function startEmbedded(init){
-    if (!init || !init.roomCode) return;
+    if (!init) return;
+    // Some parents may omit/rename the room code field; be tolerant.
+    const roomCode = String(init.roomCode || init.roomId || init.room || '').trim() || 'local';
     if (G.net) return;
 
     // wait assets (they load asynchronously)
@@ -9451,7 +9453,7 @@ net.on('uiMeetingOpen', (m) => {
       : ((window.__EMBED_EXPECTED_HUMANS__ > 0) ? (window.__EMBED_EXPECTED_HUMANS__ < 4) : false);
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
-    try{ roomEl.value = String(init.roomCode || roomEl.value || '1234').slice(0,256); }catch(_){ }
+    try{ roomEl.value = String(roomCode).slice(0,256); }catch(_){ }
 
     // hide local lobby controls (room UI is handled by parent)
     try{ joinBtn.style.display = 'none'; }catch(_){ }
@@ -9464,6 +9466,26 @@ net.on('uiMeetingOpen', (m) => {
     try{ G.ui.embedJoined = true; }catch(_){ }
     try{ lobby?.classList.add('hidden'); }catch(_){ }
     try{ if (hud) hud.style.display = 'flex'; }catch(_){ }
+
+    // Safety net: on some hosts/relays the "isHost" flag can be missing or delayed.
+    // If a solo player gets stuck forever at the title/loading screen waiting for the host,
+    // force-start a local practice session after a short delay.
+    setTimeout(() => {
+      try{
+        if (!EMBED) return;
+        if (!G.net || G.host.started) return;
+        // Only intervene when there is effectively a single human in the room.
+        const humans = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
+        if (humans > 1) return;
+        // If still not started, promote to host locally and begin practice.
+        try{ G.net.isHost = true; }catch(_){ }
+        try{ window.__EMBED_IS_HOST__ = true; }catch(_){ }
+        if (G.phase === 'lobby') G.phase = 'play';
+        try{ hostStartGame(true); }catch(_){ }
+        try{ broadcastState(true); }catch(_){ }
+        try{ broadcastRoster(true); }catch(_){ }
+      }catch(_){ }
+    }, 3500);
 
     // host: auto-start, but wait a short moment for other players to finish joining.
     // (Prevents 4+ rooms from incorrectly starting in practice due to slow iframe loads.)

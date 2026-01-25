@@ -581,6 +581,22 @@ body.tg-mode.in-game #duelFrame{
   margin-top: clamp(120px, 22vh, 220px);
 }
 
+/* Desktop: prevent the enlarged logo from being covered by the login box. */
+@media (min-width: 921px){
+  #loginModal .loginBrand{
+    width: min(88vw, 900px);
+    max-width: 900px;
+  }
+  #loginModal .loginBrand img{
+    /* keep it big, but not so tall that it collides with the modal */
+    max-height: 30vh;
+  }
+  #loginModal .modal{
+    /* push the login panel down a bit more on desktop */
+    margin-top: clamp(240px, 34vh, 360px);
+  }
+}
+
 .modalBackdrop.show{ display:flex; }
 
 /* Responsive - mobile first */
