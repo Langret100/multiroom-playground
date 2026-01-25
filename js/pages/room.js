@@ -1615,19 +1615,23 @@ function sendCoopBridgeInit(){
     }catch(_){ }
   };
 
-  // Wait until the room state has my player entry (so host/seat can be derived reliably).
+  // Wait until the room state has enough information to derive my seat + the single host.
   // Some environments can load the iframe faster than the first room_state snapshot.
-  // Don't give up too early — otherwise the embedded game can get stuck on its own loading overlay.
+  // For SuhakTokki we primarily rely on `order` (seat map), because some schemas may
+  // not expose `players` immediately. However, we should still wait until either
+  // `order` contains me OR `players` contains me, otherwise every client can briefly
+  // think they are the host (=> split-host, missing characters, inputs ignored).
   try{
-    const hasMe = !!getPlayer(mySessionId);
+    const hasMePlayer = !!getPlayer(mySessionId);
+    const hasMeOrder = (()=>{
+      try{ return !!room?.state?.order?.has?.(mySessionId); }catch(_){ return false; }
+    })();
+    const hasMe = hasMePlayer || hasMeOrder;
 
-    // SuhakTokki: do NOT block on `players.get(mySessionId)`.
-    // In some deployments the initial room state schema does not expose `players` reliably
-    // at the moment we need to send bridge_init. Waiting here caused the iframe to never
-    // receive bridge_init (=> infinite loading). We will still compute seat/host from
-    // `order` and deterministic fallbacks below.
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
-    if (!hasMe && !isSuhak){
+    // For most games, we require `players` to include me.
+    // For SuhakTokki, accept either `order` or `players`.
+    if (!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer))){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -1646,9 +1650,9 @@ function sendCoopBridgeInit(){
         sendCoopBridgeInit();
       }, delay);
 
-      // After enough retries, stop blocking on "hasMe" and send a best-effort init.
+      // After enough retries, stop blocking and send a best-effort init.
       // This prevents infinite loading if the state schema is different than expected.
-      if (coop._bridgeInitRetry > 200) {
+      if (coop._bridgeInitRetry > 220) {
         try{ coop._bridgeInitRetry = 0; }catch(_){ }
         try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
       } else {
@@ -1672,6 +1676,19 @@ function sendCoopBridgeInit(){
   const CPU_SID = "__cpu__";
   const humanCount = (()=>{
     try{
+      // Prefer `order` (seat map) because it is stable even when the `players`
+      // schema isn't exposed yet (important for SuhakTokki late joins).
+      const ord = room?.state?.order;
+      if (ord){
+        let cnt = 0;
+        if (typeof ord.forEach === 'function'){
+          ord.forEach((_, sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
+        } else {
+          Object.keys(ord).forEach((sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
+        }
+        return cnt;
+      }
+      // Fallback: count from players map/object
       let cnt = 0;
       forEachPlayer((_, sid)=>{
         if (String(sid) === CPU_SID) return;
