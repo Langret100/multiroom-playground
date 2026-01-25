@@ -187,8 +187,14 @@ this.st = {
       // If we only relay during "playing", guests who load the iframe while the room
       // is still in "lobby" can miss their initial join packet and end up seeing only
       // the host forever. So we relay in both lobby and playing.
-      const inner = payload?.msg || payload;
-      if (!inner || typeof inner !== "object") return;
+      const raw = payload?.msg || payload;
+      if (!raw || typeof raw !== "object") return;
+      const inner = { ...raw };
+      // Ensure sender identity for robust routing inside embedded SuhakTokki net.
+      // (Some clients rely on sessionId/sid to match joinAck even if clientId differs.)
+      if (inner.sessionId == null) inner.sessionId = client.sessionId;
+      if (inner.sid == null) inner.sid = client.sessionId;
+      if (inner._fromSid == null) inner._fromSid = client.sessionId;
       const t = String(inner.t || "").slice(0, 32);
       if (!t) return;
 

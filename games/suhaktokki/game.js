@@ -1917,7 +1917,7 @@
       msg.from = this.clientId;
 	  // Stable per-iframe id for robust routing even if `from` is rewritten.
 	  msg.cid = this.clientId;
-	      if (this.sessionId) msg.sessionId = this.sessionId;
+	      if (this.sessionId) { msg.sessionId = this.sessionId; msg.sid = this.sessionId; }
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
@@ -3942,6 +3942,7 @@ function hostHandleInteract(playerId) {
           isBot: !!p.isBot,
           clientId: (p.clientId != null) ? String(p.clientId) : null,
           joinToken: p.joinToken || null,
+          sid: (p.sid != null) ? String(p.sid) : null,
           ready: !!p.ready,
           x: Math.round((p.x || 0) * 100) / 100,
           y: Math.round((p.y || 0) * 100) / 100,
@@ -8487,7 +8488,11 @@ try{
       const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
         ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
         : '';
+      const sid = (m && (m.sid != null || m.sessionId != null || m._fromSid != null))
+        ? String(m.sid ?? m.sessionId ?? m._fromSid)
+        : '';
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
+      if (!G.host._sidToPlayer) G.host._sidToPlayer = new Map();
 
       // Dedupe joins using a per-join token (NOT clientId), because embed sessionId can be shared
       // across iframes. Clients retry join until joinAck arrives, reusing the same joinToken.
@@ -8499,12 +8504,15 @@ try{
         if (p) {
           p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
           p.clientId = from || p.clientId || null;
+          p.sid = sid || p.sid || null;
           p.joinToken = jt || p.joinToken || null;
           p.isBot = false;
           p.alive = true;
           p.lastSeen = now();
         }
-        net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
+        try{ if (sid) G.host._sidToPlayer.set(sid, pid); }catch(_){ }
+        try{ if (from) G.host._clientToPlayer.set(from, pid); }catch(_){ }
+        net.post({ t: 'joinAck', toSid: sid || null, toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
         broadcastState(true);
         try{ broadcastRoster(true); }catch(_){ }
         // If the match already started, immediately reveal the current role/mode to this (re)joining client.
@@ -8514,14 +8522,15 @@ try{
 
       const playersCount = Object.values(st.players).filter(p => !p.isBot).length;
       if (playersCount >= 8) {
-        net.post({ t: 'joinDenied', toCid: from || null, toClient: from || null, reason: '방이 가득 찼어!', joinToken: jt });
+        net.post({ t: 'joinDenied', toSid: sid || null, toCid: from || null, toClient: from || null, reason: '방이 가득 찼어!', joinToken: jt });
         return;
       }
       const pid = hostAddPlayer(m.nick || '토끼', false, from || null);
-      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.joinToken = jt || p.joinToken || null; } }catch(_){ }
+      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.lastSeen = now(); p.sid = sid || p.sid || null; p.joinToken = jt || p.joinToken || null; } }catch(_){ }
       if (jt) G.host._joinTokenToPlayer.set(jt, pid);
       if (from) G.host._clientToPlayer.set(from, pid);
-      net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
+      if (sid) G.host._sidToPlayer.set(sid, pid);
+      net.post({ t: 'joinAck', toSid: sid || null, toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt });
       broadcastState(true);
       try{ broadcastRoster(true); }catch(_){ }
       // If the match already started, immediately reveal the current role/mode to the late joiner.
@@ -8561,6 +8570,11 @@ try{
 
       // If token matches, accept even if routing fields are rewritten by the room shell.
       if (!tokenOk) {
+        // Strong routing by stable session id when available.
+        if (m.toSid != null) {
+          const to = String(m.toSid);
+          if (!mySid || to !== mySid) return;
+        } else
         // Prefer `toCid` routing when available; fall back to legacy `toClient`.
         if (m.toCid != null) {
           const to = String(m.toCid);
@@ -8609,6 +8623,7 @@ try{
       const st = G.state;
       const pid = Number(m.playerId || 0);
       const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
+      const sid = (m && (m.sid != null || m.sessionId != null || m._fromSid != null)) ? String(m.sid ?? m.sessionId ?? m._fromSid) : '';
       let p = null;
 
       try{
@@ -8623,6 +8638,14 @@ try{
         }
       }catch(_){ }
 
+      // Fallback: resolve by stable session id (room sessionId)
+      try{
+        if (!p && sid && G.host && G.host._sidToPlayer && G.host._sidToPlayer.has(sid)) {
+          const pid3 = Number(G.host._sidToPlayer.get(sid) || 0);
+          if (pid3 && st.players && st.players[pid3]) p = st.players[pid3];
+        }
+      }catch(_){ }
+
       if (!p) return;
 
       p.ready = true;
@@ -8633,7 +8656,8 @@ try{
         const from = (m && (m.cid != null || m.from != null || m.clientId != null || m.sessionId != null))
           ? String(m.cid ?? m.from ?? m.clientId ?? m.sessionId)
           : '';
-        if (from) p.clientId = from;
+        if (from) { p.clientId = from; try{ if (from) G.host._clientToPlayer.set(from, p.id); }catch(_){ } }
+        if (sid) { p.sid = sid; try{ G.host._sidToPlayer && G.host._sidToPlayer.set(sid, p.id); }catch(_){ } }
       }catch(_){ }
 
       try{ broadcastRoster(true); }catch(_){ }
@@ -8648,7 +8672,10 @@ net.on('joinDenied', (m) => {
       const tokenOk = (hasToken && net.joinToken && String(m.joinToken) === String(net.joinToken));
 
       if (!tokenOk) {
-        if (m.toCid != null) {
+        if (m.toSid != null) {
+          const to = String(m.toSid);
+          if (!mySid || to !== mySid) return;
+        } else if (m.toCid != null) {
           const to = String(m.toCid);
           if (to !== myCid && (!mySid || to !== mySid)) return;
         } else if (m.toClient != null) {
@@ -8896,7 +8923,15 @@ net.on('joinDenied', (m) => {
                 if (pp && pp.joinToken && String(pp.joinToken) === String(net.joinToken)) { found = Number(pid||0); break; }
               }
             }
-            // 2) Fallback to clientId match
+
+            // 2) Fallback to sid (room sessionId) match
+            const sid = (net.sessionId != null) ? String(net.sessionId) : '';
+            if (!found && sid) {
+              for (const [pid, pp] of Object.entries(playersObj)) {
+                if (pp && pp.sid && String(pp.sid) === String(sid)) { found = Number(pid||0); break; }
+              }
+            }
+            // 3) Fallback to clientId match
             if (!found) {
               for (const [pid, pp] of Object.entries(playersObj)) {
                 if (pp && pp.clientId && String(pp.clientId) === String(net.clientId)) { found = Number(pid||0); break; }
@@ -9124,7 +9159,15 @@ G.state.missions = m.missions;
               if (pp.joinToken && String(pp.joinToken) === String(jt)) { found = Number(pp.id || 0); break; }
             }
           }
-          // 2) Fallback to clientId match
+          // 2) Fallback to sid (room sessionId) match
+          const sid = (net.sessionId != null) ? String(net.sessionId) : '';
+          if (!found && sid) {
+            for (const pp of Object.values(st.players || {})) {
+              if (!pp) continue;
+              if (pp.sid && String(pp.sid) === String(sid)) { found = Number(pp.id || 0); break; }
+            }
+          }
+          // 3) Fallback to clientId match
           if (!found && cid) {
             for (const pp of Object.values(st.players || {})) {
               if (!pp) continue;
@@ -9462,7 +9505,7 @@ net.on('uiMeetingOpen', (m) => {
       hostInitFromMap();
       // 호스트 자신도 플레이어로 추가
       const pid = hostAddPlayer(nick, false, net.clientId);
-      try{ const p = G.state.players && G.state.players[pid]; if (p) p.ready = true; }catch(_){ }
+      try{ const p = G.state.players && G.state.players[pid]; if (p) { p.ready = true; if (net.sessionId) p.sid = String(net.sessionId); } }catch(_){ }
       net.myPlayerId = pid;
       G.phase = 'lobby';
       setRolePill();
@@ -9473,7 +9516,7 @@ net.on('uiMeetingOpen', (m) => {
     } else {
       // join 요청
       if (!net.joinToken) net.joinToken = randId();
-      net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken });
+      net.post({ t: 'join', nick, clientId: net.clientId, sid: net.sessionId || null, joinToken: net.joinToken });
 
       // If the first join packet is dropped (common when the iframe loads before the room
       // starts relaying packets), keep retrying until we get joinAck.
@@ -9484,7 +9527,7 @@ net.on('uiMeetingOpen', (m) => {
               if (!G.net || G.net !== net) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
               if (net.isHost || net.myPlayerId) { clearInterval(net._joinRetry); net._joinRetry = null; return; }
               if (!net.joinToken) net.joinToken = randId();
-              net.post({ t: 'join', nick, clientId: net.clientId, joinToken: net.joinToken, retry: true });
+              net.post({ t: 'join', nick, clientId: net.clientId, sid: net.sessionId || null, joinToken: net.joinToken, retry: true });
             }catch(_){ }
           }, 900);
         }
