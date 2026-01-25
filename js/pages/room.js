@@ -791,7 +791,19 @@ function updatePreview(modeId){
     // In-game "나가기" from embedded SuhakTokki iframe (return to room UI only)
     if (d.type === "sk_quit"){
       if (!fromMain) return;
-      forceLobbyUI = true;
+      // SuhakTokki uses sk_quit for both manual leave and match-end return.
+      // If the match ended, ask the server to reset the room back to lobby
+      // so the "게임중" label disappears and the start button re-appears.
+      try{
+        const r = (d && typeof d.reason === 'string') ? d.reason : '';
+        if (r === 'match_end' || r === 'host_exit') {
+          try{ room.send('sk_over', { reason: r }); }catch(_){ }
+          // Once the room is reset, we don't need to force the lobby UI.
+          forceLobbyUI = false;
+        } else {
+          forceLobbyUI = true;
+        }
+      }catch(_){ forceLobbyUI = true; }
       try{ exitGameFullscreen(); }catch(_){ }
       try{ renderPlayers(); }catch(_){ }
       return;

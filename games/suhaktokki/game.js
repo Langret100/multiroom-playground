@@ -432,6 +432,37 @@
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
+  // ---------- Pixel-sprite tinting (for special pose sheets) ----------
+  // We keep this very lightweight: create a tinted offscreen canvas per (sheetKey,colorIdx).
+  // This is used for one-off pose sheets like "teacher_kill0" and "student_cry" so
+  // the outfit color matches the player's color selection.
+  function getTintedSheet(sheetKey, colorIdx) {
+    const img = AS.pixel?.[sheetKey];
+    if (!img) return null;
+    if (!AS._tintCache) AS._tintCache = {};
+    const k = sheetKey + ':' + String(colorIdx|0);
+    if (AS._tintCache[k]) return AS._tintCache[k];
+
+    const c = document.createElement('canvas');
+    c.width = img.width; c.height = img.height;
+    const g = c.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    // base
+    g.clearRect(0,0,c.width,c.height);
+    g.drawImage(img,0,0);
+    // tint (multiply keeps shading). We intentionally keep alpha < 1 so skin/hair aren't fully recolored.
+    g.globalCompositeOperation = 'multiply';
+    g.globalAlpha = 0.78;
+    g.fillStyle = colorHex(colorIdx);
+    g.fillRect(0,0,c.width,c.height);
+    g.globalCompositeOperation = 'destination-in';
+    g.globalAlpha = 1;
+    g.drawImage(img,0,0);
+    g.globalCompositeOperation = 'source-over';
+    AS._tintCache[k] = c;
+    return c;
+  }
+
   // "모바일" 판정이 너무 보수적이면 조이스틱 UI가 안 뜨는 경우가 있어
   // coarse pointer + touchpoints 를 함께 고려
   const isMobile = matchMedia('(pointer:coarse)').matches || ('ontouchstart' in window) || ((navigator && navigator.maxTouchPoints) ? navigator.maxTouchPoints > 0 : false);
@@ -461,10 +492,10 @@
     } catch (_) {}
   }
 
-  async function leaveRoom() {
+  async function leaveRoom(reason) {
     if (EMBED){
-      // In multiroom iframe: just return to room UI
-      try{ bridgeSend("sk_quit", {}); }catch(_){ }
+      // In multiroom iframe: return to room UI (parent page controls room phase)
+      try{ bridgeSend("sk_quit", { reason: reason || '' }); }catch(_){ }
       try{ stopHeartbeat(); }catch(_){ }
       try{ G.net?.close?.(); }catch(_){ }
       G.net = null;
@@ -496,7 +527,7 @@
     // Host-confirmed exit: end the match for everyone and go back to the room after 1.5s.
     try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
     try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'host_exit', at: now() }); } catch (_) {}
-    setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
+    setTimeout(() => { try { leaveRoom('host_exit'); } catch (_) {} }, 1500);
   }
 
   // When the match ends (winner decided), automatically return everyone back to the room.
@@ -509,7 +540,7 @@
     try { showCenterNotice('게임이 종료되었습니다. 잠시 후 방으로 돌아갑니다.', 1600); } catch (_) {}
     // Tell all clients to quit (they handle hostExit by calling leaveRoom).
     try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'match_end', at: now() }); } catch (_) {}
-    setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1700);
+    setTimeout(() => { try { leaveRoom('match_end'); } catch (_) {} }, 1700);
   }
 
   function tryHostLeave() {
@@ -1166,6 +1197,8 @@
       ['teacher_basic_sheet', 'assets/pixel/teacher_basic_sheet.png'],
       ['teacher_kill0_sheet', 'assets/pixel/teacher_kill0_sheet.png'],
       ['teacher_tch_sheet', 'assets/pixel/teacher_tch_sheet.png'],
+      // Ejected student crying pose (single frame)
+      ['student_cry_sheet', 'assets/pixel/student_cry_sheet.png'],
     ];
     await Promise.all(px.map(async ([k, url]) => {
       try { AS.pixel[k] = greenKeyExact(await loadImage(url)); }
@@ -3695,6 +3728,33 @@ function hostHandleInteract(playerId) {
 
     // '다음 긴급회의 한정' : 긴급회의(종)에서만 2표 + 소멸
     if (emergency && voter.crown) voter.crown = false;
+
+    // Live vote UI update: send current counts so everyone sees "who has how many votes".
+    // (Clients can still change their vote until the timer ends.)
+    try{
+      const snap = hostVoteSnapshot();
+      broadcast({ t: 'voteUpdate', ...snap });
+    }catch(_){ }
+  }
+
+  function hostVoteSnapshot() {
+    // Returns a lightweight tally for the meeting UI.
+    const st = G.state;
+    const tally = {};
+    let skip = 0;
+    let total = 0;
+    for (const [voterId, v] of G.host.votes.entries()) {
+      const voter = st.players[voterId];
+      if (!voter || !voter.alive || voter.down) continue;
+      const target = (v && typeof v === 'object') ? v.target : v;
+      const w = (v && typeof v === 'object' && v.weight) ? v.weight : 1;
+      total += w;
+      if (target == null) { skip += w; continue; }
+      const t = st.players[target];
+      if (!t || !t.alive || t.down) continue;
+      tally[target] = (tally[target] || 0) + w;
+    }
+    return { tally, skip, total, endsAt: G.host.meetingEndsAt || 0 };
   }
 
   function hostResolveMeeting() {
@@ -4668,7 +4728,13 @@ function showToast(text) {
     }
     const tag = (kind === 'report') ? '🚨 신고' : '🔔 긴급회의';
     meetingInfo.textContent = `${tag} · ${reason}`;
-    G.ui.meeting.voted = false;
+    // Local vote state (clients may change vote until timer ends)
+    G.ui.meeting.voted = false; // legacy flag (kept for compatibility)
+    G.ui.meeting.myVote = undefined;
+    G.ui.meeting.tally = {};
+    G.ui.meeting.skip = 0;
+    G.ui.meeting.total = 0;
+    G.ui.meeting.endsAt = Number(endsAt || 0);
 
     renderMeetingRoster();
     renderMeetingChat();
@@ -4710,6 +4776,18 @@ function showToast(text) {
     const st = G.state;
     const meId = G.net?.myPlayerId;
 
+    const endsAt = Number(G.ui?.meeting?.endsAt || 0);
+    const canVoteTime = (endsAt ? (now() < endsAt) : true);
+    const myVote = G.ui?.meeting?.myVote;
+    const tally = (G.ui?.meeting?.tally) || {};
+    const skipCnt = Number(G.ui?.meeting?.skip || 0);
+    const isGhost = (()=>{
+      try{
+        const me = st.players[meId];
+        return (!me || !me.alive || me.down);
+      }catch(_){ return false; }
+    })();
+
     // Keep roster in sync with current alive/down states
     renderMeetingRoster();
 
@@ -4729,25 +4807,62 @@ function showToast(text) {
       label.style.fontWeight = '900';
       left.appendChild(icon);
       left.appendChild(label);
+      // vote count badge
+      const badge = document.createElement('div');
+      badge.textContent = String(tally[p.id] || 0);
+      badge.style.minWidth = '24px';
+      badge.style.padding = '2px 8px';
+      badge.style.borderRadius = '999px';
+      badge.style.background = 'rgba(255,255,255,.08)';
+      badge.style.border = '1px solid rgba(255,255,255,.12)';
+      badge.style.fontWeight = '900';
+      badge.style.textAlign = 'center';
+
       const btn = document.createElement('button');
       btn.className = 'ui';
-      btn.textContent = '투표';
-      btn.disabled = G.ui.meeting.voted || p.id === meId;
+      const selected = (myVote === p.id);
+      btn.textContent = selected ? '선택됨' : '투표';
+      btn.disabled = (!canVoteTime) || isGhost || (p.id === meId);
       btn.onclick = () => {
         if (!G.net) return;
-        G.ui.meeting.voted = true;
+        if (!canVoteTime) return;
+        if (isGhost) return;
+        G.ui.meeting.myVote = p.id;
         G.net.post({ t: 'vote', playerId: meId, target: p.id });
         renderVoteList();
       };
       row.appendChild(left);
+      row.appendChild(badge);
       row.appendChild(btn);
+
+      // highlight my choice
+      if (selected) {
+        row.style.outline = '2px solid rgba(125,211,252,.55)';
+        row.style.borderRadius = '12px';
+        row.style.padding = '6px';
+      }
       voteList.appendChild(row);
     });
+
+    // Skip vote button state (show count + my selection)
+    try{
+      const selSkip = (myVote === null);
+      skipVote.textContent = selSkip ? `기권(선택됨) · ${skipCnt}표` : `기권 · ${skipCnt}표`;
+      skipVote.disabled = (!canVoteTime) || isGhost;
+      skipVote.style.outline = selSkip ? '2px solid rgba(125,211,252,.55)' : '';
+    }catch(_){ }
   }
 
   skipVote.addEventListener('click', () => {
     if (!G.net) return;
-    G.ui.meeting.voted = true;
+    const endsAt = Number(G.ui?.meeting?.endsAt || 0);
+    if (endsAt && now() >= endsAt) return;
+    // Ghosts cannot vote
+    try{
+      const me = G.state?.players?.[G.net?.myPlayerId];
+      if (!me || !me.alive || me.down) return;
+    }catch(_){ }
+    G.ui.meeting.myVote = null;
     G.net.post({ t: 'vote', playerId: Number(G.net.myPlayerId || 0), target: null });
     renderVoteList();
   });
@@ -4975,7 +5090,9 @@ function showToast(text) {
           const ok = drawTeacherSceneSheet('teacher_tch_sheet', cx, cy, 1.05 * DPR, t, 'teacher');
           if (!ok) drawBunny(cx, cy, 2.4 * DPR, p.color ?? 0, t - SCENE.startAt, mood);
         } else {
-          drawBunny(cx, cy, 2.4 * DPR, p.color ?? 0, t - SCENE.startAt, mood);
+          // ejected student: prefer the dedicated crying sheet
+          const ok = drawStudentCrySceneSheet(cx, cy, 1.10 * DPR, p.color ?? 0, t);
+          if (!ok) drawBunny(cx, cy, 2.4 * DPR, p.color ?? 0, t - SCENE.startAt, mood);
         }
 
         // 말풍선
@@ -5010,6 +5127,29 @@ function showToast(text) {
     sceneCtx.globalAlpha = 1;
 
     sceneCtx.drawImage(sheet, viewX, 0, sw, sh, Math.round(x - dw/2), Math.round(y - dh*0.70 + bob), dw, dh);
+    sceneCtx.restore();
+    return true;
+  }
+
+  function drawStudentCrySceneSheet(x, y, scale, colorIdx, t) {
+    const sheet = (getTintedSheet('student_cry_sheet', colorIdx) || AS.pixel?.student_cry_sheet);
+    if (!sheet) return false;
+    const bob = Math.sin(t * 0.01) * 1.6;
+    const sw = 64, sh = 72;
+    const dw = Math.round(sw * scale);
+    const dh = Math.round(sh * scale);
+
+    sceneCtx.save();
+    sceneCtx.imageSmoothingEnabled = false;
+    // shadow
+    sceneCtx.globalAlpha = 0.22;
+    sceneCtx.fillStyle = '#000';
+    sceneCtx.beginPath();
+    sceneCtx.ellipse(x, y + dh * 0.22, dw * 0.28, dh * 0.09, 0, 0, Math.PI * 2);
+    sceneCtx.fill();
+    sceneCtx.globalAlpha = 1;
+
+    sceneCtx.drawImage(sheet, 0, 0, sw, sh, Math.round(x - dw/2), Math.round(y - dh*0.70 + bob), dw, dh);
     sceneCtx.restore();
     return true;
   }
@@ -7887,7 +8027,7 @@ try{
     const killPose = p.role === 'teacher' && p.emoteUntil && now() < p.emoteUntil && p.emoteKind === 'kill0' && AS.pixel?.teacher_kill0_sheet;
 
     if (killPose) {
-      const sheet = AS.pixel.teacher_kill0_sheet;
+      const sheet = getTintedSheet('teacher_kill0_sheet', p.color ?? 0) || AS.pixel.teacher_kill0_sheet;
       ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.translate(x, ySprite);
@@ -9348,6 +9488,19 @@ net.on('uiMeetingOpen', (m) => {
       openMeetingUI(m.kind || 'emergency', m.reason || '회의!', m.endsAt || (now() + 20_000));
     });
 
+    // Live vote counts (who has how many votes) + remaining time.
+    net.on('voteUpdate', (m) => {
+      try{
+        if (!G.ui) G.ui = {};
+        if (!G.ui.meeting) G.ui.meeting = {};
+        G.ui.meeting.tally = m.tally || {};
+        G.ui.meeting.skip = Number(m.skip || 0);
+        G.ui.meeting.total = Number(m.total || 0);
+        if (m.endsAt) G.ui.meeting.endsAt = Number(m.endsAt);
+        if (G.phase === 'meeting') renderVoteList();
+      }catch(_){ }
+    });
+
     // Meeting chat packets (Among-Us style)
     net.on('meetingChat', (m) => {
       const mid = Number(m.meetingId || 0);
@@ -9389,7 +9542,7 @@ net.on('uiMeetingOpen', (m) => {
       if (!G.ui) G.ui = {};
       G.ui._hostExitHandled = true;
       try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
-      setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
+      setTimeout(() => { try { leaveRoom(m?.reason || 'host_exit'); } catch (_) {} }, 1500);
     });
     net.on('uiRoleReveal', (m) => {
       if (m.to != null && Number(m.to) !== Number(net.myPlayerId)) return;

@@ -200,6 +200,38 @@ this.st = {
       this.broadcast("sk_msg", { msg: inner });
     });
 
+    // SuhakTokki match end -> reset room back to lobby (like Together)
+    // Called by the parent room page when the embedded iframe reports match_end/host_exit.
+    this.onMessage("sk_over", (client, payload) => {
+      if (this.state.mode !== "suhaktokki") return;
+      if (this.state.phase !== "playing") return;
+
+      // Prefer host authority, but if host is missing, allow any client to recover the room.
+      let hostSid = null;
+      for (const [sid, ps] of this.state.players.entries()){
+        if (ps?.isHost){ hostSid = sid; break; }
+      }
+      const isHost = (!hostSid) || (client.sessionId === hostSid);
+      if (!isHost) return;
+
+      const reason = String(payload?.reason || "match_end").slice(0, 32);
+      const keepHost = hostSid || client.sessionId;
+      this.resetToLobby(reason);
+
+      // Restore host ownership so the room remains controllable after returning.
+      try{
+        for (const ps of this.state.players.values()) ps.isHost = false;
+        const hp = this.state.players.get(keepHost);
+        if (hp) hp.isHost = true;
+        const hostNick = hp?.nick || "-";
+        this.setMetadata({ ...this.metadata, hostNick });
+      }catch(_){ }
+
+      this.recomputeReady();
+      this.syncMetadata();
+      this.broadcast("backToRoom", { mode: "suhaktokki", reason });
+    });
+
     // ---- Togester relay (Firebase 제거: Colyseus 메시지로 동기화) ----
     this.onMessage("tg_state", (client, { state }) => {
       if (this.state.mode !== "togester") return;
