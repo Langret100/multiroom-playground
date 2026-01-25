@@ -1656,12 +1656,57 @@ function sendCoopBridgeInit(){
     }catch(_){ return humanCount; }
   })();
   const solo = (expectedHumans <= 1);
-  const isHostFromState = (()=>{
+  const isHostFromState = (()=>{ 
     try{ return !!getPlayer(mySessionId)?.isHost; }catch(_){ return false; }
   })();
 
-  // Host must be decided by the room (avoid multiple hosts).
-  const effectiveIsHost = isHostFromState;
+  // Determine the single effective host for the embedded coop game.
+  // If the room state doesn't yet expose isHost reliably (or schema differs),
+  // fall back to the lowest seat (order) / deterministic sid to avoid "no host" deadlocks.
+  const hostSid = (()=>{
+    try{
+      // 1) Explicit host flag in state
+      let hs = null;
+      forEachPlayer((pp, sid)=>{ if (pp?.isHost) hs = sid; });
+      if (hs) return String(hs);
+
+      // 2) Lowest seat in order map (if available)
+      let best = null;
+      let bestSeat = 1e9;
+      const ord = room?.state?.order;
+      if (ord){
+        if (typeof ord.forEach === "function"){
+          ord.forEach((seat, sid)=>{
+            if (String(sid) === CPU_SID) return;
+            const n = Number(seat);
+            if (!Number.isFinite(n)) return;
+            if (n < bestSeat){ bestSeat = n; best = sid; }
+          });
+        } else {
+          Object.keys(ord).forEach((sid)=>{
+            if (String(sid) === CPU_SID) return;
+            const n = Number(ord[sid]);
+            if (!Number.isFinite(n)) return;
+            if (n < bestSeat){ bestSeat = n; best = sid; }
+          });
+        }
+      }
+      if (best) return String(best);
+
+      // 3) Deterministic smallest sid among players
+      let min = null;
+      forEachPlayer((_, sid)=>{
+        if (String(sid) === CPU_SID) return;
+        const s = String(sid);
+        if (min === null || s < min) min = s;
+      });
+      return min || String(mySessionId || "");
+    }catch(_){
+      return String(mySessionId || "");
+    }
+  })();
+
+  const effectiveIsHost = isHostFromState || (String(mySessionId) === String(hostSid));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
@@ -1992,18 +2037,70 @@ function startSim(){
 
 // Coop embed: propagate host changes to the iframe so mid-game host migration works.
 try{
-	if (coop.active && duel.iframeEl && room?.state?.players?.has?.(mySessionId)){
-		const me = room.state.players.get(mySessionId);
-		const meIsHost = !!me?.isHost;
-		let hostSid = null;
-		room.state.players.forEach((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
-		if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
-			coop._lastHostSid = hostSid;
-			coop._lastMeIsHost = meIsHost;
-			postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
-		}
-	}
+  if (coop.active && duel.iframeEl && room?.state?.players){
+    const playersObj = room.state.players;
+    const getP = (sid)=>{
+      try{
+        if (!playersObj) return null;
+        if (typeof playersObj.get === "function") return playersObj.get(sid) || null;
+        return playersObj[String(sid)] || null;
+      }catch(_){ return null; }
+    };
+    const forEachP = (fn)=>{
+      try{
+        if (!playersObj) return;
+        if (typeof playersObj.forEach === "function"){ playersObj.forEach((v,k)=>fn(v,k)); return; }
+        Object.keys(playersObj).forEach((k)=>fn(playersObj[k], k));
+      }catch(_){ }
+    };
+
+    const meP = getP(mySessionId);
+    let meIsHost = !!meP?.isHost;
+
+    // Find the room's current host sid (or a deterministic fallback).
+    let hostSid = null;
+    forEachP((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
+
+    if (!hostSid){
+      // Fallback: lowest seat in order
+      try{
+        const ord = room?.state?.order;
+        let best = null, bestSeat = 1e9;
+        if (ord){
+          if (typeof ord.forEach === "function"){
+            ord.forEach((seat, sid)=>{
+              const n = Number(seat);
+              if (!Number.isFinite(n)) return;
+              if (n < bestSeat){ bestSeat = n; best = sid; }
+            });
+          } else {
+            Object.keys(ord).forEach((sid)=>{
+              const n = Number(ord[sid]);
+              if (!Number.isFinite(n)) return;
+              if (n < bestSeat){ bestSeat = n; best = sid; }
+            });
+          }
+        }
+        if (best) hostSid = best;
+      }catch(_){ }
+    }
+    if (!hostSid){
+      // Fallback: smallest sid
+      let min = null;
+      forEachP((_, sid)=>{ const s = String(sid); if (min === null || s < min) min = s; });
+      hostSid = min || mySessionId;
+    }
+
+    if (!meIsHost && String(hostSid) === String(mySessionId)) meIsHost = true;
+
+    if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
+      coop._lastHostSid = hostSid;
+      coop._lastMeIsHost = meIsHost;
+      postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
+    }
+  }
 }catch(_){ }
+
       };
       room.state.players.onAdd = renderPlayers;
       room.state.players.onRemove = renderPlayers;

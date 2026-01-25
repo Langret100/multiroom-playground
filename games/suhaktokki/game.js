@@ -9421,6 +9421,53 @@ net.on('uiMeetingOpen', (m) => {
   });
 
 
+  // Programmatic start used by embedded mode (avoids relying on a DOM click on a disabled button).
+  async function _embedHostStartNow() {
+    if (!G.assetsReady) return;
+    if (!G.net) {
+      try { await joinRoom(); } catch (_) { return; }
+    }
+    if (!G.net?.isHost) return;
+    if (G.host.started) return;
+    G.phase = 'play';
+    const n = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
+    const practice = (n < 4);
+    hostStartGame(practice);
+    try{ broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
+    applyPhaseUI();
+  }
+
+  function _armEmbedHostAutostart(){
+    try{
+      if (!EMBED) return;
+      if (!window.__EMBED_IS_HOST__) return;
+      if (G.ui && G.ui._embedHostAutoTimer){ clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; }
+      const t0 = now();
+      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
+      const minReal = 4;
+      const target = (expected > 0) ? expected : minReal;
+      const MAX_WAIT = (expected > minReal) ? 9000 : 6500;
+      const CHECK_MS = 120;
+      if (!G.ui) G.ui = {};
+      G.ui._embedWaitingStart = true;
+      G.ui._embedHostAutoTimer = setInterval(()=>{
+        try{
+          if (!G.net) return;
+          if (!G.net.isHost) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
+          if (G.host.started) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
+          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
+          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
+          if (ready || (now() - t0) > MAX_WAIT){
+            clearInterval(G.ui._embedHostAutoTimer);
+            G.ui._embedHostAutoTimer = null;
+            _embedHostStartNow().catch(()=>{});
+          }
+        }catch(_){ }
+      }, CHECK_MS);
+    }catch(_){ }
+  }
+
+
 
   // ---------- Embed bridge (multiroom) ----------
   async function startEmbedded(init){
@@ -9487,28 +9534,10 @@ net.on('uiMeetingOpen', (m) => {
       }catch(_){ }
     }, 3500);
 
-    // host: auto-start, but wait a short moment for other players to finish joining.
-    // (Prevents 4+ rooms from incorrectly starting in practice due to slow iframe loads.)
+    // host: auto-start (embedded).
+    // NOTE: never rely on button.click() because disabled buttons do not dispatch click events.
     if (window.__EMBED_IS_HOST__){
-      const t0 = now();
-      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
-      const minReal = 4;
-      const target = (expected > 0) ? expected : minReal;
-      // Give a bit more time in embed (iframe) so late joinAck/roster packets don't push the room into practice.
-      const MAX_WAIT = (expected > minReal) ? 9000 : 6500;   // ms
-      const CHECK_MS = 120;    // ms
-      const it = setInterval(()=>{
-        try{
-          if (!G.net || !G.net.isHost) { clearInterval(it); return; }
-          if (G.host.started) { clearInterval(it); try{ if (G.ui) G.ui._embedWaitingStart = false; }catch(_){ } return; }
-          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
-          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
-          if (ready || (now() - t0) > MAX_WAIT){
-            clearInterval(it);
-            try{ startBtn.click(); }catch(_){ }
-          }
-        }catch(_){}
-      }, CHECK_MS);
+      _armEmbedHostAutostart();
     } else {
       try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
     }
@@ -9542,6 +9571,20 @@ net.on('uiMeetingOpen', (m) => {
         try{ d = JSON.parse(d); }catch(_){ return; }
       }
       if (!d || typeof d !== 'object') return;
+      // Parent -> iframe: host ownership update (avoids no-host deadlocks).
+      if (d.type === 'bridge_host') {
+        try{
+          window.__EMBED_IS_HOST__ = !!d.isHost;
+          if (G.net) G.net.isHost = !!d.isHost;
+          // If we just became host, arm auto-start and ensure lobby UI updates.
+          if (window.__EMBED_IS_HOST__){
+            try{ applyPhaseUI(); }catch(_){ }
+            try{ _armEmbedHostAutostart(); }catch(_){ }
+          }
+        }catch(_){ }
+        return;
+      }
+
       // Parent -> iframe: leaving the embedded game view (go back to room)
       if (d.type === 'bridge_leave') {
         try {

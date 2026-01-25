@@ -564,6 +564,8 @@ body.tg-mode.in-game #duelFrame{
   transform: translateX(-50%);
   width: min(96vw, 840px);
   max-width: 840px;
+  /* Ensure the logo is never visually covered by the login panel (desktop). */
+  z-index: 3;
   pointer-events:none;
   display:flex;
   justify-content:center;
@@ -579,6 +581,7 @@ body.tg-mode.in-game #duelFrame{
 #loginModal .modal{
   /* Bring the login box up a bit on mobile while leaving room for the logo */
   margin-top: clamp(120px, 22vh, 220px);
+  z-index: 2;
 }
 
 /* Desktop: prevent the enlarged logo from being covered by the login box. */
