@@ -102,6 +102,7 @@ this.state.maxClients = this.maxClients;
     this.tickRate = 20; // 서버 틱: 20Hz (무료/대역폭 친화)
     this.inputs = new Map(); // sessionId -> latest mask
     this.started = false;
+    this.matchStartedAt = 0;
     this._mainLoopTimer = null;
 
     // stackga tournament state
@@ -179,12 +180,13 @@ this.st = {
       }
 
       this.state.phase = "playing";
+      this.matchStartedAt = Date.now();
       this.setMetadata({ ...this.metadata, status: "playing" });
       this.broadcast("started", {
         tickRate: this.tickRate,
         playerCount: Number(this.state.playerCount || 0),
         maxClients: Number(this.maxClients || this.state.maxClients || 0),
-        startedAt: Date.now(),
+        startedAt: this.matchStartedAt || Date.now(),
       });
 
       // Reset transient co-op state (no persistence)
@@ -745,6 +747,18 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     this.recomputeReady();
     this.syncMetadata();
     this.broadcast("system", { nick: "SYSTEM", text: `${nick} 입장`, time: new Date().toTimeString().slice(0,5) });
+    // Late-join: if the room is already playing a co-op game, explicitly send the
+    // 'started' message to this client so they don't get stuck in the lobby UI.
+    try{
+      if (this.state.modeType === "coop" && this.state.phase === "playing"){
+        client.send("started", {
+          tickRate: this.tickRate,
+          playerCount: Number(this.state.playerCount || 0),
+          maxClients: Number(this.maxClients || this.state.maxClients || 0),
+          startedAt: this.matchStartedAt || Date.now(),
+        });
+      }
+    }catch(_){ }
 
     // Late-join sync for SnakeTail (spectators can still see foods/timer)
     try{
@@ -861,6 +875,7 @@ try{
 
     this.syncMetadata();
     this.broadcast("system", { nick: "SYSTEM", text: `${nick} 퇴장`, time: new Date().toTimeString().slice(0,5) });
+
   }
 
   recomputeReady(){
@@ -901,6 +916,8 @@ try{
     clearClockTimer(this._mainLoopTimer);
     this._mainLoopTimer = null;
     this.started = false;
+    this.matchStartedAt = 0;
+
 
     // Clear duel tournament state
     this.tour = null;
@@ -1057,6 +1074,7 @@ try{
 
     // Let spectators know too
     this.broadcast("system", { nick: "SYSTEM", text: `🎮 매치 시작: ${(pa?.nick||"A")} vs ${(pb?.nick||"B")} (${roundLabel})`, at: new Date().toISOString() });
+
   }
 
   finishDuelTournament(winnerSid){
