@@ -2625,16 +2625,8 @@
     const st = G.state;
     hostInitFromMap();
 
-    // In embed mode, decide practice based on the room's expected human count (from parent),
-    // not only on the instantaneous join count (which can be temporarily low due to relay timing).
-    try{
-      if (window.__EMBED_MODE__) {
-        const desired = (typeof window.__EMBED_PRACTICE__ === 'boolean') ? !!window.__EMBED_PRACTICE__ : !!practice;
-        const nHum = Object.values(st.players || {}).filter(p=>p && !p.isBot).length;
-        // Only start practice if the room is *actually* a practice room (<4 expected AND <4 currently).
-        practice = !!(desired && nHum < 4);
-      }
-    }catch(_){ }
+    // (embed) practice mode is authoritative from game_start(payload).
+    // Do NOT override here; it can split host/guests if they infer differently.
 
     // Ensure the initial lighting state is fully bright (all lamps on) at game start.
     // This prevents an occasional "slightly dark" look reported on some devices.
@@ -10049,6 +10041,7 @@ net.on('uiMeetingOpen', (m) => {
   }
 
   joinBtn.addEventListener('click', () => {
+    if (EMBED) return;
     if (G.net) return;
     joinRoom().catch(e => {
       console.error(e);
@@ -10057,6 +10050,7 @@ net.on('uiMeetingOpen', (m) => {
   });
 
   addBotBtn.addEventListener('click', async () => {
+    if (EMBED) return;
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); return; }
     if (!G.net) {
       try { await joinRoom(); } catch (_) { return; }
@@ -10071,6 +10065,7 @@ net.on('uiMeetingOpen', (m) => {
   });
 
   startBtn.addEventListener('click', async () => {
+    if (EMBED) return;
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); return; }
     if (!G.net) {
       try { await joinRoom(); } catch (_) { return; }
@@ -10089,6 +10084,7 @@ net.on('uiMeetingOpen', (m) => {
   // ---------- Embed-only authoritative start ----------
   // In embed mode, the parent room sends exactly one game_start(payload).
   // The iframe must NOT run its own lobby/start flow (no local fallback / no auto-start).
+  let __LAST_STARTED_AT = 0;
   function _mulberry32(seed){
     let a = (seed >>> 0) || 0;
     return function(){
@@ -10103,7 +10099,17 @@ net.on('uiMeetingOpen', (m) => {
     try{
       if (!EMBED) return;
       if (!payload || typeof payload !== 'object') return;
-      if (G && G.ui && G.ui._gameStartApplied) return;
+
+      // Dedupe (authoritative): ignore older/duplicate starts using startedAt.
+      const startedAt = Number(payload.startedAt || 0) || 0;
+      if (startedAt){
+        if (startedAt <= __LAST_STARTED_AT) return;
+        __LAST_STARTED_AT = startedAt;
+      } else {
+        // Fallback dedupe if startedAt is missing.
+        if (G && G.ui && G.ui._gameStartApplied) return;
+      }
+
       if (!G.ui) G.ui = {};
       G.ui._pendingGameStart = payload;
 
@@ -10112,12 +10118,33 @@ net.on('uiMeetingOpen', (m) => {
       if (G.assetsError) return;
       if (!G.net) { try{ await joinRoom(); }catch(_){ return; } }
 
-      // Dedupe: ignore if already started.
-      if ((G.state && G.state.started) || (G.host && G.host.started)) { G.ui._gameStartApplied = true; applyPhaseUI(); return; }
+      // Immediately transition UI out of the waiting lobby.
+      try{ G.phase = 'play'; }catch(_){ }
+      try{ if (G.state) G.state.started = true; }catch(_){ }
+      try{ if (G.host) G.host.started = true; }catch(_){ }
+      try{ bootHide(); if (G.ui) G.ui._bootHidden = true; }catch(_){ }
 
       // Practice comes from the authoritative payload.
       const practice = !!payload.practice;
       try{ window.__EMBED_PRACTICE__ = practice; }catch(_){ }
+
+      // Apply authoritative roster metadata (best-effort).
+      try{
+        const roster = Array.isArray(payload.roster) ? payload.roster : null;
+        if (roster && G.state && G.state.players){
+          for (const ent of roster){
+            if (!ent) continue;
+            const sid = (ent.sid != null) ? String(ent.sid) : '';
+            if (!sid) continue;
+            for (const p of Object.values(G.state.players)){
+              if (p && p.sessionId != null && String(p.sessionId) === sid){
+                if (ent.seat != null) p.seat = Number(ent.seat);
+                if (ent.nick) p.nick = String(ent.nick).slice(0, 16);
+              }
+            }
+          }
+        }
+      }catch(_){ }
 
       // Host applies the seed + starts once, then broadcasts the resulting state.
       if (G.net && G.net.isHost){
@@ -10125,7 +10152,6 @@ net.on('uiMeetingOpen', (m) => {
         const prevRand = Math.random;
         try{
           if (seed) Math.random = _mulberry32(seed);
-          G.phase = 'play';
           hostStartGame(practice);
 
           // Force teacher assignment when provided (avoid RNG drift).
@@ -10141,7 +10167,6 @@ net.on('uiMeetingOpen', (m) => {
                 if (!p) continue;
                 p.role = (Number(p.id || 0) === wantPid) ? 'teacher' : 'crew';
               }
-              // Refresh role reveal.
               for (const p of Object.values(G.state.players || {})){
                 if (!p) continue;
                 try{ sendToPlayer(p.id, { t: 'uiRoleReveal', role: p.role, practice: false }); }catch(_){ }
@@ -10151,13 +10176,13 @@ net.on('uiMeetingOpen', (m) => {
 
           try{ broadcastRoster(true); }catch(_){ }
           try{ broadcastState(true); }catch(_){ }
+          try{ broadcastPlayers(); }catch(_){ }
         } finally {
           Math.random = prevRand;
         }
       }
 
-      // All clients: flip phase/UI and wait for host snapshots.
-      try{ G.phase = 'play'; }catch(_){ }
+      // All clients: ensure phase/UI is applied (host snapshots will refine state).
       try{ applyPhaseUI(); }catch(_){ }
       G.ui._gameStartApplied = true;
     }catch(_){ }
@@ -10197,9 +10222,7 @@ net.on('uiMeetingOpen', (m) => {
     // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
     window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
     window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
-    window.__EMBED_PRACTICE__ = (typeof init.practice === 'boolean')
-      ? !!init.practice
-      : ((window.__EMBED_EXPECTED_HUMANS__ > 0) ? (window.__EMBED_EXPECTED_HUMANS__ < 4) : false);
+    window.__EMBED_PRACTICE__ = false;
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(roomCode).slice(0,256); }catch(_){ }

@@ -178,44 +178,49 @@ this.st = {
         this.recomputeReady();
         if (!this.state.allReady) return;
       }
-
       // SuhakTokki: build an authoritative start payload once.
       // The embedded game must start only from this payload (no in-game lobby/start flow).
       let suhakStartPayload = null;
       if (this.state.mode === "suhaktokki"){
         try{
+          // Deterministic roster: sort humans by seat (authoritative order).
           const humans = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
-          const expectedHumans = humans.length;
+          humans.sort((a, b) => {
+            const sa = Number(this.state.order.get(a) ?? 999);
+            const sb = Number(this.state.order.get(b) ?? 999);
+            return sa - sb;
+          });
+
+          const humanCount = humans.length;
           const seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
-          const practice = expectedHumans < 4;
+          const practice = humanCount < 4;
+
+          // Deterministic teacher selection from roster using seed.
           let teacherSid = null;
-          if (!practice && humans.length){
-            teacherSid = String(humans[seed % humans.length]);
+          if (!practice && humanCount){
+            teacherSid = String(humans[seed % humanCount]);
           }
+
           const roster = humans.map((sid) => {
             const pp = this.state.players.get(sid);
             return {
               sid: String(sid),
               nick: pp?.nick || "Player",
               seat: Number(this.state.order.get(sid) ?? -1),
-              isHost: !!pp?.isHost,
             };
           });
-          suhakStartPayload = {
-            mode: "suhaktokki",
-            seed,
-            practice,
-            expectedHumans,
-            teacherSid,
-            roster,
-            startedAt: Date.now(),
-          };
+
+          // Dedupe key: a single authoritative startedAt for the whole room.
+          const startedAt = Date.now();
+
+          suhakStartPayload = { startedAt, seed, practice, teacherSid, roster };
           this._suhakStartPayload = suhakStartPayload;
         }catch(_){ /* best-effort */ }
       }
 
       this.state.phase = "playing";
-      this.matchStartedAt = Date.now();
+      // Align room startedAt with SuhakTokki payload.startedAt for consistent dedupe across clients.
+      this.matchStartedAt = (suhakStartPayload && suhakStartPayload.startedAt) ? suhakStartPayload.startedAt : Date.now();
       this.setMetadata({ ...this.metadata, status: "playing" });
       this.broadcast("started", {
         tickRate: this.tickRate,
