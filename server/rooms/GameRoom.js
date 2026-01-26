@@ -13,14 +13,6 @@ function shuffle(arr){
   return arr;
 }
 
-function seededPick(seed, arr){
-  if (!arr || !arr.length) return null;
-  const n = arr.length;
-  const x = ((seed >>> 0) % n + n) % n;
-  return arr[x];
-}
-
-
 function clearClockTimer(t){
   try{ if (t && typeof t.clear === 'function') t.clear(); }catch(_){ }
 }
@@ -187,51 +179,51 @@ this.st = {
         if (!this.state.allReady) return;
       }
 
+      // SuhakTokki: build an authoritative start payload once.
+      // The embedded game must start only from this payload (no in-game lobby/start flow).
+      let suhakStartPayload = null;
+      if (this.state.mode === "suhaktokki"){
+        try{
+          const humans = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
+          const expectedHumans = humans.length;
+          const seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
+          const practice = expectedHumans < 4;
+          let teacherSid = null;
+          if (!practice && humans.length){
+            teacherSid = String(humans[seed % humans.length]);
+          }
+          const roster = humans.map((sid) => {
+            const pp = this.state.players.get(sid);
+            return {
+              sid: String(sid),
+              nick: pp?.nick || "Player",
+              seat: Number(this.state.order.get(sid) ?? -1),
+              isHost: !!pp?.isHost,
+            };
+          });
+          suhakStartPayload = {
+            mode: "suhaktokki",
+            seed,
+            practice,
+            expectedHumans,
+            teacherSid,
+            roster,
+            startedAt: Date.now(),
+          };
+          this._suhakStartPayload = suhakStartPayload;
+        }catch(_){ /* best-effort */ }
+      }
+
       this.state.phase = "playing";
       this.matchStartedAt = Date.now();
       this.setMetadata({ ...this.metadata, status: "playing" });
-      const startedMsg = {
-tickRate: this.tickRate,
+      this.broadcast("started", {
+        tickRate: this.tickRate,
         playerCount: Number(this.state.playerCount || 0),
         maxClients: Number(this.maxClients || this.state.maxClients || 0),
         startedAt: this.matchStartedAt || Date.now(),
-};
-
-// SuhakTokki: build authoritative start payload (seed/roles/roster) once per match.
-if (this.state.mode === "suhaktokki") {
-  try {
-    const seed = (Math.random() * 0x7fffffff) | 0;
-    const humans = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
-    // Deterministic order by seat then sid
-    humans.sort((a,b)=>{
-      const sa = this.state.order.get(a);
-      const sb = this.state.order.get(b);
-      if (sa !== sb) return (sa ?? 0) - (sb ?? 0);
-      return String(a).localeCompare(String(b));
-    });
-    const practice = humans.length < 4;
-    const teacherSid = practice ? null : seededPick(seed, humans);
-    const roles = {};
-    for (const sid of humans) roles[sid] = (teacherSid && sid === teacherSid) ? 'teacher' : 'student';
-    const roster = humans.map((sid)=>({
-      sid,
-      nick: this.state.players.get(sid)?.nick || '-',
-      seat: Number(this.state.order.get(sid) ?? 0),
-      isHost: !!this.state.players.get(sid)?.isHost,
-    }));
-    this._suhakStartPayload = {
-      startedAt: this.matchStartedAt || Date.now(),
-      seed,
-      practice,
-      teacherSid,
-      roles,
-      roster,
-    };
-    startedMsg.startPayload = this._suhakStartPayload;
-  } catch (_) {}
-}
-
-this.broadcast("started", startedMsg);
+        ...(suhakStartPayload ? { startPayload: suhakStartPayload } : {}),
+      });
 
       // Reset transient co-op state (no persistence)
       if (this.state.mode === "togester"){
@@ -795,14 +787,13 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     // 'started' message to this client so they don't get stuck in the lobby UI.
     try{
       if (this.state.modeType === "coop" && this.state.phase === "playing"){
-        const startedMsg = {
-tickRate: this.tickRate,
+        client.send("started", {
+          tickRate: this.tickRate,
           playerCount: Number(this.state.playerCount || 0),
           maxClients: Number(this.maxClients || this.state.maxClients || 0),
           startedAt: this.matchStartedAt || Date.now(),
-};
-try{ if (this.state.mode === "suhaktokki" && this._suhakStartPayload) startedMsg.startPayload = this._suhakStartPayload; }catch(_){ }
-client.send("started", startedMsg);
+          ...(this.state.mode === "suhaktokki" && this._suhakStartPayload ? { startPayload: this._suhakStartPayload } : {}),
+        });
       }
     }catch(_){ }
 

@@ -75,7 +75,8 @@
       type: "coop",
       badgeClass: "coop",
       maxClients: 8,
-      embedPath: "games/suhaktokki/index.html"
+      // Use an embed-only entry that bypasses the game's internal lobby.
+      embedPath: "games/suhaktokki/embed.html"
     },
 
     // SnakeTail (shape snake) - free-for-all up to 8 players

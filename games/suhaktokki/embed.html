@@ -7,13 +7,10 @@
   <link rel="icon" href="../../favicon.ico" />
   <link rel="preload" as="image" href="assets/mathrabbitloading.png" />
   <script>
-  // Decide embed-mode as early as possible (before first paint) so we can show the boot overlay
-  // immediately in the iframe, without flashing it in normal standalone mode.
+  // Embed-only entry: always run in embed mode.
+  // (This file is used by the parent "방" page iframe.)
   (function(){
-    try{
-      const sp = new URLSearchParams(location.search);
-      if (sp.get('embed') === '1') document.documentElement.classList.add('embed');
-    }catch(_){ }
+    try{ document.documentElement.classList.add('embed'); }catch(_){ }
   })();
   </script>
   <style>
@@ -21,6 +18,11 @@
     *{box-sizing:border-box;touch-action:none;-webkit-user-select:none;user-select:none;}
     html,body{width:100%;height:100%;margin:0;overflow:hidden;background:radial-gradient(1200px 800px at 50% 10%,#1a2642,#0c1220);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
     canvas{background:#0b0f1a;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);image-rendering:pixelated;image-rendering:crisp-edges;}
+
+    /* Embed: parent page already owns the "lobby". Keep the iframe as pure gameplay.
+       Also remove the rounded/shadowed stage to avoid the "flash" users reported. */
+    html.embed canvas{border-radius:0 !important; box-shadow:none !important;}
+    html.embed #lobby{display:none !important;}
 
     /* HUD */
     #hud{position:fixed;left:0;top:0;right:0;z-index:20;pointer-events:none;display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;
