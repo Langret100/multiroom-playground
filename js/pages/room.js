@@ -10,8 +10,8 @@
     try{
       // ensure duel UI/frame is visible
       duel.ui?.duelUI?.classList.remove("hidden");
-      duel.ui?.duelFrameWrap?.classList.remove("hidden");
-      duel.ui?.duelSpectate?.classList.add("hidden");
+      duel.ui?.frameWrap?.classList.remove("hidden");
+      duel.ui?.spectate?.classList.add("hidden");
     }catch(_){}
     try{ window.scrollTo(0,0); }catch(_){ }
     try{ setTogesterDock(isTogesterActive()); }catch(_){ }
@@ -39,8 +39,8 @@
     }catch(_){ }
     try{
       // Hide the game frame when not actively playing (no spectator layout needed now)
-      duel.ui?.duelFrameWrap?.classList.add("hidden");
-      const fr = duel.ui?.duelFrame;
+      duel.ui?.frameWrap?.classList.add("hidden");
+      const fr = duel.ui?.frame;
       if (fr) fr.src = "about:blank";
     }catch(_){ }
     try{
@@ -802,7 +802,7 @@ function updatePreview(modeId){
     if (d.type === "gesture"){
       try{ _ensureGameBgm(); }catch(_){ }
       try{
-        const inGame = document.body.classList.contains("in-game") || !(duel.ui?.duelFrameWrap?.classList?.contains("hidden"));
+        const inGame = document.body.classList.contains("in-game") || !(duel.ui?.frameWrap?.classList?.contains("hidden"));
         if (inGame){
           const modeId = (room && room.state && (room.state.mode || room.state.gameId)) || duel.active?.gameId || duel.meta?.id;
           playGameBgm(modeId);
@@ -2670,5 +2670,6 @@ try{
   if (!el || !window.AudioManager) return;
   // keep handle so we can stop/resume on fullscreen game transitions
   // Slightly lower room BGM (was a bit loud)
-  window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.42 });
+  // Reduce room BGM volume by ~30%
+  window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.294 });
 })();

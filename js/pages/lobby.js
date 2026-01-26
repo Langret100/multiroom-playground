@@ -74,6 +74,9 @@ function setupBgm(audioElId, btnId){
   let client = null;
   let lobbyRoom = null;
   let myNick = null;
+  // Tracks whether the user manually changed the "max clients" select inside the create-room modal.
+  // If not touched, we apply per-game defaults (most games default to 4, stackga/suika are capped at 2).
+  let maxClientsTouched = false;
 
   function defaultRoomTitle(){
     const nick = safeText(((myNick||"Player").toString().trim()) || "Player", 20);
@@ -362,6 +365,8 @@ function statusDot(room){
     const def = defaultRoomTitle();
     // Always start with a sensible default; user can overwrite.
     els.roomTitle.value = def;
+    // Reset touched state every time the modal opens so game defaults apply naturally.
+    maxClientsTouched = false;
     try{ els.roomTitle.dataset.defaultTitle = def; }catch(_){ }
     try{ els.roomTitle.focus(); els.roomTitle.select(); }catch(_){ }
   }
@@ -413,8 +418,11 @@ function statusDot(room){
 
         const sel = els.maxClients;
         if (!sel) return;
-        const prev = parseInt(sel.value || String(Math.min(4, cap)), 10) || Math.min(4, cap);
-        const next = Math.max(2, Math.min(cap, prev));
+        const defaultVal = Math.max(2, Math.min(cap, Math.min(4, cap)));
+        const prev = parseInt(sel.value || "", 10);
+        const next = (!maxClientsTouched || Number.isNaN(prev))
+          ? defaultVal
+          : Math.max(2, Math.min(cap, prev));
 
         sel.innerHTML = "";
         for (let n = cap; n >= 2; n--){
@@ -429,6 +437,11 @@ function statusDot(room){
 
     updateMaxClientsOptions();
     try{ els.gameMode.addEventListener("change", updateMaxClientsOptions); }catch(_){ }
+    try{
+      // Mark as touched only when the user explicitly changes the select.
+      // This prevents carrying over "2" from stackga/suika when switching games unless the user wanted it.
+      els.maxClients?.addEventListener("change", ()=>{ maxClientsTouched = true; });
+    }catch(_){ }
 
     els.refreshBtn.addEventListener("click", ()=> refreshRooms());
 
@@ -530,7 +543,8 @@ function statusDot(room){
 
   const storageKey = 'audio_enabled';
   // Slightly lower lobby BGM (was a bit loud)
-  const handle = window.AudioManager.attachAudioManager(el, { label: '로비 음악', storageKey, volume: 0.42 });
+  // Reduce lobby BGM volume by ~30%
+  const handle = window.AudioManager.attachAudioManager(el, { label: '로비 음악', storageKey, volume: 0.294 });
   try{ window.__bgmLobbyHandle = handle; }catch(_){}
 
   const btn = document.getElementById('toggleMute');
