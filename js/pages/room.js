@@ -1782,7 +1782,7 @@ function sendCoopBridgeInit(){
     // so we MUST NOT block bridge_init waiting for it. We only wait until we can
     // identify "me" in either `players` or the seat-map `order`. A single host is
     // elected deterministically (lowest seat / smallest sid) below.
-	    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer))) || (isSuhak && hasMe && !hasHostFlag)){
+	    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)))){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
