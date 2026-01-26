@@ -488,22 +488,7 @@
     // BGM (mobile autoplay: starts after first user gesture)
     const __BGM_URL__ = "assets/catchpicture.mp3";
     let __bgm = null;
-    let __bgmMuted = (function(){ try{ return localStorage.getItem('audio_enabled') === '0'; }catch(_){ return false; } })();
-
-    function __applyAudioPref(enabled){
-      try{ localStorage.setItem('audio_enabled', enabled ? '1' : '0'); }catch(_){ }
-      __bgmMuted = !enabled;
-      try{
-        if (__bgmMuted){
-          try{ __bgm?.pause?.(); }catch(_){ }
-        } else {
-          // BGM will be started on next eligible call
-        }
-      }catch(_){ }
-    }
-
-    // Apply initial preference immediately
-    try{ __applyAudioPref(localStorage.getItem('audio_enabled') !== '0'); }catch(_){ }
+    let __bgmMuted = false;
 
     function __ensureBgm(){
       if (__bgm || !__BGM_URL__) return;
@@ -516,7 +501,6 @@
     }
 
     function __startBgm(){
-      try{ if (localStorage.getItem('audio_enabled') === '0') { __bgmMuted = true; return; } }catch(_){ }
       if (__bgmMuted) return;
       __ensureBgm();
       if (!__bgm) return;
@@ -662,10 +646,6 @@
     window.addEventListener('message', (ev)=>{
       const d = ev.data || {};
       if(!d || typeof d !== 'object') return;
-      if (d.type === 'audio_pref'){
-        __applyAudioPref(!!d.enabled);
-        return;
-      }
       if (d.type === 'bridge_init'){
         mySid = String(d.sessionId || d.mySid || '');
         myNick = String(d.nick || d.myNick || 'Player');

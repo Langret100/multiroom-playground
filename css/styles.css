@@ -822,7 +822,7 @@ tbody td{ padding: 10px 8px; }
 .duel-info{ display:flex; flex-direction:column; gap:4px; padding:8px 10px; border-radius:12px; background:rgba(255,255,255,0.04); margin-bottom:8px; }
 .duel-line{ font-weight:700; font-size:14px; }
 .duel-sub{ font-size:12px; }
-.duel-frameWrap{ width:100%; border-radius:14px; overflow:hidden; background:rgba(0,0,0,0.25); }
+.duel-frameWrap{ width:100%; border-radius:0; overflow:hidden; background:transparent; }
 .duel-frame{ width:100%; height:520px; border:0; display:block; background:transparent; }
 @media (max-width: 480px){
   .duel-frame{ height:560px; }
