@@ -10,6 +10,9 @@
 (() => {
   'use strict';
 
+  // Build stamp for cache/배포 확인 (콘솔에 이 문구가 안 보이면 새 파일이 안 로드된 것)
+  try{ console.log('[suhaktokki] build v4 2026-01-26'); }catch(_){ }
+
   // ---------- Pixel-art crisp rendering ----------
   // Bitmap sprites may look blurry if canvas smoothing is enabled (common in iframes / CSS scaling).
   // Force nearest-neighbor for the main canvases.
