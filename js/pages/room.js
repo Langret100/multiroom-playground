@@ -1666,6 +1666,18 @@ function postToAllIframes(msg){
   postToCpu(msg);
 }
 
+// Propagate the user's audio preference (lobby mute) into embedded games.
+// Some games have their own BGM inside the iframe, so they must receive the
+// preference to stay muted when the lobby is muted.
+function broadcastAudioPref(){
+  try{
+    const enabled = (window.AudioManager && typeof window.AudioManager.isEnabled === 'function')
+      ? !!window.AudioManager.isEnabled('audio_enabled')
+      : (localStorage.getItem('audio_enabled') === '1');
+    postToAllIframes({ type: 'audio_pref', enabled });
+  }catch(_){ }
+}
+
 function sendBridgeInitTo(targetIframe, init){
   postTo(targetIframe, {
     type: "bridge_init",
@@ -1693,6 +1705,9 @@ function sendBridgeInit(){
     role,
     matchId: duel.matchId
   });
+
+  // Keep embedded game audio consistent with lobby mute.
+  try{ broadcastAudioPref(); }catch(_){ }
 }
 
 function sendCpuBridgeInit(){
@@ -1708,6 +1723,9 @@ function sendCpuBridgeInit(){
     matchId: duel.matchId,
     cpuDifficulty
   });
+
+  // Keep embedded game audio consistent with lobby mute.
+  try{ broadcastAudioPref(); }catch(_){ }
 }
 
 function sendCoopBridgeInit(){
@@ -1748,14 +1766,23 @@ function sendCoopBridgeInit(){
     })();
     const hasMe = hasMePlayer || hasMeOrder;
 
-    const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
+	    const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
+	    // SuhakTokki: we rely on the authoritative isHost flag from server state.
+	    // Avoid sending bridge_init before that flag is available, otherwise everyone
+	    // can briefly appear as non-host and the game may deadlock waiting for host.
+	    const hasHostFlag = (()=>{
+	      try{
+	        const p = getPlayer(mySessionId);
+	        return !!p && (typeof p.isHost === 'boolean');
+	      }catch(_){ return false; }
+	    })();
 
     // SuhakTokki: the embedded game uses `init.isHost` for authority.
     // Some deployments do not expose a reliable `isHost` flag in the room state,
     // so we MUST NOT block bridge_init waiting for it. We only wait until we can
     // identify "me" in either `players` or the seat-map `order`. A single host is
     // elected deterministically (lowest seat / smallest sid) below.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)))){
+	    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer))) || (isSuhak && hasMe && !hasHostFlag)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -1850,10 +1877,17 @@ function sendCoopBridgeInit(){
     humanCount,
     roomCode: roomId,
     level: coop.level || 1,
-    practice: (coop.meta && coop.meta.id === "suhaktokki")
-      ? (coop.startPayload ? !!coop.startPayload.practice : false)
-      : !!coop.practice
+	    practice: (() => {
+	      // Explicit local practice mode (togester only)
+	      if (coop.practice) return true;
+	      // SuhakTokki: practice is authoritative in game_start(payload). Do not guess here.
+	      if (coop.meta && coop.meta.id === "suhaktokki") return false;
+	      return false;
+	    })()
   });
+
+	  // Keep embedded game audio consistent with lobby mute.
+	  try{ broadcastAudioPref(); }catch(_){ }
 
   // If the room has already provided an authoritative start payload,
   // deliver it to the iframe right after bridge_init.
@@ -2196,7 +2230,73 @@ function startSim(){
 
 		renderPlayers();
 
+// Coop embed: propagate host changes to the iframe so mid-game host migration works.
+try{
+	  // SuhakTokki: host authority comes only from the server's started payload.
+	  // Do not spam host-migration messages.
+	  if (coop.active && duel.iframeEl && room?.state?.players && room?.state?.mode !== "suhaktokki"){
+    const playersObj = room.state.players;
+    const getP = (sid)=>{
+      try{
+        if (!playersObj) return null;
+        if (typeof playersObj.get === "function") return playersObj.get(sid) || null;
+        return playersObj[String(sid)] || null;
+      }catch(_){ return null; }
     };
+    const forEachP = (fn)=>{
+      try{
+        if (!playersObj) return;
+        if (typeof playersObj.forEach === "function"){ playersObj.forEach((v,k)=>fn(v,k)); return; }
+        Object.keys(playersObj).forEach((k)=>fn(playersObj[k], k));
+      }catch(_){ }
+    };
+
+    const meP = getP(mySessionId);
+    let meIsHost = !!meP?.isHost;
+
+    // Find the room's current host sid (or a deterministic fallback).
+    let hostSid = null;
+    forEachP((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
+
+    if (!hostSid){
+      // Fallback: lowest seat in order
+      try{
+        const ord = room?.state?.order;
+        let best = null, bestSeat = 1e9;
+        if (ord){
+          if (typeof ord.forEach === "function"){
+            ord.forEach((seat, sid)=>{
+              const n = Number(seat);
+              if (!Number.isFinite(n)) return;
+              if (n < bestSeat){ bestSeat = n; best = sid; }
+            });
+          } else {
+            Object.keys(ord).forEach((sid)=>{
+              const n = Number(ord[sid]);
+              if (!Number.isFinite(n)) return;
+              if (n < bestSeat){ bestSeat = n; best = sid; }
+            });
+          }
+        }
+        if (best) hostSid = best;
+      }catch(_){ }
+    }
+    if (!hostSid){
+      // Fallback: smallest sid
+      let min = null;
+      forEachP((_, sid)=>{ const s = String(sid); if (min === null || s < min) min = s; });
+      hostSid = min || mySessionId;
+    }
+
+    if (!meIsHost && String(hostSid) === String(mySessionId)) meIsHost = true;
+
+    if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
+      coop._lastHostSid = hostSid;
+      coop._lastMeIsHost = meIsHost;
+      postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
+    }
+  }
+}catch(_){ }
 
       };
       room.state.players.onAdd = renderPlayers;
@@ -2218,6 +2318,8 @@ function startSim(){
         try{ shakeOnce(); }catch(_){ }
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
+	        // Ensure embedded games inherit lobby mute immediately on entry.
+	        try{ broadcastAudioPref(); }catch(_){ }
         tickRate = m.tickRate || 20;
         try{ coop.expectedHumans = Number(m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
@@ -2491,6 +2593,8 @@ function startSim(){
           if (isEmbedded){
             try{ window.parent.postMessage({ type:'audio_pref', enabled: next }, '*'); }catch(_){ }
           }
+	          // Also notify embedded game iframes inside this room page.
+	          try{ broadcastAudioPref(); }catch(_){ }
         });
 
         // Initial state

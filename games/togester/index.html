@@ -646,45 +646,40 @@
         // ==================== 사운드 시스템 ====================
         let audioCtx = null;
 
-        // Global audio preference (shared with lobby/room)
-        const AUDIO_KEY = 'audio_enabled';
-        let __audioEnabled = true;
-        function __readAudioPref(){
-            try{
-                const v = localStorage.getItem(AUDIO_KEY);
-                return (v === null) ? true : (v === '1');
-            }catch(_){ return true; }
-        }
-        function __applyAudioPref(enabled){
-            __audioEnabled = !!enabled;
-            initBGM();
-            if (bgmEl){
-                try{ bgmEl.muted = !__audioEnabled; }catch(_){ }
-                if (!__audioEnabled){
-                    try{ bgmEl.pause(); }catch(_){ }
-                } else {
-                    if (bgmWanted){
-                        try{ bgmEl.play().catch(()=>{}); }catch(_){ }
-                    }
-                }
-            }
-        }
-        __applyAudioPref(__readAudioPref());
-        window.addEventListener('message', (ev)=>{
-            const d = ev && ev.data;
-            if (d && typeof d === 'object' && d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
-                __applyAudioPref(d.enabled);
-            }
-        });
-        window.addEventListener('storage', (ev)=>{
-            if (ev && ev.key === AUDIO_KEY){
-                __applyAudioPref(__readAudioPref());
-            }
-        });
-
         // 배경음악 (첨부 mp3) - 게임 진행 중 반복 재생
         let bgmEl = null;
         let bgmWanted = false;
+	        // Global mute preference (shared with lobby/room)
+	        let __audioEnabled = (localStorage.getItem('audio_enabled') === '1');
+
+	        function applyAudioPref(){
+	            try{
+	                initBGM();
+	                if (!bgmEl) return;
+	                if (!__audioEnabled){
+	                    bgmEl.muted = true;
+	                    stopBGM();
+	                } else {
+	                    bgmEl.muted = false;
+	                    if (bgmWanted){
+	                        bgmEl.play().catch(()=>{});
+	                    }
+	                }
+	            }catch(_){ }
+	        }
+
+	        // Receive preference updates from parent room (best effort)
+	        window.addEventListener('message', (ev)=>{
+	            let d = ev.data;
+	            if (typeof d === 'string'){
+	                try{ d = JSON.parse(d); }catch(_){ return; }
+	            }
+	            if (!d || typeof d !== 'object') return;
+	            if (d.type === 'audio_pref'){
+	                __audioEnabled = !!d.enabled;
+	                applyAudioPref();
+	            }
+	        });
 
         function initBGM() {
             if (!bgmEl) bgmEl = document.getElementById('bgm');
@@ -693,15 +688,20 @@
                 bgmEl.preload = 'auto';
                 // 기본 볼륨 (너무 크지 않게)
                 if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.5;
-                try{ bgmEl.muted = !__audioEnabled; }catch(_){ }
+	                // Apply current mute state immediately
+	                bgmEl.muted = !__audioEnabled;
             }
         }
 
         async function startBGM() {
+	            if (!__audioEnabled){
+	                bgmWanted = false;
+	                try{ initBGM(); applyAudioPref(); }catch(_){ }
+	                return;
+	            }
             initBGM();
             if (!bgmEl) return;
             bgmWanted = true;
-            if (!__audioEnabled){ try{ bgmEl.pause(); }catch(_){ } return; }
             try {
                 await bgmEl.play();
             } catch (e) {
@@ -721,11 +721,11 @@
         // 사용자 입력이 발생하면 오디오 컨텍스트/배경음악 재시도 (자동재생 제한 대응)
         (function attachBGMGestureRetry(){
             const tryStart = async () => {
+	                if (!__audioEnabled) return;
                 initAudio();
                 initBGM();
                 if (!bgmEl) return;
                 if (!bgmWanted) return;
-                if (!__audioEnabled) return;
                 if (!bgmEl.paused) return;
                 try { await bgmEl.play(); } catch (e) { return; }
             };
@@ -735,7 +735,6 @@
         })();
         
         function initAudio() {
-            if (!__audioEnabled) return;
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -745,7 +744,6 @@
         }
         
         function playTone(frequency, duration, type = 'square', volume = 0.3, slide = 0) {
-            if (!__audioEnabled) return;
             if (!audioCtx) return;
             
             const oscillator = audioCtx.createOscillator();
