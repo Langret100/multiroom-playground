@@ -161,6 +161,7 @@ function setupBgm(audioElId, btnId){
 
   const q = new URLSearchParams(location.search);
   const roomId = q.get("roomId") || sessionStorage.getItem("pendingRoomId");
+  const isEmbedded = (q.get('embedded') === '1') && (window.parent && window.parent !== window);
 
   const els = {
     title: document.querySelector("#roomTitle"),
@@ -169,6 +170,7 @@ function setupBgm(audioElId, btnId){
     readyBtn: document.querySelector("#readyBtn"),
     startBtn: document.querySelector("#startBtn"),
     leaveBtn: document.querySelector("#leaveBtn"),
+    fullBtn: document.querySelector("#toggleFullscreen"),
     status: document.querySelector("#roomStatus"),
     canvas: document.querySelector("#gameCanvas"),
     roomChatLog: document.querySelector("#roomChatLog"),
@@ -179,6 +181,13 @@ function setupBgm(audioElId, btnId){
     tgDockInput: document.querySelector("#tgDockInput"),
     tgDockSend: document.querySelector("#tgDockSend"),
   };
+
+  async function toggleBrowserFullscreenLocal(){
+    try{
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+      else await document.exitFullscreen?.();
+    }catch(_){ }
+  }
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
@@ -253,6 +262,8 @@ function setupBgm(audioElId, btnId){
     _ensureGameBgm();
     const el = _gameBgm.el;
     if (!el) return;
+    // Respect global mute preference (lobby mute button)
+    try{ if (window.AudioManager && !window.AudioManager.isEnabled('audio_enabled')){ stopGameBgm(); return; } }catch(_){ }
     const src = GAME_BGM_MAP[modeId];
     if (!src){
       stopGameBgm();
@@ -2023,7 +2034,7 @@ function startSim(){
 
     if (!roomId){
       setStatus("방 ID가 없습니다. 로비로 돌아갑니다.", "error");
-      setTimeout(()=> location.href="./index.html", 500);
+      setTimeout(()=>{ try{ window.__fsNavigating = true; }catch(_){ } location.href="./index.html"; }, 500);
       return;
     }
 
@@ -2417,6 +2428,30 @@ try{
       // Leave
       els.leaveBtn.addEventListener("click", leaveToLobby);
 
+      // Browser fullscreen toggle (works in both standalone room and embedded-room mode)
+      if (els.fullBtn && !els.fullBtn._wired){
+        els.fullBtn._wired = true;
+        const syncFsBtn = () => {
+          const on = isEmbedded ? (localStorage.getItem('fullscreen_intent') === '1') : !!document.fullscreenElement;
+          els.fullBtn.textContent = on ? "🗗" : "⛶";
+          els.fullBtn.title = on ? "전체화면 해제" : "전체화면";
+          els.fullBtn.setAttribute("aria-label", els.fullBtn.title);
+        };
+
+        els.fullBtn.addEventListener('click', async ()=>{
+          try{
+            if (isEmbedded) window.parent.postMessage({ type:'fs_toggle' }, '*');
+            else await toggleBrowserFullscreenLocal();
+          }catch(_){ }
+          // (standalone) fullscreenchange event will also sync
+          syncFsBtn();
+        });
+
+        document.addEventListener('fullscreenchange', syncFsBtn);
+        window.addEventListener('storage', (e)=>{ if (e && e.key === 'fullscreen_intent') syncFsBtn(); });
+        syncFsBtn();
+      }
+
       // Ensure WS closes even on tab close / navigation (auto-delete empty rooms)
       window.addEventListener("pagehide", ()=>{ try{ stopRoomPing(); room?.send?.('client_leave', { at: Date.now() }); }catch(_){} try{ room?.leave(); }catch(_){} });
       window.addEventListener("beforeunload", ()=>{ try{ stopRoomPing(); room?.send?.('client_leave', { at: Date.now() }); }catch(_){} try{ room?.leave(); }catch(_){} });
@@ -2439,7 +2474,7 @@ try{
       setStatus("", "info");
     }catch(err){
       setStatus("서버에 연결할 수 없습니다. 로비로 돌아갑니다.", "error");
-      setTimeout(()=> location.href="./index.html", 800);
+      setTimeout(()=>{ try{ window.__fsNavigating = true; }catch(_){ } location.href="./index.html"; }, 800);
     }
   }
 
@@ -2450,6 +2485,15 @@ try{
     }catch(_){}
     // clear room chat UI (no persistence)
     if (els.roomChatLog) els.roomChatLog.innerHTML = "";
+    try{ window.__fsNavigating = true; }catch(_){ }
+
+    // If this room is running inside the lobby fullscreen overlay,
+    // ask the parent to close the iframe instead of navigating.
+    if (isEmbedded){
+      try{ window.parent.postMessage({ type:'embedded_room_leave' }, '*'); }catch(_){ }
+      return;
+    }
+
     location.href = "./index.html";
   }
 

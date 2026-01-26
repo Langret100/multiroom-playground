@@ -72,82 +72,124 @@
   window.SFX = { win: playWinSfx, lose: playLoseSfx, readyOn: playReadyOn, readyOff: playReadyOff, start: playStartSfx, click: playClick };
 
   // - No floating "sound enable" button (requested)
-  // - Warm up with muted autoplay best-effort
-  // - If user previously enabled sound (localStorage key), unmute on first gesture
-  function attachAudioManager(audioEl, opts){
-    opts = opts || {};
-    const volume = (typeof opts.volume === 'number') ? opts.volume : 0.7;
-    const storageKey = opts.storageKey || 'audio_enabled';
+// - Warm up with muted autoplay best-effort
+// - Respect user's saved preference in localStorage (storageKey: 'audio_enabled' by default)
 
+function _readPref(storageKey){
+  try{
+    const v = localStorage.getItem(storageKey);
+    if (v === '0' || v === '1') return v;
+  }catch(_){}
+  return null;
+}
+function isEnabled(storageKey){
+  const v = _readPref(storageKey);
+  // Default: enabled
+  return (v === null) ? true : (v === '1');
+}
+function setEnabled(storageKey, enabled){
+  try{ localStorage.setItem(storageKey, enabled ? '1' : '0'); }catch(_){}
+}
+
+function attachAudioManager(audioEl, opts){
+  opts = opts || {};
+  const volume = (typeof opts.volume === 'number') ? opts.volume : 0.7;
+  const storageKey = opts.storageKey || 'audio_enabled';
+
+  try{
+    audioEl.loop = true;
+    audioEl.preload = 'auto';
+    audioEl.playsInline = true;
+    audioEl.volume = volume;
+  }catch(_){}
+
+  // Ensure a preference exists (default ON), but do not override an explicit OFF.
+  try{
+    const pref = _readPref(storageKey);
+    if (pref === null) setEnabled(storageKey, true);
+  }catch(_){}
+
+  // Apply initial preference immediately (before any gesture).
+  (()=>{
+    const enabled = isEnabled(storageKey);
     try{
-      audioEl.loop = true;
-      audioEl.preload = 'auto';
-      audioEl.playsInline = true;
-      audioEl.volume = volume;
-    }catch(_){}
-
-    // Warm-up: try muted autoplay so decoding is ready.
-    (async ()=>{
-      try{
-        audioEl.muted = true;
-        await audioEl.play();
-      }catch(_){}
-    })();
-
-    const onGesture = async ()=>{
-      document.removeEventListener('pointerdown', onGesture, true);
-      document.removeEventListener('touchstart', onGesture, true);
-      document.removeEventListener('keydown', onGesture, true);
-
-      // unlock sfx context as well
-      try{
-        const ctx = _getSfxCtx();
-        if (ctx && ctx.state === "suspended") await ctx.resume();
-      }catch(_){}
-
-      // Default to enabled on first run.
-      // (Autoplay still needs a gesture, but we shouldn't stay muted forever.)
-      let pref = null;
-      try{ pref = localStorage.getItem(storageKey); }catch(_){ pref = null; }
-      if (pref === null){
-        try{ localStorage.setItem(storageKey, '1'); }catch(_){ }
-        pref = '1';
-      }
-      // Force-enable background music when the user interacts (no UI toggle in this build).
-      if (pref !== '1'){
-        try{ localStorage.setItem(storageKey, '1'); }catch(_){ }
-        pref = '1';
-      }
-      try{
-        audioEl.volume = volume;
-        audioEl.muted = false;
-        await audioEl.play();
-      }catch(_){}
-    };
-
-    document.addEventListener('pointerdown', onGesture, true);
-    document.addEventListener('touchstart', onGesture, true);
-    document.addEventListener('keydown', onGesture, true);
-
-    async function enable(){
-      try{
-        localStorage.setItem(storageKey, '1');
-        audioEl.volume = volume;
-        audioEl.muted = false;
-        await audioEl.play();
-      }catch(_){}
-    }
-    function disable(){
-      try{
-        // Persist user's choice to keep audio off.
-        localStorage.setItem(storageKey, '0');
+      if (!enabled){
         audioEl.muted = true;
         audioEl.pause();
-      }catch(_){}
+      }else{
+        // Start muted to comply with autoplay restrictions; we'll unmute on a gesture.
+        audioEl.muted = true;
+      }
+    }catch(_){}
+  })();
+
+  // Warm-up: try muted autoplay so decoding is ready (only if enabled).
+  (async ()=>{
+    if (!isEnabled(storageKey)) return;
+    try{
+      audioEl.muted = true;
+      await audioEl.play();
+    }catch(_){}
+  })();
+
+  const onGesture = async ()=>{
+    document.removeEventListener('pointerdown', onGesture, true);
+    document.removeEventListener('touchstart', onGesture, true);
+    document.removeEventListener('keydown', onGesture, true);
+
+    // unlock sfx context as well
+    try{
+      const ctx = _getSfxCtx();
+      if (ctx && ctx.state === "suspended") await ctx.resume();
+    }catch(_){}
+
+    // Only start music if user's preference is enabled.
+    if (!isEnabled(storageKey)){
+      try{ audioEl.muted = true; audioEl.pause(); }catch(_){}
+      return;
     }
 
-    return { enable, disable, stop(){ try{ audioEl.pause(); }catch(_){ } } };
+    try{
+      audioEl.volume = volume;
+      audioEl.muted = false;
+      await audioEl.play();
+    }catch(_){}
+  };
+
+  document.addEventListener('pointerdown', onGesture, true);
+  document.addEventListener('touchstart', onGesture, true);
+  document.addEventListener('keydown', onGesture, true);
+
+  async function enable(){
+    setEnabled(storageKey, true);
+    try{
+      audioEl.volume = volume;
+      audioEl.muted = false;
+      await audioEl.play();
+    }catch(_){}
+  }
+  function disable(){
+    setEnabled(storageKey, false);
+    try{
+      audioEl.muted = true;
+      audioEl.pause();
+    }catch(_){}
+  }
+  function sync(){
+    // Apply current preference (useful if changed elsewhere)
+    if (isEnabled(storageKey)) enable();
+    else disable();
   }
 
-  window.AudioManager = { attachAudioManager };
+  // Keep in sync across tabs/windows.
+  try{
+    window.addEventListener('storage', (ev)=>{
+      if (ev && ev.key === storageKey) sync();
+    });
+  }catch(_){}
+
+  return { enable, disable, sync, stop(){ try{ audioEl.pause(); }catch(_){ } } };
+}
+
+window.AudioManager = { attachAudioManager, isEnabled, setEnabled };
 })();

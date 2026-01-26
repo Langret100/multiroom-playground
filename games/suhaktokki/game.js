@@ -651,7 +651,9 @@
     mapModal?.classList.remove('show');
   }
   function toggleMapUI() {
-    if (!G.net || G.phase === 'lobby') return;
+    // Map UI should only be available during active play.
+    // (Do not allow opening during lobby/meeting/scene/end.)
+    if (!G.net || G.phase !== 'play') return;
     if (G.ui.mapOpen) closeMapUI(); else openMapUI();
   }
 
@@ -665,6 +667,15 @@
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
+
+    // Don't steal keys while typing in an input/textarea (but allow Esc to close modals).
+    try{
+      const ae = document.activeElement;
+      const tag = (ae && ae.tagName) ? ae.tagName.toLowerCase() : '';
+      const typing = (tag === 'input' || tag === 'textarea' || (ae && ae.isContentEditable));
+      if (typing && e.key !== 'Escape') return;
+    }catch(_){ }
+
     // PC map shortcut: C
     if (e.key === 'c' || e.key === 'C') toggleMapUI();
     if (e.key === 'Escape') { closeRulesUI(); closeMapUI(); }
@@ -5068,6 +5079,9 @@ function showToast(text) {
   });
 
   function openMeetingUI(kind, reason, endsAt) {
+    // Ensure other overlays are closed while in meeting.
+    try{ closeMapUI(); }catch(_){ }
+    try{ closeRulesUI(); }catch(_){ }
     meetingModal.classList.add('show');
 
     // Initialize meeting chat (new meeting instance id)
@@ -8884,10 +8898,7 @@ try{
           if (!G.ui) G.ui = {};
           G.ui._hostGoneHandled = true;
           try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
-          // IMPORTANT (multiroom embed): include an explicit reason so the parent
-          // room page can notify the server (sk_over) and avoid getting stuck in
-          // "게임중" state.
-          setTimeout(() => { try { leaveRoom('host_exit'); } catch (_) {} }, 1500);
+          setTimeout(() => { try { leaveRoom(); } catch (_) {} }, 1500);
         }
       }
     } catch (_) {}

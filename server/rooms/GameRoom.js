@@ -80,7 +80,7 @@ export class GameRoom extends Room {
     const inferred = ["stackga","suika"].includes(this.state.mode) ? "duel" : "coop";
     this.state.modeType = String(options?.modeType || inferred).slice(0, 10);
 
-// maxClients: duel games are capped at 4; coop rooms can be up to 8 (per-game UI can request less)
+// maxClients: honor UI request; duel rooms allow up to 4, coop up to 8.
 const requestedMax = parseInt(options?.maxClients || "4", 10) || 4;
 const cap = (this.state.modeType === "duel") ? 4 : 8;
 this.maxClients = clamp(requestedMax, 2, cap);
@@ -129,17 +129,6 @@ this.st = {
   timer: null,
   interval: null,
 };
-
-    // ---- SuhakTokki (embedded iframe) transient end-signal tracking ----
-    // The SuhakTokki iframe broadcasts a "hostExit" packet (reason: match_end/host_exit)
-    // before it returns to the room UI. If the host's sk_over message is missed, the
-    // room can get stuck in "playing". We record the end-signal here and allow a
-    // short window where any client can successfully request a reset.
-    this.sk = {
-      ended: false,
-      endedAt: 0,
-      endedReason: "",
-    };
 
     this.onMessage("ready", (client, { ready }) => {
       const p = this.state.players.get(client.sessionId);
@@ -270,30 +259,7 @@ this.st = {
         inner.text = String(inner.text || "").replace(/[\r\n\t]/g, " ").slice(0, 120);
       }
 
-      
-// Track match end / host exit signals so the room can be reset even if the
-// host's sk_over packet is missed.
-// NOTE: We also end the match server-side immediately on this signal to avoid
-// "stuck playing" when the parent page fails to deliver sk_over (e.g. fast navigation).
-try{
-  if (t === "hostExit") {
-    const r = String(inner.reason || "").slice(0, 32);
-    if (r === "match_end" || r === "host_exit") {
-      this.sk.ended = true;
-      this.sk.endedAt = Date.now();
-      this.sk.endedReason = r;
-
-      // Only honor end signal from the current host when known.
-      let hostSid = null;
-      for (const [sid, ps] of this.state.players.entries()){
-        if (ps?.isHost){ hostSid = sid; break; }
-      }
-      if (!hostSid || client.sessionId === hostSid){
-        this._endSuhakTokki(r, hostSid || client.sessionId);
-      }
-    }
-  }
-}catch(_){ }this.broadcast("sk_msg", { msg: inner });
+      this.broadcast("sk_msg", { msg: inner });
     });
 
     // SuhakTokki match end -> reset room back to lobby (like Together)
@@ -308,14 +274,7 @@ try{
         if (ps?.isHost){ hostSid = sid; break; }
       }
       const isHost = (!hostSid) || (client.sessionId === hostSid);
-
-      // If the game already signaled an end (via hostExit relayed in sk_msg),
-      // allow any client to request the reset within a short grace window.
-      // This prevents the room from getting stuck in "playing" when the host
-      // returns to lobby UI without successfully sending sk_over.
-      const graceMs = 15000;
-      const inGrace = !!(this.sk?.ended && this.sk.endedAt && (Date.now() - this.sk.endedAt) < graceMs);
-      if (!isHost && !inGrace) return;
+      if (!isHost) return;
 
       const reason = String(payload?.reason || "match_end").slice(0, 32);
       const keepHost = hostSid || client.sessionId;
@@ -940,38 +899,6 @@ try{
     }
   }
 
-
-
-_endSuhakTokki(reason = "match_end", keepHostSid = null){
-  // Idempotent: only transition when currently playing SuhakTokki.
-  if (this.state.mode !== "suhaktokki") return;
-  if (this.state.phase !== "playing") return;
-
-  const r = String(reason || "match_end").slice(0, 32);
-  const keep = keepHostSid;
-
-  this.resetToLobby(r);
-
-  // Restore host ownership so the room remains controllable after returning.
-  try{
-    let chosen = keep;
-    if (!chosen){
-      for (const [sid, ps] of this.state.players.entries()){
-        if (ps){ chosen = sid; break; }
-      }
-    }
-    for (const ps of this.state.players.values()) ps.isHost = false;
-    const hp = chosen ? this.state.players.get(chosen) : null;
-    if (hp) hp.isHost = true;
-    const hostNick = hp?.nick || "-";
-    this.setMetadata({ ...this.metadata, hostNick });
-  }catch(_){ }
-
-  try{ this.recomputeReady(); }catch(_){ }
-  try{ this.syncMetadata(); }catch(_){ }
-  try{ this.broadcast("backToRoom", { mode: "suhaktokki", reason: r }); }catch(_){ }
-}
-
   syncMetadata(){
     const status = (this.state.phase === "playing") ? "playing" : "waiting";
     this.setMetadata({
@@ -1018,15 +945,6 @@ _endSuhakTokki(reason = "match_end", keepHostSid = null){
         this.st.scores = {};
         this.st.startedAt = 0;
         this.st.durationMs = 180000;
-      }
-    }catch(_){ }
-
-    // Clear SuhakTokki end-signal tracking
-    try{
-      if (this.sk){
-        this.sk.ended = false;
-        this.sk.endedAt = 0;
-        this.sk.endedReason = "";
       }
     }catch(_){ }
 

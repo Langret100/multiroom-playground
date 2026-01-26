@@ -1185,3 +1185,21 @@ body.kb-open.in-game .duel-frame{
 @media (max-width: 520px){
   .gameControlsHint{ font-size: 12px; }
 }
+
+/* Embedded room overlay (used to keep browser fullscreen across lobby -> room)
+   Most browsers exit fullscreen on top-level navigations. When the user is
+   already in fullscreen and enters a room, we render room.html in an iframe
+   overlay instead.
+*/
+.embedRoomOverlay{
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+}
+.embedRoomOverlay iframe{
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}

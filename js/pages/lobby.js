@@ -75,6 +75,11 @@ function setupBgm(audioElId, btnId){
   let lobbyRoom = null;
   let myNick = null;
 
+  function defaultRoomTitle(){
+    const nick = safeText(((myNick||"Player").toString().trim()) || "Player", 20);
+    return nick + "의 방";
+  }
+
   // Cache latest rooms/users so we can render user meta (room title/game) reliably.
   let roomsById = new Map();
   let lastUsers = [];
@@ -177,6 +182,68 @@ function statusDot(room){
     return { roomId, title, mode, status, clients, maxClients };
   }
 
+  // ---- Fullscreen-friendly room entry (no top-level navigation) ----
+  // Most browsers exit fullscreen on a top-level navigation (index.html -> room.html).
+  // To make fullscreen feel continuous, when the user is already in fullscreen,
+  // we open room.html in an iframe overlay instead.
+  let _embedOverlay = null;
+  let _embedFrame = null;
+
+  function isFullscreenActive(){
+    try{ return !!document.fullscreenElement; }catch(_){ return false; }
+  }
+
+  async function toggleBrowserFullscreen(){
+    try{
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+      else await document.exitFullscreen?.();
+    }catch(_){ }
+  }
+
+  function openEmbeddedRoom(roomId){
+    try{
+      const ov = _embedOverlay || document.getElementById('embedRoomOverlay');
+      const fr = _embedFrame || document.getElementById('embedRoomFrame');
+      _embedOverlay = ov; _embedFrame = fr;
+      if (!ov || !fr){
+        location.href = `./room.html?roomId=${encodeURIComponent(roomId)}`;
+        return;
+      }
+      ov.classList.remove('hidden');
+      ov.setAttribute('aria-hidden', 'false');
+      // Keep URL param explicit so room.js/auth.js can behave differently in embed mode.
+      fr.src = `./room.html?roomId=${encodeURIComponent(roomId)}&embedded=1`;
+    }catch(_){
+      location.href = `./room.html?roomId=${encodeURIComponent(roomId)}`;
+    }
+  }
+
+  function closeEmbeddedRoom(){
+    try{
+      const ov = _embedOverlay || document.getElementById('embedRoomOverlay');
+      const fr = _embedFrame || document.getElementById('embedRoomFrame');
+      _embedOverlay = ov; _embedFrame = fr;
+      if (fr) fr.src = 'about:blank';
+      if (ov){
+        ov.classList.add('hidden');
+        ov.setAttribute('aria-hidden', 'true');
+      }
+    }catch(_){ }
+    // Best-effort: refresh the rooms list after returning.
+    try{ refreshRooms(); }catch(_){ }
+  }
+
+  // Receive signals from embedded room/game iframes.
+  window.addEventListener('message', (e)=>{
+    const d = e?.data || {};
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'embedded_room_leave') closeEmbeddedRoom();
+    if (d.type === 'fs_toggle') toggleBrowserFullscreen();
+    if (d.type === 'fs_request') { try{ document.documentElement.requestFullscreen?.(); }catch(_){ } }
+    if (d.type === 'fs_exit') { try{ document.exitFullscreen?.(); }catch(_){ } }
+    if (d.type === 'auth_logout') { try{ location.reload(); }catch(_){ } }
+  });
+
   function renderRooms(list){
     const rooms = (list || []).map(normalizeRoom).filter(r=>!!r.roomId);
 
@@ -233,7 +300,9 @@ function statusDot(room){
           return;
         }
         sessionStorage.setItem("pendingRoomId", r.roomId);
-        location.href = `./room.html?roomId=${encodeURIComponent(r.roomId)}`;
+        try{ window.__fsNavigating = true; }catch(_){ }
+        if (isFullscreenActive()) openEmbeddedRoom(r.roomId);
+        else location.href = `./room.html?roomId=${encodeURIComponent(r.roomId)}`;
       };
 
       if (!(isPlaying || isFull)) {
@@ -261,7 +330,11 @@ function statusDot(room){
 
   function openModal(){
     els.modal.classList.add("show");
-    els.roomTitle.value = (els.roomTitle.value || "새 방");
+    const def = defaultRoomTitle();
+    // Always start with a sensible default; user can overwrite.
+    els.roomTitle.value = def;
+    try{ els.roomTitle.dataset.defaultTitle = def; }catch(_){ }
+    try{ els.roomTitle.focus(); els.roomTitle.select(); }catch(_){ }
   }
   function closeModal(){
     els.modal.classList.remove("show");
@@ -269,7 +342,10 @@ function statusDot(room){
 
   async function createRoom(){
     if (!client) return;
-    const title = safeText(els.roomTitle.value || "새 방", 30);
+    let rawTitle = (els.roomTitle.value || "").toString().trim();
+    const defTitle = (els.roomTitle.dataset && els.roomTitle.dataset.defaultTitle) ? els.roomTitle.dataset.defaultTitle : defaultRoomTitle();
+    if (!rawTitle || rawTitle === "새 방") rawTitle = defTitle;
+    const title = safeText(rawTitle, 30);
     const mode = els.gameMode.value || ((window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id) ? window.GAME_REGISTRY[0].id : "stackga");
     const meta = (window.gameById ? window.gameById(mode) : null);
     const modeType = meta?.type || "coop";
@@ -279,7 +355,9 @@ function statusDot(room){
     try{
       const room = await client.create("game_room", { title, mode, modeType, maxClients, hostNick: myNick, nick: myNick });
       sessionStorage.setItem("pendingRoomId", room.id);
-      location.href = `./room.html?roomId=${encodeURIComponent(room.id)}`;
+      try{ window.__fsNavigating = true; }catch(_){ }
+      if (isFullscreenActive()) openEmbeddedRoom(room.id);
+      else location.href = `./room.html?roomId=${encodeURIComponent(room.id)}`;
     }catch(err){
       setStatus("방 생성 실패: 서버 연결을 확인하세요.", "error");
     }
@@ -420,6 +498,35 @@ function statusDot(room){
 (function(){
   const el = document.getElementById('bgmLobby');
   if (!el || !window.AudioManager) return;
+
+  const storageKey = 'audio_enabled';
   // Slightly lower lobby BGM (was a bit loud)
-  window.AudioManager.attachAudioManager(el, { label: '로비 음악 켜기', storageKey: 'audio_enabled', volume: 0.42 });
+  const handle = window.AudioManager.attachAudioManager(el, { label: '로비 음악', storageKey, volume: 0.42 });
+  try{ window.__bgmLobbyHandle = handle; }catch(_){}
+
+  const btn = document.getElementById('toggleMute');
+
+  function renderMuteBtn(){
+    if (!btn) return;
+    const enabled = window.AudioManager.isEnabled(storageKey);
+    btn.textContent = enabled ? '🔊' : '🔇';
+    const t = enabled ? '음소거' : '음소거 해제';
+    btn.title = t;
+    btn.setAttribute('aria-label', t);
+  }
+
+  if (btn){
+    btn.addEventListener('click', async ()=>{
+      try{ window.SFX && window.SFX.click && window.SFX.click(); }catch(_){}
+      const enabled = window.AudioManager.isEnabled(storageKey);
+      if (enabled) handle.disable();
+      else await handle.enable();
+      renderMuteBtn();
+    });
+  }
+
+  // Apply preference right away (so lobby doesn't play if already muted)
+  try{ if (!window.AudioManager.isEnabled(storageKey)) handle.disable(); }catch(_){}
+
+  renderMuteBtn();
 })();

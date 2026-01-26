@@ -168,6 +168,19 @@
     els.btnLogout.addEventListener("click", ()=>{
       clearGhostUser();
       try { sessionStorage.clear(); } catch(e){}
+
+      // If we're inside an embedded room iframe, reloading only the iframe
+      // leaves the parent lobby in a confusing state. In that case, notify the
+      // parent so it can refresh...
+      try{
+        const sp = new URLSearchParams(location.search || "");
+        const embedded = (sp.get('embedded') === '1') && (window.parent && window.parent !== window);
+        if (embedded){
+          window.parent.postMessage({ type: 'auth_logout' }, '*');
+          return;
+        }
+      }catch(_){ }
+
       location.reload();
     });
   }

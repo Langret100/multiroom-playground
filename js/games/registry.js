@@ -15,7 +15,7 @@
       ],
       type:"duel",
       badgeClass: "tetris",
-      maxClients: 4,
+      maxClients: 2,
       embedPath: "games/stackga/index.html"
     },
     // NOTE: 기존 "수박게임"의 표시명은 요청에 따라 "도형게임"으로 변경.
@@ -30,7 +30,7 @@
       ],
       type:"duel",
       badgeClass: "suika",
-      maxClients: 4,
+      maxClients: 2,
       embedPath: "games/suika/index.html"
     },
     // Togester (co-op) is embedded as an iframe and synced via Colyseus messages.

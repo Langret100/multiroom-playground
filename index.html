@@ -15,6 +15,7 @@
         <button class="iconbtn" id="openCreate" title="방 만들기" aria-label="방 만들기">➕</button>
         <button class="iconbtn" id="refreshRooms" title="새로고침" aria-label="새로고침">🔄</button>
         <button class="iconbtn" id="toggleFullscreen" title="전체화면" aria-label="전체화면">⛶</button>
+        <button class="iconbtn" id="toggleMute" title="음소거" aria-label="음소거">🔊</button>
         <button class="iconbtn" id="logoutBtn" title="로그아웃" aria-label="로그아웃">🚪</button>
       </div>
     </div>
@@ -164,11 +165,17 @@
     </div>
   </div>
 
+  <!-- Fullscreen 지속을 위해: 전체화면 상태에서 방 입장 시 top-level 이동 대신 iframe 오버레이로 room.html을 표시 -->
+  <div id="embedRoomOverlay" class="embedRoomOverlay hidden" aria-hidden="true">
+    <iframe id="embedRoomFrame" title="room" allow="autoplay; fullscreen" allowfullscreen></iframe>
+  </div>
+
   <script src="./js/core/config.js" defer></script>
   <script src="./js/auth/sheet-config.js" defer></script>
   <script src="./js/auth/auth.js" defer></script>
   <script src="./js/core/net.js" defer></script>
   <script src="./js/core/audio.js" defer></script>
+  <script src="./js/core/fullscreen-intent.js" defer></script>
   <script src="./js/games/registry.js" defer></script>
   <script src="./js/pages/lobby.js" defer></script>
 
