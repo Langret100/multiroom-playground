@@ -494,6 +494,42 @@
         // ==================== 설정 ====================
         // Firebase 의존성 제거 (Colyseus/부모 브릿지로 동기화)
         const EMBED = new URLSearchParams(location.search).get('embed') === '1';
+        // ==================== 오디오 선호도(로비 음소거 연동) ====================
+        const AUDIO_KEY = 'audio_enabled';
+        let __audioEnabled = (()=>{
+            try{ return localStorage.getItem(AUDIO_KEY) !== '0'; }catch(_){ return true; }
+        })();
+
+        function applyAudioPref(enabled){
+            __audioEnabled = !!enabled;
+            try{ localStorage.setItem(AUDIO_KEY, __audioEnabled ? '1' : '0'); }catch(_){ }
+            // HTML <audio> BGM
+            try{
+                initBGM();
+                if (bgmEl){
+                    bgmEl.muted = !__audioEnabled;
+                    if (!__audioEnabled){
+                        try{ bgmEl.pause(); }catch(_){ }
+                    } else if (bgmWanted){
+                        bgmEl.play().catch(()=>{});
+                    }
+                }
+            }catch(_){ }
+            // WebAudio SFX
+            try{
+                if (audioCtx){
+                    if (!__audioEnabled){
+                        audioCtx.suspend?.().catch?.(()=>{});
+                    } else {
+                        // resume only when later user interaction calls initAudio()
+                    }
+                }
+            }catch(_){ }
+        }
+
+        // Apply initial preference immediately
+        applyAudioPref(__audioEnabled);
+
         const EMBED_PRACTICE = EMBED && (new URLSearchParams(location.search).get('practice') === '1');
         function bridgeSend(type, payload){
             if (!EMBED) return;
@@ -661,6 +697,7 @@
         }
 
         async function startBGM() {
+            if (!__audioEnabled) return;
             initBGM();
             if (!bgmEl) return;
             bgmWanted = true;
@@ -696,6 +733,7 @@
         })();
         
         function initAudio() {
+            if (!__audioEnabled) return;
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -705,6 +743,7 @@
         }
         
         function playTone(frequency, duration, type = 'square', volume = 0.3, slide = 0) {
+            if (!__audioEnabled) return;
             if (!audioCtx) return;
             
             const oscillator = audioCtx.createOscillator();
@@ -3215,6 +3254,11 @@ function setupActionButtons(){
         window.addEventListener("message", (e)=>{
             const d = e.data || {};
             if (!d || typeof d !== "object") return;
+
+            if (d.type === "audio_pref"){
+                applyAudioPref(!!d.enabled);
+                return;
+            }
 
             if (d.type === "bridge_init"){
                 mySessionId = String(d.sessionId || "");
