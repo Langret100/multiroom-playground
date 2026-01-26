@@ -488,29 +488,7 @@
     // BGM (mobile autoplay: starts after first user gesture)
     const __BGM_URL__ = "assets/catchpicture.mp3";
     let __bgm = null;
-	    // Global mute preference (shared with lobby/room)
-	    let __bgmMuted = (localStorage.getItem('audio_enabled') !== '1');
-
-	    function __applyAudioPref(){
-	      try{
-	        if (!__bgm) return;
-	        __bgm.muted = !!__bgmMuted;
-	        if (__bgmMuted) __pauseBgm();
-	      }catch(_){ }
-	    }
-
-	    // Receive preference updates from parent room (best effort)
-	    window.addEventListener('message', (ev)=>{
-	      let d = ev.data;
-	      if (typeof d === 'string'){
-	        try{ d = JSON.parse(d); }catch(_){ return; }
-	      }
-	      if (!d || typeof d !== 'object') return;
-	      if (d.type === 'audio_pref'){
-	        __bgmMuted = !d.enabled;
-	        __applyAudioPref();
-	      }
-	    });
+    let __bgmMuted = false;
 
     function __ensureBgm(){
       if (__bgm || !__BGM_URL__) return;
@@ -519,7 +497,6 @@
         __bgm.loop = true;
         __bgm.preload = "auto";
         __bgm.volume = 0.35;
-	        try{ __applyAudioPref(); }catch(_){ }
       }catch(_){ __bgm = null; }
     }
 

@@ -9184,27 +9184,6 @@ try{
       // stop join retry loop
       try{ if (net._joinRetry) { clearInterval(net._joinRetry); net._joinRetry = null; } }catch(_){ }
 
-      // EMBED: Do NOT reset to lobby after an authoritative start.
-      // game_start(payload) can arrive before/after joinAck. If we force the
-      // lobby phase here, clients can get stuck on the "로딩중..." screen even
-      // though the room already started.
-      if (EMBED){
-        try{
-          const ui = (G && G.ui) ? G.ui : null;
-          const pending = ui && ui._pendingGameStart;
-          const applied = !!(ui && ui._gameStartApplied);
-          const started = !!((G && G.state && G.state.started) || (G && G.host && G.host.started));
-          // If we have a pending or already-applied authoritative start, stay in play.
-          if (pending || applied || started){
-            try{ G.phase = 'play'; }catch(_){ }
-            try{ applyPhaseUI(); }catch(_){ }
-            // If the start payload was received but not yet applied (e.g., joinAck won the race), apply now.
-            try{ if (pending && !applied) applyGameStartPayload(pending); }catch(_){ }
-            return;
-          }
-        }catch(_){ }
-      }
-
       G.phase = 'lobby';
       setRolePill();
       setHUD();
@@ -10120,66 +10099,6 @@ net.on('uiMeetingOpen', (m) => {
     };
   }
 
-
-  // ---------- Embed host authority ----------
-  // In embed mode, the parent room is authoritative. The game must NOT elect host internally.
-  // Host is locked from the server-provided start payload (hostSid or roster[].isHost).
-  function _embedHostSidFromPayload(payload){
-    try{
-      if (!payload || typeof payload !== 'object') return null;
-      if (payload.hostSid != null) return String(payload.hostSid);
-      const r = Array.isArray(payload.roster) ? payload.roster : null;
-      if (r){
-        const h = r.find(x => x && x.isHost);
-        if (h && h.sid != null) return String(h.sid);
-      }
-    }catch(_){ }
-    return null;
-  }
-
-  function _embedLockHostFromPayload(payload){
-    try{
-      if (!EMBED || !G || !G.net) return;
-      const hostSid = _embedHostSidFromPayload(payload);
-      if (!hostSid) return;
-      const mySid = String(G.net.sessionId || window.__EMBED_SESSION_ID__ || '');
-      const shouldHost = (mySid && mySid === String(hostSid));
-      // Lock the role; prevent any internal leader-election from flipping it later.
-      G.net.__LOCKED_HOST__ = true;
-      G.net.isHost = !!shouldHost;
-      // Best-effort: align hostId so join routing is stable.
-      if (shouldHost){
-        try{ if (typeof G.net.becomeHost === 'function') G.net.becomeHost(); }catch(_){ }
-        try{ G.net.hostId = G.net.clientId; }catch(_){ }
-      }
-    }catch(_){ }
-  }
-
-  function _embedEnsureHostBootstrapped(payload){
-    try{
-      if (!EMBED || !G || !G.net) return;
-      if (!G.net.isHost) return;
-      // If we became host AFTER joinRoom() ran the non-host path, we must bootstrap host state now.
-      if (G.net.myPlayerId && G.state && G.state.players && G.state.players[G.net.myPlayerId]) return;
-
-      hostInitFromMap();
-      const nick = (nickEl && nickEl.value ? nickEl.value : '토끼').trim().slice(0, 10);
-      const pid = hostAddPlayer(nick, false, G.net.clientId);
-      G.net.myPlayerId = pid;
-
-      // Attach sessionId for roster->pid mapping (used for teacherSid and joins).
-      try{
-        const mySid = String(G.net.sessionId || window.__EMBED_SESSION_ID__ || '');
-        const p = G.state.players && G.state.players[pid];
-        if (p && mySid) p.sessionId = mySid;
-      }catch(_){ }
-
-      // Make sure clients aren't stuck waiting for the first snapshot.
-      try{ broadcastRoster(true); }catch(_){ }
-      try{ broadcastState(true); }catch(_){ }
-    }catch(_){ }
-  }
-
   async function applyGameStartPayload(payload){
     try{
       if (!EMBED) return;
@@ -10192,10 +10111,6 @@ net.on('uiMeetingOpen', (m) => {
       while(!G.assetsReady && !G.assetsError){ await new Promise(r=>setTimeout(r, 50)); }
       if (G.assetsError) return;
       if (!G.net) { try{ await joinRoom(); }catch(_){ return; } }
-
-      // Lock host from the authoritative start payload (prevents split-host / no-host deadlocks).
-      try{ _embedLockHostFromPayload(payload); }catch(_){ }
-      try{ _embedEnsureHostBootstrapped(payload); }catch(_){ }
 
       // Dedupe: ignore if already started.
       if ((G.state && G.state.started) || (G.host && G.host.started)) { G.ui._gameStartApplied = true; applyPhaseUI(); return; }
@@ -10356,10 +10271,7 @@ window.addEventListener('message', (ev)=>{
       if (!d || typeof d !== 'object') return;
       // Parent -> iframe: host ownership update (avoids no-host deadlocks).
       if (d.type === 'bridge_host') {
-        // Deprecated: host must be locked from the authoritative server payload.
-        // Ignore any late/duplicate host hints once locked to prevent split-host races.
         try{
-          if (G.net && G.net.__LOCKED_HOST__) return;
           window.__EMBED_IS_HOST__ = !!d.isHost;
           if (G.net) G.net.isHost = !!d.isHost;
           try{ applyPhaseUI(); }catch(_){ }

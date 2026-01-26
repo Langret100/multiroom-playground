@@ -649,37 +649,6 @@
         // 배경음악 (첨부 mp3) - 게임 진행 중 반복 재생
         let bgmEl = null;
         let bgmWanted = false;
-	        // Global mute preference (shared with lobby/room)
-	        let __audioEnabled = (localStorage.getItem('audio_enabled') === '1');
-
-	        function applyAudioPref(){
-	            try{
-	                initBGM();
-	                if (!bgmEl) return;
-	                if (!__audioEnabled){
-	                    bgmEl.muted = true;
-	                    stopBGM();
-	                } else {
-	                    bgmEl.muted = false;
-	                    if (bgmWanted){
-	                        bgmEl.play().catch(()=>{});
-	                    }
-	                }
-	            }catch(_){ }
-	        }
-
-	        // Receive preference updates from parent room (best effort)
-	        window.addEventListener('message', (ev)=>{
-	            let d = ev.data;
-	            if (typeof d === 'string'){
-	                try{ d = JSON.parse(d); }catch(_){ return; }
-	            }
-	            if (!d || typeof d !== 'object') return;
-	            if (d.type === 'audio_pref'){
-	                __audioEnabled = !!d.enabled;
-	                applyAudioPref();
-	            }
-	        });
 
         function initBGM() {
             if (!bgmEl) bgmEl = document.getElementById('bgm');
@@ -688,17 +657,10 @@
                 bgmEl.preload = 'auto';
                 // 기본 볼륨 (너무 크지 않게)
                 if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.5;
-	                // Apply current mute state immediately
-	                bgmEl.muted = !__audioEnabled;
             }
         }
 
         async function startBGM() {
-	            if (!__audioEnabled){
-	                bgmWanted = false;
-	                try{ initBGM(); applyAudioPref(); }catch(_){ }
-	                return;
-	            }
             initBGM();
             if (!bgmEl) return;
             bgmWanted = true;
@@ -721,7 +683,6 @@
         // 사용자 입력이 발생하면 오디오 컨텍스트/배경음악 재시도 (자동재생 제한 대응)
         (function attachBGMGestureRetry(){
             const tryStart = async () => {
-	                if (!__audioEnabled) return;
                 initAudio();
                 initBGM();
                 if (!bgmEl) return;

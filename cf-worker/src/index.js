@@ -479,6 +479,10 @@ export class RoomDO{
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null }; // coop state aggregation
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
 
+    // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
+    // Stored here so late-joiners can be synced.
+    this.sk = { startPayload: null };
+
     // DrawAnswer (Pictionary-like): minimal server = relays + round/timer/score authority
     this.da = {
       active:false,
@@ -760,6 +764,15 @@ export class RoomDO{
         this._scheduleLobbyUpdate();
         this._broadcast("room_state", this._snapshot());
 
+        // SuhakTokki: if a match is already running, sync authoritative start payload to the joining client.
+        // Without this, the iframe stays forever on "로딩 중..." because it never receives game_start.
+        if (this.meta.phase === "playing" && this.meta.mode === "suhaktokki"){
+          try{
+            const sp = this.sk && this.sk.startPayload;
+            if (sp) this._send(ws, "started", { mode: this.meta.mode, startPayload: sp });
+          }catch(_){ }
+        }
+
         // SnakeTail: if a match is already running, sync timer/foods/snapshots to the joining client
         // (prevents missing initial food spawn due to iframe load timing).
         if (this.meta.phase === "playing" && this.meta.mode === "snaketail"){
@@ -888,10 +901,51 @@ export class RoomDO{
           }
         }catch(_){ }
 
+        // SuhakTokki: decide authoritative start payload exactly once per match.
+        // The iframe must start ONLY from this payload (game_start).
+        let skStartPayload = null;
+        if (this.meta.mode === "suhaktokki"){
+          try{
+            const cpuUid = this._cpuUid();
+            const roster = Array.from(this.users.entries())
+              .filter(([uid])=> String(uid) !== String(cpuUid))
+              .map(([uid, u])=>({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99) }))
+              .sort((a,b)=> (a.seat??99) - (b.seat??99));
+
+            const humans = roster.length;
+            const practice = (humans < 4);
+
+            // 32-bit seed
+            const seed = (Math.floor(Math.random() * 0x100000000) >>> 0);
+            let teacherSid = null;
+            if (!practice && humans > 0){
+              const idx = (seed >>> 0) % humans;
+              teacherSid = roster[idx]?.sid ?? null;
+            }
+
+            skStartPayload = {
+              startedAt: now(),
+              seed,
+              practice,
+              teacherSid,
+              roster
+            };
+            this.sk.startPayload = skStartPayload;
+          }catch(_){
+            // if anything goes wrong, keep null and rely on client-side lobby fallback (dev only)
+            skStartPayload = null;
+            try{ this.sk.startPayload = null; }catch(_){ }
+          }
+        }
+
         this.meta.phase = "playing";
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
-        this._broadcast("started", { mode: this.meta.mode });
+        if (this.meta.mode === "suhaktokki"){
+          this._broadcast("started", { mode: this.meta.mode, startPayload: skStartPayload });
+        } else {
+          this._broadcast("started", { mode: this.meta.mode });
+        }
 
         // SnakeTail: start 3-minute round timer (server is source of truth)
         if (this.meta.mode === "snaketail"){
@@ -1983,6 +2037,9 @@ export class RoomDO{
       if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
       try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
       if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
+
+      // SuhakTokki: clear authoritative start payload when returning to lobby.
+      try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
 
       try{ this.da && this._daReset(); }catch(_){ }
 

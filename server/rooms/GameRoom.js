@@ -184,58 +184,31 @@ this.st = {
       let suhakStartPayload = null;
       if (this.state.mode === "suhaktokki"){
         try{
-          // Humans (exclude CPU), sorted by seat for deterministic roster/teacher selection.
-          const humansRaw = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID).map(String);
-
-          // Determine the single authoritative hostSid (room owner).
-          let hostSid = null;
-          for (const sid of humansRaw){
-            const ps = this.state.players.get(sid);
-            if (ps?.isHost){ hostSid = String(sid); break; }
+          const humans = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
+          const expectedHumans = humans.length;
+          const seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
+          const practice = expectedHumans < 4;
+          let teacherSid = null;
+          if (!practice && humans.length){
+            teacherSid = String(humans[seed % humans.length]);
           }
-
-          // If host flag is missing for any reason, fall back to the starter client (still authoritative server-side).
-          if (!hostSid && client?.sessionId) hostSid = String(client.sessionId);
-
-          // Build seat-sorted roster.
-          const roster = humansRaw.map((sid) => {
+          const roster = humans.map((sid) => {
             const pp = this.state.players.get(sid);
-            const seat = Number(this.state.order.get(sid) ?? -1);
             return {
               sid: String(sid),
               nick: pp?.nick || "Player",
-              seat,
+              seat: Number(this.state.order.get(sid) ?? -1),
               isHost: !!pp?.isHost,
             };
-          }).sort((a,b)=>{
-            const as = Number.isFinite(a.seat) ? a.seat : 9999;
-            const bs = Number.isFinite(b.seat) ? b.seat : 9999;
-            if (as !== bs) return as - bs;
-            // Tie-break for stability
-            return String(a.sid).localeCompare(String(b.sid));
           });
-
-          const expectedHumans = roster.length;
-          const seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
-
-          // practice rule: <4 humans => practice
-          const practice = expectedHumans < 4;
-
-          // teacherSid is deterministic from the same authoritative seed + roster ordering
-          let teacherSid = null;
-          if (!practice && roster.length){
-            teacherSid = String(roster[seed % roster.length].sid);
-          }
-
           suhakStartPayload = {
             mode: "suhaktokki",
-            startedAt: Date.now(),
             seed,
             practice,
-            hostSid: hostSid ? String(hostSid) : null,
+            expectedHumans,
             teacherSid,
             roster,
-            expectedHumans,
+            startedAt: Date.now(),
           };
           this._suhakStartPayload = suhakStartPayload;
         }catch(_){ /* best-effort */ }
