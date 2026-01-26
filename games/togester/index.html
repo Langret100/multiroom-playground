@@ -646,6 +646,42 @@
         // ==================== 사운드 시스템 ====================
         let audioCtx = null;
 
+        // Global audio preference (shared with lobby/room)
+        const AUDIO_KEY = 'audio_enabled';
+        let __audioEnabled = true;
+        function __readAudioPref(){
+            try{
+                const v = localStorage.getItem(AUDIO_KEY);
+                return (v === null) ? true : (v === '1');
+            }catch(_){ return true; }
+        }
+        function __applyAudioPref(enabled){
+            __audioEnabled = !!enabled;
+            initBGM();
+            if (bgmEl){
+                try{ bgmEl.muted = !__audioEnabled; }catch(_){ }
+                if (!__audioEnabled){
+                    try{ bgmEl.pause(); }catch(_){ }
+                } else {
+                    if (bgmWanted){
+                        try{ bgmEl.play().catch(()=>{}); }catch(_){ }
+                    }
+                }
+            }
+        }
+        __applyAudioPref(__readAudioPref());
+        window.addEventListener('message', (ev)=>{
+            const d = ev && ev.data;
+            if (d && typeof d === 'object' && d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+                __applyAudioPref(d.enabled);
+            }
+        });
+        window.addEventListener('storage', (ev)=>{
+            if (ev && ev.key === AUDIO_KEY){
+                __applyAudioPref(__readAudioPref());
+            }
+        });
+
         // 배경음악 (첨부 mp3) - 게임 진행 중 반복 재생
         let bgmEl = null;
         let bgmWanted = false;
@@ -657,6 +693,7 @@
                 bgmEl.preload = 'auto';
                 // 기본 볼륨 (너무 크지 않게)
                 if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.5;
+                try{ bgmEl.muted = !__audioEnabled; }catch(_){ }
             }
         }
 
@@ -664,6 +701,7 @@
             initBGM();
             if (!bgmEl) return;
             bgmWanted = true;
+            if (!__audioEnabled){ try{ bgmEl.pause(); }catch(_){ } return; }
             try {
                 await bgmEl.play();
             } catch (e) {
@@ -687,6 +725,7 @@
                 initBGM();
                 if (!bgmEl) return;
                 if (!bgmWanted) return;
+                if (!__audioEnabled) return;
                 if (!bgmEl.paused) return;
                 try { await bgmEl.play(); } catch (e) { return; }
             };
@@ -696,6 +735,7 @@
         })();
         
         function initAudio() {
+            if (!__audioEnabled) return;
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -705,6 +745,7 @@
         }
         
         function playTone(frequency, duration, type = 'square', volume = 0.3, slide = 0) {
+            if (!__audioEnabled) return;
             if (!audioCtx) return;
             
             const oscillator = audioCtx.createOscillator();

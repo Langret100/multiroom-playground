@@ -370,6 +370,7 @@
     // ===== SFX (코드로 생성: WebAudio) =====
     let __sfxCtx = null;
     function __ensureSfxCtx(){
+      if (!__audioEnabled) return null;
       if (__sfxCtx) return __sfxCtx;
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
@@ -489,6 +490,38 @@
     const __BGM_URL__ = "assets/catchpicture.mp3";
     let __bgm = null;
     let __bgmMuted = false;
+
+    // Global audio preference (shared with lobby/room)
+    const AUDIO_KEY = 'audio_enabled';
+    let __audioEnabled = true;
+    function __readAudioPref(){
+      try{
+        const v = localStorage.getItem(AUDIO_KEY);
+        return (v === null) ? true : (v === '1');
+      }catch(_){ return true; }
+    }
+    function __applyAudioPref(enabled){
+      __audioEnabled = !!enabled;
+      __bgmMuted = !__audioEnabled;
+      if (__bgmMuted){
+        __pauseBgm();
+      } else {
+        __startBgm();
+      }
+    }
+    __applyAudioPref(__readAudioPref());
+    window.addEventListener('message', (ev)=>{
+      const d = ev && ev.data;
+      if (d && typeof d === 'object' && d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+        __applyAudioPref(d.enabled);
+      }
+    });
+    window.addEventListener('storage', (ev)=>{
+      if (ev && ev.key === AUDIO_KEY){
+        __applyAudioPref(__readAudioPref());
+      }
+    });
+
 
     function __ensureBgm(){
       if (__bgm || !__BGM_URL__) return;
