@@ -171,6 +171,7 @@ function setupBgm(audioElId, btnId){
     startBtn: document.querySelector("#startBtn"),
     leaveBtn: document.querySelector("#leaveBtn"),
     fullBtn: document.querySelector("#toggleFullscreen"),
+    muteBtn: document.querySelector("#toggleMute"),
     status: document.querySelector("#roomStatus"),
     canvas: document.querySelector("#gameCanvas"),
     roomChatLog: document.querySelector("#roomChatLog"),
@@ -181,6 +182,59 @@ function setupBgm(audioElId, btnId){
     tgDockInput: document.querySelector("#tgDockInput"),
     tgDockSend: document.querySelector("#tgDockSend"),
   };
+
+  // ---- Mute button (shared preference with lobby) ----
+  const AUDIO_KEY = 'audio_enabled';
+
+  function _renderRoomMuteBtn(){
+    const btn = els.muteBtn;
+    if (!btn || !window.AudioManager) return;
+    const enabled = window.AudioManager.isEnabled(AUDIO_KEY);
+    btn.textContent = enabled ? '🔊' : '🔇';
+    const t = enabled ? '음소거' : '음소거 해제';
+    btn.title = t;
+    btn.setAttribute('aria-label', t);
+  }
+
+  function _syncRoomAudio(){
+    // Room BGM
+    try{ window.__bgmBattleHandle && window.__bgmBattleHandle.sync && window.__bgmBattleHandle.sync(); }catch(_){ }
+    // Game BGM (if initialized)
+    try{ _gameBgm && _gameBgm.handle && _gameBgm.handle.sync && _gameBgm.handle.sync(); }catch(_){ }
+    // Safety: if handle isn't ready yet, still apply mute to elements.
+    try{
+      const enabled = window.AudioManager ? window.AudioManager.isEnabled(AUDIO_KEY) : true;
+      const b = document.getElementById('bgmBattle');
+      if (b){
+        if (!enabled){ b.muted = true; b.pause(); }
+      }
+      const g = document.getElementById('bgmGame');
+      if (g){
+        if (!enabled){ g.muted = true; g.pause(); }
+      }
+    }catch(_){ }
+  }
+
+  // Keep UI in sync when lobby toggles preference (storage fires across frames).
+  try{
+    window.addEventListener('storage', (ev)=>{
+      if (ev && ev.key === AUDIO_KEY){
+        _renderRoomMuteBtn();
+        _syncRoomAudio();
+      }
+    });
+  }catch(_){ }
+
+  // Also accept a direct message (useful if some browsers don't fire storage across iframes).
+  window.addEventListener('message', (e)=>{
+    const d = e?.data || {};
+    if (!d || typeof d !== 'object') return;
+    if (d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+      try{ window.AudioManager && window.AudioManager.setEnabled(AUDIO_KEY, d.enabled); }catch(_){ }
+      _renderRoomMuteBtn();
+      _syncRoomAudio();
+    }
+  });
 
   async function toggleBrowserFullscreenLocal(){
     try{
@@ -2489,6 +2543,28 @@ try{
         document.addEventListener('fullscreenchange', syncFsBtn);
         window.addEventListener('storage', (e)=>{ if (e && e.key === 'fullscreen_intent') syncFsBtn(); });
         syncFsBtn();
+      }
+
+      // Mute toggle (shared with lobby). When embedded, also notify parent so
+      // the lobby's button UI updates immediately.
+      if (els.muteBtn && !els.muteBtn._wired && window.AudioManager){
+        els.muteBtn._wired = true;
+
+        els.muteBtn.addEventListener('click', async ()=>{
+          try{ window.SFX && window.SFX.click && window.SFX.click(); }catch(_){ }
+          const enabled = window.AudioManager.isEnabled(AUDIO_KEY);
+          const next = !enabled;
+          try{ window.AudioManager.setEnabled(AUDIO_KEY, next); }catch(_){ }
+          _syncRoomAudio();
+          _renderRoomMuteBtn();
+          if (isEmbedded){
+            try{ window.parent.postMessage({ type:'audio_pref', enabled: next }, '*'); }catch(_){ }
+          }
+        });
+
+        // Initial state
+        _syncRoomAudio();
+        _renderRoomMuteBtn();
       }
 
       // Ensure WS closes even on tab close / navigation (auto-delete empty rooms)

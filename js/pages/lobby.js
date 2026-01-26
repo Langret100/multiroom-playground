@@ -266,6 +266,11 @@ function statusDot(room){
     if (d.type === 'fs_request') { try{ document.documentElement.requestFullscreen?.(); }catch(_){ } }
     if (d.type === 'fs_exit') { try{ document.exitFullscreen?.(); }catch(_){ } }
     if (d.type === 'auth_logout') { try{ location.reload(); }catch(_){ } }
+    if (d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+      try{ window.AudioManager && window.AudioManager.setEnabled('audio_enabled', d.enabled); }catch(_){ }
+      try{ window.__bgmLobbyHandle && window.__bgmLobbyHandle.sync && window.__bgmLobbyHandle.sync(); }catch(_){ }
+      try{ window.__renderLobbyMuteBtn && window.__renderLobbyMuteBtn(); }catch(_){ }
+    }
   });
 
   function renderRooms(list){
@@ -539,18 +544,35 @@ function statusDot(room){
     btn.setAttribute('aria-label', t);
   }
 
+  // Expose so embedded room/game can force a UI refresh.
+  try{ window.__renderLobbyMuteBtn = renderMuteBtn; }catch(_){ }
+
   if (btn){
     btn.addEventListener('click', async ()=>{
       try{ window.SFX && window.SFX.click && window.SFX.click(); }catch(_){}
       const enabled = window.AudioManager.isEnabled(storageKey);
+      const nextEnabled = !enabled;
       if (enabled) handle.disable();
       else await handle.enable();
       renderMuteBtn();
+
+      // If a room is open in the fullscreen overlay, sync its mute button too.
+      try{
+        const fr = document.getElementById('embedRoomFrame');
+        if (fr && fr.contentWindow) fr.contentWindow.postMessage({ type:'audio_pref', enabled: nextEnabled }, '*');
+      }catch(_){ }
     });
   }
 
   // Apply preference right away (so lobby doesn't play if already muted)
   try{ if (!window.AudioManager.isEnabled(storageKey)) handle.disable(); }catch(_){}
+
+ // Keep the button UI in sync when the preference is toggled from an embedded room.
+  try{
+    window.addEventListener('storage', (ev)=>{
+      if (ev && ev.key === storageKey) renderMuteBtn();
+    });
+  }catch(_){}
 
   renderMuteBtn();
 })();
