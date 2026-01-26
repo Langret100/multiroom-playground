@@ -469,19 +469,31 @@
   if (isMobile) touchUI.style.display = 'block';
 
   // ---------- Fullscreen / orientation ----------
-  async function requestFullscreenAndLandscape() {
+  // IMPORTANT:
+  // - In the multiroom embed flow, the *top-level* document (lobby) owns fullscreen.
+  //   The game runs in an iframe, so `document.fullscreenElement` is usually null here.
+  //   To make the button behave naturally (toggle on/off), we delegate to the parent.
+  async function toggleFullscreenAndLandscape() {
     try {
-      if (!document.fullscreenElement) {
-        await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
+      if (EMBED) {
+        // Ask parent to toggle fullscreen (it can enter/exit reliably)
+        bridgeSend('fs_toggle');
+      } else {
+        if (!document.fullscreenElement) {
+          await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
+        } else {
+          await document.exitFullscreen?.();
+        }
       }
     } catch (_) {}
+    // Orientation lock best-effort (may fail on iOS Safari or without fullscreen)
     try {
       await screen.orientation?.lock?.('landscape');
     } catch (_) {
       // iOS Safari 등은 lock이 막혀있을 수 있음
     }
   }
-  fullscreenBtn.addEventListener('click', () => requestFullscreenAndLandscape());
+  fullscreenBtn.addEventListener('click', () => toggleFullscreenAndLandscape());
 
   function stopHeartbeat() {
     try {

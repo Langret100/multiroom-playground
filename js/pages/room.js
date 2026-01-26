@@ -1733,9 +1733,36 @@ function sendCoopBridgeInit(){
     const hasMe = hasMePlayer || hasMeOrder;
 
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
+
+    // In SuhakTokki, the embedded game elects host from the boolean `init.isHost`.
+    // If we send an init before the server-host flag arrives, multiple clients can
+    // temporarily believe they are host (=> 2 hosts, missing avatars, desync).
+    // So for multi-human rooms we *wait* until we can observe exactly one host in state.
+    const ordHumanCount = (()=>{
+      try{
+        const CPU_SID = "__cpu__";
+        const ord = room?.state?.order;
+        if (!ord) return 0;
+        let cnt = 0;
+        if (typeof ord.forEach === 'function'){
+          ord.forEach((_, sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
+        } else {
+          Object.keys(ord).forEach((sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
+        }
+        return cnt;
+      }catch(_){ return 0; }
+    })();
+    const hostFlagKnown = (()=>{
+      try{
+        let n = 0;
+        forEachPlayer((pp)=>{ if (pp?.isHost) n++; });
+        return n === 1;
+      }catch(_){ return false; }
+    })();
     // For most games, we require `players` to include me.
     // For SuhakTokki, accept either `order` or `players`.
-    if (!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer))){
+    // Additionally, for SuhakTokki with 2+ humans, wait for the unique host flag.
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer))) || (isSuhak && ordHumanCount >= 2 && !hostFlagKnown)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -1861,7 +1888,14 @@ function sendCoopBridgeInit(){
     }
   })();
 
-  const effectiveIsHost = isHostFromState || (String(mySessionId) === String(hostSid));
+  // IMPORTANT: Do not "guess" host in multi-human coop. The embedded game uses this
+  // flag for authoritative state; guessing causes split-host bugs.
+  const hostFromStateKnown = (()=>{
+    try{ let hs = null; forEachPlayer((pp, sid)=>{ if (pp?.isHost) hs = sid; }); return !!hs; }catch(_){ return false; }
+  })();
+  const effectiveIsHost = hostFromStateKnown
+    ? (String(mySessionId) === String(hostSid))
+    : (solo ? true : false);
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
