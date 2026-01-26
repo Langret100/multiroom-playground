@@ -721,7 +721,9 @@ tbody td{ padding: 10px 8px; }
   }
   .title b{ font-size: 1.05rem; }
   .title .muted{ font-size: 0.82rem; }
-  .actions{ gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .actions{ gap: 6px; flex-wrap: nowrap; justify-content: flex-end; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .actions::-webkit-scrollbar{ display:none; }
+  .iconbtn{ width:30px; height:30px; border-radius:10px; font-size:14px; }
   .btn{
   border:1px solid rgba(0,0,0,.12);
   background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));

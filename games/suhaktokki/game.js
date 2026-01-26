@@ -75,553 +75,11 @@
     try{
       // User request: never block the game with a full-screen loading overlay.
       // Even if assets/join are slow, keep rendering on the canvas and/or show lobby UI.
-      if (EMBED) { bootHide(); return; }
-      if (!bootLoading) return;
-      bootLoading.classList.remove('hidden');
-      if (bootLoadingText && msg != null) bootLoadingText.textContent = String(msg);
-    }catch(_){ }
-  }
-  function bootHide(){
-    try{ if (bootLoading) bootLoading.classList.add('hidden'); }catch(_){ }
-  }
-
-  // Default behavior: always hide the HTML boot overlay.
-  // (We still show loading/title art on the canvas when needed.)
-  try{ bootHide(); }catch(_){ }
-  const nickEl = document.getElementById('nick');
-  const roomEl = document.getElementById('room');
-  const joinBtn = document.getElementById('joinBtn');
-  const addBotBtn = document.getElementById('addBotBtn');
-  const startBtn = document.getElementById('startBtn');
-
-  const hud = document.getElementById('hud');
-  const timeText = document.getElementById('timeText');
-  const progFill = document.getElementById('progFill');
-  const progText = document.getElementById('progText');
-  const rolePill = document.getElementById('rolePill');
-  const roleText = document.getElementById('roleText');
-  const fullscreenBtn = document.getElementById('fullscreenBtn');
-  const exitBtn = document.getElementById('exitBtn');
-
-  const rulesBtn = document.getElementById('rulesBtn');
-  const mapBtn = document.getElementById('mapBtn');
-
-  const rulesModal = document.getElementById('rulesModal');
-  const closeRules = document.getElementById('closeRules');
-  const mapModal = document.getElementById('mapModal');
-  const closeMap = document.getElementById('closeMap');
-  const mapUiCanvas = document.getElementById('mapUiCanvas');
-  const mapUiCtx = mapUiCanvas ? mapUiCanvas.getContext('2d') : null;
-  setCrisp(mapUiCanvas, mapUiCtx);
-
-  const lobbyStatus = document.getElementById('lobbyStatus');
-  const roster = document.getElementById('roster');
-  const rosterMeta = document.getElementById('rosterMeta');
-  const rosterList = document.getElementById('rosterList');
-
-  // room name pill (created dynamically to keep HTML small)
-  const rightHud = document.getElementById('rightHud');
-  const roomPill = document.createElement('div');
-  roomPill.className = 'pill';
-  roomPill.id = 'roomPill';
-  roomPill.style.display = 'none';
-  roomPill.style.opacity = '0.92';
-  roomPill.style.pointerEvents = 'none';
-  const roomText = document.createElement('span');
-  roomText.id = 'roomText';
-  roomPill.appendChild(roomText);
-  if (rightHud) rightHud.insertBefore(roomPill, rightHud.firstChild);
-
-  const touchUI = document.getElementById('touchUI');
-  const joy = document.getElementById('joy');
-  const joyKnob = document.getElementById('joyKnob');
-  const interactBtn = document.getElementById('interactBtn');
-  const killBtn = document.getElementById('killBtn');
-  // PC에서 선생토끼가 가까이 있는 학생을 0점(검은당근) 처리할 수 있는 버튼
-  let killBtnPc = document.getElementById('killBtnPc');
-  try{
-    if (!killBtnPc && rightHud){
-      killBtnPc = document.createElement('button');
-      killBtnPc.className = 'ui mini danger';
-      killBtnPc.id = 'killBtnPc';
-      killBtnPc.textContent = '0점(X)';
-      killBtnPc.style.display = 'none';
-      const fsb = document.getElementById('fullscreenBtn');
-      rightHud.insertBefore(killBtnPc, fsb || null);
-    }
-  }catch(_){ }
-  const saboBtn = document.getElementById('saboBtn');
-  const forceBtn = document.getElementById('forceBtn');
-  const saboBtnTouch = document.getElementById('saboBtnTouch');
-  const forceBtnTouch = document.getElementById('forceBtnTouch');
-
-  const missionModal = document.getElementById('missionModal');
-  const missionTitle = document.getElementById('missionTitle');
-  const missionDesc = document.getElementById('missionDesc');
-  const qArea = document.getElementById('qArea');
-  const closeMission = document.getElementById('closeMission');
-
-  const meetingModal = document.getElementById('meetingModal');
-  const meetingInfo = document.getElementById('meetingInfo');
-  const meetingRoster = document.getElementById('meetingRoster');
-  const meetingChatLog = document.getElementById('meetingChatLog');
-  const meetingChatText = document.getElementById('meetingChatText');
-  const meetingChatSend = document.getElementById('meetingChatSend');
-  const voteList = document.getElementById('voteList');
-  const skipVote = document.getElementById('skipVote');
-
-  const sceneModal = document.getElementById('sceneModal');
-  const sceneTitle = document.getElementById('sceneTitle');
-  const sceneText = document.getElementById('sceneText');
-  const sceneOk = document.getElementById('sceneOk');
-  const sceneCanvas = document.getElementById('sceneCanvas');
-  const sceneCtx = sceneCanvas.getContext('2d');
-  setCrisp(sceneCanvas, sceneCtx);
-
-  // ---------- Role reveal (Among Us style) ----------
-  // Build overlay dynamically so it works in both standalone and embedded modes.
-  const roleReveal = document.createElement('div');
-  roleReveal.id = 'roleReveal';
-  roleReveal.style.position = 'fixed';
-  roleReveal.style.inset = '0';
-  roleReveal.style.zIndex = '80';
-  roleReveal.style.display = 'none';
-  roleReveal.style.alignItems = 'center';
-  roleReveal.style.justifyContent = 'center';
-  roleReveal.style.background = 'rgba(0,0,0,.78)';
-  roleReveal.style.padding = '18px';
-  roleReveal.style.backdropFilter = 'blur(2px)';
-  roleReveal.style.pointerEvents = 'auto';
-
-  const rrCard = document.createElement('div');
-  rrCard.style.width = 'min(560px, 92vw)';
-  rrCard.style.borderRadius = '22px';
-  rrCard.style.border = '2px solid rgba(255,255,255,.12)';
-  rrCard.style.boxShadow = '0 40px 120px rgba(0,0,0,.65)';
-  rrCard.style.padding = '18px 18px 16px';
-  rrCard.style.textAlign = 'center';
-  rrCard.style.color = 'rgba(244,247,255,.98)';
-  rrCard.style.transform = 'scale(.96)';
-  rrCard.style.transition = 'transform .18s ease, opacity .18s ease';
-  rrCard.style.opacity = '0';
-
-  const rrLine = document.createElement('div');
-  rrLine.style.fontWeight = '1000';
-  rrLine.style.letterSpacing = '-.3px';
-  rrLine.style.fontSize = '14px';
-  rrLine.style.opacity = '.92';
-  rrLine.textContent = '역할';
-
-  const rrBig = document.createElement('div');
-  rrBig.style.marginTop = '8px';
-  rrBig.style.fontWeight = '1100';
-  rrBig.style.letterSpacing = '-.8px';
-  rrBig.style.fontSize = '44px';
-  rrBig.style.lineHeight = '1.05';
-  rrBig.textContent = '...';
-
-  const rrPortraitWrap = document.createElement('div');
-  rrPortraitWrap.style.marginTop = '10px';
-  rrPortraitWrap.style.display = 'flex';
-  rrPortraitWrap.style.justifyContent = 'center';
-  rrPortraitWrap.style.alignItems = 'center';
-
-  const rrPortrait = document.createElement('canvas');
-  rrPortrait.width = 220;
-  rrPortrait.height = 220;
-  rrPortrait.style.width = '220px';
-  rrPortrait.style.height = '220px';
-  rrPortrait.style.imageRendering = 'pixelated';
-  rrPortrait.style.borderRadius = '18px';
-  rrPortrait.style.border = '1px solid rgba(255,255,255,.10)';
-  rrPortrait.style.background = 'rgba(0,0,0,.18)';
-  rrPortrait.style.boxShadow = 'inset 0 0 0 1px rgba(0,0,0,.25)';
-  const rrPctx = rrPortrait.getContext('2d');
-  setCrisp(rrPortrait, rrPctx);
-
-  rrPortraitWrap.appendChild(rrPortrait);
-
-  const rrSub = document.createElement('div');
-  rrSub.style.marginTop = '10px';
-  rrSub.style.fontWeight = '850';
-  rrSub.style.fontSize = '14px';
-  rrSub.style.color = 'rgba(244,247,255,.82)';
-  rrSub.style.lineHeight = '1.35';
-  rrSub.style.whiteSpace = 'pre-line';
-
-  const rrHint = document.createElement('div');
-  rrHint.style.marginTop = '12px';
-  rrHint.style.fontWeight = '900';
-  rrHint.style.fontSize = '12px';
-  rrHint.style.color = 'rgba(244,247,255,.62)';
-  rrHint.textContent = '탭/클릭하면 닫혀요';
-
-  rrCard.appendChild(rrLine);
-  rrCard.appendChild(rrBig);
-  rrCard.appendChild(rrPortraitWrap);
-  rrCard.appendChild(rrSub);
-  rrCard.appendChild(rrHint);
-  roleReveal.appendChild(rrCard);
-  document.body.appendChild(roleReveal);
-
-  function drawGlassesOn(_ctx, x, y, intensity = 0.65, tNow = now()) {
-    const t = tNow * 0.01;
-    const shine = (Math.sin(t) * 0.5 + 0.5) * (0.14 + 0.22 * intensity);
-    _ctx.save();
-    _ctx.translate(x, y);
-    _ctx.strokeStyle = `rgba(255,255,255,${0.55 + 0.40 * intensity})`;
-    _ctx.shadowColor = `rgba(255,255,255,${0.18 * intensity})`;
-    _ctx.shadowBlur = 4 * intensity;
-    _ctx.lineWidth = 2;
-    _ctx.beginPath();
-    _ctx.arc(-10, 0, 7.4, 0, Math.PI*2);
-    _ctx.arc(10, 0, 7.4, 0, Math.PI*2);
-    _ctx.moveTo(-2, 0);
-    _ctx.lineTo(2, 0);
-    _ctx.stroke();
-    _ctx.fillStyle = `rgba(255,255,255,${0.06 + shine})`;
-    _ctx.beginPath();
-    _ctx.ellipse(-13, -3, 3.4, 1.8, -0.4, 0, Math.PI*2);
-    _ctx.fill();
-    _ctx.beginPath();
-    _ctx.ellipse(7, -4, 3.8, 2.0, -0.4, 0, Math.PI*2);
-    _ctx.fill();
-    _ctx.restore();
-  }
-
-  function renderRolePortrait(role, practice) {
-    // Draw the local player's sprite as a portrait inside the role reveal card.
-    // Teacher shows glasses (local-only), crew shows normal.
-    const tNow = now();
-    rrPctx.save();
-    rrPctx.clearRect(0, 0, rrPortrait.width, rrPortrait.height);
-
-    // soft vignette
-    const g = rrPctx.createRadialGradient(110, 78, 30, 110, 120, 160);
-    g.addColorStop(0, 'rgba(255,255,255,.10)');
-    g.addColorStop(1, 'rgba(0,0,0,.30)');
-    rrPctx.fillStyle = g;
-    rrPctx.fillRect(0, 0, rrPortrait.width, rrPortrait.height);
-
-    // Choose a stable frame: front view, idle.
-    const me = G.state?.players?.[G.net?.myPlayerId];
-    const color = (me && typeof me.color === 'number') ? me.color : 0;
-
-    if (AS.charsImg) {
-      rrPctx.imageSmoothingEnabled = false;
-      const MOTION_ROWS = 5;
-      const DIR_ROWS = 3;
-      const motionWalk = 0;
-      const dirFront = 0;
-      const row = ((color % COLOR_ROWS) * (MOTION_ROWS * DIR_ROWS)) + (motionWalk * DIR_ROWS) + dirFront;
-      const sx = 0;
-      const sy = row * SPR_H;
-
-      // draw big (pixelated)
-      const scale = 2.6;
-      const dw = SPR_W * scale;
-      const dh = SPR_H * scale;
-      const dx = (rrPortrait.width - dw) / 2;
-      const dy = 18;
-      rrPctx.drawImage(AS.charsImg, sx, sy, SPR_W, SPR_H, dx, dy, dw, dh);
-
-      // teacher glasses overlay (face position on portrait)
-      if (!practice && role === 'teacher') {
-        // glasses are local-only by nature (this overlay is local UI)
-        const gx = rrPortrait.width / 2;
-        // Glasses should sit lower on the face (mobile request)
-        const gy = dy + dh * 0.46;
-        drawGlassesOn(rrPctx, gx, gy, 0.9, tNow);
-      }
-    } else {
-      // Fallback portrait
-      rrPctx.fillStyle = 'rgba(255,255,255,.9)';
-      rrPctx.font = '900 16px system-ui';
-      rrPctx.textAlign = 'center';
-      rrPctx.fillText('로딩중...', 110, 112);
-    }
-
-    // role badge bottom
-    rrPctx.fillStyle = 'rgba(0,0,0,.35)';
-    rrPctx.fillRect(18, 176, 184, 28);
-    rrPctx.fillStyle = 'rgba(255,255,255,.92)';
-    rrPctx.font = '900 13px system-ui';
-    rrPctx.textAlign = 'center';
-    const label = practice ? '연습 모드' : (role === 'teacher' ? '선생토끼' : '학생토끼');
-    rrPctx.fillText(label, 110, 195);
-
-    rrPctx.restore();
-  }
-
-  function showRoleReveal(role, practice) {
-    try { closeMissionUI(); } catch (_) {}
-    try { closeMeetingUI(); } catch (_) {}
-    // role: 'teacher' | 'crew'
-    const isPractice = !!practice;
-    let title = '';
-    let sub = '';
-    let bg = '';
-    let border = 'rgba(255,255,255,.12)';
-
-    if (isPractice) {
-      title = '연습 모드';
-      sub = '1~3명일 때는 연습 모드야!\n(선생토끼 없음)';
-      bg = 'radial-gradient(900px 420px at 50% 0%, rgba(125,211,252,.35), rgba(18,26,46,.92))';
-      border = 'rgba(125,211,252,.45)';
-    } else if (role === 'teacher') {
-      title = '선생토끼';
-      sub = '들키지 말고 검은당근으로 빵점을 줘!\n(불 끄기/물막기/강제미션 가능)';
-      bg = 'radial-gradient(900px 420px at 50% 0%, rgba(255,90,122,.45), rgba(18,26,46,.92))';
-      border = 'rgba(255,90,122,.55)';
-    } else {
-      title = '학생토끼';
-      sub = '미션을 풀어 시간을 늘리자!\n(불 켜기 가능)';
-      bg = 'radial-gradient(900px 420px at 50% 0%, rgba(102,224,163,.38), rgba(18,26,46,.92))';
-      border = 'rgba(102,224,163,.45)';
-    }
-
-    rrBig.textContent = title;
-    rrSub.textContent = sub;
-    rrCard.style.background = bg;
-    rrCard.style.borderColor = border;
-
-    // portrait
-    try { renderRolePortrait(role, isPractice); } catch (_) {}
-
-    roleReveal.style.display = 'flex';
-    // animate in
-    requestAnimationFrame(() => {
-      rrCard.style.opacity = '1';
-      rrCard.style.transform = 'scale(1)';
-    });
-
-    // auto hide
-    const until = now() + 1800;
-    G.ui.roleRevealUntil = until;
-  }
-
-  function hideRoleReveal() {
-    if (roleReveal.style.display === 'none') return;
-    rrCard.style.opacity = '0';
-    rrCard.style.transform = 'scale(.96)';
-    setTimeout(() => { roleReveal.style.display = 'none'; }, 180);
-    G.ui.roleRevealUntil = 0;
-  }
-
-  roleReveal.addEventListener('pointerdown', () => hideRoleReveal());
-
-  // ---------- Helpers ----------
-  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-  const dist2 = (ax, ay, bx, by) => {
-    const dx = ax - bx, dy = ay - by;
-    return dx * dx + dy * dy;
-  };
-  const now = () => performance.now();
-  const randId = () => Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2);
-  const strHash = (s) => {
-    s = String(s || '');
-    let h = 0;
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-    return h;
-  };
-
-  function fmtTime(sec) {
-    sec = Math.max(0, Math.floor(sec));
-    const m = Math.floor(sec / 60);
-    const s = sec % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
-
-  // ---------- Pixel-sprite tinting (for special pose sheets) ----------
-  // We keep this very lightweight: create a tinted offscreen canvas per (sheetKey,colorIdx).
-  // This is used for one-off pose sheets like "teacher_kill0" and "student_cry" so
-  // the outfit color matches the player's color selection.
-  function getTintedSheet(sheetKey, colorIdx) {
-    const img = AS.pixel?.[sheetKey];
-    if (!img) return null;
-    if (!AS._tintCache) AS._tintCache = {};
-    const k = sheetKey + ':' + String(colorIdx|0);
-    if (AS._tintCache[k]) return AS._tintCache[k];
-
-    const c = document.createElement('canvas');
-    c.width = img.width; c.height = img.height;
-    const g = c.getContext('2d');
-    g.imageSmoothingEnabled = false;
-    // base
-    g.clearRect(0,0,c.width,c.height);
-    g.drawImage(img,0,0);
-    // tint (multiply keeps shading). We intentionally keep alpha < 1 so skin/hair aren't fully recolored.
-    g.globalCompositeOperation = 'multiply';
-    g.globalAlpha = 0.78;
-    g.fillStyle = colorHex(colorIdx);
-    g.fillRect(0,0,c.width,c.height);
-    g.globalCompositeOperation = 'destination-in';
-    g.globalAlpha = 1;
-    g.drawImage(img,0,0);
-    g.globalCompositeOperation = 'source-over';
-    AS._tintCache[k] = c;
-    return c;
-  }
-
-  // "모바일" 판정이 너무 보수적이면 조이스틱 UI가 안 뜨는 경우가 있어
-  // coarse pointer + touchpoints 를 함께 고려
-  const isMobile = matchMedia('(pointer:coarse)').matches || ('ontouchstart' in window) || ((navigator && navigator.maxTouchPoints) ? navigator.maxTouchPoints > 0 : false);
-  if (isMobile) touchUI.style.display = 'block';
-
-  // ---------- Fullscreen / orientation ----------
-  // IMPORTANT:
-  // - In the multiroom embed flow, the *top-level* document (lobby) owns fullscreen.
-  //   The game runs in an iframe, so `document.fullscreenElement` is usually null here.
-  //   To make the button behave naturally (toggle on/off), we delegate to the parent.
-  async function toggleFullscreenAndLandscape() {
-    try {
-      if (EMBED) {
-        // Ask parent to toggle fullscreen (it can enter/exit reliably)
-        bridgeSend('fs_toggle');
-      } else {
-        if (!document.fullscreenElement) {
-          await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
-        } else {
-          await document.exitFullscreen?.();
-        }
-      }
-    } catch (_) {}
-    // Orientation lock best-effort (may fail on iOS Safari or without fullscreen)
-    try {
-      await screen.orientation?.lock?.('landscape');
-    } catch (_) {
-      // iOS Safari 등은 lock이 막혀있을 수 있음
-    }
-  }
-  fullscreenBtn.addEventListener('click', () => toggleFullscreenAndLandscape());
-
-  function stopHeartbeat() {
-    try {
-      if (G.net && G.net._hb) {
-        clearInterval(G.net._hb);
-        G.net._hb = null;
-      }
-    } catch (_) {}
-  }
-
-  async function leaveRoom(reason) {
-    if (EMBED){
-      // In multiroom iframe: return to room UI (parent page controls room phase)
-      try{ bridgeSend("sk_quit", { reason: reason || '' }); }catch(_){ }
-      try{ stopHeartbeat(); }catch(_){ }
-      try{ G.net?.close?.(); }catch(_){ }
-      G.net = null;
-      return;
-    }
-    try { if (document.fullscreenElement) await document.exitFullscreen?.(); } catch (_) {}
-    try { await screen.orientation?.unlock?.(); } catch (_) {}
-    try { closeMissionUI(); } catch (_) {}
-    try { closeMeetingUI(); } catch (_) {}
-    try { sceneModal.classList.remove('show'); } catch (_) {}
-    try { stopSceneAnim(); } catch (_) {}
-
-    stopHeartbeat();
-    try { G.net?.close?.(); } catch (_) {}
-    G.net = null;
-
-    G.phase = 'lobby';
-    G.host.started = false;
-    G.host.inputs?.clear?.();
-    G.host.votes?.clear?.();
-    hostInitFromMap();
-
-    hud.style.display = 'none';
-    lobby.classList.remove('hidden');
-    startBtn.disabled = true;
-  }
-
-  function hostExitAll() {
-    // Host-confirmed exit: end the match for everyone and go back to the room after 1.5s.
-    try { showCenterNotice('호스트 이탈로 게임이 종료되었습니다.', 1500); } catch (_) {}
-    try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'host_exit', at: now() }); } catch (_) {}
-    setTimeout(() => { try { leaveRoom('host_exit'); } catch (_) {} }, 1500);
-  }
-
-  // When the match ends (winner decided), automatically return everyone back to the room.
-  // This keeps the multiroom UX consistent with Together-style games.
-  function scheduleMatchEndReturn() {
-    if (!EMBED) return;
-    if (!G.ui) G.ui = {};
-    if (G.ui._matchEndReturnScheduled) return;
-    G.ui._matchEndReturnScheduled = true;
-    try { showCenterNotice('게임이 종료되었습니다. 잠시 후 방으로 돌아갑니다.', 1600); } catch (_) {}
-    // Tell all clients to quit (they handle hostExit by calling leaveRoom).
-    try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'match_end', at: now() }); } catch (_) {}
-    setTimeout(() => { try { leaveRoom('match_end'); } catch (_) {} }, 1700);
-  }
-
-  function tryHostLeave() {
-    const t = now();
-    if (!G.ui) G.ui = {};
-    const armedAt = G.ui._hostLeaveArmedAt || 0;
-    const within = (armedAt && (t - armedAt) < 4500);
-    if (!within) {
-      G.ui._hostLeaveArmedAt = t;
-      try { showCenterNotice('당신이 호스트입니다. 게임이 종료될 때 까지 나가면 안됩니다', 2500); } catch (_) {}
-      return;
-    }
-    // second press
-    hostExitAll();
-  }
-
-  exitBtn.addEventListener('click', () => {
-    // If host tries to leave mid-game, require a second press and end the match for everyone.
-    try {
-      if (G.net && G.net.isHost && G.phase !== 'lobby') { tryHostLeave(); return; }
-    } catch (_) {}
-    leaveRoom();
-  });
-
-  // ---------- Lobby/Phase UI helpers ----------
-  function setLobbyStatus(text, kind) {
-    if (!lobbyStatus) return;
-    if (!text) { lobbyStatus.textContent = ''; return; }
-    lobbyStatus.textContent = text;
-    if (kind === 'danger') lobbyStatus.style.color = 'rgba(255,90,122,.92)';
-    else lobbyStatus.style.color = 'rgba(244,247,255,.82)';
-  }
-
-  function updateRosterUI() {
-    if (!roster || !rosterList || !rosterMeta) return;
-    if (!G.net) {
-      roster.style.display = 'none';
-      rosterList.innerHTML = '';
-      rosterMeta.textContent = '0/8';
-      return;
-    }
-    roster.style.display = 'block';
-    const players = Object.values(G.state.players || {});
-    rosterMeta.textContent = `${players.length}/8` + (G.net.isHost ? ' · 호스트' : '');
-    rosterList.innerHTML = '';
-    for (const p of players) {
-      const chip = document.createElement('span');
-      chip.className = 'chip';
-      const bot = p.isBot ? '🤖' : '🐰';
-      const alive = (p.alive && !p.down) ? '' : ' (다운)';
-      chip.textContent = `${bot} ${p.nick}${alive}`;
-      rosterList.appendChild(chip);
-    }
-  }
-
-  function applyPhaseUI() {
-    const inGame = !!(G.net && G.phase !== 'lobby');
-    // lobby vs game
     if (EMBED) {
-      // Embedded: keep the in-iframe lobby visible until the match actually starts,
-      // so the host can always press Start if auto-start fails for any reason.
-      const started = !!(G.state && G.state.started) || !!(G.host && G.host.started);
-      if (started || inGame) {
-        lobby?.classList.add('hidden');
-        if (hud) hud.style.display = 'flex';
-      } else {
-        lobby?.classList.remove('hidden');
-        if (hud) hud.style.display = 'none';
-      }
+      // Embedded: the parent room owns the lobby/start UI.
+      // Never show the in-iframe lobby.
+      lobby?.classList.add('hidden');
+      if (hud) hud.style.display = inGame ? 'flex' : 'none';
     } else {
       if (inGame) {
         lobby?.classList.add('hidden');
@@ -2620,26 +2078,16 @@
     }
     const aliveIds = Object.values(st.players).filter(p => p.alive).map(p => p.id);
     if (aliveIds.length < 2) return;
-    const idx = Math.floor(Math.random() * aliveIds.length);
+    const rr = (G.host && typeof G.host._rng === 'function') ? G.host._rng() : Math.random();
+    const idx = Math.floor(rr * aliveIds.length);
     const tid = aliveIds[idx];
     st.teacherId = tid;
     for (const p of Object.values(st.players)) p.role = (p.id === tid) ? 'teacher' : 'crew';
   }
 
-  function hostStartGame(practice = false) {
+  function hostStartGame(practice = false, startPayload = null) {
     const st = G.state;
     hostInitFromMap();
-
-    // In embed mode, decide practice based on the room's expected human count (from parent),
-    // not only on the instantaneous join count (which can be temporarily low due to relay timing).
-    try{
-      if (window.__EMBED_MODE__) {
-        const desired = (typeof window.__EMBED_PRACTICE__ === 'boolean') ? !!window.__EMBED_PRACTICE__ : !!practice;
-        const nHum = Object.values(st.players || {}).filter(p=>p && !p.isBot).length;
-        // Only start practice if the room is *actually* a practice room (<4 expected AND <4 currently).
-        practice = !!(desired && nHum < 4);
-      }
-    }catch(_){ }
 
     // Ensure the initial lighting state is fully bright (all lamps on) at game start.
     // This prevents an occasional "slightly dark" look reported on some devices.
@@ -2648,6 +2096,24 @@
         if (st.lamps[lid]) st.lamps[lid].on = true;
       }
     }catch(_){ }
+    // Apply authoritative start payload (seed/practice)
+    try{
+      if (startPayload && typeof startPayload.seed === 'number') {
+        G.host.seed = startPayload.seed | 0;
+        // Simple deterministic RNG for host-only decisions (teacher pick etc.)
+        G.host._rng = (function(seed){
+          let a = (seed >>> 0) || 1;
+          return function(){
+            a |= 0; a = (a + 0x6D2B79F5) | 0;
+            let t = Math.imul(a ^ (a >>> 15), 1 | a);
+            t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+            return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+          };
+        })(G.host.seed);
+      }
+    }catch(_){ }
+
+
 
     // Mark as started for both host-only logic and the replicated state (clients).
     G.host.started = true;
@@ -9058,16 +8524,6 @@ try{
     net.on('discover', (m) => {
       if (net.isHost) net.post({ t: 'host', hostId: net.hostId, at: Date.now() });
     });
-
-    // Embed fallback: if clients are stuck in lobby (host didn't auto-start),
-    // allow any client to request the host to start.
-    net.on('embedStart', (_m) => {
-      try{
-        if (!net.isHost) return;
-        if (G.host.started) return;
-        _embedHostStartNow().catch(()=>{});
-      }catch(_){ }
-    });
     // Snapshot resync (clients -> host): used in embed mode when the first roster/state broadcasts
     // can be missed during iframe boot. Host responds by broadcasting fresh snapshots.
     net.on('syncReq', (m) => {
@@ -10096,6 +9552,7 @@ net.on('uiMeetingOpen', (m) => {
   });
 
   startBtn.addEventListener('click', async () => {
+    if (EMBED) { try{ showToast('방에서 게임을 시작해줘'); }catch(_){ } return; }
     if (!G.assetsReady) { showToast('에셋 로딩이 필요해요'); return; }
     if (!G.net) {
       try { await joinRoom(); } catch (_) { return; }
@@ -10109,56 +9566,6 @@ net.on('uiMeetingOpen', (m) => {
     broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
     applyPhaseUI();
   });
-
-
-  // Programmatic start used by embedded mode (avoids relying on a DOM click on a disabled button).
-  async function _embedHostStartNow() {
-    if (!G.assetsReady) return;
-    if (!G.net) {
-      try { await joinRoom(); } catch (_) { return; }
-    }
-    if (!G.net?.isHost) return;
-    if (G.host.started) return;
-    G.phase = 'play';
-    const n = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
-    const practice = (n < 4);
-    hostStartGame(practice);
-    try{ broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
-    applyPhaseUI();
-  }
-
-  function _armEmbedHostAutostart(){
-    try{
-      if (!EMBED) return;
-      if (!window.__EMBED_IS_HOST__) return;
-      if (G.ui && G.ui._embedHostAutoTimer){ clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; }
-      const t0 = now();
-      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
-      // In embed rooms we must avoid deadlocks (no one can press the in-iframe start button).
-      // Start quickly even for small rooms; late joiners are supported.
-      const minReal = 1;
-      const target = (expected > 0) ? expected : minReal;
-      const MAX_WAIT = 1800;
-      const CHECK_MS = 120;
-      if (!G.ui) G.ui = {};
-      G.ui._embedWaitingStart = true;
-      G.ui._embedHostAutoTimer = setInterval(()=>{
-        try{
-          if (!G.net) return;
-          if (!G.net.isHost) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
-          if (G.host.started) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
-          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
-          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
-          if (ready || (now() - t0) > MAX_WAIT){
-            clearInterval(G.ui._embedHostAutoTimer);
-            G.ui._embedHostAutoTimer = null;
-            _embedHostStartNow().catch(()=>{});
-          }
-        }catch(_){ }
-      }, CHECK_MS);
-    }catch(_){ }
-  }
-
 
 
   // ---------- Embed bridge (multiroom) ----------
@@ -10182,31 +9589,12 @@ net.on('uiMeetingOpen', (m) => {
 
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
-    // Host is decided by the room (avoid multiple-host races when more players join).
-    
-// Host is ideally decided by the room, but some room states don't expose isHost reliably.
-// For SuhakTokki embed we elect host deterministically to avoid "no host => infinite loading":
-// - spectators are never host
-// Host selection in embed mode:
-// - Prefer the explicit boolean `init.isHost` from the parent room shell.
-// - Only fall back to `seat===0` when `init.isHost` is *missing* (undefined),
-//   because seat can temporarily be 0 for everyone before the room's order map arrives.
-const __seat = (init.seat != null) ? Number(init.seat)
-            : (init.order != null) ? Number(init.order)
-            : (init.slot != null) ? Number(init.slot)
-            : -1;
-const __role = String(init.role || '');
-const __hasHintHost = (typeof init.isHost === 'boolean');
-const __hintHost = __hasHintHost ? !!init.isHost : false;
-const __electedHost = (__role !== 'spectator') && (__hasHintHost ? __hintHost : (__seat === 0));
-window.__EMBED_SEAT__ = (Number.isFinite(__seat) ? __seat : -1);
-window.__EMBED_IS_HOST__ = !!__electedHost;
+    // Host is decided by the room only. No local guessing.
+    window.__EMBED_SEAT__ = (typeof init.seat === 'number') ? init.seat : ((typeof init.order === 'number') ? init.order : -1);
+    window.__EMBED_IS_HOST__ = !!init.isHost;
     // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
     window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
     window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
-    window.__EMBED_PRACTICE__ = (typeof init.practice === 'boolean')
-      ? !!init.practice
-      : ((window.__EMBED_EXPECTED_HUMANS__ > 0) ? (window.__EMBED_EXPECTED_HUMANS__ < 4) : false);
 
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(roomCode).slice(0,256); }catch(_){ }
@@ -10218,50 +9606,11 @@ window.__EMBED_IS_HOST__ = !!__electedHost;
 
     await joinRoom();
 
-    // Embedded UX: never show the internal lobby overlay. The parent already has it.
+    // Embedded UX: the parent owns the lobby UI.
     try{ G.ui.embedJoined = true; }catch(_){ }
-    // Let applyPhaseUI decide whether to show lobby/hud (we keep lobby visible until started in embed).
+    try{ lobby?.classList.add('hidden'); }catch(_){ }
     try{ applyPhaseUI(); }catch(_){ }
 
-    // If we are a non-host client and the room ends up with no host auto-start (rare relay/host flag issues),
-    // ask the host to start after a short grace period.
-    setTimeout(() => {
-      try{
-        if (!EMBED) return;
-        if (!G.net || G.net.isHost) return;
-        if (G.state && G.state.started) return;
-        if (G.phase !== 'lobby') return;
-        G.net.post({ t: 'embedStart' });
-      }catch(_){ }
-    }, 2200);
-
-    // Safety net: on some hosts/relays the "isHost" flag can be missing or delayed.
-    // If a solo player gets stuck forever at the title/loading screen waiting for the host,
-    // force-start a local practice session after a short delay.
-    setTimeout(() => {
-      try{
-        if (!EMBED) return;
-        if (!G.net || G.host.started) return;
-        // Only intervene when there is effectively a single human in the room.
-        const humans = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
-        if (humans > 1) return;
-        // If still not started, promote to host locally and begin practice.
-        try{ G.net.isHost = true; }catch(_){ }
-        try{ window.__EMBED_IS_HOST__ = true; }catch(_){ }
-        if (G.phase === 'lobby') G.phase = 'play';
-        try{ hostStartGame(true); }catch(_){ }
-        try{ broadcastState(true); }catch(_){ }
-        try{ broadcastRoster(true); }catch(_){ }
-      }catch(_){ }
-    }, 3500);
-
-    // host: auto-start (embedded).
-    // NOTE: never rely on button.click() because disabled buttons do not dispatch click events.
-    if (window.__EMBED_IS_HOST__){
-      _armEmbedHostAutostart();
-    } else {
-      try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
-    }
   }
 
   if (EMBED){
@@ -10292,16 +9641,54 @@ window.__EMBED_IS_HOST__ = !!__electedHost;
         try{ d = JSON.parse(d); }catch(_){ return; }
       }
       if (!d || typeof d !== 'object') return;
+
+      // Parent -> iframe: authoritative start (SuhakTokki starts ONLY from this message)
+      if (d.type === 'game_start' && d.payload){
+        const payload = d.payload;
+        try{ window.__SUHAK_STARTED_AT__ = window.__SUHAK_STARTED_AT__ || 0; }catch(_){ }
+        const sa = Number(payload.startedAt || payload.started_at || 0) || 0;
+        try{ if (sa && window.__SUHAK_STARTED_AT__ === sa) return; }catch(_){ }
+        try{ if (sa) window.__SUHAK_STARTED_AT__ = sa; }catch(_){ }
+
+        // If we aren't ready yet (assets/net), store and apply once ready.
+        try{ window.__PENDING_GAME_START__ = payload; }catch(_){ }
+        (async ()=>{
+          try{
+            // wait assets/net join
+            while(!G.assetsReady && !G.assetsError){ await new Promise(r=>setTimeout(r, 50)); }
+            if (!G.assetsReady || G.assetsError) return;
+            while(!G.net){ await new Promise(r=>setTimeout(r, 50)); }
+
+            // Apply once
+            const pp = window.__PENDING_GAME_START__;
+            if (!pp) return;
+            window.__PENDING_GAME_START__ = null;
+
+            // Enter play phase for everyone; host runs authoritative start.
+            G.phase = 'play';
+            try{ applyPhaseUI(); }catch(_){ }
+            try{ setLobbyStatus('', null); }catch(_){ }
+
+            if (G.net && G.net.isHost){
+              if (!G.host.started){
+                hostStartGame(!!pp.practice, pp);
+                try{ broadcast({ t: 'toast', text: pp.practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
+                try{ applyPhaseUI(); }catch(_){ }
+              }
+            } else {
+              // Non-host: mark started locally so UI doesn't wait for a lobby that no longer exists.
+              try{ G.state.started = true; G.state.practice = !!pp.practice; }catch(_){ }
+            }
+          }catch(_){ }
+        })();
+        return;
+      }
+
       // Parent -> iframe: host ownership update (avoids no-host deadlocks).
       if (d.type === 'bridge_host') {
         try{
           window.__EMBED_IS_HOST__ = !!d.isHost;
           if (G.net) G.net.isHost = !!d.isHost;
-          // If we just became host, arm auto-start and ensure lobby UI updates.
-          if (window.__EMBED_IS_HOST__){
-            try{ applyPhaseUI(); }catch(_){ }
-            try{ _armEmbedHostAutostart(); }catch(_){ }
-          }
         }catch(_){ }
         return;
       }
