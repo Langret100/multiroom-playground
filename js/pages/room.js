@@ -1831,13 +1831,32 @@ function sendCoopBridgeInit(){
     }catch(_){ return humanCount; }
   })();
   const solo = (expectedHumans <= 1);
-  const isHostFromState = (()=>{ 
-    try{ return !!getPlayer(mySessionId)?.isHost; }catch(_){ return false; }
+  // NOTE: SuhakTokki embed authority relies on a single, stable host.
+  // Some room-state variants do not expose `players[sid].isHost` reliably/early.
+  // In that case, we derive host deterministically from the authoritative seat map
+  // (`order`), where seat 0 is always the room host in our server logic.
+  const isHostFromState = (()=>{
+    try{
+      const pl = getPlayer(mySessionId);
+      const v = (pl && typeof pl.isHost === 'boolean') ? pl.isHost : null;
+      return v;
+    }catch(_){ return null; }
   })();
 
-  // Host must come from the authoritative room state.
-  // For SuhakTokki specifically, guessing/fallback creates split-host races.
-  const effectiveIsHost = !!isHostFromState;
+  const isSuhakTokki = (coop && coop.meta && coop.meta.id === 'suhaktokki');
+  let effectiveIsHost = false;
+  if (isSuhakTokki){
+    if (isHostFromState === true) {
+      effectiveIsHost = true;
+    } else if (Number.isFinite(seat) && seat === 0) {
+      // Authoritative fallback (NOT a guess): server assigns host as lowest seat.
+      effectiveIsHost = true;
+    } else {
+      effectiveIsHost = false;
+    }
+  } else {
+    effectiveIsHost = (isHostFromState === true);
+  }
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
