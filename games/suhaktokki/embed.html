@@ -7,40 +7,20 @@
   <link rel="icon" href="../../favicon.ico" />
   <link rel="preload" as="image" href="assets/mathrabbitloading.png" />
   <script>
-  // Embed-only entry: always run in embed mode.
-  // (This file is used by the parent "방" page iframe.)
-  (function(){
-    try{ document.documentElement.classList.add('embed'); }catch(_){ }
-  })();
-  </script>
-  <script>
-  // Buffer bridge_init/game_start in case they arrive before game.js attaches listeners.
+  // Decide embed-mode as early as possible (before first paint) so we can show the boot overlay
+  // immediately in the iframe, without flashing it in normal standalone mode.
   (function(){
     try{
-      window.__PENDING_BRIDGE_INIT__ = window.__PENDING_BRIDGE_INIT__ || null;
-      window.__PENDING_GAME_START__ = window.__PENDING_GAME_START__ || null;
-      window.addEventListener('message', function(ev){
-        var d = ev.data;
-        if (typeof d === 'string'){ try{ d = JSON.parse(d); }catch(e){ return; } }
-        if (!d || typeof d !== 'object') return;
-        if (d.type === 'bridge_init') window.__PENDING_BRIDGE_INIT__ = d;
-        if (d.type === 'game_start') window.__PENDING_GAME_START__ = d;
-      });
-      // tell parent we exist as early as possible
-      try{ window.parent && window.parent.postMessage({type:'bridge_ready'},'*'); }catch(e){}
-    }catch(e){}
+      const sp = new URLSearchParams(location.search);
+      if (sp.get('embed') === '1') document.documentElement.classList.add('embed');
+    }catch(_){ }
   })();
   </script>
   <style>
     :root{--bg:#0c1220;--panel:#121a2e;--line:rgba(255,255,255,.12);--txt:#f4f7ff;--muted:rgba(244,247,255,.72);--accent:#66e0a3;--danger:#ff5a7a;--actW:200px;--actH:88px;--actGap:16px;--actStep:calc(var(--actH) + var(--actGap))}
     *{box-sizing:border-box;touch-action:none;-webkit-user-select:none;user-select:none;}
     html,body{width:100%;height:100%;margin:0;overflow:hidden;background:radial-gradient(1200px 800px at 50% 10%,#1a2642,#0c1220);color:var(--txt);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;}
-    canvas{background:#0b0f1a;border-radius:0;box-shadow:none;image-rendering:pixelated;image-rendering:crisp-edges;}
-
-    /* Embed: parent page already owns the "lobby". Keep the iframe as pure gameplay.
-       Also remove the rounded/shadowed stage to avoid the "flash" users reported. */
-    html.embed canvas{border-radius:0 !important; box-shadow:none !important;}
-    html.embed #lobby{display:none !important;}
+    canvas{background:#0b0f1a;border-radius:16px;box-shadow:0 20px 80px rgba(0,0,0,.45);image-rendering:pixelated;image-rendering:crisp-edges;}
 
     /* HUD */
     #hud{position:fixed;left:0;top:0;right:0;z-index:20;pointer-events:none;display:flex;gap:8px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;
@@ -179,7 +159,7 @@
        stuck forever behind it. We keep the DOM nodes for compatibility but
        never display them. */
     #bootLoading{position:fixed;inset:0;z-index:9999;display:none;align-items:center;justify-content:center;background:#000;pointer-events:none;}
-    html.embed #bootLoading{display:none !important;}
+    html.embed #bootLoading{display:none;}
     #bootLoading.hidden{display:none;}
     #bootLoading .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
     #bootLoading .hint{position:relative;z-index:1;margin-top:32vh;padding:10px 14px;border-radius:14px;
@@ -258,7 +238,7 @@
       <div class="note">
         <span class="tag">PC</span>마우스로 이동(클릭/드래그) · 가까이서 <b>X</b>로 <b>조작</b><br/>
         <span class="tag">모바일</span>왼쪽 조이스틱 · 오른쪽 <b>조작</b> / (선생토끼만) <b>검은당근</b><br/>
-        <span class="tag">팁</span>키보드: <b>C</b>(지도) · <b>Q</b>(물막기) · <b>F</b>(강제미션) · <b>X</b>(조작/0점)
+        <span class="tag">팁</span>키보드: <b>M</b>(지도) · <b>Q</b>(물막기) · <b>F</b>(강제미션) · <b>X</b>(조작/0점)
       </div>
     </div>
   </div>
@@ -316,13 +296,6 @@
       <div class="divider"></div>
       <div style="color:rgba(244,247,255,.88);font-weight:800;font-size:13px;line-height:1.5">
         <div style="margin-bottom:8px"><b>기본</b><br/>- 가까이서 <b>조작</b>하면 미션/시설 사용<br/>- 활성 미션은 바닥 분수에 <b>!</b> 표시</div>
-        <div style="margin-bottom:8px"><b>단축키(PC)</b><br/>
-          - 이동: <b>WASD</b> / <b>방향키</b><br/>
-          - 조작/공격: <b>X</b><br/>
-          - 지도: <b>C</b> (※ 회의 중엔 열리지 않음)<br/>
-          - (선생토끼) 사보타주: <b>Q</b> · 강제미션: <b>F</b><br/>
-          - 감정표현: <b>1</b>, <b>2</b>
-        </div>
         <div style="margin-bottom:8px"><b>오답 페널티(대표)</b><br/>- 단위: 10초 방향 반전<br/>- 뺄셈: 8초 시야 감소<br/>- 그래프: 7초 미션 잠금(자동 재오픈)</div>
         <div style="margin-bottom:8px"><b>시간/누수</b><br/>- 미션 제한시간(60초) 초과 시 실패 → 시간 감소 + 누수 흔적<br/>- 누수 레벨이 높을수록 시간이 더 빨리 줄어듦</div>
         <div><b>선생토끼(4명 이상)</b><br/>- 검은당근으로 다운 유도, 신고/종으로 회의, 물막기 사보타주, 땅굴 이동, 강제미션</div>
@@ -397,24 +370,7 @@
   (function(){
     const url = 'assets/mathrabbit.mp3';
     let bgm = null;
-    // Global audio preference comes from the lobby/room (localStorage: 'audio_enabled').
-    // Default: enabled ('1'). If disabled ('0'), we must not play BGM.
     let muted = false;
-
-    function prefEnabled(){
-      try{ return (localStorage.getItem('audio_enabled') || '1') === '1'; }catch(_){ return true; }
-    }
-
-    function applyMuted(nextMuted){
-      muted = !!nextMuted;
-      try{
-        if (bgm){
-          bgm.volume = muted ? 0 : 0.35;
-          if (muted) bgm.pause();
-        }
-      }catch(_){ }
-      if (!muted) start();
-    }
 
     function ensure(){
       if (bgm) return;
@@ -422,7 +378,7 @@
         bgm = new Audio(url);
         bgm.loop = true;
         bgm.preload = 'auto';
-        bgm.volume = muted ? 0 : 0.35;
+        bgm.volume = 0.35;
       }catch(_){ bgm = null; }
     }
 
@@ -453,37 +409,10 @@
 
     // optional toggle hook
     window.__toggleBgmMuted__ = function(){
-      applyMuted(!muted);
+      muted = !muted;
+      if (bgm) bgm.volume = muted ? 0 : 0.35;
+      if (!muted) start();
       return muted;
-    };
-
-    // Sync with global preference.
-    try{ applyMuted(!prefEnabled()); }catch(_){ }
-
-    // Listen for preference changes from parent.
-    try{
-      window.addEventListener('storage', (ev)=>{
-        if (ev && ev.key === 'audio_enabled'){
-          applyMuted(!prefEnabled());
-        }
-      });
-    }catch(_){ }
-
-    // Some browsers may not dispatch storage events into iframes reliably.
-    // Parent can also broadcast via postMessage({type:'audio_pref', enabled:boolean}).
-    try{
-      window.addEventListener('message', (e)=>{
-        const d = e?.data || {};
-        if (!d || typeof d !== 'object') return;
-        if (d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
-          applyMuted(!d.enabled);
-        }
-      });
-    }catch(_){ }
-
-    // Parent may call this directly via contentWindow.
-    window.__setAudioEnabled__ = function(enabled){
-      applyMuted(!enabled);
     };
   })();
   </script>

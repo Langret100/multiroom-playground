@@ -469,31 +469,19 @@
   if (isMobile) touchUI.style.display = 'block';
 
   // ---------- Fullscreen / orientation ----------
-  // IMPORTANT:
-  // - In the multiroom embed flow, the *top-level* document (lobby) owns fullscreen.
-  //   The game runs in an iframe, so `document.fullscreenElement` is usually null here.
-  //   To make the button behave naturally (toggle on/off), we delegate to the parent.
-  async function toggleFullscreenAndLandscape() {
+  async function requestFullscreenAndLandscape() {
     try {
-      if (EMBED) {
-        // Ask parent to toggle fullscreen (it can enter/exit reliably)
-        bridgeSend('fs_toggle');
-      } else {
-        if (!document.fullscreenElement) {
-          await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
-        } else {
-          await document.exitFullscreen?.();
-        }
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen?.({ navigationUI: 'hide' });
       }
     } catch (_) {}
-    // Orientation lock best-effort (may fail on iOS Safari or without fullscreen)
     try {
       await screen.orientation?.lock?.('landscape');
     } catch (_) {
       // iOS Safari 등은 lock이 막혀있을 수 있음
     }
   }
-  fullscreenBtn.addEventListener('click', () => toggleFullscreenAndLandscape());
+  fullscreenBtn.addEventListener('click', () => requestFullscreenAndLandscape());
 
   function stopHeartbeat() {
     try {
@@ -612,11 +600,16 @@
     const inGame = !!(G.net && G.phase !== 'lobby');
     // lobby vs game
     if (EMBED) {
-      // Embed-only flow: the parent room owns all lobby/ready/start UI.
-      // The iframe must never show its internal lobby.
-      lobby?.classList.add('hidden');
+      // Embedded: keep the in-iframe lobby visible until the match actually starts,
+      // so the host can always press Start if auto-start fails for any reason.
       const started = !!(G.state && G.state.started) || !!(G.host && G.host.started);
-      if (hud) hud.style.display = (started || inGame) ? 'flex' : 'none';
+      if (started || inGame) {
+        lobby?.classList.add('hidden');
+        if (hud) hud.style.display = 'flex';
+      } else {
+        lobby?.classList.remove('hidden');
+        if (hud) hud.style.display = 'none';
+      }
     } else {
       if (inGame) {
         lobby?.classList.add('hidden');
@@ -634,8 +627,8 @@
     if (joinBtn) joinBtn.disabled = joined || !G.assetsReady;
 
     // host controls (in lobby)
-    if (addBotBtn) addBotBtn.disabled = EMBED || !G.assetsReady || !G.net || !G.net.isHost || (G.phase !== 'lobby');
-    if (startBtn) startBtn.disabled = EMBED || !G.assetsReady || !G.net || !G.net.isHost || G.host.started || (G.phase !== 'lobby') || Object.keys(G.state.players || {}).length < 1;
+    if (addBotBtn) addBotBtn.disabled = !G.assetsReady || !G.net || !G.net.isHost || (G.phase !== 'lobby');
+    if (startBtn) startBtn.disabled = !G.assetsReady || !G.net || !G.net.isHost || G.host.started || (G.phase !== 'lobby') || Object.keys(G.state.players || {}).length < 1;
 
     // HUD buttons
     if (rulesBtn) rulesBtn.style.display = inGame ? 'inline-flex' : 'none';
@@ -658,9 +651,7 @@
     mapModal?.classList.remove('show');
   }
   function toggleMapUI() {
-    // Map UI should only be available during active play.
-    // (Do not allow opening during lobby/meeting/scene/end.)
-    if (!G.net || G.phase !== 'play') return;
+    if (!G.net || G.phase === 'lobby') return;
     if (G.ui.mapOpen) closeMapUI(); else openMapUI();
   }
 
@@ -674,15 +665,6 @@
 
   window.addEventListener('keydown', (e) => {
     if (e.repeat) return;
-
-    // Don't steal keys while typing in an input/textarea (but allow Esc to close modals).
-    try{
-      const ae = document.activeElement;
-      const tag = (ae && ae.tagName) ? ae.tagName.toLowerCase() : '';
-      const typing = (tag === 'input' || tag === 'textarea' || (ae && ae.isContentEditable));
-      if (typing && e.key !== 'Escape') return;
-    }catch(_){ }
-
     // PC map shortcut: C
     if (e.key === 'c' || e.key === 'C') toggleMapUI();
     if (e.key === 'Escape') { closeRulesUI(); closeMapUI(); }
@@ -5086,9 +5068,6 @@ function showToast(text) {
   });
 
   function openMeetingUI(kind, reason, endsAt) {
-    // Ensure other overlays are closed while in meeting.
-    try{ closeMapUI(); }catch(_){ }
-    try{ closeRulesUI(); }catch(_){ }
     meetingModal.classList.add('show');
 
     // Initialize meeting chat (new meeting instance id)
@@ -9054,9 +9033,15 @@ try{
       if (net.isHost) net.post({ t: 'host', hostId: net.hostId, at: Date.now() });
     });
 
-    // NOTE: Old embed fallback (clients asking host to start) intentionally removed.
-    // The parent room is authoritative and starts the game exactly once via
-    // postMessage({type:'game_start', payload}).
+    // Embed fallback: if clients are stuck in lobby (host didn't auto-start),
+    // allow any client to request the host to start.
+    net.on('embedStart', (_m) => {
+      try{
+        if (!net.isHost) return;
+        if (G.host.started) return;
+        _embedHostStartNow().catch(()=>{});
+      }catch(_){ }
+    });
     // Snapshot resync (clients -> host): used in embed mode when the first roster/state broadcasts
     // can be missed during iframe boot. Host responds by broadcasting fresh snapshots.
     net.on('syncReq', (m) => {
@@ -9138,9 +9123,23 @@ try{
       broadcastState(true);
       try{ broadcastRoster(true); }catch(_){ }
 
-      // NOTE: In embed mode, the parent room sends a single authoritative
-      // game_start(payload). We do NOT auto-switch practice <-> real game
-      // based on late joins, because it creates timing/race bugs.
+      // If we started in practice (e.g., embed auto-start) and now have enough players,
+      // switch to the real game by assigning a teacher and notifying roles.
+      const humanCountNow = Object.values(st.players).filter(p => !p.isBot).length;
+      if (G.host.started && st.practice && humanCountNow >= 4) {
+        st.practice = false;
+        st.timeLeft = 180;
+        st.maxTime = 180;
+        st.infiniteMissions = !st.practice;
+        hostAssignTeacher();
+        for (const pp of Object.values(st.players)) {
+          sendToPlayer(pp.id, { t: 'toast', text: (pp.role === 'teacher') ? '당신은 선생토끼야! (임포스터)' : '당신은 학생토끼야! 미션을 해결해!' });
+          // Refresh role reveal for everyone on conversion.
+          sendToPlayer(pp.id, { t: 'uiRoleReveal', role: pp.role, practice: false });
+        }
+        broadcast({ t: 'toast', text: '인원이 모여서 본게임으로 전환! (선생토끼 배정)' });
+        broadcastState(true);
+      }
     });
 
     net.on('joinAck', (m) => {
@@ -10086,80 +10085,51 @@ net.on('uiMeetingOpen', (m) => {
   });
 
 
-  // ---------- Embed-only authoritative start ----------
-  // In embed mode, the parent room sends exactly one game_start(payload).
-  // The iframe must NOT run its own lobby/start flow (no local fallback / no auto-start).
-  function _mulberry32(seed){
-    let a = (seed >>> 0) || 0;
-    return function(){
-      a |= 0; a = (a + 0x6D2B79F5) | 0;
-      let t = Math.imul(a ^ (a >>> 15), 1 | a);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
+  // Programmatic start used by embedded mode (avoids relying on a DOM click on a disabled button).
+  async function _embedHostStartNow() {
+    if (!G.assetsReady) return;
+    if (!G.net) {
+      try { await joinRoom(); } catch (_) { return; }
+    }
+    if (!G.net?.isHost) return;
+    if (G.host.started) return;
+    G.phase = 'play';
+    const n = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
+    const practice = (n < 4);
+    hostStartGame(practice);
+    try{ broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
+    applyPhaseUI();
   }
 
-  async function applyGameStartPayload(payload){
+  function _armEmbedHostAutostart(){
     try{
       if (!EMBED) return;
-      if (!payload || typeof payload !== 'object') return;
-      if (G && G.ui && G.ui._gameStartApplied) return;
+      if (!window.__EMBED_IS_HOST__) return;
+      if (G.ui && G.ui._embedHostAutoTimer){ clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; }
+      const t0 = now();
+      const expected = Number(window.__EMBED_EXPECTED_HUMANS__ || 0) || 0;
+      // In embed rooms we must avoid deadlocks (no one can press the in-iframe start button).
+      // Start quickly even for small rooms; late joiners are supported.
+      const minReal = 1;
+      const target = (expected > 0) ? expected : minReal;
+      const MAX_WAIT = 1800;
+      const CHECK_MS = 120;
       if (!G.ui) G.ui = {};
-      G.ui._pendingGameStart = payload;
-
-      // Ensure assets + network join completed.
-      while(!G.assetsReady && !G.assetsError){ await new Promise(r=>setTimeout(r, 50)); }
-      if (G.assetsError) return;
-      if (!G.net) { try{ await joinRoom(); }catch(_){ return; } }
-
-      // Dedupe: ignore if already started.
-      if ((G.state && G.state.started) || (G.host && G.host.started)) { G.ui._gameStartApplied = true; applyPhaseUI(); return; }
-
-      // Practice comes from the authoritative payload.
-      const practice = !!payload.practice;
-      try{ window.__EMBED_PRACTICE__ = practice; }catch(_){ }
-
-      // Host applies the seed + starts once, then broadcasts the resulting state.
-      if (G.net && G.net.isHost){
-        const seed = Number(payload.seed || 0) || 0;
-        const prevRand = Math.random;
+      G.ui._embedWaitingStart = true;
+      G.ui._embedHostAutoTimer = setInterval(()=>{
         try{
-          if (seed) Math.random = _mulberry32(seed);
-          G.phase = 'play';
-          hostStartGame(practice);
-
-          // Force teacher assignment when provided (avoid RNG drift).
-          if (!practice && payload.teacherSid != null) {
-            const wantSid = String(payload.teacherSid);
-            let wantPid = null;
-            for (const p of Object.values(G.state.players || {})){
-              if (p && p.sessionId != null && String(p.sessionId) === wantSid){ wantPid = Number(p.id || 0); break; }
-            }
-            if (wantPid){
-              G.state.teacherId = wantPid;
-              for (const p of Object.values(G.state.players || {})){
-                if (!p) continue;
-                p.role = (Number(p.id || 0) === wantPid) ? 'teacher' : 'crew';
-              }
-              // Refresh role reveal.
-              for (const p of Object.values(G.state.players || {})){
-                if (!p) continue;
-                try{ sendToPlayer(p.id, { t: 'uiRoleReveal', role: p.role, practice: false }); }catch(_){ }
-              }
-            }
+          if (!G.net) return;
+          if (!G.net.isHost) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
+          if (G.host.started) { clearInterval(G.ui._embedHostAutoTimer); G.ui._embedHostAutoTimer = null; G.ui._embedWaitingStart = false; return; }
+          const n = Object.values(G.state.players || {}).filter(p=>p && !p.isBot).length;
+          const ready = (expected > 0) ? (n >= target) : (n >= minReal);
+          if (ready || (now() - t0) > MAX_WAIT){
+            clearInterval(G.ui._embedHostAutoTimer);
+            G.ui._embedHostAutoTimer = null;
+            _embedHostStartNow().catch(()=>{});
           }
-
-          try{ broadcastRoster(true); }catch(_){ }
-          try{ broadcastState(true); }catch(_){ }
-        } finally {
-          Math.random = prevRand;
-        }
-      }
-
-      // All clients: flip phase/UI and wait for host snapshots.
-      try{ G.phase = 'play'; }catch(_){ }
-      try{ applyPhaseUI(); }catch(_){ }
-      G.ui._gameStartApplied = true;
+        }catch(_){ }
+      }, CHECK_MS);
     }catch(_){ }
   }
 
@@ -10186,14 +10156,25 @@ net.on('uiMeetingOpen', (m) => {
 
     window.__USE_BRIDGE_NET__ = true;
     window.__EMBED_SESSION_ID__ = String(init.sessionId || '');
-    // Host must be decided by the authoritative room state.
-    // Do NOT guess/fallback, because that creates split-host races.
-    const __seat = (init.seat != null) ? Number(init.seat)
-              : (init.order != null) ? Number(init.order)
-              : (init.slot != null) ? Number(init.slot)
-              : -1;
-    window.__EMBED_SEAT__ = (Number.isFinite(__seat) ? __seat : -1);
-    window.__EMBED_IS_HOST__ = (typeof init.isHost === 'boolean') ? !!init.isHost : false;
+    // Host is decided by the room (avoid multiple-host races when more players join).
+    
+// Host is ideally decided by the room, but some room states don't expose isHost reliably.
+// For SuhakTokki embed we elect host deterministically to avoid "no host => infinite loading":
+// - spectators are never host
+// Host selection in embed mode:
+// - Prefer the explicit boolean `init.isHost` from the parent room shell.
+// - Only fall back to `seat===0` when `init.isHost` is *missing* (undefined),
+//   because seat can temporarily be 0 for everyone before the room's order map arrives.
+const __seat = (init.seat != null) ? Number(init.seat)
+            : (init.order != null) ? Number(init.order)
+            : (init.slot != null) ? Number(init.slot)
+            : -1;
+const __role = String(init.role || '');
+const __hasHintHost = (typeof init.isHost === 'boolean');
+const __hintHost = __hasHintHost ? !!init.isHost : false;
+const __electedHost = (__role !== 'spectator') && (__hasHintHost ? __hintHost : (__seat === 0));
+window.__EMBED_SEAT__ = (Number.isFinite(__seat) ? __seat : -1);
+window.__EMBED_IS_HOST__ = !!__electedHost;
     // Embed meta (expected number of human players in this room). Used to prevent accidental "practice" start.
     window.__EMBED_HUMAN_COUNT__ = Number(init.humanCount || 0) || 0;
     window.__EMBED_EXPECTED_HUMANS__ = Number(init.expectedHumans || init.humanCount || 0) || 0;
@@ -10204,29 +10185,57 @@ net.on('uiMeetingOpen', (m) => {
     try{ nickEl.value = String(init.nick || nickEl.value || '토끼').slice(0,10); }catch(_){ }
     try{ roomEl.value = String(roomCode).slice(0,256); }catch(_){ }
 
-    // Hide local lobby controls (room UI is handled by parent).
+    // hide local lobby controls (room UI is handled by parent)
     try{ joinBtn.style.display = 'none'; }catch(_){ }
     try{ addBotBtn.style.display = 'none'; }catch(_){ }
-    try{ startBtn.style.display = 'none'; }catch(_){ }
+    // keep startBtn for programmatic click
 
     await joinRoom();
 
     // Embedded UX: never show the internal lobby overlay. The parent already has it.
     try{ G.ui.embedJoined = true; }catch(_){ }
+    // Let applyPhaseUI decide whether to show lobby/hud (we keep lobby visible until started in embed).
     try{ applyPhaseUI(); }catch(_){ }
 
-    // If game_start arrived early, apply it now.
-    try{
-      const gs = window.__PENDING_GAME_START__;
-      if (gs && typeof gs === 'object' && gs.type === 'game_start'){
-        window.__PENDING_GAME_START__ = null;
-        setTimeout(()=>{ try{ applyGameStartPayload(gs.payload || gs); }catch(_){ } }, 0);
-      }
-    }catch(_){ }
+    // If we are a non-host client and the room ends up with no host auto-start (rare relay/host flag issues),
+    // ask the host to start after a short grace period.
+    setTimeout(() => {
+      try{
+        if (!EMBED) return;
+        if (!G.net || G.net.isHost) return;
+        if (G.state && G.state.started) return;
+        if (G.phase !== 'lobby') return;
+        G.net.post({ t: 'embedStart' });
+      }catch(_){ }
+    }, 2200);
 
-    // IMPORTANT: In embed mode we ONLY start from a single authoritative
-    // game_start(payload) message from the parent room.
-    try{ showToast('대기중...'); }catch(_){ }
+    // Safety net: on some hosts/relays the "isHost" flag can be missing or delayed.
+    // If a solo player gets stuck forever at the title/loading screen waiting for the host,
+    // force-start a local practice session after a short delay.
+    setTimeout(() => {
+      try{
+        if (!EMBED) return;
+        if (!G.net || G.host.started) return;
+        // Only intervene when there is effectively a single human in the room.
+        const humans = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
+        if (humans > 1) return;
+        // If still not started, promote to host locally and begin practice.
+        try{ G.net.isHost = true; }catch(_){ }
+        try{ window.__EMBED_IS_HOST__ = true; }catch(_){ }
+        if (G.phase === 'lobby') G.phase = 'play';
+        try{ hostStartGame(true); }catch(_){ }
+        try{ broadcastState(true); }catch(_){ }
+        try{ broadcastRoster(true); }catch(_){ }
+      }catch(_){ }
+    }, 3500);
+
+    // host: auto-start (embedded).
+    // NOTE: never rely on button.click() because disabled buttons do not dispatch click events.
+    if (window.__EMBED_IS_HOST__){
+      _armEmbedHostAutostart();
+    } else {
+      try{ showToast('호스트가 게임을 시작하는 중...'); }catch(_){ }
+    }
   }
 
   if (EMBED){
@@ -10251,19 +10260,7 @@ net.on('uiMeetingOpen', (m) => {
       }
     }catch(_){ }
 
-    
-    // If game_start arrived before listeners were attached, apply it now.
-    try{
-      const gsRaw = window.__PENDING_GAME_START__;
-      let gs = gsRaw;
-      if (typeof gsRaw === 'string'){ try{ gs = JSON.parse(gsRaw); }catch(_){ gs = null; } }
-      if (gs && typeof gs === 'object' && gs.type === 'game_start'){
-        window.__PENDING_GAME_START__ = null;
-        // Defer slightly to allow joinRoom() to finish if bridge_init is still processing.
-        setTimeout(()=>{ try{ applyGameStartPayload(gs.payload || gs); }catch(_){ } }, 0);
-      }
-    }catch(_){ }
-window.addEventListener('message', (ev)=>{
+    window.addEventListener('message', (ev)=>{
       let d = ev.data;
       if (typeof d === 'string'){
         try{ d = JSON.parse(d); }catch(_){ return; }
@@ -10274,15 +10271,12 @@ window.addEventListener('message', (ev)=>{
         try{
           window.__EMBED_IS_HOST__ = !!d.isHost;
           if (G.net) G.net.isHost = !!d.isHost;
-          try{ applyPhaseUI(); }catch(_){ }
+          // If we just became host, arm auto-start and ensure lobby UI updates.
+          if (window.__EMBED_IS_HOST__){
+            try{ applyPhaseUI(); }catch(_){ }
+            try{ _armEmbedHostAutostart(); }catch(_){ }
+          }
         }catch(_){ }
-        return;
-      }
-
-      // Parent -> iframe: authoritative match start.
-      // The iframe must NOT run its own lobby/start flow.
-      if (d.type === 'game_start') {
-        try{ applyGameStartPayload(d.payload || d); }catch(_){ }
         return;
       }
 
@@ -10311,17 +10305,31 @@ window.addEventListener('message', (ev)=>{
       }
     });
 
-    // IMPORTANT (embed): Do NOT auto-start a local practice session when bridge_init is delayed.
-    // That can split the room if the real init arrives slightly later (host ends up in "local").
-    // Instead, keep waiting and show a gentle status message.
+    // Fallback: if the parent never delivers bridge_init (schema mismatch / race / caching),
+    // start a local practice session so the game doesn't get stuck on the title screen.
+    // This is only used when no init arrives for a while.
     try{
       setTimeout(()=>{
         try{
           if (!EMBED) return;
           if (window.__EMBED_INITED__) return;
-          try{ setLobbyStatus('연결 중... (잠시만 기다려줘)', null); }catch(_){ }
+          window.__EMBED_INITED__ = true;
+          startEmbedded({
+            type: 'bridge_init',
+            gameId: 'suhaktokki',
+            sessionId: 'local',
+            nick: 'Player',
+            seat: 0,
+            isHost: true,
+            solo: true,
+            expectedHumans: 1,
+            humanCount: 1,
+            roomCode: 'local',
+            level: 1,
+            practice: true
+          }).catch(()=>{});
         }catch(_){ }
-      }, 3000);
+      }, 2500);
     }catch(_){ }
   }
 
