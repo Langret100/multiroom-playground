@@ -3,26 +3,6 @@ import { GameState, PlayerState } from "../state/GameState.js";
 
 const CPU_SID = "__cpu__";
 
-function makeSeed(){
-  // 31-bit positive int
-  return (Math.random() * 0x7fffffff) | 0;
-}
-
-function sortSidsBySeat(orderMap, sids){
-  const getSeat = (sid)=>{
-    try{
-      const v = orderMap?.get ? orderMap.get(sid) : (orderMap ? orderMap[sid] : undefined);
-      const n = Number(v);
-      return Number.isFinite(n) ? n : 1e9;
-    }catch(_){ return 1e9; }
-  };
-  return Array.from(sids).sort((a,b)=>{
-    const sa = getSeat(a); const sb = getSeat(b);
-    if (sa !== sb) return sa - sb;
-    return String(a).localeCompare(String(b));
-  });
-}
-
 function clamp(n, a, b){ return Math.max(a, Math.min(b, n)); }
 
 function shuffle(arr){
@@ -32,6 +12,14 @@ function shuffle(arr){
   }
   return arr;
 }
+
+function seededPick(seed, arr){
+  if (!arr || !arr.length) return null;
+  const n = arr.length;
+  const x = ((seed >>> 0) % n + n) % n;
+  return arr[x];
+}
+
 
 function clearClockTimer(t){
   try{ if (t && typeof t.clear === 'function') t.clear(); }catch(_){ }
@@ -123,9 +111,6 @@ this.state.maxClients = this.maxClients;
     this.inputs = new Map(); // sessionId -> latest mask
     this.started = false;
     this.matchStartedAt = 0;
-
-    // Clear SuhakTokki start payload so the next match can generate a fresh one.
-    this.skStart = null;
     this._mainLoopTimer = null;
 
     // stackga tournament state
@@ -152,10 +137,6 @@ this.st = {
   timer: null,
   interval: null,
 };
-
-    // ---- SuhakTokki authoritative start payload (server-decided) ----
-    // Stored so late joiners can receive the same game_start exactly once.
-    this.skStart = null; // { seed, practice, roster:[{sid,nick,seat}], teacherSid|null, startedAt }
 
     this.onMessage("ready", (client, { ready }) => {
       const p = this.state.players.get(client.sessionId);
@@ -209,39 +190,48 @@ this.st = {
       this.state.phase = "playing";
       this.matchStartedAt = Date.now();
       this.setMetadata({ ...this.metadata, status: "playing" });
-      this.broadcast("started", {
-        tickRate: this.tickRate,
+      const startedMsg = {
+tickRate: this.tickRate,
         playerCount: Number(this.state.playerCount || 0),
         maxClients: Number(this.maxClients || this.state.maxClients || 0),
         startedAt: this.matchStartedAt || Date.now(),
-      });
+};
 
-      // SuhakTokki: authoritative start payload (server-decided, one-time)
-      // This removes all in-game lobby/autostart/fallback logic and prevents split-host timing bugs.
-      if (this.state.mode === "suhaktokki"){
-        try{
-          const rosterSids = sortSidsBySeat(this.state.order, humanSids);
-          const roster = rosterSids.map((sid)=>({
-            sid,
-            nick: String(this.state.players.get(sid)?.nick || "Player").slice(0,20),
-            seat: Number(this.state.order.get(sid) ?? 0),
-          }));
-          const seed = makeSeed();
-          const practice = roster.length < 4;
-          let teacherSid = null;
-          if (!practice && roster.length >= 2){
-            teacherSid = roster[(Math.abs(seed) % roster.length)].sid;
-          }
-          this.skStart = {
-            seed,
-            practice,
-            roster,
-            teacherSid,
-            startedAt: this.matchStartedAt || Date.now(),
-          };
-          this.broadcast("sk_start", this.skStart);
-        }catch(_){ }
-      }
+// SuhakTokki: build authoritative start payload (seed/roles/roster) once per match.
+if (this.state.mode === "suhaktokki") {
+  try {
+    const seed = (Math.random() * 0x7fffffff) | 0;
+    const humans = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
+    // Deterministic order by seat then sid
+    humans.sort((a,b)=>{
+      const sa = this.state.order.get(a);
+      const sb = this.state.order.get(b);
+      if (sa !== sb) return (sa ?? 0) - (sb ?? 0);
+      return String(a).localeCompare(String(b));
+    });
+    const practice = humans.length < 4;
+    const teacherSid = practice ? null : seededPick(seed, humans);
+    const roles = {};
+    for (const sid of humans) roles[sid] = (teacherSid && sid === teacherSid) ? 'teacher' : 'student';
+    const roster = humans.map((sid)=>({
+      sid,
+      nick: this.state.players.get(sid)?.nick || '-',
+      seat: Number(this.state.order.get(sid) ?? 0),
+      isHost: !!this.state.players.get(sid)?.isHost,
+    }));
+    this._suhakStartPayload = {
+      startedAt: this.matchStartedAt || Date.now(),
+      seed,
+      practice,
+      teacherSid,
+      roles,
+      roster,
+    };
+    startedMsg.startPayload = this._suhakStartPayload;
+  } catch (_) {}
+}
+
+this.broadcast("started", startedMsg);
 
       // Reset transient co-op state (no persistence)
       if (this.state.mode === "togester"){
@@ -805,19 +795,14 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     // 'started' message to this client so they don't get stuck in the lobby UI.
     try{
       if (this.state.modeType === "coop" && this.state.phase === "playing"){
-        client.send("started", {
-          tickRate: this.tickRate,
+        const startedMsg = {
+tickRate: this.tickRate,
           playerCount: Number(this.state.playerCount || 0),
           maxClients: Number(this.maxClients || this.state.maxClients || 0),
           startedAt: this.matchStartedAt || Date.now(),
-        });
-      }
-    }catch(_){ }
-
-    // SuhakTokki: late joiners should receive the exact same start payload.
-    try{
-      if (this.state.mode === "suhaktokki" && this.state.phase === "playing" && this.skStart){
-        client.send("sk_start", this.skStart);
+};
+try{ if (this.state.mode === "suhaktokki" && this._suhakStartPayload) startedMsg.startPayload = this._suhakStartPayload; }catch(_){ }
+client.send("started", startedMsg);
       }
     }catch(_){ }
 

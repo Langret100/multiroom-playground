@@ -721,21 +721,9 @@ tbody td{ padding: 10px 8px; }
   }
   .title b{ font-size: 1.05rem; }
   .title .muted{ font-size: 0.82rem; }
-  /* Mobile: keep the top-right actions on a single row (no wrapping) */
-  .brand{ flex: 1 1 auto; min-width: 0; }
-  .brand .title b,
-  .brand .title .muted{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-  .actions{
-    gap: 6px;
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-    white-space: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-  .actions .iconbtn{ width: 30px; height: 30px; font-size: 15px; border-radius: 10px; }
-  .actions .btn{ padding: 7px 8px; font-size: 0.86rem; border-radius: 10px; }
+  .actions{ gap: 6px; flex-wrap: nowrap; justify-content: flex-end; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .actions::-webkit-scrollbar{ display:none; }
+  .iconbtn{ width:30px; height:30px; border-radius:10px; font-size:14px; }
   .btn{
   border:1px solid rgba(0,0,0,.12);
   background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));

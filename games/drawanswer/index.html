@@ -367,37 +367,21 @@
       if (mobileWordTextEl) mobileWordTextEl.textContent = txt;
     }
 
-    // ===== Global audio preference (shared with lobby/room) =====
-    let __audioEnabled = true;
-    function __readAudioEnabled(){
-      try{ return (localStorage.getItem('audio_enabled') || '1') === '1'; }catch(_){ return true; }
-    }
-
     // ===== SFX (코드로 생성: WebAudio) =====
     let __sfxCtx = null;
-    let __sfxMaster = null;
     function __ensureSfxCtx(){
       if (__sfxCtx) return __sfxCtx;
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
-      try{
-        __sfxCtx = new AC();
-        try{
-          __sfxMaster = __sfxCtx.createGain();
-          __sfxMaster.gain.value = __audioEnabled ? 1 : 0;
-          __sfxMaster.connect(__sfxCtx.destination);
-        }catch(_){ __sfxMaster = null; }
-      }catch(_){ __sfxCtx = null; __sfxMaster = null; }
+      try{ __sfxCtx = new AC(); }catch(_){ __sfxCtx = null; }
       return __sfxCtx;
     }
     function __resumeSfx(){
-      if (!__audioEnabled) return;
       const ctx = __ensureSfxCtx();
       if (!ctx) return;
       if (ctx.state === 'suspended') { try{ ctx.resume(); }catch(_){ } }
     }
     function __tone(freq, t0, dur, type='sine', gain=0.12){
-      if (!__audioEnabled) return;
       const ctx = __ensureSfxCtx();
       if (!ctx) return;
       const o = ctx.createOscillator();
@@ -408,12 +392,11 @@
       g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
       o.connect(g);
-      g.connect(__sfxMaster || ctx.destination);
+      g.connect(ctx.destination);
       o.start(t0);
       o.stop(t0 + dur + 0.03);
     }
     function playSfx(kind){
-      if (!__audioEnabled) return;
       __resumeSfx();
       const ctx = __ensureSfxCtx();
       if (!ctx) return;
@@ -505,21 +488,22 @@
     // BGM (mobile autoplay: starts after first user gesture)
     const __BGM_URL__ = "assets/catchpicture.mp3";
     let __bgm = null;
-    let __bgmMuted = false;
+    let __bgmMuted = (function(){ try{ return localStorage.getItem('audio_enabled') === '0'; }catch(_){ return false; } })();
 
     function __applyAudioPref(enabled){
-      __audioEnabled = !!enabled;
-      __bgmMuted = !__audioEnabled;
-      try{ if (__bgm){ __bgm.muted = !__audioEnabled; if (!__audioEnabled) __bgm.pause(); } }catch(_){ }
+      try{ localStorage.setItem('audio_enabled', enabled ? '1' : '0'); }catch(_){ }
+      __bgmMuted = !enabled;
       try{
-        if (__sfxCtx){
-          if (__sfxMaster){ __sfxMaster.gain.setValueAtTime(__audioEnabled ? 1 : 0, __sfxCtx.currentTime); }
-          if (!__audioEnabled) { try{ __sfxCtx.suspend(); }catch(_){ } }
-          else { try{ __sfxCtx.resume(); }catch(_){ } }
+        if (__bgmMuted){
+          try{ __bgm?.pause?.(); }catch(_){ }
+        } else {
+          // BGM will be started on next eligible call
         }
       }catch(_){ }
-      if (__audioEnabled) { try{ __startBgm(); }catch(_){ } }
     }
+
+    // Apply initial preference immediately
+    try{ __applyAudioPref(localStorage.getItem('audio_enabled') !== '0'); }catch(_){ }
 
     function __ensureBgm(){
       if (__bgm || !__BGM_URL__) return;
@@ -528,12 +512,11 @@
         __bgm.loop = true;
         __bgm.preload = "auto";
         __bgm.volume = 0.35;
-        try{ __bgm.muted = !__audioEnabled; }catch(_){ }
       }catch(_){ __bgm = null; }
     }
 
     function __startBgm(){
-      if (!__audioEnabled) return;
+      try{ if (localStorage.getItem('audio_enabled') === '0') { __bgmMuted = true; return; } }catch(_){ }
       if (__bgmMuted) return;
       __ensureBgm();
       if (!__bgm) return;
@@ -559,22 +542,6 @@
 
     document.addEventListener("visibilitychange", ()=>{ if(document.hidden) __pauseBgm(); else __startBgm(); });
     window.addEventListener("pagehide", __pauseBgm);
-
-    // Apply initial preference and listen for updates from parent (room/lobby)
-    try{ __applyAudioPref(__readAudioEnabled()); }catch(_){ }
-    try{
-      window.addEventListener('message', (e)=>{
-        const d = e?.data || {};
-        if (d && typeof d === 'object' && d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
-          __applyAudioPref(!!d.enabled);
-        }
-      });
-      window.addEventListener('storage', (ev)=>{
-        if (ev && ev.key === 'audio_enabled'){
-          __applyAudioPref(__readAudioEnabled());
-        }
-      });
-    }catch(_){ }
 
     // colors (+ eraser)
     const colorBtns = Array.from(document.querySelectorAll('.color'));
@@ -695,6 +662,10 @@
     window.addEventListener('message', (ev)=>{
       const d = ev.data || {};
       if(!d || typeof d !== 'object') return;
+      if (d.type === 'audio_pref'){
+        __applyAudioPref(!!d.enabled);
+        return;
+      }
       if (d.type === 'bridge_init'){
         mySid = String(d.sessionId || d.mySid || '');
         myNick = String(d.nick || d.myNick || 'Player');
