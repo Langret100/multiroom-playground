@@ -71,40 +71,21 @@
   // assets/join/start are still pending.
   const bootLoading = document.getElementById('bootLoading');
   const bootLoadingText = document.getElementById('bootLoadingText');
+  // Boot loading overlay (only used when running standalone).
+  // In embed mode, the parent room owns all loading/lobby UI.
   function bootShow(msg){
     try{
-      // User request: never block the game with a full-screen loading overlay.
-      // Even if assets/join are slow, keep rendering on the canvas and/or show lobby UI.
-    if (EMBED) {
-      // Embedded: the parent room owns the lobby/start UI.
-      // Never show the in-iframe lobby.
-      lobby?.classList.add('hidden');
-      if (hud) hud.style.display = inGame ? 'flex' : 'none';
-    } else {
-      if (inGame) {
-        lobby?.classList.add('hidden');
-        if (hud) hud.style.display = 'flex';
-      } else {
-        lobby?.classList.remove('hidden');
-        if (hud) hud.style.display = 'none';
+      if (!bootLoading) return;
+      if (EMBED) {
+        bootLoading.style.display = 'none';
+        return;
       }
-    }
-
-    // inputs enabled only before join
-    const joined = !!G.net;
-    if (nickEl) nickEl.disabled = joined;
-    if (roomEl) roomEl.disabled = joined;
-    if (joinBtn) joinBtn.disabled = joined || !G.assetsReady;
-
-    // host controls (in lobby)
-    if (addBotBtn) addBotBtn.disabled = !G.assetsReady || !G.net || !G.net.isHost || (G.phase !== 'lobby');
-    if (startBtn) startBtn.disabled = !G.assetsReady || !G.net || !G.net.isHost || G.host.started || (G.phase !== 'lobby') || Object.keys(G.state.players || {}).length < 1;
-
-    // HUD buttons
-    if (rulesBtn) rulesBtn.style.display = inGame ? 'inline-flex' : 'none';
-    if (mapBtn) mapBtn.style.display = inGame ? 'inline-flex' : 'none';
-
-    updateRosterUI();
+      bootLoading.style.display = 'flex';
+      if (bootLoadingText) bootLoadingText.textContent = msg || 'Loading…';
+    }catch(_){ }
+  }
+  function bootHide(){
+    try{ if (bootLoading) bootLoading.style.display = 'none'; }catch(_){ }
   }
 
   // ---------- Rules/Map modal ----------
