@@ -209,6 +209,17 @@ function statusDot(room){
         location.href = `./room.html?roomId=${encodeURIComponent(roomId)}`;
         return;
       }
+
+      // When the room is rendered as an overlay (to keep browser fullscreen),
+      // the lobby page stays alive underneath. Stop lobby BGM so it doesn't
+      // overlap with room/game BGM.
+      try{
+        window.__lobbyBgmPausedByEmbed = true;
+        window.__bgmLobbyHandle?.stop?.();
+        const el = document.getElementById('bgmLobby');
+        if (el){ el.pause(); el.muted = true; }
+      }catch(_){ }
+
       ov.classList.remove('hidden');
       ov.setAttribute('aria-hidden', 'false');
       // Keep URL param explicit so room.js/auth.js can behave differently in embed mode.
@@ -229,6 +240,19 @@ function statusDot(room){
         ov.setAttribute('aria-hidden', 'true');
       }
     }catch(_){ }
+
+    // Resume lobby BGM only if the user preference is enabled.
+    try{
+      if (window.__lobbyBgmPausedByEmbed){
+        window.__lobbyBgmPausedByEmbed = false;
+        const el = document.getElementById('bgmLobby');
+        if (el && window.AudioManager && window.AudioManager.isEnabled('audio_enabled')){
+          el.muted = false;
+          el.play().catch(()=>{});
+        }
+      }
+    }catch(_){ }
+
     // Best-effort: refresh the rooms list after returning.
     try{ refreshRooms(); }catch(_){ }
   }

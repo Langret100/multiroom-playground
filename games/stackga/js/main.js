@@ -133,6 +133,13 @@ function setStatus(s){ safeSetText(ui.status, s); }
 
 // Fullscreen toggle (best-effort; iOS Safari may ignore)
 function toggleFullscreen(){
+  // In embedded mode (inside room iframe), fullscreen state belongs to the parent.
+  // Request the parent to toggle so both enter/exit works reliably.
+  if (EMBED){
+    try{ window.parent?.postMessage({ type:'fs_toggle' }, '*'); }catch(_){ }
+    return;
+  }
+
   const doc = document;
   const el = document.documentElement;
   try{

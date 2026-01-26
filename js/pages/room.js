@@ -290,6 +290,15 @@ function setupBgm(audioElId, btnId){
       return;
     }
 
+    // Don't call AudioManager.enable() here (it would flip the user's
+    // saved preference and can accidentally re-enable lobby music).
+    // Instead, unmute only if the preference is currently enabled.
+    try{
+      if (window.AudioManager && window.AudioManager.isEnabled('audio_enabled')){
+        el.muted = false;
+      }
+    }catch(_){ }
+
     // If it's already playing, don't interrupt.
     try{ if (el.paused) el.play().catch(()=>{}); }catch(_){ }
   }
@@ -731,8 +740,38 @@ function updatePreview(modeId){
           playGameBgm(modeId);
         }
       }catch(_){ }
-      try{ _gameBgm.handle?.enable?.(); }catch(_){ }
-      try{ if(_gameBgm.el){ _gameBgm.el.muted = false; _gameBgm.el.play().catch(()=>{}); } }catch(_){ }
+      // IMPORTANT: do NOT call AudioManager.enable() here.
+      // It would overwrite the user's saved mute preference and can
+      // re-enable lobby music in the background. Only attempt playback
+      // if the preference is already enabled.
+      try{
+        if (window.AudioManager && window.AudioManager.isEnabled('audio_enabled')){
+          if(_gameBgm.el){ _gameBgm.el.muted = false; _gameBgm.el.play().catch(()=>{}); }
+        }
+      }catch(_){ }
+      return;
+    }
+
+    // Fullscreen toggle requests bubbling up from nested game iframes (stackga/suika/etc.)
+    if (d.type === 'fs_toggle'){
+      try{
+        if (isEmbedded) window.parent.postMessage({ type:'fs_toggle' }, '*');
+        else toggleBrowserFullscreenLocal();
+      }catch(_){ }
+      return;
+    }
+    if (d.type === 'fs_request'){
+      try{
+        if (isEmbedded) window.parent.postMessage({ type:'fs_request' }, '*');
+        else document.documentElement.requestFullscreen?.();
+      }catch(_){ }
+      return;
+    }
+    if (d.type === 'fs_exit'){
+      try{
+        if (isEmbedded) window.parent.postMessage({ type:'fs_exit' }, '*');
+        else document.exitFullscreen?.();
+      }catch(_){ }
       return;
     }
 

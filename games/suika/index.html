@@ -1314,8 +1314,14 @@ this.view.scale = scale;
                 if (fullBtn && gameContainer) {
                     fullBtn.addEventListener('click', async () => {
                         try {
-                            if (!document.fullscreenElement) await gameContainer.requestFullscreen();
-                            else await document.exitFullscreen();
+                            // When embedded inside the room/lobby iframes,
+                            // fullscreen state belongs to the parent document.
+                            if (window.top && window.top !== window) {
+                                window.parent?.postMessage({ type: 'fs_toggle' }, '*');
+                            } else {
+                                if (!document.fullscreenElement) await gameContainer.requestFullscreen();
+                                else await document.exitFullscreen();
+                            }
                         } catch(e) {}
                         setTimeout(() => this.setupCanvas(), 80);
                     });
