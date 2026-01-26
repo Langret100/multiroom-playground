@@ -11,7 +11,7 @@
   'use strict';
 
   // Build stamp for cache/배포 확인 (콘솔에 이 문구가 안 보이면 새 파일이 안 로드된 것)
-  try{ console.log('[suhaktokki] build v4 2026-01-26'); }catch(_){ }
+  try{ console.log('[suhaktokki] build v5 2026-01-26'); }catch(_){ }
 
   // ---------- Pixel-art crisp rendering ----------
   // Bitmap sprites may look blurry if canvas smoothing is enabled (common in iframes / CSS scaling).
@@ -33,6 +33,20 @@
   // embed (multiroom iframe)
   const QS = new URLSearchParams(location.search);
   const EMBED = QS.get("embed") === "1";
+  // Time helper (older code relied on now())
+  const now = () => (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  // Mobile detection helper (older code relied on isMobile)
+  const isMobile = (() => {
+    try{
+      if (typeof navigator !== 'undefined') {
+        if ((navigator.maxTouchPoints || 0) > 0) return true;
+        const ua = navigator.userAgent || '';
+        if (/Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(ua)) return true;
+      }
+      return ('ontouchstart' in window);
+    }catch(_){ return false; }
+  })();
+
   function bridgeSend(type, payload){
     try{ window.parent && window.parent.postMessage({ type, ...(payload||{}) }, "*"); }catch(_){ }
   }
@@ -68,6 +82,12 @@
     canvas.style.outline = 'none';
     canvas.addEventListener('pointerdown', () => { try { canvas.focus(); } catch (_) {} });
   } catch (_) {}
+
+  // In embed mode, remove any rounded/shadow styling immediately (prevents flash)
+  if (EMBED) {
+    try { canvas.style.borderRadius = '0px'; } catch (_) {}
+    try { canvas.style.boxShadow = 'none'; } catch (_) {}
+  }
 
   const lobby = document.getElementById('lobby');
   // Boot loading overlay (index.html). In embed mode, this prevents black/flicker frames while
