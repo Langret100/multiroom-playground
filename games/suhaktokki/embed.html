@@ -224,42 +224,18 @@
     <div id="saboBtnTouch">물막기</div>
   </div>
 
-  <div id="lobby">
-    <div id="lobbyCard">
-      <h1 id="title">🐰 수학토끼</h1>
-      <p id="subtitle">1~8명 입장 가능 · 4명 이상이면 대전, 1~3명은 연습 모드(선생토끼 없음)</p>
-      <p id="lobbyStatus"></p>
-
-      <div class="row">
-        <div class="field">
-          <label>닉네임</label>
-          <input id="nick" maxlength="10" placeholder="예: 당근왕" />
-        </div>
-        <div class="field">
-          <label>방 코드</label>
-          <input id="room" maxlength="8" placeholder="예: 1234" />
-        </div>
-      </div>
-
-      <div id="lobbyActions">
-        <button class="ui primary" id="joinBtn">방 참가 / 만들기</button>
-        <button class="ui" id="addBotBtn">봇 +1 (테스트)</button>
-        <button class="ui danger" id="startBtn" disabled>게임 시작 (호스트)</button>
-      </div>
-
-      <div id="roster" style="display:none">
-        <div id="rosterHead">
-          <b>대기실</b>
-          <span id="rosterMeta">0/8</span>
-        </div>
-        <div id="rosterList"></div>
-      </div>
-
-      <div class="note">
-        <span class="tag">PC</span>마우스로 이동(클릭/드래그) · 가까이서 <b>X</b>로 <b>조작</b><br/>
-        <span class="tag">모바일</span>왼쪽 조이스틱 · 오른쪽 <b>조작</b> / (선생토끼만) <b>검은당근</b><br/>
-        <span class="tag">팁</span>키보드: <b>C</b>(지도) · <b>Q</b>(물막기) · <b>F</b>(강제미션) · <b>X</b>(조작/0점)
-      </div>
+  <!-- Hidden lobby elements (embed entry).
+       The parent room owns nick/room/start UI. We keep minimal nodes so game.js can bind safely. -->
+  <div id="lobby" style="display:none">
+    <p id="lobbyStatus"></p>
+    <input id="nick" maxlength="10" />
+    <input id="room" maxlength="256" />
+    <button id="joinBtn" type="button"></button>
+    <button id="addBotBtn" type="button"></button>
+    <button id="startBtn" type="button"></button>
+    <div id="roster" style="display:none">
+      <span id="rosterMeta"></span>
+      <div id="rosterList"></div>
     </div>
   </div>
 
