@@ -1835,9 +1835,48 @@ function sendCoopBridgeInit(){
     try{ return !!getPlayer(mySessionId)?.isHost; }catch(_){ return false; }
   })();
 
-  // Host must come from the authoritative room state.
-  // For SuhakTokki specifically, guessing/fallback creates split-host races.
-  const effectiveIsHost = !!isHostFromState;
+  // SuhakTokki: we need exactly one host inside the iframe.
+  // Prefer the server-provided isHost flag. If it's temporarily missing during early snapshots,
+  // fall back to a deterministic hostSid derived from the authoritative seat map (order).
+  let hostSid = null;
+  try{
+    // 1) explicit host flag from server state
+    forEachPlayer((p, sid)=>{ if (!hostSid && p && p.isHost) hostSid = String(sid); });
+  }catch(_){ }
+  try{
+    // 2) deterministic: smallest seat number in room.state.order
+    if (!hostSid){
+      const ord = room?.state?.order;
+      if (ord){
+        let best = null;
+        let bestSeat = 999;
+        if (typeof ord.forEach === 'function'){
+          ord.forEach((seat, sid)=>{
+            const n = Number(seat);
+            if (!Number.isFinite(n)) return;
+            if (n < bestSeat){ bestSeat = n; best = String(sid); }
+          });
+        } else {
+          Object.keys(ord).forEach((sid)=>{
+            const n = Number(ord[sid]);
+            if (!Number.isFinite(n)) return;
+            if (n < bestSeat){ bestSeat = n; best = String(sid); }
+          });
+        }
+        if (best) hostSid = best;
+      }
+    }
+  }catch(_){ }
+  try{
+    // 3) last resort: smallest sid string
+    if (!hostSid){
+      let min = null;
+      forEachPlayer((_, sid)=>{ const s = String(sid); if (min === null || s < min) min = s; });
+      hostSid = min || String(mySessionId);
+    }
+  }catch(_){ hostSid = String(mySessionId); }
+
+  const effectiveIsHost = isHostFromState || (String(hostSid) === String(mySessionId));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,

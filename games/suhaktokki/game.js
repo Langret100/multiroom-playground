@@ -10085,6 +10085,7 @@ net.on('uiMeetingOpen', (m) => {
   // In embed mode, the parent room sends exactly one game_start(payload).
   // The iframe must NOT run its own lobby/start flow (no local fallback / no auto-start).
   let __LAST_STARTED_AT = 0;
+  let __HOST_STARTED_AT = 0;
   function _mulberry32(seed){
     let a = (seed >>> 0) || 0;
     return function(){
@@ -10102,9 +10103,13 @@ net.on('uiMeetingOpen', (m) => {
 
       // Dedupe (authoritative): ignore older/duplicate starts using startedAt.
       const startedAt = Number(payload.startedAt || 0) || 0;
+      const seenSameStartedAt = !!startedAt && (startedAt === __LAST_STARTED_AT);
       if (startedAt){
-        if (startedAt <= __LAST_STARTED_AT) return;
-        __LAST_STARTED_AT = startedAt;
+        // Strictly ignore older starts.
+        // If we see the same startedAt again, we may still need to start the match
+        // when host ownership arrives slightly later (bridge_host message).
+        if (startedAt < __LAST_STARTED_AT) return;
+        if (startedAt > __LAST_STARTED_AT) __LAST_STARTED_AT = startedAt;
       } else {
         // Fallback dedupe if startedAt is missing.
         if (G && G.ui && G.ui._gameStartApplied) return;
@@ -10148,11 +10153,16 @@ net.on('uiMeetingOpen', (m) => {
 
       // Host applies the seed + starts once, then broadcasts the resulting state.
       if (G.net && G.net.isHost){
-        const seed = Number(payload.seed || 0) || 0;
-        const prevRand = Math.random;
-        try{
-          if (seed) Math.random = _mulberry32(seed);
-          hostStartGame(practice);
+        // Host ownership can arrive slightly later via a bridge_host message.
+        // Allow re-entry for the *same* startedAt, but only execute hostStartGame once.
+        if (startedAt && __HOST_STARTED_AT === startedAt){
+          // already started as host for this match
+        } else {
+          const seed = Number(payload.seed || 0) || 0;
+          const prevRand = Math.random;
+          try{
+            if (seed) Math.random = _mulberry32(seed);
+            hostStartGame(practice);
 
           // Force teacher assignment when provided (avoid RNG drift).
           if (!practice && payload.teacherSid != null) {
@@ -10177,9 +10187,11 @@ net.on('uiMeetingOpen', (m) => {
           try{ broadcastRoster(true); }catch(_){ }
           try{ broadcastState(true); }catch(_){ }
           try{ broadcastPlayers(); }catch(_){ }
+          try{ __HOST_STARTED_AT = startedAt || Date.now(); }catch(_){ __HOST_STARTED_AT = Date.now(); }
         } finally {
           Math.random = prevRand;
         }
+      }
       }
 
       // All clients: ensure phase/UI is applied (host snapshots will refine state).
@@ -10298,6 +10310,16 @@ window.addEventListener('message', (ev)=>{
           window.__EMBED_IS_HOST__ = !!d.isHost;
           if (G.net) G.net.isHost = !!d.isHost;
           try{ applyPhaseUI(); }catch(_){ }
+
+          // If we already received game_start as a non-host, and host ownership
+          // arrives slightly later, re-apply the pending payload so the new host
+          // can run hostStartGame() exactly once.
+          try{
+            if (window.__EMBED_IS_HOST__ && G && G.ui && G.ui._pendingGameStart){
+              const gs = G.ui._pendingGameStart;
+              setTimeout(()=>{ try{ applyGameStartPayload(gs); }catch(_){ } }, 0);
+            }
+          }catch(_){ }
         }catch(_){ }
         return;
       }
