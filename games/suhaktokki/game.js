@@ -10331,31 +10331,17 @@ window.__EMBED_IS_HOST__ = !!__electedHost;
       }
     });
 
-    // Fallback: if the parent never delivers bridge_init (schema mismatch / race / caching),
-    // start a local practice session so the game doesn't get stuck on the title screen.
-    // This is only used when no init arrives for a while.
+    // IMPORTANT (embed): Do NOT auto-start a local practice session when bridge_init is delayed.
+    // That can split the room if the real init arrives slightly later (host ends up in "local").
+    // Instead, keep waiting and show a gentle status message.
     try{
       setTimeout(()=>{
         try{
           if (!EMBED) return;
           if (window.__EMBED_INITED__) return;
-          window.__EMBED_INITED__ = true;
-          startEmbedded({
-            type: 'bridge_init',
-            gameId: 'suhaktokki',
-            sessionId: 'local',
-            nick: 'Player',
-            seat: 0,
-            isHost: true,
-            solo: true,
-            expectedHumans: 1,
-            humanCount: 1,
-            roomCode: 'local',
-            level: 1,
-            practice: true
-          }).catch(()=>{});
+          try{ setLobbyStatus('연결 중... (잠시만 기다려줘)', null); }catch(_){ }
         }catch(_){ }
-      }, 2500);
+      }, 3000);
     }catch(_){ }
   }
 

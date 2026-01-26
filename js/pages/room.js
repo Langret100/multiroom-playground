@@ -1748,35 +1748,12 @@ function sendCoopBridgeInit(){
 
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
 
-    // In SuhakTokki, the embedded game elects host from the boolean `init.isHost`.
-    // If we send an init before the server-host flag arrives, multiple clients can
-    // temporarily believe they are host (=> 2 hosts, missing avatars, desync).
-    // So for multi-human rooms we *wait* until we can observe exactly one host in state.
-    const ordHumanCount = (()=>{
-      try{
-        const CPU_SID = "__cpu__";
-        const ord = room?.state?.order;
-        if (!ord) return 0;
-        let cnt = 0;
-        if (typeof ord.forEach === 'function'){
-          ord.forEach((_, sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
-        } else {
-          Object.keys(ord).forEach((sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
-        }
-        return cnt;
-      }catch(_){ return 0; }
-    })();
-    const hostFlagKnown = (()=>{
-      try{
-        let n = 0;
-        forEachPlayer((pp)=>{ if (pp?.isHost) n++; });
-        return n === 1;
-      }catch(_){ return false; }
-    })();
-    // For most games, we require `players` to include me.
-    // For SuhakTokki, accept either `order` or `players`.
-    // Additionally, for SuhakTokki with 2+ humans, wait for the unique host flag.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer))) || (isSuhak && ordHumanCount >= 2 && !hostFlagKnown)){
+    // SuhakTokki: the embedded game uses `init.isHost` for authority.
+    // Some deployments do not expose a reliable `isHost` flag in the room state,
+    // so we MUST NOT block bridge_init waiting for it. We only wait until we can
+    // identify "me" in either `players` or the seat-map `order`. A single host is
+    // elected deterministically (lowest seat / smallest sid) below.
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)))){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -1904,12 +1881,10 @@ function sendCoopBridgeInit(){
 
   // IMPORTANT: Do not "guess" host in multi-human coop. The embedded game uses this
   // flag for authoritative state; guessing causes split-host bugs.
-  const hostFromStateKnown = (()=>{
-    try{ let hs = null; forEachPlayer((pp, sid)=>{ if (pp?.isHost) hs = sid; }); return !!hs; }catch(_){ return false; }
-  })();
-  const effectiveIsHost = hostFromStateKnown
-    ? (String(mySessionId) === String(hostSid))
-    : (solo ? true : false);
+  // Deterministic host: always use `hostSid` (derived from host flag if present,
+  // else lowest seat / smallest sid). This avoids "no host" deadlocks and
+  // split-host bugs in multi-human rooms.
+  const effectiveIsHost = (String(mySessionId) === String(hostSid));
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
