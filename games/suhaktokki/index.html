@@ -377,7 +377,24 @@
   (function(){
     const url = 'assets/mathrabbit.mp3';
     let bgm = null;
+    // Global audio preference comes from the lobby/room (localStorage: 'audio_enabled').
+    // Default: enabled ('1'). If disabled ('0'), we must not play BGM.
     let muted = false;
+
+    function prefEnabled(){
+      try{ return (localStorage.getItem('audio_enabled') || '1') === '1'; }catch(_){ return true; }
+    }
+
+    function applyMuted(nextMuted){
+      muted = !!nextMuted;
+      try{
+        if (bgm){
+          bgm.volume = muted ? 0 : 0.35;
+          if (muted) bgm.pause();
+        }
+      }catch(_){ }
+      if (!muted) start();
+    }
 
     function ensure(){
       if (bgm) return;
@@ -385,7 +402,7 @@
         bgm = new Audio(url);
         bgm.loop = true;
         bgm.preload = 'auto';
-        bgm.volume = 0.35;
+        bgm.volume = muted ? 0 : 0.35;
       }catch(_){ bgm = null; }
     }
 
@@ -416,10 +433,37 @@
 
     // optional toggle hook
     window.__toggleBgmMuted__ = function(){
-      muted = !muted;
-      if (bgm) bgm.volume = muted ? 0 : 0.35;
-      if (!muted) start();
+      applyMuted(!muted);
       return muted;
+    };
+
+    // Sync with global preference.
+    try{ applyMuted(!prefEnabled()); }catch(_){ }
+
+    // Listen for preference changes from parent.
+    try{
+      window.addEventListener('storage', (ev)=>{
+        if (ev && ev.key === 'audio_enabled'){
+          applyMuted(!prefEnabled());
+        }
+      });
+    }catch(_){ }
+
+    // Some browsers may not dispatch storage events into iframes reliably.
+    // Parent can also broadcast via postMessage({type:'audio_pref', enabled:boolean}).
+    try{
+      window.addEventListener('message', (e)=>{
+        const d = e?.data || {};
+        if (!d || typeof d !== 'object') return;
+        if (d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+          applyMuted(!d.enabled);
+        }
+      });
+    }catch(_){ }
+
+    // Parent may call this directly via contentWindow.
+    window.__setAudioEnabled__ = function(enabled){
+      applyMuted(!enabled);
     };
   })();
   </script>

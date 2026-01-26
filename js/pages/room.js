@@ -212,6 +212,10 @@ function setupBgm(audioElId, btnId){
       if (g){
         if (!enabled){ g.muted = true; g.pause(); }
       }
+
+      // Best-effort: propagate preference into embedded game iframes
+      // (some games implement their own audio and listen for audio_pref).
+      try{ if (window.__roomBroadcastAudioPref) window.__roomBroadcastAudioPref(enabled); }catch(_){ }
     }catch(_){ }
   }
 
@@ -498,6 +502,16 @@ function updatePreview(modeId){
   duel.ui.specSingleBtn = document.getElementById("spectateSingleBtn");
   duel.ui.specSwapBtn = document.getElementById("spectateSwapBtn");
   duel.iframeEl = duel.ui.frame;
+
+  // Broadcast audio preference to embedded game iframes (coop/duel + hidden CPU).
+  // Games may listen for {type:'audio_pref', enabled:boolean}.
+  try{
+    window.__roomBroadcastAudioPref = function(enabled){
+      const msg = { type:'audio_pref', enabled: !!enabled };
+      try{ if (duel && duel.iframeEl && duel.iframeEl.contentWindow) duel.iframeEl.contentWindow.postMessage(msg, '*'); }catch(_){ }
+      try{ if (cpuFrame && cpuFrame.iframeEl && cpuFrame.iframeEl.contentWindow) cpuFrame.iframeEl.contentWindow.postMessage(msg, '*'); }catch(_){ }
+    };
+  }catch(_){ }
 
   // Spectator live view (no iframe): render latest duel_state snapshots
   const spec = {
