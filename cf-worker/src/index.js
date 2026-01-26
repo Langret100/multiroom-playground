@@ -706,11 +706,15 @@ export class RoomDO{
         if (!this.meta.roomId) this.meta.roomId = wantUid.slice(0,8);
         await this._pullMetaFromLobby(this.meta.roomId);
 
-        // Disallow NEW joins while a game is running (no spectate). Allow reconnect if already in users.
+        // Allow late-join for coop games (especially SuhakTokki).
+        // Duel games remain closed while playing (no spectate). Reconnects are always allowed.
         if (this.meta.phase === "playing" && !this.users.has(wantUid)) {
-          this._send(ws, "system", { text:"게임중인 방입니다. 게임이 끝난 뒤 입장해 주세요.", ts: now() });
-          try{ ws.close(1008, "playing"); }catch(_){}
-          return;
+          const duel = isDuelMode(this.meta.mode);
+          if (duel) {
+            this._send(ws, "system", { text:"게임중인 방입니다. 게임이 끝난 뒤 입장해 주세요.", ts: now() });
+            try{ ws.close(1008, "playing"); }catch(_){ }
+            return;
+          }
         }
 
         // capacity check
