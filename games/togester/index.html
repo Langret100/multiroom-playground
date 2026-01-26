@@ -494,42 +494,6 @@
         // ==================== 설정 ====================
         // Firebase 의존성 제거 (Colyseus/부모 브릿지로 동기화)
         const EMBED = new URLSearchParams(location.search).get('embed') === '1';
-        // ==================== 오디오 선호도(로비 음소거 연동) ====================
-        const AUDIO_KEY = 'audio_enabled';
-        let __audioEnabled = (()=>{
-            try{ return localStorage.getItem(AUDIO_KEY) !== '0'; }catch(_){ return true; }
-        })();
-
-        function applyAudioPref(enabled){
-            __audioEnabled = !!enabled;
-            try{ localStorage.setItem(AUDIO_KEY, __audioEnabled ? '1' : '0'); }catch(_){ }
-            // HTML <audio> BGM
-            try{
-                initBGM();
-                if (bgmEl){
-                    bgmEl.muted = !__audioEnabled;
-                    if (!__audioEnabled){
-                        try{ bgmEl.pause(); }catch(_){ }
-                    } else if (bgmWanted){
-                        bgmEl.play().catch(()=>{});
-                    }
-                }
-            }catch(_){ }
-            // WebAudio SFX
-            try{
-                if (audioCtx){
-                    if (!__audioEnabled){
-                        audioCtx.suspend?.().catch?.(()=>{});
-                    } else {
-                        // resume only when later user interaction calls initAudio()
-                    }
-                }
-            }catch(_){ }
-        }
-
-        // Apply initial preference immediately
-        applyAudioPref(__audioEnabled);
-
         const EMBED_PRACTICE = EMBED && (new URLSearchParams(location.search).get('practice') === '1');
         function bridgeSend(type, payload){
             if (!EMBED) return;
@@ -681,6 +645,31 @@
         
         // ==================== 사운드 시스템 ====================
         let audioCtx = null;
+        let masterGain = null;
+
+        // Global audio preference (shared with lobby/room)
+        let __audioEnabled = true;
+        function __readAudioEnabled(){
+            try{ return (localStorage.getItem('audio_enabled') || '1') === '1'; }catch(_){ return true; }
+        }
+        function __applyAudioPref(enabled){
+            __audioEnabled = !!enabled;
+            // BGM
+            try{ initBGM(); if (bgmEl){ bgmEl.muted = !__audioEnabled; if (!__audioEnabled) bgmEl.pause(); else if (bgmWanted) startBGM(); } }catch(_){ }
+            // WebAudio (SFX)
+            try{
+                if (audioCtx){
+                    if (masterGain){
+                        masterGain.gain.setValueAtTime(__audioEnabled ? 1 : 0, audioCtx.currentTime);
+                    }
+                    if (!__audioEnabled){
+                        try{ audioCtx.suspend(); }catch(_){ }
+                    }else{
+                        try{ audioCtx.resume(); }catch(_){ }
+                    }
+                }
+            }catch(_){ }
+        }
 
         // 배경음악 (첨부 mp3) - 게임 진행 중 반복 재생
         let bgmEl = null;
@@ -693,14 +682,16 @@
                 bgmEl.preload = 'auto';
                 // 기본 볼륨 (너무 크지 않게)
                 if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.5;
+                // reflect preference immediately
+                try{ bgmEl.muted = !__audioEnabled; }catch(_){ }
             }
         }
 
         async function startBGM() {
-            if (!__audioEnabled) return;
             initBGM();
             if (!bgmEl) return;
             bgmWanted = true;
+            if (!__audioEnabled) return;
             try {
                 await bgmEl.play();
             } catch (e) {
@@ -717,10 +708,27 @@
             } catch (e) {}
         }
 
+        // Apply initial preference and listen for updates from parent (room/lobby)
+        try{ __applyAudioPref(__readAudioEnabled()); }catch(_){ }
+        try{
+            window.addEventListener('message', (e)=>{
+                const d = e?.data || {};
+                if (d && typeof d === 'object' && d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+                    __applyAudioPref(!!d.enabled);
+                }
+            });
+            window.addEventListener('storage', (ev)=>{
+                if (ev && ev.key === 'audio_enabled'){
+                    __applyAudioPref(__readAudioEnabled());
+                }
+            });
+        }catch(_){ }
+
         // 사용자 입력이 발생하면 오디오 컨텍스트/배경음악 재시도 (자동재생 제한 대응)
         (function attachBGMGestureRetry(){
             const tryStart = async () => {
-                initAudio();
+                if (!__audioEnabled) return;
+                initAudio(true);
                 initBGM();
                 if (!bgmEl) return;
                 if (!bgmWanted) return;
@@ -732,13 +740,17 @@
             document.addEventListener('keydown', tryStart);
         })();
         
-        function initAudio() {
-            if (!__audioEnabled) return;
+        function initAudio(forceResume=false) {
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                try{
+                    masterGain = audioCtx.createGain();
+                    masterGain.gain.value = __audioEnabled ? 1 : 0;
+                    masterGain.connect(audioCtx.destination);
+                }catch(_){ masterGain = null; }
             }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
+            if ((forceResume || __audioEnabled) && audioCtx.state === 'suspended') {
+                try{ audioCtx.resume(); }catch(_){ }
             }
         }
         
@@ -750,7 +762,7 @@
             const gainNode = audioCtx.createGain();
             
             oscillator.connect(gainNode);
-            gainNode.connect(audioCtx.destination);
+            gainNode.connect(masterGain || audioCtx.destination);
             
             oscillator.type = type;
             oscillator.frequency.setValueAtTime(frequency, audioCtx.currentTime);
@@ -1207,8 +1219,9 @@
             canvas = document.getElementById('gameCanvas');
             ctx = canvas.getContext('2d');
             
-            // 오디오 초기화
-            initAudio();
+            // 오디오 초기화 (로비/방의 음소거 설정을 즉시 반영)
+            try{ __applyAudioPref(__readAudioEnabled()); }catch(_){ }
+            if (__audioEnabled){ initAudio(true); }
             // 배경음악 시작 (자동재생 제한 시 첫 입력에서 재시도)
             startBGM();
             
@@ -3254,11 +3267,6 @@ function setupActionButtons(){
         window.addEventListener("message", (e)=>{
             const d = e.data || {};
             if (!d || typeof d !== "object") return;
-
-            if (d.type === "audio_pref"){
-                applyAudioPref(!!d.enabled);
-                return;
-            }
 
             if (d.type === "bridge_init"){
                 mySessionId = String(d.sessionId || "");

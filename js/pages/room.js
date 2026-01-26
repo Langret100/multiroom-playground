@@ -475,11 +475,6 @@ function updatePreview(modeId){
     meta: null,
     iframeReady: false,
     iframeLoaded: false,
-    // Authoritative start payload (server-decided). For SuhakTokki, the game MUST start only via game_start(payload).
-    started: false,
-    startPayload: null,
-    startedAt: 0,
-    gameStartSent: false,
     practice: false,
     level: 1,
   };
@@ -866,8 +861,6 @@ function updatePreview(modeId){
       }
       if (fromMain && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
         sendCoopBridgeInit();
-        // SuhakTokki: start only via authoritative game_start(payload)
-        maybeSendCoopGameStart();
       }
       return;
     }
@@ -1715,22 +1708,6 @@ function sendCpuBridgeInit(){
   });
 }
 
-
-function maybeSendCoopGameStart(){
-  try{
-    if (!coop.active || !coop.meta) return;
-    if (coop.meta.id !== "suhaktokki") return;
-    if (!coop.started || !coop.startPayload) return;
-    if (!coop.iframeReady || !coop.iframeLoaded || !duel.iframeEl) return;
-    // Ensure we only send once per startedAt.
-    const sa = Number(coop.startPayload?.startedAt || coop.startedAt || 0) || 0;
-    if (coop.gameStartSent && coop.startedAt === sa) return;
-    coop.startedAt = sa;
-    coop.gameStartSent = true;
-    postToMain({ type: "game_start", payload: coop.startPayload });
-  }catch(_){ }
-}
-
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
 
@@ -1756,32 +1733,26 @@ function sendCoopBridgeInit(){
     }catch(_){ }
   };
 
-    // Wait until the room state snapshot contains *my* player entry.
-  // For SuhakTokki we DO NOT guess host locally (to avoid split-host / missing-player races).
-  // The server is authoritative: we only proceed once `players[mySessionId].isHost` is available.
-  try{
-    const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
-    const me = getPlayer(mySessionId);
-    const ready = !!me && (!isSuhak || (typeof me.isHost === "boolean"));
-    if (!ready){
-      coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
-      const n = coop._bridgeInitRetry;
-      const delay = (n < 60) ? 80 : (n < 180) ? 140 : 240;
-      try{ if (coop._bridgeInitTimer) clearTimeout(coop._bridgeInitTimer); }catch(_){ }
-      coop._bridgeInitTimer = setTimeout(()=>{
-        try{ coop._bridgeInitTimer = null; }catch(_){ }
-        try{
-          if (!coop.active || !coop.meta) return;
-          if (!duel.iframeEl) return;
-        }catch(_){ return; }
-        sendCoopBridgeInit();
-      }, delay);
-      return;
-    }
-    coop._bridgeInitRetry = 0;
-    try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
-  }catch(_){ }
-
+  // Wait until my player entry exists. This guarantees the authoritative `isHost`
+  // flag is available (we do NOT guess/elect hosts client-side).
+  const meP = getPlayer(mySessionId);
+  if (!meP){
+    coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
+    const n = coop._bridgeInitRetry;
+    const delay = (n < 40) ? 80 : (n < 120) ? 140 : 240;
+    try{ if (coop._bridgeInitTimer) clearTimeout(coop._bridgeInitTimer); }catch(_){ }
+    coop._bridgeInitTimer = setTimeout(()=>{
+      try{ coop._bridgeInitTimer = null; }catch(_){ }
+      try{
+        if (!coop.active || !coop.meta) return;
+        if (!duel.iframeEl) return;
+      }catch(_){ return; }
+      sendCoopBridgeInit();
+    }, delay);
+    return;
+  }
+  coop._bridgeInitRetry = 0;
+  try{ if (coop._bridgeInitTimer){ clearTimeout(coop._bridgeInitTimer); coop._bridgeInitTimer = null; } }catch(_){ }
 
   const seat = (()=>{
   try{
@@ -1827,14 +1798,7 @@ function sendCoopBridgeInit(){
     }catch(_){ return humanCount; }
   })();
   const solo = (expectedHumans <= 1);
-  const isHostFromState = (()=>{ 
-    try{ return !!getPlayer(mySessionId)?.isHost; }catch(_){ return false; }
-  })();
-
-  // IMPORTANT: Do not guess host locally for coop games.
-  // The server is authoritative; we only use the state flag.
-  const effectiveIsHost = isHostFromState;
-
+  const effectiveIsHost = !!meP?.isHost;
   postToMain({
     type: "bridge_init",
     gameId: coop.meta.id,
@@ -1853,17 +1817,18 @@ function sendCoopBridgeInit(){
       // SuhakTokki: practice for 1~3 players, real game (teacher/crew) for 4+.
       // This also avoids a timing/race where bridge_init can be sent before all players
       // are present in state, incorrectly forcing practice in 4+ rooms.
-      if (coop.meta && coop.meta.id === "suhaktokki"){
-        // Practice is decided authoritatively by the room start payload.
-        try{ if (coop.startPayload && typeof coop.startPayload.practice === "boolean") return !!coop.startPayload.practice; }catch(_){ }
-        return false;
-      }
+      if (coop.meta && coop.meta.id === "suhaktokki") return (expectedHumans < 4);
       return false;
     })()
   });
-  // SuhakTokki: if the authoritative payload already arrived, start now.
-  maybeSendCoopGameStart();
 
+  // SuhakTokki: if the match already started before the iframe finished loading,
+  // resend the authoritative game_start payload after bridge_init.
+  try{
+    if (coop.meta && coop.meta.id === "suhaktokki" && room?.state?.phase === "playing" && coop.skStart){
+      postToMain({ type:"game_start", payload: coop.skStart });
+    }
+  }catch(_){ }
   
   // SnakeTail: ensure we don't miss initial food/timer messages due to iframe load timing
   try{
@@ -1984,12 +1949,6 @@ function startCoopEmbed(meta){
   coop.iframeLoaded = false;
   coop.iframeReady = false;
 
-  // Reset authoritative start info for a new embed session
-  coop.started = false;
-  coop.startPayload = null;
-  coop.startedAt = 0;
-  coop.gameStartSent = false;
-
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
   // coop에서는 관전/대진 UI를 숨기고 iframe만 사용
@@ -2017,12 +1976,6 @@ function startCoopPractice(meta){
   coop.level = 1;
   coop.iframeLoaded = false;
   coop.iframeReady = false;
-
-  // Reset authoritative start info (practice uses local path only)
-  coop.started = false;
-  coop.startPayload = null;
-  coop.startedAt = 0;
-  coop.gameStartSent = false;
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -2224,41 +2177,10 @@ try{
     const meP = getP(mySessionId);
     let meIsHost = !!meP?.isHost;
 
-    // Find the room's current host sid (or a deterministic fallback).
+    // Find the room's current host sid (authoritative). Do NOT guess/elect client-side.
     let hostSid = null;
     forEachP((pp, sid)=>{ if (pp?.isHost) hostSid = sid; });
-
-    if (!hostSid){
-      // Fallback: lowest seat in order
-      try{
-        const ord = room?.state?.order;
-        let best = null, bestSeat = 1e9;
-        if (ord){
-          if (typeof ord.forEach === "function"){
-            ord.forEach((seat, sid)=>{
-              const n = Number(seat);
-              if (!Number.isFinite(n)) return;
-              if (n < bestSeat){ bestSeat = n; best = sid; }
-            });
-          } else {
-            Object.keys(ord).forEach((sid)=>{
-              const n = Number(ord[sid]);
-              if (!Number.isFinite(n)) return;
-              if (n < bestSeat){ bestSeat = n; best = sid; }
-            });
-          }
-        }
-        if (best) hostSid = best;
-      }catch(_){ }
-    }
-    if (!hostSid){
-      // Fallback: smallest sid
-      let min = null;
-      forEachP((_, sid)=>{ const s = String(sid); if (min === null || s < min) min = s; });
-      hostSid = min || mySessionId;
-    }
-
-    if (!meIsHost && String(hostSid) === String(mySessionId)) meIsHost = true;
+    if (!hostSid) return;
 
     if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
       coop._lastHostSid = hostSid;
@@ -2289,21 +2211,6 @@ try{
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
-        // SuhakTokki: authoritative start payload (server decides seed/roles/roster)
-        try{
-          if ((room.state.mode || (m && m.gameId)) === "suhaktokki" && m && m.startPayload){
-            coop.started = true;
-            coop.startPayload = m.startPayload;
-            const sa = Number(m.startPayload.startedAt || 0) || 0;
-            // New start -> allow re-send once
-            if (coop.startedAt !== sa){
-              coop.gameStartSent = false;
-              coop.startedAt = sa;
-            }
-            maybeSendCoopGameStart();
-          }
-        }catch(_){ }
-
         try{ coop.expectedHumans = Number(m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
         // reset per-game transient UI/state
@@ -2356,6 +2263,15 @@ try{
       room.onMessage("sk_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
         postToMain({ type:"sk_msg", msg: inner || {} });
+      });
+
+      // SuhakTokki authoritative start payload: server -> iframe (one-time)
+      room.onMessage("sk_start", (msg)=>{
+        try{
+          const payload = (msg && msg.payload) ? msg.payload : msg;
+          coop.skStart = payload || null;
+          postToMain({ type:"game_start", payload: payload || null });
+        }catch(_){ }
       });
 
       // DrawAnswer (그림맞추기) relay: server -> iframe
@@ -2514,13 +2430,12 @@ try{
         if (action === "practice"){
           const modeId = room?.state?.mode || "";
           const meta = window.gameById ? window.gameById(modeId) : null;
-          if (meta && meta.type === "coop" && meta.embedPath && meta.id !== "suhaktokki"){
+          if (meta && meta.type === "coop" && meta.embedPath){
             try{ enterGameFullscreen(); }catch(_){ }
             try{ playGameBgm(meta.id); }catch(_){ }
             startCoopPractice(meta);
-            return;
           }
-          // SuhakTokki: no local/practice fallback. Always start via server payload.
+          return;
         }
 
         room.send("start", { cpuDifficulty });
