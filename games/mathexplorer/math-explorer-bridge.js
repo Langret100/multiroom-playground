@@ -55,8 +55,9 @@
   function activeCount(){
     const observed = Math.max(1, peers.size || 0);
     const configured = Math.max(1, Number(expectedHumans||0)||0);
-    if (observed <= 1) return 1;
-    return Math.min(4, Math.max(observed, Math.min(configured, observed)));
+    // Prefer authoritative room count (game_start / bridge_init) so all clients wait for the same count
+    // during character selection and shared-phase sync, even before hello packets fully propagate.
+    return Math.min(4, Math.max(observed, configured));
   }
   function coopScale(){ const n = activeCount(); return n >= 3 ? 3 : n >= 2 ? 2 : 1; }
   function coopBossScale(){ const n = activeCount(); return n >= 3 ? 6 : n >= 2 ? 3 : 1; }
@@ -376,6 +377,13 @@
   function beginFromRoom(){
     if (!window.G || typeof window.G.showCharSelect !== 'function' || !document.getElementById('charScreen')){
       setTimeout(beginFromRoom, 150);
+      return;
+    }
+    // In room mode, wait for authoritative game_start payload before opening the selection UI.
+    // This prevents clients from starting separate local runs and getting stuck in mismatched phases.
+    if (embed && activeCount() > 1 && !startPayload){
+      setOverlay('게임 시작 동기화 중…', true);
+      setTimeout(beginFromRoom, 120);
       return;
     }
     ensureExitButton();
@@ -1104,6 +1112,10 @@
       expectedHumans = Math.max(1, Number(d.humanCount || d.expectedHumans || 1));
       markPeer(localSid || 'me');
       if (embed){ setTimeout(beginFromRoom, 50); }
+    }
+    if (d.type === 'bridge_host'){
+      bridgeIsHost = !!d.isHost || (Number.isFinite(localSeat) && localSeat === 0);
+      if (d.hostSessionId) markPeer(String(d.hostSessionId));
     }
     if (d.type === 'game_start' && d.payload && (((d.payload.mode||'').toLowerCase() === 'mathexplorer') || ((d.payload.mode||'').toLowerCase() === 'math-explorer'))){
       startPayload = d.payload;
