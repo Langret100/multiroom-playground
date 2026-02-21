@@ -2627,7 +2627,7 @@ try{
         if (isHost) return; // host does not need ready
         isReady = !isReady;
         try{ (isReady ? window.SFX?.readyOn : window.SFX?.readyOff)?.(); }catch(_){ }
-        room.send("ready", { v: isReady, ready: isReady });
+        room.send("ready", { ready: isReady });
         renderPlayers();
       });
       els.startBtn.addEventListener("click", ()=>{
