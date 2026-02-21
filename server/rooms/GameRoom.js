@@ -111,7 +111,9 @@ this.state.maxClients = this.maxClients;
     // ---- Togester (co-op iframe) transient sync state (NO persistence) ----
     this.tg = {
       players: new Map(),   // sessionId -> last state snapshot
-      buttons: {},          // idx -> pressed
+      buttons: {},
+      boxes: {},
+      puzzle: null,          // idx -> pressed
       floors: new Map(),    // id -> {id, owner, x, y, width, height, color, t}
       floorUsed: new Map(), // sessionId -> used count (per-life quota)
       level: 1,
@@ -447,6 +449,69 @@ this.st = {
       });
     });
 
+    this.onMessage("tg_box_impulse", (client, payload) => {
+      if (this.state.mode !== "togester") return;
+      if (this.state.phase !== "playing") return;
+      if (this.tg.over) return;
+      const sid = client.sessionId;
+      const p = this.state.players.get(sid);
+      if (!p) return;
+      const level = clamp(parseInt(payload?.level ?? this.tg.level, 10) || this.tg.level || 1, 1, 999);
+      const id = String(payload?.id || "").slice(0,64);
+      const vx = clamp(Number(payload?.vx) || 0, -8, 8);
+      if (!id || !vx) return;
+      this.broadcast("tg_box_impulse", { level, id, vx, fromLeft: !!payload?.fromLeft, from: sid });
+    });
+
+    this.onMessage("tg_boxes", (client, payload) => {
+      if (this.state.mode !== "togester") return;
+      if (this.state.phase !== "playing") return;
+      if (this.tg.over) return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p?.isHost) return;
+      const level = clamp(parseInt(payload?.level ?? this.tg.level, 10) || this.tg.level || 1, 1, 999);
+      const arr = Array.isArray(payload?.boxes) ? payload.boxes : [];
+      this.tg.boxes = {};
+      for (const b of arr){
+        const id = String(b?.id || "").slice(0,64); if (!id) continue;
+        this.tg.boxes[id] = {
+          id,
+          x: Math.round(Number(b?.x) || 0),
+          y: Math.round(Number(b?.y) || 0),
+          vx: clamp(Number(b?.vx) || 0, -20, 20),
+          vy: clamp(Number(b?.vy) || 0, -40, 40),
+          width: clamp(Number(b?.width) || 0, 0, 9999),
+          height: clamp(Number(b?.height) || 0, 0, 9999),
+        };
+      }
+      this.broadcast("tg_boxes", { level, boxes: Object.values(this.tg.boxes) });
+    });
+
+    this.onMessage("tg_puzzle", (client, payload) => {
+      if (this.state.mode !== "togester") return;
+      if (this.state.phase !== "playing") return;
+      if (this.tg.over) return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p?.isHost) return;
+      const level = clamp(parseInt(payload?.level ?? this.tg.level, 10) || this.tg.level || 1, 1, 999);
+      const buttons = (payload && typeof payload.buttons === 'object' && payload.buttons) ? payload.buttons : {};
+      const normButtons = {};
+      for (const [k,v] of Object.entries(buttons)) normButtons[String(k).slice(0,8)] = !!v;
+      const normBoxes = Array.isArray(payload?.boxes) ? payload.boxes.map(b=>({
+        id: String(b?.id || '').slice(0,64),
+        x: Math.round(Number(b?.x)||0), y: Math.round(Number(b?.y)||0),
+        vx: clamp(Number(b?.vx)||0,-20,20), vy: clamp(Number(b?.vy)||0,-40,40),
+        width: clamp(Number(b?.width)||0,0,9999), height: clamp(Number(b?.height)||0,0,9999),
+      })).filter(b=>b.id) : [];
+      const normDoors = Array.isArray(payload?.doors) ? payload.doors.map(d=>({ open: !!d?.open })) : [];
+      const normLifts = Array.isArray(payload?.lifts) ? payload.lifts.map(l=>({ y: Math.round(Number(l?.y)||0) })) : [];
+      const normBridges = Array.isArray(payload?.bridges) ? payload.bridges.map(b=>({ active: !!b?.active })) : [];
+      this.tg.buttons = normButtons;
+      this.tg.boxes = Object.fromEntries(normBoxes.map(b=>[b.id,b]));
+      this.tg.puzzle = { level, boxes: normBoxes, buttons: normButtons, doors: normDoors, lifts: normLifts, bridges: normBridges };
+      this.broadcast("tg_puzzle", this.tg.puzzle);
+    });
+
     // Togester: snapshot resync (prevents missing early broadcasts during iframe boot)
     this.onMessage("tg_sync", (client) => {
       if (this.state.mode !== "togester") return;
@@ -456,6 +521,8 @@ this.st = {
         client.send("tg_level", { level: this.tg.level });
         client.send("tg_buttons", { buttons: this.tg.buttons });
         client.send("tg_floors", { floors: Array.from(this.tg.floors.values()) });
+        if (this.tg.boxes && Object.keys(this.tg.boxes).length) client.send("tg_boxes", { level: this.tg.level, boxes: Object.values(this.tg.boxes) });
+        if (this.tg.puzzle) client.send("tg_puzzle", this.tg.puzzle);
         const used = Number(this.tg.floorUsed?.get(client.sessionId) || 0);
         client.send("tg_floor_quota", { used, limit: 2 });
       }catch(_){ }
@@ -514,8 +581,11 @@ this.st = {
 
       this.tg.level = lv;
       try{ this.tg.floors.clear(); }catch(_){ }
+      try{ this.tg.boxes = {}; this.tg.puzzle = { level: lv, boxes: [], buttons: this.tg.buttons || {}, doors: [], lifts: [], bridges: [] }; }catch(_){ }
       this.broadcast("tg_level", { level: lv });
       this.broadcast("tg_floors", { floors: [] });
+      this.broadcast("tg_boxes", { level: lv, boxes: [] });
+      this.broadcast("tg_puzzle", this.tg.puzzle);
     });
 
     this.onMessage("tg_reset", (client, { t }) => {
@@ -527,9 +597,12 @@ this.st = {
       // clear buttons, keep player snapshots
       this.tg.buttons = {};
       try{ this.tg.floors.clear(); }catch(_){ }
+      try{ this.tg.boxes = {}; this.tg.puzzle = { level: this.tg.level, boxes: [], buttons: this.tg.buttons, doors: [], lifts: [], bridges: [] }; }catch(_){ }
       this.broadcast("tg_reset", { t: Number(t)||Date.now() });
       this.broadcast("tg_buttons", { buttons: this.tg.buttons });
       this.broadcast("tg_floors", { floors: [] });
+      this.broadcast("tg_boxes", { level: this.tg.level, boxes: [] });
+      this.broadcast("tg_puzzle", this.tg.puzzle);
     });
 
     // Togester game over (success/fail) -> result -> backToRoom

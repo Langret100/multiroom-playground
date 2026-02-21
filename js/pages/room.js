@@ -1043,6 +1043,32 @@ function updatePreview(modeId){
       room.send("tg_button", { idx: d.idx, pressed: d.pressed });
       return;
     }
+    if (d.type === "tg_buttons"){
+      if (!fromMain) return;
+      try{ room.send("tg_buttons", { buttons: d.buttons || {} }); }catch(_){ }
+      return;
+    }
+    if (d.type === "tg_puzzle"){
+      if (!fromMain) return;
+      try{ room.send("tg_puzzle", d); }catch(_){ }
+      return;
+    }
+    if (d.type === "tg_boxes"){
+      if (!fromMain) return;
+      try{ room.send("tg_boxes", d); }catch(_){ }
+      return;
+    }
+    if (d.type === "tg_box_impulse"){
+      if (!fromMain) return;
+      try{ room.send("tg_box_impulse", d); }catch(_){ }
+      return;
+    }
+    if (d.type === "tg_sync"){
+      if (!fromMain) return;
+      try{ room.send("tg_sync", {}); }catch(_){ }
+      return;
+    }
+
     if (d.type === "tg_level"){
       if (!fromMain) return;
       room.send("tg_level", { level: d.level });
@@ -2468,6 +2494,16 @@ try{
       });
       room.onMessage("tg_push", (msg)=>{
         postToMain({ type:"tg_push", to: msg.to, dx: msg.dx, dy: msg.dy, from: msg.from });
+      });
+
+      room.onMessage("tg_boxes", (msg)=>{
+        postToMain(Object.assign({ type:"tg_boxes" }, msg || {}));
+      });
+      room.onMessage("tg_box_impulse", (msg)=>{
+        postToMain(Object.assign({ type:"tg_box_impulse" }, msg || {}));
+      });
+      room.onMessage("tg_puzzle", (msg)=>{
+        postToMain(Object.assign({ type:"tg_puzzle" }, msg || {}));
       });
 
       room.onMessage("tg_floors", (msg)=>{
