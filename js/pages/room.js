@@ -1032,7 +1032,7 @@ function updatePreview(modeId){
     if (d.type === "tg_state"){
       if (!fromMain) return;
       const now = Date.now();
-      if (now - lastTgStateSent >= 120){
+      if (now - lastTgStateSent >= 50){
         lastTgStateSent = now;
         room.send("tg_state", { state: d.state });
       }

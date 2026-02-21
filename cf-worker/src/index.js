@@ -1111,11 +1111,11 @@ export class RoomDO{
         // rate-limit client spam (client already throttles)
         const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0 };
         const n = now();
-        if (n - lim.tgTs < 80) return;
+        if (n - lim.tgTs < 40) return;
         lim.tgTs = n;
         this._relayLimiter.set(uid, lim);
 
-        // store per-player state, broadcast aggregated snapshot at ~8fps
+        // store per-player state, broadcast aggregated snapshot at ~20fps
         // + 요청사항: 발판 생성 제한을 "라운드당"이 아니라 "목숨(사망/리스폰)당"으로 처리
         const prev = (this.tg.players && this.tg.players[uid]) ? this.tg.players[uid] : {};
         const prevDead = !!prev.isDead;
@@ -1663,7 +1663,7 @@ export class RoomDO{
     this.tg.timer = setTimeout(()=>{
       this.tg.timer = null;
       this._broadcast("tg_players", { players: this.tg.players });
-    }, 120);
+    }, 50);
   }
 
   // -------- SnakeTail helpers --------

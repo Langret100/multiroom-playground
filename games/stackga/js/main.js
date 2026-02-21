@@ -249,10 +249,10 @@ fit();
 
 // --- Effects
 function linesToGarbage(c){
-  // Classic-like: 1=0, 2=1, 3=2, 4=4
+  // Requested garbage rule: 1=0, 2=1, 3=2, 4=3
   if(c===2) return 1;
   if(c===3) return 2;
-  if(c>=4) return 4;
+  if(c>=4) return 3;
   return 0;
 }
 function applyGarbageTo(game, n){
@@ -424,7 +424,7 @@ function startLoop(){
       audio.sfx("clear");
       if(atk){
         audio.sfx("attackSend");
-        if(mode==="online" && oppPid){
+        if(mode==="online"){
           pushEvent({ api, eventsRef, event:{ from: pid, kind:"garbage", payload: { n: atk } } }).catch(()=>{});
         }else if(mode==="cpu" && cpuGame){
           applyGarbageTo(cpuGame, atk);

@@ -648,7 +648,7 @@
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
         let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
         // Slightly larger interpolation delay reduces visible jitter from packet timing variance.
-        const NET_INTERP_DELAY_MS = 150;
+        const NET_INTERP_DELAY_MS = 95;
         const NET_MAX_HISTORY_MS = 2000;
         let gameObjects = [];
         let canvas, ctx;
@@ -1293,7 +1293,9 @@
         // ==================== 임베드 모드(Colyseus 브릿지) ====================
         function startEmbedded(init){
             isGuestMode = !!init.practice || EMBED_PRACTICE;
-            isHost = !!init.isHost;
+            // room.js 의 bridge_init 에서 isHost 가 초기 타이밍상 false 로 들어올 수 있다.
+            // seat 0 은 서버에서 호스트로 배정되므로, 임베드 초기화 시 안전한 폴백을 둔다.
+            isHost = !!init.isHost || (typeof init.seat === 'number' && init.seat === 0 && !init.practice);
             roomId = String(init.roomCode || 'ROOM');
             playerId = String(init.sessionId || ('p_' + Date.now()));
             localPlayer.name = String(init.nick || '햄찌').slice(0, 16);
@@ -3017,7 +3019,7 @@ function setupActionButtons(){
                     sp.ry = Math.round(sp.y);
                 } else {
                     // 가까울수록 더 천천히 따라가서 미세한 흔들림을 흡수
-                    const k = dist < 8 ? 0.22 : 0.45;
+                    const k = dist < 8 ? 0.30 : 0.58;
                     sp.x += dx * k;
                     sp.y += dy * k;
                 }
@@ -3696,7 +3698,7 @@ function setupActionButtons(){
         function bridgeSendState(force=false){
             if (!EMBED || isGuestMode) return;
             const now = performance.now();
-            if (!force && bridgeSendState._t && (now - bridgeSendState._t) < 33) return; // ~20Hz
+            if (!force && bridgeSendState._t && (now - bridgeSendState._t) < 25) return; // ~40Hz target before room/worker throttles
             bridgeSendState._t = now;
             bridgeSend("tg_state", {
                 state: {
@@ -3750,6 +3752,21 @@ function setupActionButtons(){
                 if (d.level) {
                     const lv = parseInt(d.level, 10);
                     if (lv) { currentLevel = lv; }
+                }
+                return;
+            }
+
+            if (d.type === "bridge_host"){
+                const prevHost = !!isHost;
+                isHost = !!d.isHost;
+                // 호스트 승격/변경 직후 authoritative 퍼즐 스냅샷 송신이 바로 시작되도록 즉시 동기화 요청/전송
+                if (isHost && !prevHost){
+                    try{ ensureBoxIds(); }catch(_){ }
+                    try{ sendPuzzleSnapshot(); }catch(_){ }
+                    try{ sendBoxSnapshot(); }catch(_){ }
+                    try{ bridgeSendState(true); }catch(_){ }
+                } else if (!isHost && prevHost){
+                    try{ requestFloorSync(); }catch(_){ }
                 }
                 return;
             }
