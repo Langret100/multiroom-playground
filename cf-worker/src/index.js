@@ -301,7 +301,7 @@ export class LobbyDO{
       const title = String(opts.title || "방").slice(0, 30);
       const mode = String(opts.mode || "stackga").slice(0, 24);
       // Allow larger rooms for some coop modes (e.g., snaketail). UI still limits per-game.
-      const minPlayers = ((mode === "mathexplorer") || (mode === "math-explorer")) ? 1 : 2;
+      const minPlayers = (mode === "mathexplorer") ? 1 : 2;
       const maxPlayers = Math.max(minPlayers, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
       this.rooms[roomId] = {
         roomId, title, mode,
@@ -399,7 +399,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -483,8 +483,7 @@ export class RoomDO{
     // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
     // Stored here so late-joiners can be synced.
     this.sk = { startPayload: null };
-    // MathExplorer: latest relayed packets for late-join/reconnect sync (transient only)
-    this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 };
+    this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, lastActiveAt: 0 };
 
     // DrawAnswer (Pictionary-like): minimal server = relays + round/timer/score authority
     this.da = {
@@ -590,7 +589,7 @@ export class RoomDO{
   _allReady(){
     const cpu = this._cpuUid();
     const duel = isDuelMode(this.meta.mode);
-    const soloCoopOk = (this.meta.mode === "suhaktokki");
+    const soloCoopOk = (this.meta.mode === "suhaktokki" || this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer");
     let humanCount = 0;
     for (const [uid] of this.users.entries()){
       if (uid === cpu) continue;
@@ -769,10 +768,21 @@ export class RoomDO{
 
         // SuhakTokki: if a match is already running, sync authoritative start payload to the joining client.
         // Without this, the iframe stays forever on "로딩 중..." because it never receives game_start.
-        if (this.meta.phase === "playing" && this.meta.mode === "suhaktokki"){
+        if (this.meta.phase === "playing" && (this.meta.mode === "suhaktokki" || this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer")){
           try{
-            const sp = this.sk && this.sk.startPayload;
+            const sp = (this.meta.mode === "suhaktokki") ? (this.sk && this.sk.startPayload) : (this.mx && this.mx.startPayload);
             if (sp) this._send(ws, "started", { mode: this.meta.mode, startPayload: sp });
+          }catch(_){ }
+        }
+
+        // MathExplorer: if a match is already running, sync cached start/state/world to the joining client.
+        if (this.meta.phase === "playing" && (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer")){
+          try{
+            if (this.mx && this.mx.latestPhase) this._send(ws, "mx_msg", { msg: Object.assign({}, this.mx.latestPhase, { from:"server" }) });
+            if (this.mx && this.mx.latestWorld) this._send(ws, "mx_msg", { msg: Object.assign({}, this.mx.latestWorld, { from:"server" }) });
+            if (this.mx && this.mx.latestEvent) this._send(ws, "mx_msg", { msg: Object.assign({}, this.mx.latestEvent, { from:"server" }) });
+            const states = (this.mx && this.mx.latestStates) ? Object.values(this.mx.latestStates) : [];
+            for (const st of states){ try{ this._send(ws, "mx_msg", { msg: Object.assign({}, st, { from: String(st?.from || "") }) }); }catch(_){ } }
           }catch(_){ }
         }
 
@@ -805,18 +815,6 @@ export class RoomDO{
         if (this.meta.phase === "playing" && this.meta.mode === "drawanswer"){
           try{ this._sendDaSync(ws, wantUid); }catch(_){ }
         }
-        // MathExplorer: if a match is already running, sync latest transient world snapshots
-        if (this.meta.phase === "playing" && (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer")){
-          try{ if (this.mx && this.mx.latestWorld) this._send(ws, "mx_msg", { msg: this.mx.latestWorld }); }catch(_){ }
-          try{
-            if (this.mx && this.mx.latestStates){
-              for (const sid of Object.keys(this.mx.latestStates)){
-                const st = this.mx.latestStates[sid];
-                if (st) this._send(ws, "mx_msg", { msg: st });
-              }
-            }
-          }catch(_){ }
-        }
         // Inform lobby presence list that this user is currently inside a room.
         // This allows the lobby's online list to include room occupants and show their room.
         await this._presenceSet(wantUid, nick, this.meta.roomId);
@@ -836,7 +834,7 @@ export class RoomDO{
         const u = this.users.get(uid);
         if (!u) return;
         if (this.meta.phase !== "lobby") return;
-        u.ready = !!d.v;
+        u.ready = !!(d.v ?? d.ready);
         wsSetAttachment(ws, { uid, nick: u.nick, ready: !!u.ready, seat: u.seat });
         this._broadcast("room_state", this._snapshot());
         return;
@@ -865,8 +863,7 @@ export class RoomDO{
 
         if (!duel){
           // Co-op usually requires 2+ humans; allow solo for SuhakTokki and SnakeTail.
-          const mode = String(this.meta.mode||"").toLowerCase();
-          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer"].includes(mode)) ? 1 : 2;
+          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer"].includes(this.meta.mode)) ? 1 : 2;
           if (humanCount < minHumans){
             this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
             return;
@@ -924,9 +921,29 @@ export class RoomDO{
           }
         }catch(_){ }
 
-        // SuhakTokki: decide authoritative start payload exactly once per match.
+        // SuhakTokki/MathExplorer: decide authoritative start payload exactly once per match.
         // The iframe must start ONLY from this payload (game_start).
         let skStartPayload = null;
+        let mxStartPayload = null;
+        if (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer"){
+          try{
+            const cpuUid = this._cpuUid();
+            const roster = Array.from(this.users.entries())
+              .filter(([ruid])=> String(ruid) !== String(cpuUid))
+              .map(([ruid, ru])=>({ sid:String(ruid), nick:safeNick(ru?.nick), seat:Number(ru?.seat ?? 99) }))
+              .sort((a,b)=> (a.seat??99) - (b.seat??99));
+            const seed = (Math.floor(Math.random()*0x100000000) >>> 0);
+            mxStartPayload = {
+              mode: 'mathexplorer',
+              startedAt: now(),
+              seed,
+              playerCount: roster.length,
+              roster,
+              difficulty: Number(d?.coopDifficulty ?? 1) || 1,
+            };
+            try{ this.mx.startPayload = mxStartPayload; }catch(_){ }
+          }catch(_){ try{ this.mx.startPayload = null; }catch(_){ } }
+        }
         if (this.meta.mode === "suhaktokki"){
           try{
             const cpuUid = this._cpuUid();
@@ -966,6 +983,8 @@ export class RoomDO{
         this._scheduleLobbyUpdate();
         if (this.meta.mode === "suhaktokki"){
           this._broadcast("started", { mode: this.meta.mode, startPayload: skStartPayload });
+        } else if (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer"){
+          this._broadcast("started", { mode: this.meta.mode, startPayload: mxStartPayload });
         } else {
           this._broadcast("started", { mode: this.meta.mode });
         }
@@ -1017,25 +1036,47 @@ export class RoomDO{
       // ----- MathExplorer relay (generic packet) -----
       if (t === "mx_msg") {
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
-        const mk = String(inner.kind||inner.t||"");
-        // throttle optional high-frequency packets
-        if (mk === "state") {
-          const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0 };
+        let kind = String(inner.kind||inner.t||"");
+        if (kind === "mx_chat" || kind === "chat_msg") kind = "chat";
+
+        // throttle high-frequency packets
+        if (kind === "state" || kind === "world" || kind === "mx_state" || kind === "mx_world") {
+          const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0, mxWorldTs:0 };
           const n = now();
-          if (n - (lim.mxTs||0) < 45) return;
-          lim.mxTs = n;
+          if (kind === "state" || kind === "mx_state"){
+            if (n - (lim.mxTs||0) < 60) return;
+            lim.mxTs = n;
+          } else {
+            if (n - (lim.mxWorldTs||0) < 90) return;
+            lim.mxWorldTs = n;
+          }
           this._relayLimiter.set(uid, lim);
         }
-        // include sender sid so clients can ignore self-echo and track peers
-        const out = Object.assign({}, inner, { from: String(uid) });
-        // cache latest transient state for reconnect / late join (no persistence)
+
+        // Host-only kinds (room host or seat0 authoritative broadcast)
+        const sender = this.users.get(uid);
+        const senderSeat = Number(sender?.seat ?? 99);
+        const isAuthoritativeSender = !!sender?.isHost || senderSeat === 0;
+        if ((kind === "phase_sync" || kind === "world" || kind === "mx_phase" || kind === "mx_world" || kind === "mx_event") && !isAuthoritativeSender) {
+          return;
+        }
+
+        // cache latest states/world/phase for late-join sync
         try{
-          if (!this.mx) this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 };
+          if (!this.mx) this.mx = { startPayload:null, latestStates:{}, latestWorld:null, latestPhase:null, lastActiveAt:0 };
           this.mx.lastActiveAt = now();
-          if (mk === 'state') this.mx.latestStates[String(uid)] = out;
-          if (mk === 'world') this.mx.latestWorld = out;
-          if (mk === 'run_reset') this.mx.latestWorld = null;
+          if (kind === "state") {
+            this.mx.latestStates[String(uid)] = Object.assign({}, inner, { from:String(uid) });
+          } else if (kind === "world" || kind === "mx_world") {
+            this.mx.latestWorld = Object.assign({}, inner, { from:String(uid) });
+          } else if (kind === "phase_sync" || kind === "mx_phase") {
+            this.mx.latestPhase = Object.assign({}, inner, { from:String(uid) });
+          } else if (kind === "mx_event") {
+            this.mx.latestEvent = Object.assign({}, inner, { from:String(uid) });
+          }
         }catch(_){ }
+
+        const out = Object.assign({}, inner, { from: String(uid), nick: safeNick(this.users.get(uid)?.nick || "") });
         this._broadcast("mx_msg", { msg: out });
         return;
       }
@@ -1525,9 +1566,6 @@ export class RoomDO{
       // (prevents ghost state and avoids leaving per-user records in memory).
       try{ this._relayLimiter.delete(uid); }catch(_){ }
       try{
-        if (this.mx && this.mx.latestStates) delete this.mx.latestStates[uid];
-      }catch(_){ }
-      try{
         if (this.tg && this.tg.players && this.tg.players[uid]){
           delete this.tg.players[uid];
           this._scheduleTgBroadcast();
@@ -1638,8 +1676,7 @@ export class RoomDO{
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null };
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} };
     this.sk = { startPayload: null };
-    // MathExplorer: latest relayed packets for late-join/reconnect sync (transient only)
-    this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 };
+    this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, lastActiveAt: 0 };
     this.da = { active:false, round:0, maxRounds:5, order:[], drawerIdx:0, drawerUid:'', word:'', endAt:0, timer:null, scores:{}, ops:[] };
     this._cpu = { active:false };
 
@@ -2206,10 +2243,9 @@ export class RoomDO{
       try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
       if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
 
-      // SuhakTokki: clear authoritative start payload when returning to lobby.
+      // Clear authoritative start payloads / transient coop caches when returning to lobby.
       try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
-      // MathExplorer transient caches must be cleared when returning to lobby as well.
-      try{ this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 }; }catch(_){ }
+      try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.lastActiveAt = 0; } }catch(_){ }
 
       try{ this.da && this._daReset(); }catch(_){ }
 

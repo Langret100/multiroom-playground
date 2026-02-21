@@ -1,1143 +1,201 @@
 (function(){
   const sp = new URLSearchParams(location.search);
   const embed = sp.get('embed') === '1';
-  const gameIdRaw = (sp.get('embedGame') || 'mathexplorer').toLowerCase();
-  const gameId = (gameIdRaw === 'math-explorer') ? 'mathexplorer' : gameIdRaw;
-  let initMsg = null;
-  let startPayload = null;
-  let charChosen = false;
-  let charTimer = null;
-  let charDeadline = 0;
-  let overlay = null;
-  let levelUpTimer = null;
-  let chestTimer = null;
-  let localSid = '';
-  let localNick = 'Player';
-  let expectedHumans = 1;
-  let localSeat = -1;
-  let bridgeIsHost = false;
-  let lastWorldSendTs = 0;
-  let lastHostBeatTs = 0;
-  let worldSnapshot = null;
-  let peers = new Set();
-  let selectedChars = new Set();
-  let suppressXpRelay = false;
-  let phase = null; // {kind,id,owner,ready:Set,deadline}
-  let remoteLock = null;
-  let invulnBeforeLock = false;
-  let localChestOpen = false;
-  let remoteChestLocks = 0;
-  let globalChestClaims = [];
-  let teamXpTotal = 0;
-  let localXpSent = 0;
-  let teamBossThresholdXp = null;
-  let lastBossThresholdBase = null;
+  if (!embed) return;
 
-  const remotePlayers = new Map(); // sid -> state
-  let stateTimer = null;
-  let drawOverlayTimer = null;
-  let overlayCanvas = null;
-  let overlayCtx = null;
-  let chatWrap = null;
-  let chatInput = null;
-  let chatLog = null;
-  let exitBtn = null;
-
-  function post(msg){ try{ parent?.postMessage(Object.assign({ gameId }, msg), '*'); }catch(_){} }
-  function sendMx(m){ try{ post({ type:'mx_msg', msg:m||{} }); }catch(_){} }
-  function now(){ return Date.now(); }
-  function myPlayer(){ try{ return window.G?.player || null; }catch(_){ return null; } }
-  function phaseKey(){ return phase ? `${phase.kind}:${phase.id}` : ''; }
-  function sidShort(s){ return String(s||'').slice(0,4); }
-
-  function markPeer(sid){ if (!sid) return; peers.add(String(sid)); }
-  function isSelf(from){ return !!from && String(from) === String(localSid||''); }
-  function activeCount(){
-    const observed = Math.max(1, peers.size || 0);
-    const configured = Math.max(1, Number(expectedHumans||0)||0);
-    if (observed <= 1) return 1;
-    return Math.min(4, Math.max(observed, Math.min(configured, observed)));
-  }
-  function coopScale(){ const n = activeCount(); return n >= 3 ? 3 : n >= 2 ? 2 : 1; }
-  function coopBossScale(){ const n = activeCount(); return n >= 3 ? 6 : n >= 2 ? 3 : 1; }
-  function isWorldAuthority(){
-    if (!embed) return true;
-    if (bridgeIsHost) return true;
-    if (Number.isFinite(localSeat) && localSeat === 0) return true;
-    return false;
-  }
-  function dynamicMaxEnemies(){ const n = activeCount(); if (n >= 3) return 20; if (n >= 2) return 30; return 60; }
-  function inSelectionPhase(){
-    // Character selection waiting, levelup/chest modals, or remote lock
-    if ((charChosen && selectedChars.size < activeCount()) || (!charChosen && document.getElementById('charScreen') && !document.getElementById('charScreen').classList.contains('hidden'))) return true;
-    return !!phase || !!remoteLock;
-  }
-
-  function ensureOverlay(){
-    if (overlay) return overlay;
-    overlay = document.createElement('div');
-    overlay.id = 'mxBridgeOverlay';
-    overlay.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:9999;pointer-events:none;background:rgba(0,0,0,.55);color:#fff;border:1px solid rgba(255,255,255,.2);padding:6px 10px;border-radius:999px;font:600 14px/1.2 sans-serif;';
-    document.body.appendChild(overlay);
-    return overlay;
-  }
-  function setOverlay(text, show=true){ const el=ensureOverlay(); el.textContent=text||''; el.style.display=(show&&text)?'block':'none'; }
-
-  function ensureFreezeLayer(){
-    let el = document.getElementById('mxFreezeLayer');
-    if (el) return el;
-    el = document.createElement('div');
-    el.id = 'mxFreezeLayer';
-    el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.12);z-index:9998;display:none;pointer-events:none;';
-    document.body.appendChild(el);
-    return el;
-  }
-  function setRemoteLock(label, on){
-    try{
-      const fl = ensureFreezeLayer();
-      if (on){
-        remoteLock = { label: label||'선택 중' };
-        fl.style.display = 'block';
-        invulnBeforeLock = !!myPlayer()?.__mxInvuln;
-        if (myPlayer()) myPlayer().__mxInvuln = true;
-        if (window.G) window.G.paused = true;
-        setOverlay(`${label} · 다른 플레이어 선택 중`, true);
-      } else {
-        remoteLock = null;
-        fl.style.display = 'none';
-        if (myPlayer()) myPlayer().__mxInvuln = !!invulnBeforeLock;
-        if (!phase && window.G) window.G.paused = false;
-        setOverlay('', false);
-      }
-    }catch(_){ }
-  }
-
-  function ensureExitButton(){
-    if (exitBtn) return exitBtn;
-    exitBtn = document.createElement('button');
-    exitBtn.type = 'button';
-    exitBtn.textContent = '✕';
-    exitBtn.title = '나가기';
-    exitBtn.style.cssText = 'position:fixed;top:12px;right:12px;z-index:10001;width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.45);background:rgba(20,20,20,.35);color:#fff;font-size:18px;line-height:1;cursor:pointer;backdrop-filter: blur(2px);';
-    exitBtn.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); post({ type:'mx_quit' }); });
-    document.body.appendChild(exitBtn);
-    return exitBtn;
-  }
-
-  function ensureChat(){
-    if (chatWrap) return;
-    chatWrap = document.createElement('div');
-    chatWrap.id = 'mxChatDock';
-    chatWrap.style.cssText = 'position:fixed;left:12px;right:12px;bottom:10px;z-index:10000;pointer-events:none;display:flex;justify-content:center;';
-    const panel = document.createElement('div');
-    panel.style.cssText = 'width:min(760px,100%);background:rgba(0,0,0,.38);border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:8px;backdrop-filter: blur(3px);pointer-events:auto;';
-    chatLog = document.createElement('div');
-    chatLog.style.cssText = 'height:82px;overflow:auto;color:#fff;font:12px/1.35 sans-serif;padding:2px 2px 6px 2px;';
-    const row = document.createElement('div'); row.style.cssText = 'display:flex;gap:6px;';
-    chatInput = document.createElement('input');
-    chatInput.type = 'text';
-    chatInput.maxLength = 120;
-    chatInput.placeholder = '채팅 입력 후 Enter';
-    chatInput.style.cssText = 'flex:1;min-width:0;border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;padding:8px 10px;font:13px sans-serif;outline:none;';
-    const sendBtn = document.createElement('button');
-    sendBtn.type = 'button'; sendBtn.textContent = '전송';
-    sendBtn.style.cssText = 'border-radius:8px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.14);color:#fff;padding:8px 12px;cursor:pointer;';
-    const send = ()=>{
-      const text = String(chatInput?.value||'').trim();
-      if (!text) return;
-      appendChatLine(localNick, text, true);
-      sendMx({ kind:'chat', text, nick: localNick, ts: now() });
-      chatInput.value = '';
-    };
-    chatInput.addEventListener('keydown', (e)=>{ if (e.key === 'Enter'){ e.preventDefault(); send(); } });
-    sendBtn.addEventListener('click', send);
-    row.append(chatInput, sendBtn);
-    panel.append(chatLog, row);
-    chatWrap.append(panel);
-    document.body.appendChild(chatWrap);
-  }
-  function appendChatLine(nick, text, self){
-    if (!chatLog) return;
-    const line = document.createElement('div');
-    line.style.cssText = `margin:2px 0; opacity:.95; ${self?'color:#d6f6ff;':''}`;
-    line.textContent = `[${(nick||'Player').slice(0,12)}] ${String(text||'').slice(0,120)}`;
-    chatLog.appendChild(line);
-    while (chatLog.children.length > 60) chatLog.removeChild(chatLog.firstChild);
-    chatLog.scrollTop = chatLog.scrollHeight;
-  }
-
-  function ensureOverlayCanvas(){
-    if (overlayCanvas && overlayCanvas.isConnected) return;
-    const base = document.getElementById('gameCanvas');
-    if (!base) return;
-    const parent = base.parentElement || document.body;
-    const style = getComputedStyle(parent);
-    if (style.position === 'static') parent.style.position = 'relative';
-    overlayCanvas = document.createElement('canvas');
-    overlayCanvas.id = 'mxRemoteOverlay';
-    overlayCanvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:4;';
-    parent.appendChild(overlayCanvas);
-    overlayCtx = overlayCanvas.getContext('2d');
-  }
-  function syncOverlayCanvasSize(){
-    ensureOverlayCanvas();
-    const base = document.getElementById('gameCanvas');
-    if (!base || !overlayCanvas) return;
-    if (overlayCanvas.width !== base.width) overlayCanvas.width = base.width;
-    if (overlayCanvas.height !== base.height) overlayCanvas.height = base.height;
-    // match visual size if canvas CSS scaled
-    overlayCanvas.style.width = base.style.width || '100%';
-    overlayCanvas.style.height = base.style.height || '100%';
-  }
-
-  function designByType(type){
-    try{ return (window.CHAR_DESIGNS||[]).find(d => d && d.type === type) || null; }catch(_){ return null; }
-  }
-
-  function drawRemoteOverlay(){
+  const GAME_ID = 'mathexplorer';
+  const PHASES = {
+    LOBBY:'lobby', CHAR_SELECT:'char_select', PLAYING:'playing',
+    LEVEL_CHOICE:'level_choice', CHEST_CHOICE:'chest_choice', BOSS_INTRO:'boss_intro',
+    ROUND_CLEAR:'round_clear', GAME_OVER:'game_over'
+  };
+  const state = {
+    init:null, startPayload:null, localSid:'', hostSid:'', isHost:false, expectedHumans:1,
+    peers:new Set(), rosterSids:[], phase:PHASES.LOBBY, phaseDeadline:0, phaseTimer:null,
+    localCharChosen:false, localCharType:'', selectedBySid:{}, gameBooted:false, uiReady:false,
+    chat:null, overlay:null, remoteStates:{}, worldSnap:null, labelsCanvas:null, labelsCtx:null, chatSeen:new Set(), chatSeq:0,
+    selecting:false, choiceType:'', lastEventId:'', wrapped:false, entitySeq:1, lastWorldSeq:0, worldGhost:null,
+    lastWorldAppliedAt:0, lastPhaseBroadcastAt:0,
+    idMap:{ enemies:new WeakMap(), projectiles:new WeakMap(), enemyProjectiles:new WeakMap(), items:new WeakMap(), effects:new WeakMap() }
+  };
+  const now=()=>Date.now();
+  const G=()=>window.G||null;
+  const mySid=()=>String(state.localSid||'');
+  const hostSid=()=>String(state.hostSid || (state.startPayload?.roster?.[0]?.sid || ''));
+  const iAmHost=()=> !!state.isHost || (mySid() && mySid()===hostSid());
+  const safeNum=(v,d=0)=>{ const n=Number(v); return Number.isFinite(n)?n:d; };
+  function post(msg){ try{ parent.postMessage(Object.assign({ gameId: GAME_ID }, msg), "*"); }catch(_){ } }
+  function send(kind,payload){ post({ type:'mx_msg', msg:Object.assign({ kind, ts: now() }, payload||{}) }); }
+  const sendPhase=(phase,payload)=>send('mx_phase',Object.assign({phase},payload||{}));
+  const sendWorld=(payload)=>send('mx_world',payload||{});
+  const sendState=(payload)=>send('mx_state',payload||{});
+  const sendEvent=(evt,payload)=>send('mx_event',Object.assign({evt,id:`${evt}:${now()}:${Math.random().toString(36).slice(2,7)}`},payload||{}));
+  function markPeer(sid){ sid=String(sid||'').trim(); if(sid) state.peers.add(sid); }
+  function activeCount(){ const e=Math.max(1, Number(state.expectedHumans||1)); const r=state.rosterSids.length?state.rosterSids.length:0; const p=Math.max(1, state.peers.size||0); return Math.min(4, Math.max(e,r,p)); }
+  function ensureOverlay(){ if(state.overlay) return state.overlay; const el=document.createElement('div'); el.id='mxBridgeOverlay'; el.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:7px 12px;color:#fff;font:600 13px/1.2 sans-serif;pointer-events:none;display:none;'; document.body.appendChild(el); state.overlay=el; return el; }
+  function setOverlay(t){ const el=ensureOverlay(); el.textContent=t||''; el.style.display=t?'block':'none'; }
+  function ensureQuitBtn(){ if(document.getElementById('mxQuitBtn')) return; const b=document.createElement('button'); b.id='mxQuitBtn'; b.textContent='✕'; b.type='button'; b.style.cssText='position:fixed;top:10px;right:10px;z-index:99999;width:34px;height:34px;border-radius:8px;border:1px solid rgba(255,255,255,.3);background:rgba(0,0,0,.35);color:#fff;font:700 18px/1 sans-serif;cursor:pointer;'; b.onclick=(e)=>{ e.preventDefault(); post({ type:'mx_quit' }); }; document.body.appendChild(b); }
+  function esc(s){ return String(s||'').replace(/[&<>]/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;' }[m])); }
+  function ensureChat(){ if(state.chat) return; const box=document.createElement('div'); box.id='mxChatBox'; box.style.cssText='position:fixed;left:10px;right:10px;bottom:10px;z-index:99999;background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:8px;color:#fff;font:12px/1.35 sans-serif;'; box.innerHTML='<div id="mxChatLog" style="height:90px;overflow:auto;margin-bottom:6px;background:rgba(0,0,0,.2);border-radius:6px;padding:6px"></div><div style="display:flex;gap:6px"><input id="mxChatInput" maxlength="180" placeholder="채팅" style="flex:1;min-width:0;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.08);color:#fff"><button id="mxChatSend" type="button" style="padding:6px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.12);color:#fff;cursor:pointer">전송</button></div>';
+    document.body.appendChild(box); const log=box.querySelector('#mxChatLog'); const input=box.querySelector('#mxChatInput'); const btn=box.querySelector('#mxChatSend'); const append=(nick,text,self)=>{ const line=document.createElement('div'); line.innerHTML=`<span style="opacity:.82">${esc(nick)}:</span> <span>${esc(text)}</span>`; if(self) line.style.opacity='0.96'; log.appendChild(line); while(log.childElementCount>80) log.removeChild(log.firstChild); log.scrollTop=log.scrollHeight; }; const submit=()=>{ const text=String(input.value||'').trim(); if(!text) return; input.value=''; const id=`${mySid()||'self'}:${++state.chatSeq}:${now()}`; state.chatSeen.add(id); append('나', text, true); send('chat',{ text, t:'chat', id, nick:(state.init?.nick||'') }); }; btn.onclick=submit; input.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); submit(); }}); state.chat={box,log,input,append}; }
+  function ensureRemoteLabelCanvas(){ if(state.labelsCanvas) return; const c=document.createElement('canvas'); c.id='mxRemoteLabels'; c.style.cssText='position:fixed;inset:0;z-index:99998;pointer-events:none;'; document.body.appendChild(c); state.labelsCanvas=c; state.labelsCtx=c.getContext('2d'); const resize=()=>{ c.width=Math.max(1,innerWidth); c.height=Math.max(1,innerHeight); }; addEventListener('resize', resize); resize(); }
+  function ensureUi(){ if(state.uiReady) return; state.uiReady=true; installEmbedStartLock(); ensureQuitBtn(); ensureChat(); ensureRemoteLabelCanvas(); }
+  function applyDifficulty(diff){ try{ const hard=Number(diff||1)>=2; if(typeof window.hardMode!=='undefined' && !!window.hardMode!==hard && G()?.toggleHardMode) G().toggleHardMode(); }catch(_){ } }
+  function ensureGlobalsReady(){ return !!(window.G && typeof window.G.showCharSelect==='function' && typeof window.G.selectChar==='function'); }
+  function hideMainScreen(){ try{ document.getElementById('mainScreen')?.classList.add('hidden'); }catch(_){ } }
+  function forceEmbedScreens(){
     try{
       if (!embed) return;
-      syncOverlayCanvasSize();
-      if (!overlayCtx || !window.G || !window.G.camera) return;
-      const c = overlayCtx;
-      c.clearRect(0,0,overlayCanvas.width, overlayCanvas.height);
-      const camX = Number(window.G.camera.x||0), camY = Number(window.G.camera.y||0);
-      const t = now();
-      for (const [sid, rp] of remotePlayers.entries()){
-        if (!rp) continue;
-        // interpolate
-        const age = Math.max(0, t - (rp.ts||t));
-        const lerp = Math.min(1, age / 90);
-        if (!Number.isFinite(rp.rx)) { rp.rx = rp.x||0; rp.ry = rp.y||0; }
-        rp.rx += ((rp.x||0) - rp.rx) * (0.18 + lerp*0.22);
-        rp.ry += ((rp.y||0) - rp.ry) * (0.18 + lerp*0.22);
-        const sx = rp.rx - camX;
-        const sy = rp.ry - camY;
-        if (sx < -80 || sy < -100 || sx > overlayCanvas.width+80 || sy > overlayCanvas.height+80) continue;
-        c.save();
-        c.translate(sx, sy);
-        c.globalAlpha = rp.selecting ? 0.45 : 0.9;
-        c.fillStyle = 'rgba(0,0,0,0.35)';
-        c.beginPath(); c.ellipse(0,25,18,9,0,0,Math.PI*2); c.fill();
-        const d = designByType(rp.character);
-        if (d && typeof d.draw === 'function'){
-          const frame = Math.floor(Number(rp.walkAnim||0)) % 2;
-          d.draw(c, frame, 1.35);
-        } else {
-          c.fillStyle = '#7ad'; c.beginPath(); c.arc(0,0,18,0,Math.PI*2); c.fill();
-        }
-        // hp
-        if (Number.isFinite(rp.hp) && Number.isFinite(rp.maxHp) && rp.maxHp > 0){
-          c.globalAlpha = 0.85;
-          c.fillStyle = 'rgba(0,0,0,.6)'; c.fillRect(-24,-44,48,6);
-          c.fillStyle = '#3f6'; c.fillRect(-24,-44,48*Math.max(0,Math.min(1,rp.hp/rp.maxHp)),6);
-        }
-        // name tag
-        c.globalAlpha = 1;
-        const label = rp.selecting ? `선택중 · ${rp.nick||sidShort(sid)}` : (rp.nick||sidShort(sid));
-        c.font = 'bold 12px sans-serif';
-        const tw = c.measureText(label).width;
-        c.fillStyle = 'rgba(0,0,0,.55)';
-        c.fillRect(-tw/2 - 6, -62, tw + 12, 18);
-        c.fillStyle = '#fff'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(label, 0, -53);
-        c.restore();
-      }
-      // local label
-      const p = myPlayer();
-      if (p && p.x != null){
-        const sx = p.x - camX, sy = p.y - camY;
-        c.save();
-        c.translate(sx, sy);
-        const selecting = inSelectionPhase();
-        const label = selecting ? `선택중 · ${localNick}` : localNick;
-        c.font='bold 12px sans-serif'; const tw = c.measureText(label).width;
-        c.fillStyle='rgba(0,0,0,.55)'; c.fillRect(-tw/2 - 6, -62, tw + 12, 18);
-        c.fillStyle='#fff'; c.textAlign='center'; c.textBaseline='middle'; c.fillText(label, 0, -53);
-        c.restore();
+      const ms = document.getElementById('mainScreen');
+      if (ms) { ms.classList.add('hidden'); ms.style.display='none'; }
+      // startPayload 오기 전에는 싱글 첫화면 클릭으로 로컬 시작되는 것을 막는다.
+      if (ms && !state.startPayload){
+        ms.style.pointerEvents = 'none';
+        ms.style.opacity = '0.45';
+      } else if (ms){
+        ms.style.pointerEvents = '';
+        ms.style.opacity = '';
       }
     }catch(_){ }
   }
-
-  function pruneClaims(){
-    const t = now();
-    globalChestClaims = (globalChestClaims||[]).filter(c => (t - (c.ts||0)) < 30000);
-  }
-  function sendHello(){ sendMx({ kind:'hello', ts: now(), nick: localNick, char: myPlayer()?.design?.type||'' }); }
-  function applyDifficulty(diff){
+  function installEmbedStartLock(){
     try{
-      const target = (Number(diff)>=2);
-      if (typeof window.hardMode !== 'undefined' && !!window.hardMode !== target && window.G?.toggleHardMode){
-        window.G.toggleHardMode();
-      }
+      if (!embed || window.__mxEmbedStartLockInstalled) return;
+      window.__mxEmbedStartLockInstalled = true;
+      document.addEventListener('click', (e)=>{
+        try{
+          if (!embed) return;
+          if (state.startPayload && state.phase !== PHASES.LOBBY) return;
+          const t = e.target;
+          if (!t || !t.closest) return;
+          if (t.closest('#mainScreen') || (!state.startPayload && t.closest('#charScreen'))){
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            setOverlay(state.startPayload ? '캐릭터 선택 동기화 대기중…' : '룸 시작 대기중…');
+          }
+        }catch(_){ }
+      }, true);
     }catch(_){ }
   }
-  function hideMain(){ try{ document.getElementById('mainScreen')?.classList.add('hidden'); }catch(_){} }
-  function showCharSelect(){ try{ hideMain(); window.G?.showCharSelect?.(); }catch(_){} }
-
-  function chooseRandomChar(){
-    if (charChosen) return;
-    try{
-      const arr = Array.isArray(window.CHAR_DESIGNS) ? window.CHAR_DESIGNS : null;
-      if (arr && arr.length){
-        const pick = arr[Math.floor(Math.random()*arr.length)];
-        if (pick?.type && window.G?.selectChar) { window.G.selectChar(pick.type); return; }
-      }
-      document.querySelector('#charSelectGrid .character')?.click();
-    }catch(_){ }
-  }
-
-  function clearPickTimers(){ clearInterval(levelUpTimer); clearInterval(chestTimer); }
-
-  function openPhase(kind, secs){
-    const id = `${kind}-${now()}-${Math.random().toString(36).slice(2,6)}`;
-    phase = { kind, id, owner: localSid || 'me', ready: new Set([localSid||'me']), deadline: now()+secs*1000 };
-    if (window.G) window.G.paused = true;
-    sendMx({ kind:'phase_open', pkind:kind, pid:id, secs });
-    startSharedPhaseCountdown(kind, secs);
-    return phase;
-  }
-  function startSharedPhaseCountdown(kind, secs){
-    clearPickTimers();
-    const deadline = now() + secs*1000;
-    const timer = setInterval(()=>{
-      const remain = Math.max(0, Math.ceil((deadline-now())/1000));
-      const need = Math.max(0, activeCount() - (phase?.ready?.size||0));
-      const label = kind === 'levelup' ? '레벨업 선택' : '보물 선택';
-      setOverlay(`${label} ${remain}s${need?` · 대기 ${need}`:''}`);
-      sendMx({ kind:'modal_state', label, remain, phase: phaseKey() });
-      if (remain <= 0){
-        clearInterval(timer);
-        try{ if (kind === 'levelup') autoPick('#upgrades .upgradeCard'); else autoPick('#items .upgradeCard, #items > div'); }catch(_){ }
-      }
-    }, 250);
-    if (kind === 'levelup') levelUpTimer = timer; else chestTimer = timer;
-  }
-  function maybeResumePhase(){
-    if (!phase) return;
-    if (phase.ready.size >= activeCount()){
-      sendMx({ kind:'phase_resume', pkind:phase.kind, pid:phase.id });
-      endPhaseLocal(phase.kind, phase.id);
-    }
-  }
-  function endPhaseLocal(kind, id){
-    if (!phase || phase.kind !== kind || phase.id !== id) return;
-    phase = null;
-    clearPickTimers();
-    if (!remoteLock && window.G) window.G.paused = false;
-    setOverlay('', false);
-    sendMx({ kind:'modal_clear' });
-  }
-  function markLocalPhaseReady(kind){
-    if (!phase || phase.kind !== kind) return;
-    phase.ready.add(localSid||'me');
-    sendMx({ kind:'phase_ready', pkind:kind, pid:phase.id });
-    maybeResumePhase();
-  }
-
-  function autoPick(sel){
-    try{
-      const nodes = [...document.querySelectorAll(sel)].filter(n=>n.offsetParent!==null);
-      if (!nodes.length) return;
-      nodes[Math.floor(Math.random()*nodes.length)].click();
-    }catch(_){ }
-  }
-
-  function wrapCardsForPhase(containerSel, kind){
-    const root = document.querySelector(containerSel);
-    if (!root) return;
-    root.querySelectorAll('.upgradeCard').forEach(card=>{
-      if (card.__mxWrapped) return;
-      card.__mxWrapped = true;
-      card.addEventListener('click', ()=>{ try{ markLocalPhaseReady(kind); }catch(_){} }, true);
-    });
-  }
-
-  function startCharCountdown(){
-    clearInterval(charTimer);
-    charDeadline = now() + 10000;
-    const tick = ()=>{
-      const remain = Math.max(0, Math.ceil((charDeadline - now())/1000));
-      const need = Math.max(0, activeCount() - selectedChars.size);
-      setOverlay(`캐릭터 선택 (${remain}s)${need?` · 대기 ${need}`:''} · 최대4인`);
-      if (remain <= 0){
-        clearInterval(charTimer);
-        let tries = 0;
-        const retry = setInterval(()=>{
-          tries++;
-          chooseRandomChar();
-          if (charChosen || tries >= 20){ clearInterval(retry); }
-        }, 200);
-      }
+  function pauseGame(v){ try{ if(G()) G().paused=!!v; }catch(_){ } }
+  function setSelecting(v, label){ state.selecting=!!v; state.choiceType=label||''; const g=G(); if(g&&g.player){ g.player.__mxInvuln = !!v; } }
+  function showSelectingOverlay(label, remain){ const t = (typeof remain==='number'&&remain>=0) ? `${label} ${remain}s` : label; setOverlay(`선택중 · ${t}`); }
+  function randomCharType(){ const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; if(!arr.length) return ''; const item=arr[Math.floor(Math.random()*arr.length)]; return String(item?.type||''); }
+  function openCharSelect(){ if(!ensureGlobalsReady()) return false; ensureUi(); hideMainScreen(); try{ G().showCharSelect(); state.gameBooted=true; }catch(_){ } return true; }
+  function selectedCount(){ return Object.keys(state.selectedBySid||{}).filter(k=>state.selectedBySid[k]!==undefined).length; }
+  function hasEveryoneSelected(){ return selectedCount() >= activeCount(); }
+  function setPhase(phase, opts={}){
+    state.phase=phase; if(opts.deadline) state.phaseDeadline=Number(opts.deadline)||0;
+    if(state.phaseTimer){ clearInterval(state.phaseTimer); state.phaseTimer=null; }
+    const ticker = (label,onExpire)=>{
+      const tick=()=>{ const remain=Math.max(0, Math.ceil((state.phaseDeadline-now())/1000)); showSelectingOverlay(label, remain); if(now()>=state.phaseDeadline){ clearInterval(state.phaseTimer); state.phaseTimer=null; onExpire&&onExpire(); } };
+      tick(); state.phaseTimer=setInterval(tick,200);
     };
-    tick();
-    charTimer = setInterval(tick, 200);
+    if(phase===PHASES.CHAR_SELECT){ pauseGame(true); setSelecting(true,'캐릭터'); ticker('캐릭터 선택', ()=>{ if(!state.localCharChosen){ const t=randomCharType(); if(t&&G()?.selectChar) G().selectChar(t); else document.querySelector('#charSelectGrid .character')?.click(); } if(iAmHost()) finalizeCharSelect(true); }); }
+    else if(phase===PHASES.LEVEL_CHOICE){ pauseGame(true); setSelecting(true,'레벨업'); ticker('레벨업 선택', ()=>{ autoPickCard('#upgrades .upgradeCard'); if(iAmHost()) endChoicePhase(); }); }
+    else if(phase===PHASES.CHEST_CHOICE){ pauseGame(true); setSelecting(true,'보물'); ticker('보물 선택', ()=>{ autoPickCard('#items .upgradeCard'); if(iAmHost()) endChoicePhase(); }); }
+    else if(phase===PHASES.PLAYING){ setSelecting(false,''); setOverlay(''); pauseGame(false); hideChoiceScreens(); }
+    else { pauseGame(true); }
   }
-
-  function beginFromRoom(){
-    if (!window.G || typeof window.G.showCharSelect !== 'function' || !document.getElementById('charScreen')){
-      setTimeout(beginFromRoom, 150);
-      return;
-    }
-    ensureExitButton();
-    ensureChat();
-    hookGame();
-    try{ document.getElementById('mainScreen')?.classList.add('hidden'); }catch(_){ }
-    applyDifficulty(startPayload?.difficulty ?? initMsg?.difficulty ?? initMsg?.level ?? 1);
-    if (embed) sendHello();
-    showCharSelect();
-    startCharCountdown();
-    setTimeout(sendHello, 600);
-    setTimeout(sendHello, 1500);
-    startStateLoop();
-    startOverlayLoop();
+  function hideChoiceScreens(){ try{ ['levelUpScreen','itemScreen','mathScreen'].forEach(id=>document.getElementById(id)?.classList.add('hidden')); }catch(_){ } }
+  function autoPickCard(sel){ try{ document.querySelector(sel)?.click(); }catch(_){ } }
+  function broadcastPhaseSync(phase, deadline, extra){ if(!iAmHost()) return; sendPhase(phase,Object.assign({ deadline: deadline||0, expectedHumans: activeCount(), selectedBySid: state.selectedBySid||{} }, extra||{})); }
+  function beginCharSelect(){ if(!openCharSelect()){ setTimeout(beginCharSelect,120); return; } applyDifficulty(state.startPayload?.difficulty || state.init?.level || 1); state.selectedBySid={}; state.localCharChosen=false; state.localCharType=''; const deadline=now()+10000; setPhase(PHASES.CHAR_SELECT,{ deadline }); if(iAmHost()) broadcastPhaseSync(PHASES.CHAR_SELECT, deadline); }
+  function maybeStartSequence(){ if(!embed || !state.init) return; ensureUi(); forceEmbedScreens(); if(!state.startPayload){ setOverlay('게임 시작 동기화 대기…'); pauseGame(true); return; } if(state.phase===PHASES.LOBBY) beginCharSelect(); }
+  function finalizeCharSelect(force){ if(!iAmHost()) return; if(!(hasEveryoneSelected() || force)) return; broadcastPhaseSync(PHASES.PLAYING,0); setPhase(PHASES.PLAYING); }
+  function endChoicePhase(){ if(!iAmHost()) return; broadcastPhaseSync(PHASES.PLAYING,0); setPhase(PHASES.PLAYING); }
+  function idFor(group,obj){ if(!obj||typeof obj!=='object') return ''; let id=state.idMap[group].get(obj); if(!id){ id=`${group[0]}${state.entitySeq++}`; state.idMap[group].set(obj,id); } return id; }
+  function slimEntity(group,e){ if(!e) return null; const o={ id:idFor(group,e), x:Math.round(safeNum(e.x)), y:Math.round(safeNum(e.y)) };
+    if('hp' in e) o.hp=Math.round(safeNum(e.hp)); if('maxHp' in e) o.maxHp=Math.round(safeNum(e.maxHp));
+    if('type' in e) o.type=e.type; if(e.isBoss) o.isBoss=true; if('life' in e) o.life=Math.round(safeNum(e.life));
+    if('damage' in e) o.damage=Math.round(safeNum(e.damage)); if('value' in e) o.value=Math.round(safeNum(e.value));
+    if('vx' in e) o.vx=+safeNum(e.vx).toFixed(2); if('vy' in e) o.vy=+safeNum(e.vy).toFixed(2);
+    return o;
   }
-
-  function tryClaimChest(chest){
-    if (remoteLock || localChestOpen) return false;
-    pruneClaims();
-    if ((globalChestClaims?.length||0) >= 3) return false;
-    localChestOpen = true;
-    const claim = { from: localSid||'me', x: Math.round(chest?.x||0), y: Math.round(chest?.y||0), ts: now() };
-    globalChestClaims.push(claim);
-    sendMx({ kind:'chest_claim', x: claim.x, y: claim.y, ts: claim.ts });
-    return true;
+  function serializeWorld(){ const g=G(); if(!g||!g.player) return null; const p=g.player; const players={}; players[mySid()||'self']={ sid:mySid()||'self', x:Math.round(safeNum(p.x)), y:Math.round(safeNum(p.y)), hp:Math.round(safeNum(p.hp)), maxHp:Math.round(safeNum(p.maxHp)), lvl:Math.round(safeNum(p.level,1)), exp:Math.round(safeNum(p.exp,0)), expNext:Math.round(safeNum(p.expNext,1)), selecting:!!p.__mxInvuln || state.phase!==PHASES.PLAYING, name: state.init?.nick||'', charType: state.localCharType||'' }; for (const [sid,rs] of Object.entries(state.remoteStates||{})){ if(!sid||!rs) continue; players[sid]={ sid, x:Math.round(safeNum(rs.x)), y:Math.round(safeNum(rs.y)), hp:Math.round(safeNum(rs.hp)), maxHp:Math.round(safeNum(rs.maxHp)), lvl:Math.round(safeNum(rs.lvl,1)), exp:Math.round(safeNum(rs.exp,0)), expNext:Math.round(safeNum(rs.expNext,1)), selecting:!!rs.selecting, name:String(rs.name||''), charType:String(rs.charType||'') }; } return { seq: ++state.lastWorldSeq, phase:state.phase, stage:Math.round(safeNum(g.stage,1)), score:Math.round(safeNum(g.score)), teamXp:Math.round(teamXpEstimate()), nextBossScore:Math.round(safeNum(g.nextBossScore,700)), bossCount:Math.round(safeNum(g.bossCount,0)), player:{ x:Math.round(safeNum(p.x)), y:Math.round(safeNum(p.y)), hp:Math.round(safeNum(p.hp)), maxHp:Math.round(safeNum(p.maxHp)), level:Math.round(safeNum(p.level,1)), exp:Math.round(safeNum(p.exp,0)), expNext:Math.round(safeNum(p.expNext,1)) }, players, entities:{ monsters:(Array.isArray(g.enemies)?g.enemies:[]).slice(0,180).map(e=>slimEntity('enemies',e)).filter(Boolean), projectiles:(Array.isArray(g.projectiles)?g.projectiles:[]).slice(0,220).map(e=>slimEntity('projectiles',e)).filter(Boolean), enemyProjectiles:(Array.isArray(g.enemyProjectiles)?g.enemyProjectiles:[]).slice(0,220).map(e=>slimEntity('enemyProjectiles',e)).filter(Boolean), drops:(Array.isArray(g.items)?g.items:[]).slice(0,120).map(e=>slimEntity('items',e)).filter(Boolean) } }; }
+  function _ghostDrawCircle(x,y,r,fill,stroke){ try{ const c=window.ctx; if(!c) return; c.save(); c.fillStyle=fill||'rgba(255,80,80,.8)'; c.beginPath(); c.arc(x,y,Math.max(2,r||8),0,Math.PI*2); c.fill(); if(stroke){ c.strokeStyle=stroke; c.lineWidth=2; c.stroke(); } c.restore(); }catch(_){} }
+  function makeGhostEnemy(e){ return { __mxGhost:true, __mxId:String(e?.id||''), x:safeNum(e?.x), y:safeNum(e?.y), hp:safeNum(e?.hp,1), maxHp:Math.max(1,safeNum(e?.maxHp,1)), size:Math.max(8,safeNum(e?.size,18)), isBoss:!!e?.isBoss, type:e?.type, update(){ return this.hp>0; }, draw(){ _ghostDrawCircle(this.x,this.y,this.isBoss?Math.max(this.size,24):this.size, this.isBoss?'rgba(255,120,40,.9)':'rgba(220,60,60,.85)', this.isBoss?'#ff0':null); } }; }
+  function makeGhostProjectile(p, enemy){ return { __mxGhost:true, __mxId:String(p?.id||''), x:safeNum(p?.x), y:safeNum(p?.y), vx:safeNum(p?.vx), vy:safeNum(p?.vy), life:Math.max(1,safeNum(p?.life,5)), size:Math.max(4,safeNum(p?.size, enemy?10:6)), damage:safeNum(p?.damage,0), isRock:!!p?.isRock, isBossProjectile:!!p?.isBossProjectile, update(){ this.life=Math.max(0,this.life-1); return this.life>0; }, draw(){ _ghostDrawCircle(this.x,this.y,this.size, enemy?'rgba(255,180,60,.9)':'rgba(120,220,255,.9)'); } } }
+  function makeGhostDrop(d){ return { __mxGhost:true, __mxId:String(d?.id||''), x:safeNum(d?.x), y:safeNum(d?.y), type:String(d?.type||'exp'), value:safeNum(d?.value,1) }; }
+  function buildGhostWorld(s){ const ents=s?.entities||{}; return { monsters:(Array.isArray(ents.monsters)?ents.monsters:[]).map(makeGhostEnemy), projectiles:(Array.isArray(ents.projectiles)?ents.projectiles:[]).map(p=>makeGhostProjectile(p,false)), enemyProjectiles:(Array.isArray(ents.enemyProjectiles)?ents.enemyProjectiles:[]).map(p=>makeGhostProjectile(p,true)), drops:(Array.isArray(ents.drops)?ents.drops:[]).map(makeGhostDrop) }; }
+  function applyWorldSnapshotToGuest(s){ const g=G(); if(!g||!s) return; try{ const seq=safeNum(s.seq,0); if(seq && seq < safeNum(state.lastWorldSeq,0)) return; if(seq) state.lastWorldSeq = seq; state.lastWorldAppliedAt = now(); applyHostPlayerProgressToGuest(s); syncRemoteStatesFromWorldPlayers(s); state.worldGhost = buildGhostWorld(s); }catch(_){ } }
+  function teamXpEstimate(){ const g=G(); const p=g&&g.player; let total = safeNum(p?.exp,0); for (const rs of Object.values(state.remoteStates||{})){ total += safeNum(rs?.exp,0); } return Math.max(0, total); }
+  function applyHostPlayerProgressToGuest(s){ const g=G(); if(!g||!g.player||!s) return; try{ const hp=s.player||{}; const lp=g.player; if(typeof hp.maxHp==='number') lp.maxHp = hp.maxHp; if(typeof hp.hp==='number') lp.hp = Math.max(1, Math.min(safeNum(lp.maxHp||hp.maxHp,99999), hp.hp)); if(typeof hp.level==='number') lp.level = hp.level; if(typeof hp.exp==='number') lp.exp = hp.exp; if(typeof hp.expNext==='number') lp.expNext = hp.expNext; if(typeof s.score==='number') g.score = s.score; if(typeof s.stage==='number') g.stage = s.stage; if(typeof s.nextBossScore==='number') g.nextBossScore = s.nextBossScore; if(typeof s.bossCount==='number') g.bossCount = s.bossCount; }catch(_){} }
+  function syncRemoteStatesFromWorldPlayers(s){ const players=(s&&s.players&&typeof s.players==='object')?s.players:null; if(!players) return; for (const [sid,ps] of Object.entries(players)){ if(!sid || sid===mySid()) continue; state.remoteStates[sid] = Object.assign({}, state.remoteStates[sid]||{}, { sid, x:safeNum(ps?.x), y:safeNum(ps?.y), hp:safeNum(ps?.hp), maxHp:safeNum(ps?.maxHp), lvl:safeNum(ps?.lvl,1), exp:safeNum(ps?.exp,0), expNext:safeNum(ps?.expNext,1), selecting:!!ps?.selecting, name:String(ps?.name||state.remoteStates[sid]?.name||''), charType:String(ps?.charType||''), ts: now() }); } }
+  function drawRemoteLabels(){ ensureRemoteLabelCanvas(); const c=state.labelsCanvas, ctx=state.labelsCtx; if(!ctx) return; ctx.clearRect(0,0,c.width,c.height); const arr=Object.values(state.remoteStates||{}); if(!arr.length) return; const g=G(); const lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0; const camY=lp?(safeNum(lp.y)-c.height/2):0; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; for(const st of arr){ if(!st||!st.sid||st.sid===mySid()) continue; const x=safeNum(st.x)-camX, y=safeNum(st.y)-camY; if(x<-100||y<-100||x>c.width+100||y>c.height+100) continue; const name=String(st.name||`유저-${String(st.sid).slice(0,4)}`); if(st.selecting){ ctx.fillStyle='rgba(255,255,0,.95)'; ctx.fillText('선택중',x,y-38); } ctx.fillStyle='rgba(0,0,0,.7)'; ctx.fillRect(x-42,y-32,84,18); ctx.fillStyle='white'; ctx.fillText(name,x,y-17); if(typeof st.hp==='number'&&typeof st.maxHp==='number'&&st.maxHp>0){ const w=62,h=5, px=x-w/2, py=y-10; ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(px,py,w,h); ctx.fillStyle='lime'; ctx.fillRect(px,py,Math.max(0,Math.min(w,w*(st.hp/st.maxHp))),h); } } }
+  function postLocalState(){ const g=G(), p=g&&g.player; if(!p||!mySid()) return; sendState({ x:Math.round(safeNum(p.x)), y:Math.round(safeNum(p.y)), hp:Math.round(safeNum(p.hp)), maxHp:Math.round(safeNum(p.maxHp)), lvl:Math.round(safeNum(p.level,1)), exp:Math.round(safeNum(p.exp,0)), expNext:Math.round(safeNum(p.expNext,1)), score:Math.round(safeNum(g?.score,0)), stage:Math.round(safeNum(g?.stage,1)), selecting: !!p.__mxInvuln || state.phase!==PHASES.PLAYING, name: state.init?.nick||'', charType: state.localCharType||'', phase:state.phase }); }
+  function postWorldIfHost(){ if(!iAmHost()||state.phase!==PHASES.PLAYING) return; const s=serializeWorld(); if(s) sendWorld(s); }
+  function handlePhaseSync(m){ if(typeof m.expectedHumans==='number') state.expectedHumans=Math.max(1,Number(m.expectedHumans||1)); if(m.selectedBySid&&typeof m.selectedBySid==='object') state.selectedBySid=Object.assign({}, m.selectedBySid); const phase=String(m.phase||''); if(Object.values(PHASES).includes(phase)){ if(phase===PHASES.CHAR_SELECT && !openCharSelect()){ setTimeout(()=>handlePhaseSync(m),120); return; } setPhase(phase,{ deadline:Number(m.deadline||0)||0 }); } }
+  function handleMxEvent(m){ const id=String(m.id||''); if(id&&id===state.lastEventId) return; if(id) state.lastEventId=id; const evt=String(m.evt||''); if(evt==='boss_spawn' && !iAmHost()){ try{ if (G() && G().boss == null && typeof G().spawnBoss==='function') G().spawnBoss(); }catch(_){ } }
   }
-  function releaseChest(reason){
-    localChestOpen = false;
-    pruneClaims();
-    globalChestClaims = (globalChestClaims||[]).filter(c => String(c.from||'') !== String(localSid||''));
-    sendMx({ kind:'chest_release', reason: reason||'done' });
-  }
-
-  function ensureEntityId(obj, prefix){
-    try{
-      if (!obj) return '';
-      if (!obj.__mxId) obj.__mxId = `${prefix}${Math.random().toString(36).slice(2,8)}${Date.now().toString(36).slice(-4)}`;
-      return String(obj.__mxId);
-    }catch(_){ return ''; }
-  }
-
-  function findEnemyById(id){
-    try{
-      if (!id || !window.G || !Array.isArray(window.G.enemies)) return null;
-      const sid = String(id);
-      for (const e of window.G.enemies){ if (e && String(e.__mxId||'') === sid) return e; }
-    }catch(_){ }
-    return null;
-  }
-
-  function awardRemoteKill(enemy){
-    try{
-      if (!enemy || !window.G || !window.G.player) return;
-      const p = window.G.player;
-      window.G.score = Number(window.G.score||0) + Number(enemy.score||0);
-      suppressXpRelay = false; // host should relay xp_gain to team
-      p.gainExp(Number(enemy.exp||0));
-      const currentChests = (window.G.items||[]).filter(item => item.type === 'chest').length;
-      if (Math.random() < 0.1 && currentChests < 3) window.G.items.push({x: enemy.x, y: enemy.y, type: 'chest'});
-      else if (Math.random() < 0.3) window.G.items.push({x: enemy.x, y: enemy.y, type: 'exp', value: enemy.exp});
-      try{ window.G.textParticle?.(enemy.x, enemy.y, '협동 처치!', '#8ff', 0.9); }catch(_){}
-    }catch(_){ }
-  }
-
-  function applyRemoteCombatHit(m){
-    try{
-      if (!embed || !isWorldAuthority() || !window.G) return;
-      const enemy = findEnemyById(m.enemyId);
-      if (!enemy || !(enemy.hp > 0)) return;
-      let dmg = Number(m.dmg || 0);
-      if (!Number.isFinite(dmg) || dmg <= 0) return;
-      if (dmg > 100000) dmg = 100000;
-      enemy.hp -= dmg;
-      try{ window.G.textParticle?.(enemy.x, enemy.y, `-${Math.round(dmg)}`, '#faa', 0.7); }catch(_){}
-      if (enemy.hp <= 0 && !enemy.__mxRemoteKillAwarded){
-        enemy.__mxRemoteKillAwarded = true;
-        awardRemoteKill(enemy);
-      }
-    }catch(_){ }
-  }
-
-  function buildWorldSnapshot(){
-    try{
-      if (!window.G || !window.G.player) return null;
-      const g = window.G;
-      const enemies = (g.enemies||[]).map((e,idx)=>({
-        id: ensureEntityId(e,'e'),
-        x: Math.round(e.x||0), y: Math.round(e.y||0),
-        hp: Math.round(Number(e.hp||0)), maxHp: Math.round(Number(e.maxHp||e.hp||1)),
-        type: Number(e.type||0),
-        boss: !!e.isBoss,
-        lvl: Number(e.level||e.stage||g.stage||1)
-      })).slice(0,80);
-      const items = (g.items||[]).map((it)=>({
-        id: ensureEntityId(it,'i'), x: Math.round(it.x||0), y: Math.round(it.y||0),
-        type: String(it.type||'exp'), v: Math.round(Number(it.value||0))
-      })).slice(0,120);
-      const enemyProjectiles = (g.enemyProjectiles||[]).map((ep,idx)=>({
-        id: ensureEntityId(ep,'ep'), x: Math.round(ep.x||0), y: Math.round(ep.y||0),
-        vx: Number(ep.vx||0), vy: Number(ep.vy||0), life: Number(ep.life||0), damage: Number(ep.damage||0),
-        isRock: !!ep.isRock, size: Number(ep.size||0)
-      })).slice(0,160);
-      const effects = (g.effects||[]).filter(e=>e && (e.type==='attackWarning' || e.type==='laserWarning')).map(e=>({
-        id: ensureEntityId(e,'fx'), type:String(e.type), x:Number(e.x||0), y:Number(e.y||0), life:Number(e.life||0),
-        radius:Number(e.radius||0), angle:Number(e.angle||0), width:Number(e.width||0), length:Number(e.length||0)
-      })).slice(0,60);
-      return {
-        kind:'world',
-        ts: now(),
-        stage: Number(g.stage||1),
-        score: Math.round(Number(g.score||0)),
-        nextBossScore: Math.round(Number(g.nextBossScore||0)),
-        bossAlive: !!g.boss,
-        enemies, items, enemyProjectiles, effects
-      };
-    }catch(_){ return null; }
-  }
-
-  function applyWorldSnapshot(m){
-    try{
-      if (!window.G || !m || !Array.isArray(m.enemies) || !Array.isArray(m.items)) return;
-      const g = window.G;
-      worldSnapshot = { ts: now(), hostTs: Number(m.ts||0), data: m };
-      lastHostBeatTs = now();
-      // mirror scoreboard/stage from authority (do not reduce progress harshly)
-      if (Number.isFinite(m.stage)) g.stage = Math.max(1, Number(m.stage));
-      if (Number.isFinite(m.score)) g.score = Math.max(Number(g.score||0), Number(m.score));
-      if (Number.isFinite(m.nextBossScore) && m.nextBossScore > 0) g.nextBossScore = Number(m.nextBossScore);
-
-      const byId = new Map();
-      for (const e of (g.enemies||[])){ if (e && e.__mxId) byId.set(String(e.__mxId), e); }
-      const nextEnemies = [];
-      for (const se of m.enemies){
-        let e = byId.get(String(se.id));
-        if (!e){
+  function handleMxMsg(msg){ const m=(msg&&typeof msg==='object')?msg:{}; const from=String(m.from||''); if(from) markPeer(from); let k=String(m.kind||m.t||''); if(k==='mx_chat'||k==='chat_msg'){ k='chat'; m.kind='chat'; } if(k==='mx_phase'||k==='phase'){ k='phase_sync'; } if(k==='mx_state'){ k='state'; } if(k==='mx_world'){ k='world'; } if(k==='hello'){ send('hello_ack',{}); return; } if(k==='hello_ack'){ if(from) markPeer(from); return; } if(k==='chat'){ if(!m.text) return; ensureChat(); const cid=String(m.id||''); if(cid){ if(state.chatSeen.has(cid)) return; state.chatSeen.add(cid); if(state.chatSeen.size>300){ try{ state.chatSeen = new Set(Array.from(state.chatSeen).slice(-200)); }catch(_){ } } } if(from&&from===mySid()) return; state.chat.append(m.nick||m.name||`유저-${(from||'').slice(0,4)}`, String(m.text||''), false); return; } if(k==='phase_sync'||k==='mx_phase'){ handlePhaseSync(m); return; } if(k==='mx_event'){ handleMxEvent(m); return; } if(k==='char_selected'){ if(from){ state.selectedBySid[from]=String(m.character||''); if(state.phase===PHASES.CHAR_SELECT){ if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); } } return; } if(k==='state'||k==='mx_state'){ if(!from) return; state.remoteStates[from]={ sid:from, x:safeNum(m.x), y:safeNum(m.y), hp:safeNum(m.hp), maxHp:safeNum(m.maxHp), lvl:safeNum(m.lvl,1), exp:safeNum(m.exp,0), expNext:safeNum(m.expNext,1), score:safeNum(m.score,0), stage:safeNum(m.stage,1), selecting:!!m.selecting, name:String(m.name||m.nick||''), charType:String(m.charType||''), ts:now() }; return; } if(k==='world'||k==='mx_world'){ state.worldSnap=m; if(!iAmHost()) applyWorldSnapshotToGuest(m); return; } }
+  function ensurePlayerSafetyWrap(){ try{ const g=G(); const pl=g&&g.player; if(!pl) return; if(!pl.__mxTakeDamageWrapped&&typeof pl.takeDamage==='function'){ const o=pl.takeDamage.bind(pl); pl.takeDamage=function(d){ if(this.__mxInvuln || state.phase!==PHASES.PLAYING || (!iAmHost() && (window.location.search||'').includes('embed=1'))) return; return o(d); }; pl.__mxTakeDamageWrapped=true; }
+    if(!pl.__mxGainExpWrapped&&typeof pl.gainExp==='function'){ const ge=pl.gainExp.bind(pl); pl.gainExp=function(v){ if(!iAmHost() && (window.location.search||'').includes('embed=1')) return; return ge(v); }; pl.__mxGainExpWrapped=true; }
+  }catch(_){} }
+  function wrapGameHooks(){ const g=G(); if(!g){ ensurePlayerSafetyWrap(); return; } if(g.__mxNetWrapped){ ensurePlayerSafetyWrap(); return; } g.__mxNetWrapped=true; const origSelect=g.selectChar?.bind(g); const origStart=g.start?.bind(g); const origUpdate=g.update?.bind(g); const origLoop=g.loop?.bind(g); const origShowLevel=g.showLevelUp?.bind(g); const origShowMath=g.showMathScreen?.bind(g); const origShowItem=g.showItemScreen?.bind(g); const origSpawnBoss=g.spawnBoss?.bind(g); const origCheckBossSpawn=g.checkBossSpawn?.bind(g);
+    if(origStart){ g.start=function(){ const r=origStart(); if(state.phase!==PHASES.PLAYING) pauseGame(true); try{ applyCoopScaling(); }catch(_){ } return r; }; }
+    if(origSelect){ g.selectChar=function(type){ const sid=mySid()||'self'; state.localCharChosen=true; state.localCharType=String(type||''); state.selectedBySid[sid]=state.localCharType; const r=origSelect(type); pauseGame(true); send('char_selected',{ character: state.localCharType }); if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); return r; }; }
+    if(origUpdate){ g.update=function(){ if(!iAmHost()&&state.worldSnap) applyWorldSnapshotToGuest(state.worldSnap); return origUpdate(); }; }
+    if(!g.__mxAuthoritativeWrapped){
+      g.__mxAuthoritativeWrapped = true;
+      const noBossSpawn = function(){ return; };
+      const noSpawnEnemies = function(){ return; };
+      const noRangedQueue = function(){ return; };
+      const noCheckBossSpawn = function(){ return; };
+      const origGameOver = g.gameOver?.bind(g);
+      if(origGameOver){ g.gameOver=function(){ if(!iAmHost()) return; return origGameOver(); }; }
+      const origLoop2 = g.loop?.bind(g);
+      if(origLoop2){ g.loop=function(timestamp){
+        if(!iAmHost()){
+          if(state.worldSnap) applyWorldSnapshotToGuest(state.worldSnap);
+          const se=g.spawnEnemies, sb=g.spawnBoss, cb=g.checkBossSpawn, pr=g.processRangedEffectQueue;
+          const saved={ enemies:g.enemies, projectiles:g.projectiles, enemyProjectiles:g.enemyProjectiles, items:g.items, boss:g.boss };
           try{
-            if (se.boss && window.Boss) e = new window.Boss(Number(se.x||0), Number(se.y||0), Number(g.bossCount||0));
-            else if (window.Enemy) e = new window.Enemy(Number(se.x||0), Number(se.y||0), Number(g.stage||1), Number.isFinite(se.type)?Number(se.type):null);
-          }catch(_){ e = null; }
-          if (!e) continue;
-          e.__mxId = String(se.id);
-        }
-        e.x = Number(se.x||e.x||0); e.y = Number(se.y||e.y||0);
-        if (Number.isFinite(se.hp)) e.hp = Number(se.hp);
-        if (Number.isFinite(se.maxHp)) e.maxHp = Number(se.maxHp);
-        if (Number.isFinite(se.type)) e.type = Number(se.type);
-        if (se.boss) e.isBoss = true;
-        nextEnemies.push(e);
-      }
-      g.enemies = nextEnemies;
-      g.boss = nextEnemies.find(e=>e && e.isBoss) || null;
-
-      const itemById = new Map();
-      for (const it of (g.items||[])){ if (it && it.__mxId) itemById.set(String(it.__mxId), it); }
-      const nextItems = [];
-      for (const si of m.items){
-        let it = itemById.get(String(si.id));
-        if (!it) it = { x:0, y:0, type:'exp', value:1 };
-        it.__mxId = String(si.id);
-        it.x = Number(si.x||0); it.y = Number(si.y||0);
-        it.type = String(si.type||'exp'); it.value = Number(si.v||0);
-        nextItems.push(it);
-      }
-      g.items = nextItems;
-
-      if (Array.isArray(m.enemyProjectiles)) {
-        g.enemyProjectiles = m.enemyProjectiles.map((ep)=>({
-          __mxId: String(ep.id||''), x:Number(ep.x||0), y:Number(ep.y||0), vx:Number(ep.vx||0), vy:Number(ep.vy||0),
-          life:Number(ep.life||0), damage:Number(ep.damage||0), isRock:!!ep.isRock, size:Number(ep.size||0)
-        }));
-      }
-      if (Array.isArray(m.effects)) {
-        const keepLocal = (g.effects||[]).filter(e=>e && !(e.type==='attackWarning' || e.type==='laserWarning'));
-        const remoteFx = m.effects.map((e)=>({
-          __mxId:String(e.id||''), type:String(e.type||'attackWarning'), x:Number(e.x||0), y:Number(e.y||0), life:Number(e.life||0),
-          radius:Number(e.radius||0), angle:Number(e.angle||0), width:Number(e.width||0), length:Number(e.length||0)
-        }));
-        g.effects = keepLocal.concat(remoteFx);
-      }
-    }catch(_){ }
-  }
-
-  function maybeSendWorldSnapshot(force){
-    try{
-      if (!embed || !localSid || !isWorldAuthority() || !window.G || !window.G.running) return;
-      const n = now();
-      if (!force && (n - lastWorldSendTs) < 60) return;
-      lastWorldSendTs = n;
-      const snap = buildWorldSnapshot();
-      if (!snap) return;
-      sendMx(snap);
-    }catch(_){ }
-  }
-
-  function patchGuestSpawnSuppression(){
-    try{
-      if (!window.G || window.G.__mxGuestSpawnSuppressed) return;
-      window.G.__mxGuestSpawnSuppressed = true;
-      const wrapNoopIfGuest = (name)=>{
-        const orig = window.G[name]?.bind(window.G);
-        if (!orig) return;
-        window.G[name] = function(){
-          if (embed && !isWorldAuthority() && activeCount() > 1) return;
-          return orig.apply(this, arguments);
-        };
-      };
-      wrapNoopIfGuest('spawnEnemies');
-      wrapNoopIfGuest('spawnBoss');
-      wrapNoopIfGuest('checkBossSpawn');
-    }catch(_){ }
-  }
-
-  function patchNoPvPAndInvuln(){
-    try{
-      if (!window.Player || window.Player.prototype.__mxPatchedDamage) return;
-      const P = window.Player.prototype;
-      const origTake = P.takeDamage;
-      P.takeDamage = function(dmg){
-        if (this.__mxInvuln) return;
-        if (embed && activeCount() > 1 && !isWorldAuthority()) {
-          // Guest local enemy/boss/projectile hits are non-authoritative in coop shared-world mode.
-          return;
-        }
-        return origTake.call(this, dmg);
-      };
-      const origDraw = P.draw;
-      P.draw = function(){
-        const selecting = !!this.__mxInvuln || inSelectionPhase();
-        const c = window.ctx;
-        if (selecting && c) { c.save(); c.globalAlpha = 0.55; }
-        const r = origDraw.apply(this, arguments);
-        if (selecting && c) c.restore();
-        return r;
-      };
-      P.__mxPatchedDamage = true;
-    }catch(_){ }
-  }
-
-  function updateBossThresholdHint(){
-    try{
-      if (!window.G) return;
-      const base = Number(window.G.nextBossScore || 700);
-      lastBossThresholdBase = base;
-      teamBossThresholdXp = base * coopBossScale();
-    }catch(_){ }
-  }
-
-  function patchXpShare(){
-    try{
-      if (!window.Player || window.Player.prototype.__mxPatchedXp) return;
-      const P = window.Player.prototype;
-      const origGain = P.gainExp;
-      P.gainExp = function(amt){
-        const ret = origGain.call(this, amt);
-        try{
-          if (Number.isFinite(amt) && amt > 0){
-            if (!suppressXpRelay){
-              localXpSent += Math.round(amt);
-              teamXpTotal += Math.round(amt);
-              sendMx({ kind:'xp_gain', amt: Math.round(amt), total: localXpSent, team: teamXpTotal });
+            g.spawnEnemies=noSpawnEnemies; g.spawnBoss=noBossSpawn; g.checkBossSpawn=noCheckBossSpawn; g.processRangedEffectQueue=noRangedQueue;
+            const gw=state.worldGhost||{};
+            g.enemies = Array.isArray(gw.monsters)?gw.monsters.slice():[];
+            g.projectiles = Array.isArray(gw.projectiles)?gw.projectiles.slice():[];
+            g.enemyProjectiles = Array.isArray(gw.enemyProjectiles)?gw.enemyProjectiles.slice():[];
+            g.items = Array.isArray(gw.drops)?gw.drops.slice():[];
+            g.boss = g.enemies.find(e=>e&&e.isBoss) || null;
+            return origLoop2(timestamp);
+          } finally {
+            g.spawnEnemies=se; g.spawnBoss=sb; g.checkBossSpawn=cb; g.processRangedEffectQueue=pr;
+            if(state.worldGhost){
+              const gw=state.worldGhost||{};
+              g.enemies = Array.isArray(gw.monsters)?gw.monsters.slice():[];
+              g.projectiles = Array.isArray(gw.projectiles)?gw.projectiles.slice():[];
+              g.enemyProjectiles = Array.isArray(gw.enemyProjectiles)?gw.enemyProjectiles.slice():[];
+              g.items = Array.isArray(gw.drops)?gw.drops.slice():[];
+              g.boss = g.enemies.find(e=>e&&e.isBoss) || null;
+            } else {
+              g.enemies=saved.enemies; g.projectiles=saved.projectiles; g.enemyProjectiles=saved.enemyProjectiles; g.items=saved.items; g.boss=saved.boss;
             }
-            updateBossThresholdHint();
-          }
-        }catch(_){ }
-        return ret;
-      };
-      P.__mxPatchedXp = true;
-    }catch(_){ }
-  }
-
-  function patchEnemyScaling(){
-    try{
-      if (!window.Enemy || window.Enemy.prototype.__mxScaledPatch) return;
-      const scaleEnemy = (e)=>{
-        if (!e || e.__mxScaled) return e;
-        const mult = coopScale();
-        if (mult > 1){
-          if (Number.isFinite(e.hp)) e.hp *= mult;
-          if (Number.isFinite(e.damage)) e.damage *= mult;
-          if (Number.isFinite(e.exp)) e.exp *= mult;
-          if (Number.isFinite(e.score)) e.score *= mult;
-          if (e.isBoss && Number.isFinite(e.hp)) e.hp *= 1; // already scaled via mult, keep same path
-        }
-        e.__mxScaled = true;
-        return e;
-      };
-      const OrigEnemy = window.Enemy;
-      window.Enemy = function(){ const e = Reflect.construct(OrigEnemy, arguments, new.target || OrigEnemy); return scaleEnemy(e); };
-      window.Enemy.prototype = OrigEnemy.prototype;
-      Object.setPrototypeOf(window.Enemy, OrigEnemy);
-      window.Enemy.prototype.__mxScaledPatch = true;
-      // also patch Boss constructor if available
-      if (window.Boss && !window.Boss.prototype.__mxScaledPatch){
-        const OrigBoss = window.Boss;
-        window.Boss = function(){ const b = Reflect.construct(OrigBoss, arguments, new.target || OrigBoss); if (b){ const mult=coopScale(); if (mult>1){ if(Number.isFinite(b.hp)) b.hp*=mult; if(Number.isFinite(b.damage)) b.damage*=mult; if(Number.isFinite(b.exp)) b.exp*=mult; if(Number.isFinite(b.score)) b.score*=mult; } b.__mxScaled=true; } return b; };
-        window.Boss.prototype = OrigBoss.prototype;
-        Object.setPrototypeOf(window.Boss, OrigBoss);
-        window.Boss.prototype.__mxScaledPatch = true;
-      }
-    }catch(_){ }
-  }
-
-  function patchGameBalanceAndFlow(){
-    if (!window.G || window.G.__mxBalancePatched) return;
-    window.G.__mxBalancePatched = true;
-
-    // Dynamic enemy max + spawn count limit
-    const origSpawnEnemies = window.G.spawnEnemies?.bind(window.G);
-    if (origSpawnEnemies){
-      window.G.spawnEnemies = function(){
-        const maxE = dynamicMaxEnemies();
-        if (this.enemies.length >= maxE || this.boss) return;
-        const before = this.enemies.length;
-        const out = origSpawnEnemies();
-        if (this.enemies.length > maxE) this.enemies.length = maxE;
-        return out;
-      };
-    }
-
-    // Boss at map center + team XP threshold
-    const origSpawnBoss = window.G.spawnBoss?.bind(window.G);
-    if (origSpawnBoss){
-      window.G.spawnBoss = function(){
-        // Temporarily center player reference by patching after original spawn
-        const out = origSpawnBoss();
-        try{
-          const cx = (window.MAP_WIDTH||3000)/2, cy = (window.MAP_HEIGHT||3000)/2;
-          const bosses = (this.enemies||[]).filter(e=>e && e.isBoss);
-          bosses.forEach((b,i)=>{
-            b.x = cx + (i===0?0:(i%2?120:-120));
-            b.y = cy + (i===0?0:(i%2?-80:80));
-          });
-          if (this.boss){ this.boss.x = cx; this.boss.y = cy; }
-          this.textParticle?.(cx, cy-150, '중앙 보스 출현!', '#ff0', 2.2);
-        }catch(_){ }
-        updateBossThresholdHint();
-        sendMx({ kind:'boss_spawn', ts: now(), teamXp: teamXpTotal, threshold: teamBossThresholdXp||0 });
-        return out;
-      };
-    }
-
-    const origCheckBossSpawn = window.G.checkBossSpawn?.bind(window.G);
-    if (origCheckBossSpawn){
-      window.G.checkBossSpawn = function(){
-        if (this.boss) return;
-        // solo keeps original behavior
-        if (activeCount() <= 1) return origCheckBossSpawn();
-        if (this.nextBossScore === undefined) this.nextBossScore = 700;
-        if (!Number.isFinite(teamBossThresholdXp)) teamBossThresholdXp = Number(this.nextBossScore||700) * coopBossScale();
-        if ((teamXpTotal||0) >= (teamBossThresholdXp||Infinity)){
-          this.spawnBoss();
-          let bossInterval = 3000;
-          if (this.stage >= 6) bossInterval = 10000;
-          else if (this.stage >= 5) bossInterval = 8000;
-          else if (this.stage >= 4) bossInterval = 6000;
-          else if (this.stage >= 3) bossInterval = 4000;
-          this.nextBossScore = (this.nextBossScore || 700) + bossInterval;
-          teamBossThresholdXp = this.nextBossScore * coopBossScale();
-          return;
-        }
-      };
-    }
-
-    const origReset = window.G.reset?.bind(window.G);
-    if (origReset){
-      window.G.reset = function(){
-        const r = origReset();
-        teamXpTotal = 0; localXpSent = 0;
-        updateBossThresholdHint();
-        sendMx({ kind:'run_reset' });
-        return r;
-      };
-    }
-
-    // Level-up 5s / Chest 20s timings handled in bridge hooks; just expose invuln during pauses
-    const origLoop = window.G.loop?.bind(window.G);
-    if (origLoop){
-      window.G.loop = function(ts){
-        try{ const p=myPlayer(); if (p) p.__mxInvuln = inSelectionPhase(); }catch(_){ }
-        try{ if (embed && !isWorldAuthority() && activeCount()>1 && worldSnapshot && (now()-Number(worldSnapshot.ts||0) < 1500)) applyWorldSnapshot(worldSnapshot.data); }catch(_){ }
-        return origLoop(ts);
-      };
-    }
-  }
-
-  function patchUiHooks(){
-    if (!window.G || window.G.__mxBridgeHooked) return;
-    window.G.__mxBridgeHooked = true;
-    patchNoPvPAndInvuln();
-    patchXpShare();
-    patchEnemyScaling();
-    patchGameBalanceAndFlow();
-    patchGuestSpawnSuppression();
-    try{
-      if (window.Player && !window.Player.prototype.__mxCombatAuthorityPatched){
-        const P = window.Player.prototype;
-        const origDeal = P.dealDamage;
-        P.dealDamage = function(enemy, dmg){
-          try{ ensureEntityId(enemy, 'e'); }catch(_){ }
-          if (embed && activeCount() > 1 && !isWorldAuthority()) {
-            const enemyId = String(enemy?.__mxId||'');
-            let req = Number(dmg||0);
-            if (!Number.isFinite(req) || req <= 0) return;
-            // clamp for safety; host remains authoritative for resulting state
-            req = Math.min(req, Math.max(1, Number(this.damage||req) * 4));
-            sendMx({ kind:'combat_hit', enemyId, dmg: req, ts: now() });
-            try{ window.G?.textParticle?.(enemy?.x||0, (enemy?.y||0)-8, '타격!', '#9ff', 0.55); }catch(_){ }
-            return;
-          }
-          return origDeal.call(this, enemy, dmg);
-        };
-        P.__mxCombatAuthorityPatched = true;
-      }
-    }catch(_){ }
-
-    const origSelect = window.G.selectChar?.bind(window.G);
-    if (origSelect){
-      window.G.selectChar = function(type){
-        charChosen = true;
-        clearInterval(charTimer);
-        selectedChars.add(localSid||'me');
-        setOverlay('다른 플레이어 캐릭터 선택 대기…', true);
-        sendMx({ kind:'char_selected', character:type||'', nick: localNick });
-        const out = origSelect(type);
-        sendLocalState(true);
-        if (window.G) window.G.paused = (selectedChars.size < activeCount());
-        if (activeCount() <= 1 && window.G) window.G.paused = false;
-        return out;
-      };
-    }
-
-    const origStart = window.G.start?.bind(window.G);
-    if (origStart){
-      window.G.start = function(){
-        const out = origStart();
-        try{ if (selectedChars.size < activeCount()) window.G.paused = true; }catch(_){ }
-        updateBossThresholdHint();
-        ensureExitButton(); ensureChat();
-        return out;
-      };
-    }
-
-    const origLevelUp = window.G.showLevelUp?.bind(window.G);
-    if (origLevelUp){
-      window.G.showLevelUp = function(){
-        const out = origLevelUp();
-        openPhase('levelup', 5);
-        wrapCardsForPhase('#upgrades', 'levelup');
-        sendLocalState(true);
-        return out;
-      };
-    }
-
-    const origShowMath = window.G.showMathScreen?.bind(window.G);
-    if (origShowMath){
-      window.G.showMathScreen = function(x,y){
-        const chest = {x,y};
-        if (!tryClaimChest(chest)) return;
-        const out = origShowMath(x,y);
-        if (window.G) window.G.paused = true;
-        sendMx({ kind:'chest_phase_open', secs:20 });
-        startChestQuestionCountdown();
-        sendLocalState(true);
-        return out;
-      };
-    }
-
-    const origCheckMath = window.G.checkMathAnswer?.bind(window.G);
-    if (origCheckMath){
-      window.G.checkMathAnswer = function(){
-        const out = origCheckMath();
-        const afterOpen = document.getElementById('itemScreen') && !document.getElementById('itemScreen').classList.contains('hidden');
-        if (afterOpen){
-          openPhase('chest', 20);
-          wrapCardsForPhase('#items', 'chest');
-          sendLocalState(true);
-        }
-        return out;
-      };
-    }
-
-    const origCloseMath = window.G.closeMath?.bind(window.G);
-    if (origCloseMath){
-      window.G.closeMath = function(){
-        const out = origCloseMath();
-        clearInterval(chestTimer);
-        if (localChestOpen) releaseChest('cancel');
-        sendLocalState(true);
-        return out;
-      };
-    }
-
-    const origShowItems = window.G.showItemScreen?.bind(window.G);
-    if (origShowItems){
-      window.G.showItemScreen = function(){
-        const out = origShowItems();
-        wrapCardsForPhase('#items', 'chest');
-        return out;
-      };
-    }
-  }
-
-  function hookGame(){
-    patchUiHooks();
-  }
-
-  function startChestQuestionCountdown(){
-    clearInterval(chestTimer);
-    const deadline = now() + 20000;
-    chestTimer = setInterval(()=>{
-      const remain = Math.max(0, Math.ceil((deadline-now())/1000));
-      setOverlay(`보물 문제 ${remain}s`);
-      sendMx({ kind:'modal_state', label:'보물 문제/선택', remain });
-      if (remain<=0){
-        clearInterval(chestTimer);
-        try{ window.G?.closeMath?.(); }catch(_){ }
-      }
-    }, 250);
-  }
-
-  function startStateLoop(){
-    clearInterval(stateTimer);
-    stateTimer = setInterval(()=>{ sendLocalState(false); maybeSendWorldSnapshot(false); }, 50);
-  }
-  function startOverlayLoop(){
-    if (drawOverlayTimer) return;
-    const tick = ()=>{ drawRemoteOverlay(); drawOverlayTimer = requestAnimationFrame(tick); };
-    drawOverlayTimer = requestAnimationFrame(tick);
-  }
-  function sendLocalState(force){
-    try{
-      if (!embed || !localSid) return;
-      const p = myPlayer();
-      if (!p || !window.G) return;
-      const msg = {
-        kind:'state',
-        x: Math.round(p.x||0), y: Math.round(p.y||0),
-        hp: Math.round(p.hp||0), maxHp: Math.round(p.maxHp||0),
-        level: Number(p.level||1),
-        walkAnim: Number(p.walkAnim||0),
-        character: p.design?.type || '',
-        nick: localNick,
-        selecting: !!inSelectionPhase(),
-        stage: Number(window.G.stage||1),
-        teamXp: Math.round(teamXpTotal||0),
-        bossNeed: Math.round(teamBossThresholdXp||0),
-        authority: isWorldAuthority(),
-        ts: now(),
-      };
-      sendMx(msg);
-    }catch(_){ }
-  }
-
-  function handleMxMessage(m){
-    if (!m || typeof m !== 'object') return;
-    if (m.from) markPeer(m.from);
-    const k = m.kind || '';
-    if (isSelf(m.from)) {
-      if (k !== 'hello' && k !== 'hello_ack') return;
-    }
-    if (k === 'hello') {
-      if (m.from){
-        const rp = remotePlayers.get(String(m.from)) || { sid:String(m.from) };
-        if (m.nick) rp.nick = String(m.nick).slice(0,20);
-        if (m.char) rp.character = String(m.char);
-        remotePlayers.set(String(m.from), rp);
-      }
-      sendMx({ kind:'hello_ack', nick: localNick, char: myPlayer()?.design?.type||'' });
-      return;
-    }
-    if (k === 'hello_ack') {
-      if (m.from){
-        const rp = remotePlayers.get(String(m.from)) || { sid:String(m.from) };
-        if (m.nick) rp.nick = String(m.nick).slice(0,20);
-        if (m.char) rp.character = String(m.char);
-        remotePlayers.set(String(m.from), rp);
-      }
-      return;
-    }
-
-    if (k === 'chat'){
-      appendChatLine(m.nick || remotePlayers.get(String(m.from))?.nick || sidShort(m.from), m.text || '', false);
-      return;
-    }
-
-    if (k === 'state'){
-      const sid = String(m.from||'');
-      if (!sid || sid === localSid) return;
-      const rp = remotePlayers.get(sid) || { sid, rx:Number(m.x||0), ry:Number(m.y||0) };
-      rp.x = Number(m.x||0); rp.y = Number(m.y||0);
-      rp.hp = Number(m.hp||0); rp.maxHp = Number(m.maxHp||0);
-      rp.level = Number(m.level||1); rp.walkAnim = Number(m.walkAnim||0);
-      rp.character = String(m.character||rp.character||'');
-      rp.nick = String(m.nick || rp.nick || sidShort(sid)).slice(0,20);
-      rp.selecting = !!m.selecting;
-      rp.authority = !!m.authority;
-      rp.ts = Number(m.ts||now());
-      remotePlayers.set(sid, rp);
-      if (Number.isFinite(m.teamXp)) teamXpTotal = Math.max(teamXpTotal, Number(m.teamXp||0));
-      if (Number.isFinite(m.bossNeed) && m.bossNeed>0) teamBossThresholdXp = Math.max(teamBossThresholdXp||0, Number(m.bossNeed));
-      return;
-    }
-
-    if (k === 'world'){
-      if (isSelf(m.from)) return;
-      // Prefer explicit authority sender, fallback to seat0/first peer timing.
-      applyWorldSnapshot(m);
-      return;
-    }
-
-    if (k === 'char_selected'){
-      if (m.from) selectedChars.add(m.from);
-      if (m.from){
-        const rp = remotePlayers.get(String(m.from)) || { sid:String(m.from) };
-        rp.character = String(m.character||rp.character||'');
-        rp.nick = String(m.nick||rp.nick||sidShort(m.from)).slice(0,20);
-        remotePlayers.set(String(m.from), rp);
-      }
-      const need = Math.max(0, activeCount() - selectedChars.size);
-      if (need <= 0){
-        clearInterval(charTimer);
-        setOverlay('', false);
-        try{ if (window.G && !remoteLock) window.G.paused = false; }catch(_){ }
-      } else if (!charChosen){
-        setOverlay(`캐릭터 선택 중 · 대기 ${need}`, true);
-      }
-      return;
-    }
-
-    if (k === 'xp_gain'){
-      try{
-        const p = myPlayer();
-        const amt = Number(m.amt||0);
-        if (amt > 0){
-          teamXpTotal = Math.max(teamXpTotal, Number(m.team||0)||0);
-          if (teamXpTotal <= 0) teamXpTotal += Math.round(amt);
-          // also award local EXP so all players progress together (best-effort coop)
-          if (p){
-            suppressXpRelay = true;
-            p.gainExp(Math.round(amt));
           }
         }
-      }catch(_){ }
-      finally{ suppressXpRelay = false; }
-      return;
+        return origLoop2(timestamp);
+      }; }
     }
-
-    if (k === 'phase_open'){
-      const pkind = String(m.pkind||'');
-      const pid = String(m.pid||'');
-      if (!pkind || !pid) return;
-      if (phase && phase.id === pid) return;
-      phase = { kind: pkind, id: pid, owner: m.from||'', ready: new Set(), deadline: now() + (Number(m.secs||10)*1000) };
-      if (m.from) phase.ready.add(m.from);
-      if (window.G) window.G.paused = true;
-      const label = pkind === 'levelup' ? '레벨업 선택' : '보물 선택';
-      if ((m.from||'') !== localSid) setRemoteLock(label, true);
-      return;
+    if(origShowLevel){ g.showLevelUp=function(){ const r=origShowLevel(); if(iAmHost()){ const dl=now()+5000; broadcastPhaseSync(PHASES.LEVEL_CHOICE, dl, { choice:'level' }); } else { setPhase(PHASES.LEVEL_CHOICE,{deadline:now()+5000}); } return r; }; }
+    if(origShowMath){ g.showMathScreen=function(x,y){ const r=origShowMath(x,y); if(iAmHost()){ const dl=now()+20000; broadcastPhaseSync(PHASES.CHEST_CHOICE, dl, { choice:'chest_math' }); } else { setPhase(PHASES.CHEST_CHOICE,{deadline:now()+20000}); } return r; }; }
+    if(origShowItem){ g.showItemScreen=function(){ const r=origShowItem(); if(iAmHost()){ const dl=now()+20000; broadcastPhaseSync(PHASES.CHEST_CHOICE, dl, { choice:'chest_item' }); } else { setPhase(PHASES.CHEST_CHOICE,{deadline:now()+20000}); } return r; }; }
+    if(origCheckBossSpawn){ g.checkBossSpawn=function(){ if(!iAmHost()) return; const savedScore=g.score; try{ const teamScoreProxy=Math.max(safeNum(g.score,0), Math.round(teamXpEstimate())); g.score = teamScoreProxy; return origCheckBossSpawn(); } finally { g.score = Math.max(savedScore, safeNum(g.score,0)); } }; }
+    if(origSpawnBoss){ g.spawnBoss=function(){ const r=origSpawnBoss(); try{ if (g.boss){ g.boss.x = Math.round((window.MAP_WIDTH||2000)/2); g.boss.y = Math.round((window.MAP_HEIGHT||2000)/2); if (Array.isArray(g.enemies)){ const be = g.enemies.find(e=>e&&e.isBoss); if (be){ be.x=g.boss.x; be.y=g.boss.y; } } } }catch(_){ } if(iAmHost()) sendEvent('boss_spawn',{ stage:safeNum(g.stage,1) }); return r; };
     }
-    if (k === 'phase_ready'){
-      if (!phase || phase.id !== String(m.pid||'')) return;
-      if (m.from) phase.ready.add(m.from);
-      if (phase.owner === localSid) maybeResumePhase();
-      return;
-    }
-    if (k === 'phase_resume'){
-      if (!phase || phase.id !== String(m.pid||'')) return;
-      const pkind = phase.kind;
-      endPhaseLocal(pkind, phase.id);
-      setRemoteLock('', false);
-      if (pkind === 'chest' && localChestOpen) releaseChest('done');
-      return;
-    }
-
-    if (k === 'chest_claim'){
-      pruneClaims();
-      globalChestClaims.push({ from: String(m.from||''), x: Number(m.x||0), y: Number(m.y||0), ts: Number(m.ts||now()) });
-      if (!isSelf(m.from)) {
-        remoteChestLocks = Math.max(1, remoteChestLocks + 1);
-        setRemoteLock('보물 선택', true);
-      }
-      return;
-    }
-    if (k === 'chest_release'){
-      pruneClaims();
-      globalChestClaims = (globalChestClaims||[]).filter(c => String(c.from||'') !== String(m.from||''));
-      if (!isSelf(m.from)) {
-        remoteChestLocks = Math.max(0, remoteChestLocks - 1);
-        if (remoteChestLocks <= 0) setRemoteLock('', false);
-      }
-      return;
-    }
-    if (k === 'chest_phase_open'){
-      if ((m.from||'') !== localSid) setRemoteLock('보물 문제/선택', true);
-      return;
-    }
-    if (k === 'modal_state' && m.label){
-      if (!charChosen && String(m.label).includes('캐릭터')) return;
-      if (remoteLock || phase) setOverlay(`${m.label}${m.remain ? ' '+m.remain+'s' : ''}`, true);
-      return;
-    }
-    if (k === 'modal_clear'){
-      if (!phase && !remoteLock) setOverlay('', false);
-      return;
-    }
-    if (k === 'run_reset'){
-      teamXpTotal = 0;
-      teamBossThresholdXp = null;
-      return;
-    }
-    if (k === 'boss_spawn'){
-      if (Number.isFinite(m.teamXp)) teamXpTotal = Math.max(teamXpTotal, Number(m.teamXp||0));
-      if (Number.isFinite(m.threshold)) teamBossThresholdXp = Math.max(teamBossThresholdXp||0, Number(m.threshold||0));
-      return;
-    }
+    ensurePlayerSafetyWrap();
   }
-
-  window.addEventListener('message', (e)=>{
-    const d = e.data || {};
-    if (d.type === 'bridge_init' && (((d.gameId||'').toLowerCase()===gameId) || !d.gameId)){
-      initMsg = d;
-      localSid = String(d.sessionId || d.mySid || localSid || '');
-      localNick = String(d.nick || d.myNick || localNick || 'Player').slice(0,20);
-      localSeat = Number.isFinite(Number(d.seat)) ? Number(d.seat) : localSeat;
-      bridgeIsHost = !!d.isHost || (localSeat === 0);
-      expectedHumans = Math.max(1, Number(d.humanCount || d.expectedHumans || 1));
-      markPeer(localSid || 'me');
-      if (embed){ setTimeout(beginFromRoom, 50); }
-    }
-    if (d.type === 'game_start' && d.payload && (((d.payload.mode||'').toLowerCase() === 'mathexplorer') || ((d.payload.mode||'').toLowerCase() === 'math-explorer'))){
-      startPayload = d.payload;
-      applyDifficulty(startPayload.difficulty || 1);
-      expectedHumans = Math.max(1, Number(startPayload.playerCount || expectedHumans || 1));
-      setTimeout(sendHello, 30);
-    }
-    if (d.type === 'mx_set_difficulty'){ applyDifficulty(d.difficulty || 1); }
-    if (d.type === 'mx_msg') handleMxMessage(d.msg || {});
-    if (d.type === 'bridge_leave') { try{ post({ type:'mx_quit' }); }catch(_){} }
-  });
-
-  const hookInt = setInterval(()=>{ try{ hookGame(); ensureExitButton(); ensureChat(); }catch(_){} }, 300);
-  setTimeout(()=> clearInterval(hookInt), 30000);
-
-  if (embed){
-    try{ document.querySelector('#gameOverScreen .button')?.addEventListener('click', (ev)=>{ ev.preventDefault(); location.reload(); }); }catch(_){ }
+  function applyCoopScaling(){ const g=G(); if(!g) return; const pc=Math.max(1,Math.min(4,Number(state.startPayload?.playerCount||state.expectedHumans||1))); const enemyMul = 1 + (pc-1)*0.45; const hpMul = 1 + (pc-1)*0.35; window.__mxCoopBalance = { playerCount:pc, enemyMul, hpMul }; try{ window.MAX_ENEMIES = Math.max(window.MAX_ENEMIES||0, Math.round((window.MAX_ENEMIES||24) * enemyMul)); }catch(_){ }
   }
-
-  setInterval(()=>{
-    try{
-      if (!embed || !window.G) return;
-      if (charChosen && activeCount()<=1 && !phase && !remoteLock) window.G.paused = false;
-      // prune stale remotes
-      const t = now();
-      for (const [sid,rp] of remotePlayers){ if (t - Number(rp.ts||0) > 12000) remotePlayers.delete(sid); }
-      if (!isWorldAuthority() && worldSnapshot && (t - Number(worldSnapshot.ts||0) > 1200)) {
-        // authority stream stale: temporarily allow local simulation so game doesn't freeze.
-      }
-    }catch(_){ }
-  }, 500);
-  setInterval(()=>{ try{ if (embed && localSid) { sendHello(); sendLocalState(false); maybeSendWorldSnapshot(true); } }catch(_){} }, 4000);
-
-  setTimeout(()=> post({ type:'bridge_ready' }), 50);
-  // Fallback for slow bridge init: in embedded room, force-hide title and retry coop boot.
-  setTimeout(()=>{ try{ if (embed) beginFromRoom(); }catch(_){} }, 1200);
+  function onBridgeInit(d){ state.init=d; state.localSid=String(d.sessionId||d.mySid||''); state.expectedHumans=Math.max(1, Number(d.humanCount||d.expectedHumans||1)); state.hostSid=String(d.hostSessionId||''); state.isHost=!!d.isHost || (state.localSid && state.localSid===state.hostSid); markPeer(state.localSid||'self'); ensureUi(); send('hello',{}); setTimeout(()=>send('hello',{}),500); maybeStartSequence(); }
+  function onGameStart(payload){ state.startPayload=payload||{}; installEmbedStartLock(); forceEmbedScreens(); state.expectedHumans=Math.max(1, Number(payload?.playerCount || state.expectedHumans || 1)); state.rosterSids=Array.isArray(payload?.roster)?payload.roster.map(r=>String(r?.sid||'')).filter(Boolean):[]; state.hostSid = state.hostSid || (state.rosterSids[0]||''); state.isHost = state.isHost || (mySid() && mySid()===state.hostSid); applyDifficulty(payload?.difficulty||1); maybeStartSequence(); }
+  window.addEventListener('message',(e)=>{ const d=e.data||{}; if(d.type==='bridge_init' && (!d.gameId || d.gameId===GAME_ID || d.gameId==='math-explorer')) return onBridgeInit(d); if(d.type==='bridge_host'){ state.hostSid=String(d.hostSessionId||state.hostSid||''); state.isHost=!!d.isHost || (mySid() && mySid()===state.hostSid); return; } if(d.type==='game_start' && d.payload && (d.payload.mode==='mathexplorer'||d.payload.mode==='math-explorer')) return onGameStart(d.payload); if(d.type==='mx_set_difficulty') return applyDifficulty(d.difficulty||1); if(d.type==='mx_msg') return handleMxMsg(d.msg||{}); });
+  function patchGlobalCombatGuards(){ try{ if(window.Player&&window.Player.prototype&&!window.Player.prototype.__mxBridgeGuardPatched){ const oTD=window.Player.prototype.takeDamage; if(typeof oTD==='function'){ window.Player.prototype.takeDamage=function(d){ if((window.location.search||'').includes('embed=1') && !iAmHost()) return; if(this&&this.__mxInvuln) return; return oTD.call(this,d); }; } const oGE=window.Player.prototype.gainExp; if(typeof oGE==='function'){ window.Player.prototype.gainExp=function(v){ if((window.location.search||'').includes('embed=1') && !iAmHost()) return; return oGE.call(this,v); }; } window.Player.prototype.__mxBridgeGuardPatched=true; } }catch(_){} }
+  function raf(){ try{ forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks(); const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); } drawRemoteLabels(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
+  setInterval(()=>{ try{ if(mySid()) send('hello',{}); }catch(_){ } },4000);
+  setInterval(()=>{ try{ postLocalState(); }catch(_){ } },80);
+  setInterval(()=>{ try{ postWorldIfHost(); }catch(_){ } },50);
+  setTimeout(()=>{ try{ maybeStartSequence(); }catch(_){ } },800);
+  setTimeout(()=>post({ type:'bridge_ready' }),50);
+  try{ installEmbedStartLock(); forceEmbedScreens(); }catch(_){ }
 })();

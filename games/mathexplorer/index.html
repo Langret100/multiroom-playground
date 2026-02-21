@@ -1567,7 +1567,9 @@ const G = {
         const giantCount = this.enemies.filter(e => e.type === 5).length;
         const MAX_GIANTS = 6;
         
-        const count = Math.min(2, MAX_ENEMIES - this.enemies.length);
+        const mxBal = (window.__mxCoopBalance || null);
+        const spawnPerTick = Math.max(1, Math.min(4, Math.round(2 * (mxBal?.enemyMul || 1))));
+        const count = Math.min(spawnPerTick, MAX_ENEMIES - this.enemies.length);
         
         for (let i = 0; i < count; i++) {
             let x, y;
@@ -1609,15 +1611,20 @@ const G = {
         // 기존 몬스터 모두 즉시 제거 (아이템/경험치 없이 그냥 사라짐)
         this.enemies = [];
         
-        // 보스는 플레이어로부터 300~400px 떨어진 랜덤 방향에서 등장
+        // 멀티 협동에서는 보스를 맵 중앙에 고정 소환 (브리지 요청사항)
+        const coopCenterBoss = !!(window.__mxCoopBalance && (window.location.search||'').includes('embed=1'));
         const spawnDistance = 350;
         const spawnAngle = Math.random() * Math.PI * 2;
-        let x = this.player.x + Math.cos(spawnAngle) * spawnDistance;
-        let y = this.player.y + Math.sin(spawnAngle) * spawnDistance;
-        
-        // 맵 경계 안으로 제한
-        x = Math.max(100, Math.min(MAP_WIDTH - 100, x));
-        y = Math.max(100, Math.min(MAP_HEIGHT - 100, y));
+        let x, y;
+        if (coopCenterBoss) {
+            x = MAP_WIDTH / 2;
+            y = MAP_HEIGHT / 2;
+        } else {
+            x = this.player.x + Math.cos(spawnAngle) * spawnDistance;
+            y = this.player.y + Math.sin(spawnAngle) * spawnDistance;
+            x = Math.max(100, Math.min(MAP_WIDTH - 100, x));
+            y = Math.max(100, Math.min(MAP_HEIGHT - 100, y));
+        }
         
         // 보스 레벨은 출현 횟수로 결정
         this.boss = new Boss(x, y, this.bossCount);
@@ -1639,7 +1646,8 @@ const G = {
         
         // 7라운드부터: 거인 몬스터 함께 등장 (라운드마다 +2마리, 최대 10마리)
         if (this.stage >= 7) {
-            const giantCount = Math.min(10, (this.stage - 6) * 2); // 7라운드: 2, 8라운드: 4, 9라운드: 6...
+            const pc = Math.max(1, Math.min(4, Number(window.__mxCoopBalance?.playerCount || 1)));
+            const giantCount = Math.min(10 + (pc-1)*2, Math.round((this.stage - 6) * 2 * (1 + (pc-1)*0.2)));  // 7라운드: 2, 8라운드: 4, 9라운드: 6...
             for (let i = 0; i < giantCount; i++) {
                 const giantAngle = (Math.PI * 2 * i / giantCount) + Math.random() * 0.5;
                 const giantDist = 250 + Math.random() * 150;
@@ -5319,221 +5327,103 @@ class Projectile {
 
 // ===== Multiplayer/embed polish patch (character sprites + safer char-select flow) =====
 (function(){
-  function px(ctx,x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h)); }
-  function hpx(ctx, arr){ for (const a of arr) px(ctx,...a); }
-  function drawWeaponSlash(ctx,p,frame,color){
-    if(!frame) return;
+  function px(ctx,x,y,w,h,c){ ctx.fillStyle=c; ctx.fillRect(x,y,w,h); }
+  function outline(ctx,x,y,w,h){ ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,w-1,h-1); }
+  function drawCuteHero(ctx, frame, scale, spec){
+    const p = 3 * scale;
+    const t = Date.now()*0.01;
+    const bob = Math.round(Math.sin(t)*0.4*p);
+    const step = (frame ? 1 : -1) * 0.6*p;
     ctx.save();
-    ctx.globalAlpha = 0.35;
-    px(ctx, 5.8*p, -3.6*p, 2.2*p, 0.8*p, color);
-    px(ctx, 6.6*p, -4.6*p, 1.4*p, 0.8*p, color);
-    ctx.restore();
-  }
-  function drawChibiClass(ctx, frame, scale, spec){
-    const p = 4 * scale; // bigger chunkier pixels on purpose
-    const t = Date.now()*0.012;
-    const bob = Math.round(Math.sin(t + (spec.phase||0))*0.6*p);
-    const step = (frame ? 1 : -1) * 0.55*p;
-    const sway = Math.round(Math.sin(t*0.8 + (spec.phase||0))*0.4*p);
-    ctx.save();
-    ctx.translate(sway, bob);
+    ctx.translate(0, bob);
+    // shadow handled by player draw
+    // cape / back accessory
+    if (spec.cape){ px(ctx,-3.8*p,-3.4*p,7.6*p,6.4*p,spec.cape); }
 
-    // soft shadow/base
-    ctx.globalAlpha = 0.22;
-    px(ctx,-3.8*p,8.3*p,7.6*p,1.1*p,'#000');
-    ctx.globalAlpha = 1;
+    // legs
+    px(ctx,-2.0*p, 2.8*p + step*0.15, 1.6*p, 3.8*p - step*0.25, spec.skin2||spec.skin);
+    px(ctx, 0.4*p, 2.8*p - step*0.15, 1.6*p, 3.8*p + step*0.25, spec.skin2||spec.skin);
+    px(ctx,-2.3*p, 6.1*p + step*0.1, 2.2*p, 1.6*p, spec.bootL||spec.boot);
+    px(ctx, 0.1*p, 6.1*p - step*0.1, 2.2*p, 1.6*p, spec.bootR||spec.boot);
 
-    // back layer (cape / wings / mantle)
-    if (spec.back) spec.back(ctx,p,frame,step);
+    // body
+    px(ctx,-3.4*p,-2.3*p,6.8*p,5.4*p,spec.body);
+    if (spec.trim) px(ctx,-3.4*p,0.3*p,6.8*p,0.8*p,spec.trim);
+    if (spec.belt) px(ctx,-3.2*p,1.3*p,6.4*p,0.9*p,spec.belt);
 
-    // legs + boots
-    hpx(ctx, [
-      [-2.4*p, 3.0*p + step*0.13, 1.8*p, 3.7*p - step*0.20, spec.leg || spec.skin],
-      [ 0.6*p, 3.0*p - step*0.13, 1.8*p, 3.7*p + step*0.20, spec.leg || spec.skin],
-      [-2.7*p, 6.3*p + step*0.08, 2.4*p, 1.6*p, spec.bootL || spec.boot],
-      [ 0.3*p, 6.3*p - step*0.08, 2.4*p, 1.6*p, spec.bootR || spec.boot],
-    ]);
+    // arms (simple swing)
+    px(ctx,-5.1*p,-1.8*p + step*0.1,1.7*p,4.1*p,spec.arm||spec.skin);
+    px(ctx, 3.4*p,-1.8*p - step*0.1,1.7*p,4.1*p,spec.arm||spec.skin);
+    if (spec.glove){ px(ctx,-5.1*p,1.9*p + step*0.1,1.7*p,1.0*p,spec.glove); px(ctx,3.4*p,1.9*p - step*0.1,1.7*p,1.0*p,spec.glove); }
 
-    // skirt/robe lower if present
-    if (spec.lowerBody) spec.lowerBody(ctx,p,frame,step);
+    // head
+    px(ctx,-2.8*p,-8.0*p,5.6*p,5.2*p,spec.skin);
+    // hair / helmet / hat
+    if (spec.hair){ spec.hair(ctx,p); }
+    // eyes + blush
+    px(ctx,-1.5*p,-6.2*p,0.7*p,0.7*p,spec.eye||'#111');
+    px(ctx, 0.8*p,-6.2*p,0.7*p,0.7*p,spec.eye||'#111');
+    if (spec.blush){ px(ctx,-2.1*p,-5.2*p,0.6*p,0.5*p,spec.blush); px(ctx,1.5*p,-5.2*p,0.6*p,0.5*p,spec.blush); }
 
-    // torso
-    hpx(ctx, [
-      [-3.7*p,-2.6*p,7.4*p,5.7*p, spec.body],
-      [-3.7*p, 0.4*p,7.4*p,0.9*p, spec.trim || spec.body],
-    ]);
-    if (spec.belt) px(ctx,-3.4*p,1.6*p,6.8*p,0.9*p,spec.belt);
-    if (spec.emblem) spec.emblem(ctx,p,frame);
+    // weapon / offhand
+    if (spec.weapon) spec.weapon(ctx,p,step,frame);
+    if (spec.offhand) spec.offhand(ctx,p,step,frame);
 
-    // arms
-    hpx(ctx, [
-      [-5.6*p,-2.0*p + step*0.08,1.9*p,4.2*p, spec.arm || spec.skin],
-      [ 3.7*p,-2.0*p - step*0.08,1.9*p,4.2*p, spec.arm || spec.skin],
-    ]);
-    if (spec.glove){
-      hpx(ctx, [
-        [-5.6*p,1.6*p + step*0.08,1.9*p,1.0*p,spec.glove],
-        [ 3.7*p,1.6*p - step*0.08,1.9*p,1.0*p,spec.glove],
-      ]);
-    }
-
-    // neck + head
-    px(ctx,-1.2*p,-3.0*p,2.4*p,0.6*p,spec.skinShadow || spec.skin);
-    px(ctx,-3.0*p,-8.2*p,6.0*p,5.4*p,spec.skin);
-    if (spec.faceShade) px(ctx,-2.8*p,-5.0*p,5.6*p,1.0*p,spec.faceShade);
-
-    // hair/hat/helm
-    if (spec.headwearBack) spec.headwearBack(ctx,p,frame);
-    if (spec.hair) spec.hair(ctx,p,frame);
-    if (spec.headwear) spec.headwear(ctx,p,frame);
-
-    // face details
-    px(ctx,-1.6*p,-6.0*p,0.8*p,0.9*p,spec.eyeL || spec.eye || '#1a1a1a');
-    px(ctx, 0.8*p,-6.0*p,0.8*p,0.9*p,spec.eyeR || spec.eye || '#1a1a1a');
-    if (spec.eyeShine){ px(ctx,-1.2*p,-5.8*p,0.2*p,0.2*p,spec.eyeShine); px(ctx,1.2*p,-5.8*p,0.2*p,0.2*p,spec.eyeShine); }
-    if (spec.blush){ px(ctx,-2.2*p,-5.0*p,0.7*p,0.5*p,spec.blush); px(ctx,1.5*p,-5.0*p,0.7*p,0.5*p,spec.blush); }
-    if (spec.mouth) px(ctx,-0.2*p,-4.3*p,0.6*p,0.2*p,spec.mouth);
-
-    // front accessories / weapons
-    if (spec.offhand) spec.offhand(ctx,p,frame,step);
-    if (spec.weapon) spec.weapon(ctx,p,frame,step);
-    if (spec.front) spec.front(ctx,p,frame,step);
-
-    // tiny motion VFX
-    if (spec.vfx) spec.vfx(ctx,p,frame);
-
-    // slim outline accents to keep clarity at larger size
-    ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.strokeStyle = '#000';
-    ctx.lineWidth = Math.max(1, 0.7*scale);
-    ctx.strokeRect(-7.8*p+0.5,-15.5*p+0.5,15.6*p-1,25.0*p-1);
-    ctx.restore();
-
+    // soft outline for chunk look
+    outline(ctx,-7.5*p,-15*p,15*p,24*p);
     ctx.restore();
   }
 
   function applyCharacterArtPatch(){
     if (!Array.isArray(window.CHAR_DESIGNS)) return false;
     const byType = Object.fromEntries(window.CHAR_DESIGNS.map(c=>[c.type,c]));
-    const blush='rgba(255,165,185,.75)';
+    const commonBlush='rgba(255,150,170,0.75)';
 
-    // Swordsman / Warrior (bottom-left reference vibe)
     if (byType.warrior) byType.warrior.draw = function(ctx,frame=0,scale=1){
-      drawChibiClass(ctx, frame, scale, {
-        phase: 0.1,
-        skin:'#f2c8ad', skinShadow:'#eab79a', faceShade:'#f0c0a6', body:'#c7b28a', trim:'#8f6e3f', belt:'#694628',
-        leg:'#8b7f57', boot:'#4b3322', arm:'#d3bf9b', glove:'#7d5f3a', eye:'#2a2a2a', blush, mouth:'#6b4a40',
-        hair:(c,p)=>{ hpx(c,[[-3.2*p,-9.5*p,6.4*p,2.0*p,'#6b4327'],[-3.0*p,-7.8*p,4.8*p,1.3*p,'#8f5d36'],[-2.4*p,-6.7*p,1.6*p,0.8*p,'#6b4327']]); },
-        headwear:(c,p)=>{ px(c,1.8*p,-8.3*p,1.2*p,0.8*p,'#5e3a24'); },
-        emblem:(c,p)=>{ px(c,-0.8*p,-0.6*p,1.6*p,0.9*p,'#d9d8cf'); },
-        weapon:(c,p,f,step)=>{
-          // short sword like reference
-          hpx(c,[
-            [5.9*p,-1.2*p,0.8*p,6.4*p,'#5f4a3a'],
-            [5.2*p,-6.1*p,2.1*p,5.4*p,'#c7d1dd'],
-            [4.7*p,-1.4*p,3.1*p,0.8*p,'#6e4a2b']
-          ]);
-          drawWeaponSlash(c,p,f,'#d8e0eb');
-        },
-        offhand:(c,p)=>{ px(c,-7.0*p,-1.6*p,2.4*p,0.8*p,'#a8b7c7'); }
+      drawCuteHero(ctx, frame, scale, {
+        skin:'#f5c7ad', skin2:'#efb99f', body:'#d8dde7', trim:'#aeb8ca', belt:'#8c5a2b', boot:'#7a4a29', arm:'#d8dde7', glove:'#c8d0df', eye:'#111', blush:commonBlush,
+        hair:(c,p)=>{ px(c,-3.0*p,-9.0*p,6.0*p,2.1*p,'#c96a35'); px(c,-3.5*p,-8.1*p,1.3*p,1.2*p,'#b45b29'); px(c,2.2*p,-8.1*p,1.3*p,1.2*p,'#b45b29'); },
+        weapon:(c,p,step)=>{ px(c,5.5*p,-7.5*p,0.8*p,10.5*p,'#444'); px(c,6.3*p,-7.8*p,1.4*p,9.0*p,'#dfe6f2'); px(c,6.2*p,-0.1*p,2.0*p,0.8*p,'#8b5a2b'); },
+        offhand:(c,p)=>{ px(c,-7.3*p,-4.1*p,3.2*p,4.4*p,'#f2ca3a'); px(c,-6.5*p,-3.3*p,1.6*p,2.8*p,'#dbe6f2'); px(c,-7.5*p,-4.3*p,0.4*p,4.8*p,'#7c5a18'); }
       });
     };
 
-    // Archer/Ranger -> convert to priest/cleric inspired look from reference (hood + staff cross)
     if (byType.ranger) byType.ranger.draw = function(ctx,frame=0,scale=1){
-      drawChibiClass(ctx, frame, scale, {
-        phase: 1.1,
-        skin:'#f4cfb6', skinShadow:'#ebbd9f', faceShade:'#f0c6aa', body:'#e9eff7', trim:'#a8d4ff', belt:'#8e6a42',
-        leg:'#f1d6bd', boot:'#dcb674', arm:'#e9eff7', glove:'#6d4c2e', eye:'#4692d1', eyeShine:'#dff6ff', blush, mouth:'#8f6f68',
-        lowerBody:(c,p)=>{ hpx(c,[[-3.8*p,2.5*p,7.6*p,2.8*p,'#e9eff7'],[-2.8*p,4.3*p,5.6*p,2.3*p,'#d9b26d']]); },
-        hair:(c,p)=>{ hpx(c,[[-3.0*p,-8.9*p,6.0*p,1.5*p,'#f5c557'],[-3.6*p,-7.8*p,1.3*p,5.2*p,'#e0ad3f'],[2.3*p,-7.8*p,1.3*p,5.2*p,'#e0ad3f']]); },
-        headwearBack:(c,p)=>{ hpx(c,[[-4.2*p,-9.4*p,8.4*p,5.8*p,'#1d5d8f'],[-2.9*p,-10.4*p,5.8*p,1.5*p,'#3f90cc']]); },
-        headwear:(c,p)=>{ px(c,-3.2*p,-8.2*p,6.4*p,1.0*p,'#2e74ae'); },
-        weapon:(c,p,frame,step)=>{
-          hpx(c,[
-            [6.0*p,-8.6*p,0.8*p,13.2*p,'#a87843'],
-            [5.0*p,-10.3*p,2.8*p,0.8*p,'#f2c062'],
-            [6.0*p,-11.2*p,0.8*p,2.6*p,'#f2c062']
-          ]);
-          if(frame){ px(c,4.9*p,-10.4*p,3.0*p,0.8*p,'rgba(255,232,170,.55)'); }
-        },
-        offhand:(c,p)=>{ px(c,-7.0*p,-2.3*p,1.8*p,1.8*p,'#6f4d32'); },
-        vfx:(c,p,f)=>{ if(f){ px(c,4.5*p,-12.4*p,0.8*p,0.8*p,'rgba(255,220,120,.6)'); px(c,7.4*p,-12.0*p,0.6*p,0.6*p,'rgba(255,220,120,.5)'); } }
+      drawCuteHero(ctx, frame, scale, {
+        skin:'#f1c6ab', body:'#3f6d2f', trim:'#88bf51', belt:'#6a4c23', boot:'#5f3d1f', arm:'#3f6d2f', glove:'#c59a6b', eye:'#111', blush:commonBlush, cape:'#2d4f21',
+        hair:(c,p)=>{ px(c,-3.0*p,-9.0*p,6.0*p,2.0*p,'#2f5221'); px(c,-2.2*p,-7.7*p,4.4*p,1.0*p,'#4a7b2d'); },
+        weapon:(c,p,step)=>{ px(c,5.4*p,-6.5*p,0.8*p,10.0*p,'#7b4d2a'); px(c,4.6*p,-7.4*p,2.6*p,0.8*p,'#7b4d2a'); px(c,4.6*p,2.6*p,2.6*p,0.8*p,'#7b4d2a'); px(c,3.8*p,-6.6*p,0.7*p,9.0*p,'rgba(170,220,120,0.8)'); },
+        offhand:(c,p)=>{ px(c,-7.0*p,-1.0*p,2.8*p,0.8*p,'#d7dfe9'); px(c,-7.8*p,-1.4*p,0.9*p,1.6*p,'#9fb4c8'); }
       });
     };
 
-    // Mage / Wizard (bottom-right blue witch reference vibe)
     if (byType.mage) byType.mage.draw = function(ctx,frame=0,scale=1){
-      drawChibiClass(ctx, frame, scale, {
-        phase: 2.0,
-        skin:'#f2c7ae', skinShadow:'#eab89a', faceShade:'#efc1a7', body:'#2e6eb4', trim:'#a9d5ff', belt:'#0d3b69',
-        leg:'#2e6eb4', boot:'#14345a', arm:'#2e6eb4', glove:'#183f6d', eyeL:'#d94c58', eyeR:'#d94c58', eyeShine:'#ffd7db', blush:'#f3a0a8',
-        lowerBody:(c,p)=>{ hpx(c,[[-4.1*p,2.0*p,8.2*p,2.8*p,'#255f9f'],[-5.0*p,3.6*p,10.0*p,2.0*p,'#1f5b98']]); },
-        cape:(c,p)=>{},
-        back:(c,p,frame,step)=>{ hpx(c,[[-4.9*p,-1.8*p,9.8*p,6.4*p,'#184c82'],[-5.8*p,1.2*p,11.6*p,2.6*p,'#153f6d']]); },
-        hair:(c,p)=>{ hpx(c,[[-3.0*p,-9.0*p,6.0*p,1.4*p,'#f1d36c'],[-2.2*p,-7.8*p,4.4*p,0.9*p,'#f6e291']]); },
-        headwearBack:(c,p)=>{ hpx(c,[[-5.1*p,-11.7*p,10.2*p,3.0*p,'#7fb5ea'],[-4.3*p,-13.8*p,8.6*p,2.3*p,'#9ac8f3']]); },
-        headwear:(c,p)=>{ hpx(c,[[-4.7*p,-8.8*p,9.4*p,1.0*p,'#2f73b8'],[-5.8*p,-8.0*p,11.6*p,1.2*p,'#173d67']]); },
-        front:(c,p)=>{ px(c,-1.2*p,-1.0*p,2.4*p,0.7*p,'#f0d04f'); },
-        weapon:(c,p,f,step)=>{
-          hpx(c,[
-            [-7.1*p,-6.8*p,0.8*p,9.6*p,'#7f4b2b'],
-            [-8.5*p,-7.7*p,2.4*p,2.0*p,'#b042ff']
-          ]);
-          if(f){ px(c,-9.0*p,-8.2*p,3.2*p,2.8*p,'rgba(190,90,255,.35)'); }
-        },
-        vfx:(c,p,f)=>{ const col=f?'rgba(150,220,255,.45)':'rgba(120,180,255,.25)'; px(c,5.4*p,-12.6*p,1.0*p,1.0*p,col); }
+      drawCuteHero(ctx, frame, scale, {
+        skin:'#f5c8ad', body:'#58c73f', trim:'#9bef74', belt:'#2f3a2a', boot:'#1f221f', arm:'#58c73f', glove:'#1f221f', eye:'#111', blush:commonBlush, cape:'#2f6b29',
+        hair:(c,p)=>{ px(c,-3.2*p,-10.2*p,6.4*p,1.1*p,'#357b26'); px(c,-2.6*p,-9.1*p,5.2*p,1.0*p,'#4ba832'); px(c,-5.2*p,-9.8*p,10.4*p,1.0*p,'#69d84d'); px(c,2.8*p,-12.0*p,1.2*p,3.0*p,'#69d84d'); px(c,3.8*p,-13.0*p,1.0*p,2.0*p,'#69d84d'); },
+        weapon:(c,p,step)=>{ px(c,6.2*p,-8.2*p,0.8*p,12.4*p,'#7b4d2a'); px(c,5.3*p,-9.0*p,2.6*p,1.8*p,'#b85f2a'); px(c,5.8*p,-8.5*p,1.6*p,0.8*p,'#8eff66'); },
+        offhand:(c,p,step,frame)=>{ const pulse = frame? '#8eff66':'#5ce13b'; px(c,-7.2*p,-6.4*p,1.4*p,1.4*p,pulse); px(c,-6.4*p,-7.4*p,1.0*p,1.0*p,'rgba(120,255,120,.7)'); }
       });
     };
 
-    // Valkyrie -> dark demon swordswoman (top-left reference vibe)
     if (byType.valkyrie) byType.valkyrie.draw = function(ctx,frame=0,scale=1){
-      drawChibiClass(ctx, frame, scale, {
-        phase: 3.0,
-        skin:'#f2d5c8', skinShadow:'#ebc3b3', faceShade:'#f0cfc3', body:'#3a3a42', trim:'#a0a4af', belt:'#5e6170',
-        leg:'#2f2f36', boot:'#1b1c22', arm:'#3a3a42', glove:'#1b1c22', eyeL:'#f03ccf', eyeR:'#f03ccf', eyeShine:'#ffd7fb', blush:'#f0b0d4',
-        back:(c,p)=>{ hpx(c,[[-4.6*p,-1.6*p,9.2*p,5.6*p,'#2b2c35'],[-5.2*p,1.4*p,10.4*p,1.8*p,'#20212a']]); },
-        lowerBody:(c,p)=>{ hpx(c,[[-3.9*p,1.7*p,7.8*p,2.0*p,'#444754'],[-2.8*p,3.1*p,5.6*p,1.1*p,'#9ca3b3']]); },
-        hair:(c,p)=>{ hpx(c,[[-3.0*p,-9.0*p,6.0*p,1.8*p,'#ffffff'],[-3.6*p,-7.8*p,1.2*p,4.2*p,'#e9edf5'],[2.4*p,-7.8*p,1.2*p,4.2*p,'#e9edf5'],[-1.2*p,-7.0*p,2.4*p,1.0*p,'#f2f2f2']]); },
-        headwearBack:(c,p)=>{ hpx(c,[[-4.1*p,-9.8*p,1.4*p,4.2*p,'#111218'],[2.7*p,-9.8*p,1.4*p,4.2*p,'#111218']]); },
-        headwear:(c,p)=>{
-          // horn silhouette
-          hpx(c,[[-5.1*p,-11.4*p,2.0*p,1.2*p,'#0f1015'],[-4.5*p,-12.4*p,1.4*p,1.0*p,'#0f1015'],[3.1*p,-11.4*p,2.0*p,1.2*p,'#0f1015'],[3.1*p,-12.4*p,1.4*p,1.0*p,'#0f1015']]);
-        },
-        weapon:(c,p,f)=>{
-          hpx(c,[
-            [-7.2*p,-0.4*p,0.8*p,6.3*p,'#5a4454'],
-            [-8.6*p,-6.0*p,2.8*p,5.8*p,'#b12cff'],
-            [-8.8*p,-6.2*p,3.2*p,0.7*p,'#f0a5ff']
-          ]);
-          if(f) px(c,-9.2*p,-6.8*p,4.0*p,7.0*p,'rgba(231,72,255,.22)');
-        },
-        offhand:(c,p)=>{ px(c,5.4*p,-2.7*p,1.6*p,1.0*p,'#a8afbf'); },
-        vfx:(c,p,f)=>{ if(f){ px(c,-10.0*p,-6.6*p,0.8*p,0.8*p,'rgba(255,110,255,.5)'); px(c,-10.8*p,-5.2*p,0.6*p,0.6*p,'rgba(255,110,255,.4)'); } }
+      drawCuteHero(ctx, frame, scale, {
+        skin:'#f6c7b8', body:'#d9dbe1', trim:'#ff80bf', belt:'#ff6ab3', boot:'#b7bcc8', arm:'#d9dbe1', glove:'#c7cad4', eye:'#111', blush:commonBlush,
+        hair:(c,p)=>{ px(c,-3.0*p,-9.2*p,6.0*p,2.2*p,'#f0cf42'); px(c,-3.6*p,-7.5*p,1.1*p,4.5*p,'#e0bb2d'); px(c,2.5*p,-7.5*p,1.1*p,4.5*p,'#e0bb2d'); px(c,-3.2*p,-10.2*p,6.4*p,0.7*p,'#e8edf4'); px(c,-0.6*p,-11.8*p,1.2*p,1.6*p,'#ff71bc'); },
+        weapon:(c,p,step)=>{ px(c,5.8*p,-7.0*p,0.8*p,10.6*p,'#7b4d2a'); px(c,4.7*p,-8.0*p,3.0*p,2.3*p,'#cfd4df'); px(c,5.2*p,-7.4*p,2.0*p,1.1*p,'#ff85c5'); },
+        offhand:(c,p)=>{ px(c,-7.0*p,-2.8*p,2.8*p,3.2*p,'#d4dbe8'); px(c,-6.4*p,-2.2*p,1.6*p,2.0*p,'#ff86c7'); }
       });
     };
 
     return true;
   }
-
-  // Character art patch rolled back (use original CHAR_DESIGNS visuals)
-  // let tries=0; const t=setInterval(()=>{ tries++; if (applyCharacterArtPatch() || tries>40) clearInterval(t); }, 150);
+  // Character art patch disabled (rolled back).
 })();
 
+window.G = G;
+window.CHAR_DESIGNS = CHAR_DESIGNS;
 G.init();
 </script>
-  <script>
-    try{ window.G = (typeof G!=='undefined') ? G : window.G; }catch(_){ }
-    try{ window.CHAR_DESIGNS = (typeof CHAR_DESIGNS!=='undefined') ? CHAR_DESIGNS : window.CHAR_DESIGNS; }catch(_){ }
-    try{
-      const sp = new URLSearchParams(location.search);
-      if (sp.get('embed') === '1') {
-        const main = document.getElementById('mainScreen');
-        if (main) main.classList.add('hidden');
-      }
-    }catch(_){ }
-  </script>
   <script src="./math-explorer-bridge.js"></script>
 </body>
 </html>

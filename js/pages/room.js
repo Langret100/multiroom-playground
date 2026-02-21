@@ -70,7 +70,7 @@
       const id = (coop && coop.meta && coop.meta.id)
         ? coop.meta.id
         : ((room && room.state && room.state.mode) || "");
-      return (id === "togester" || id === "snaketail" || id === "mathexplorer" || id === "math-explorer");
+      return (id === "togester" || id === "snaketail" || id === "mathexplorer");
     }catch(_){
       return false;
     }
@@ -977,7 +977,7 @@ function updatePreview(modeId){
     }
 
     // In-game "나가기" from embedded MathExplorer iframe (return to room UI only)
-    if (d.type === "mx_quit") {
+    if (d.type === "mx_quit"){
       if (!fromMain) return;
       forceLobbyUI = true;
       try{ exitGameFullscreen(); }catch(_){ }
@@ -1537,8 +1537,7 @@ function updatePreview(modeId){
 // - CPU(__cpu__)는 레디 체크/인원 체크에서 제외
 // - 듀얼 게임은 1인 시작 허용(서버가 CPU를 붙여 1:1 구성)
 const CPU_SID = "__cpu__";
-const modeIdRaw = String(state.mode || "");
-const modeId = modeIdRaw.toLowerCase();
+const modeId = state.mode || "";
 const gmeta = (window.gameById ? window.gameById(modeId) : null);
 	// Update capacity badge (matches server room maxClients when available)
 	try{
@@ -1549,7 +1548,7 @@ const gmeta = (window.gameById ? window.gameById(modeId) : null);
 		}
 	}catch(_){ }
 
-const isCoop = (gmeta && gmeta.type === "coop") || ["togester","snaketail","suhaktokki","mathexplorer","math-explorer"].includes(modeId);
+const isCoop = (gmeta && gmeta.type === "coop") || modeId === "togester";
 const isDuel = (gmeta && gmeta.type === "duel") || (!isCoop);
 
 let humanCount = 0;
@@ -1594,7 +1593,7 @@ else if (isCoop){
     canStart = true;
     startText = "혼자 시작";
     startAction = "start";
-  } else if ((modeId === "mathexplorer" || modeId === "math-explorer") && humanCount <= 1){
+  } else if (modeId === "mathexplorer" && humanCount === 1){
     // 수학 탐험가: 1~4인 협동 플레이(최대 4인). 혼자도 시작 가능.
     canStart = true;
     startText = "혼자 시작";
@@ -1623,16 +1622,6 @@ els.startBtn.disabled = !canStart;
 els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
 els.startBtn.title = canStart ? startText : reason;
-// Hard fallback: MathExplorer supports solo start (1~4 players) even if game metadata loads late.
-try{
-  const mid = String(state.mode||'').toLowerCase();
-  if (isHost && state.phase === 'lobby' && (mid === 'mathexplorer' || mid === 'math-explorer') && humanCount >= 1){
-    els.startBtn.disabled = false;
-    els.startBtn.dataset.action = 'start';
-    els.startBtn.textContent = (humanCount === 1) ? '혼자 시작' : '게임 시작';
-    els.startBtn.title = els.startBtn.textContent;
-  }
-}catch(_){ }
 
   // Show CPU difficulty only when host starts a solo duel in lobby.
   try{
@@ -1645,7 +1634,7 @@ try{
 
   try{
     if (mathDiffWrap){
-      const showMathDiff = !!(isHost && state.phase === "lobby" && (modeId === "mathexplorer" || modeId === "math-explorer"));
+      const showMathDiff = !!(isHost && state.phase === "lobby" && modeId === "mathexplorer");
       mathDiffWrap.style.display = showMathDiff ? "flex" : "none";
       if (mathDiffSelect) mathDiffSelect.value = String(mathDifficulty);
     }
@@ -1939,9 +1928,8 @@ function sendCoopBridgeInit(){
   })();
 
   const isSuhakTokki = (coop && coop.meta && coop.meta.id === 'suhaktokki');
-  const isMathExplorer = (coop && coop.meta && (coop.meta.id === 'mathexplorer' || coop.meta.id === 'math-explorer'));
   let effectiveIsHost = false;
-  if (isSuhakTokki || isMathExplorer){
+  if (isSuhakTokki){
     if (isHostFromState === true) {
       effectiveIsHost = true;
     } else if (Number.isFinite(seat) && seat === 0) {
@@ -1951,7 +1939,15 @@ function sendCoopBridgeInit(){
       effectiveIsHost = false;
     }
   } else {
-    effectiveIsHost = (isHostFromState === true);
+    // MathExplorer 포함 coop 게임도 일부 환경에서 players[sid].isHost가 늦게/비어 들어올 수 있어
+    // seat 0를 authoritative fallback으로 사용한다 (split-host 방지).
+    if (isHostFromState === true) {
+      effectiveIsHost = true;
+    } else if (Number.isFinite(seat) && seat === 0) {
+      effectiveIsHost = true;
+    } else {
+      effectiveIsHost = false;
+    }
   }
   postToMain({
     type: "bridge_init",
@@ -2416,7 +2412,7 @@ try{
 
         // SuhakTokki: capture authoritative start payload from server and forward to iframe.
         try{
-          if (((room?.state?.mode === "suhaktokki") || (room?.state?.mode === "mathexplorer") || (room?.state?.mode === "math-explorer")) && m && m.startPayload){
+          if ((["suhaktokki","mathexplorer","math-explorer"].includes(room?.state?.mode)) && m && m.startPayload){
             coop.startPayload = m.startPayload;
             coop.sentGameStart = false;
             maybeSendCoopGameStart();
@@ -2647,7 +2643,7 @@ try{
           return;
         }
 
-        room.send("start", { cpuDifficulty, coopDifficulty: (((room?.state?.mode||"").toLowerCase() === "mathexplorer") || ((room?.state?.mode||"").toLowerCase() === "math-explorer") ? mathDifficulty : undefined) });
+        room.send("start", { cpuDifficulty, coopDifficulty: (["mathexplorer","math-explorer"].includes(room?.state?.mode) ? mathDifficulty : undefined) });
       });
 
       // Leave
