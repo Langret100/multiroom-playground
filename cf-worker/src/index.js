@@ -301,7 +301,7 @@ export class LobbyDO{
       const title = String(opts.title || "방").slice(0, 30);
       const mode = String(opts.mode || "stackga").slice(0, 24);
       // Allow larger rooms for some coop modes (e.g., snaketail). UI still limits per-game.
-      const minPlayers = (mode === "mathexplorer") ? 1 : 2;
+      const minPlayers = ((mode === "mathexplorer") || (mode === "math-explorer")) ? 1 : 2;
       const maxPlayers = Math.max(minPlayers, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
       this.rooms[roomId] = {
         roomId, title, mode,
@@ -399,7 +399,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -483,6 +483,8 @@ export class RoomDO{
     // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
     // Stored here so late-joiners can be synced.
     this.sk = { startPayload: null };
+    // MathExplorer: latest relayed packets for late-join/reconnect sync (transient only)
+    this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 };
 
     // DrawAnswer (Pictionary-like): minimal server = relays + round/timer/score authority
     this.da = {
@@ -803,6 +805,18 @@ export class RoomDO{
         if (this.meta.phase === "playing" && this.meta.mode === "drawanswer"){
           try{ this._sendDaSync(ws, wantUid); }catch(_){ }
         }
+        // MathExplorer: if a match is already running, sync latest transient world snapshots
+        if (this.meta.phase === "playing" && (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer")){
+          try{ if (this.mx && this.mx.latestWorld) this._send(ws, "mx_msg", { msg: this.mx.latestWorld }); }catch(_){ }
+          try{
+            if (this.mx && this.mx.latestStates){
+              for (const sid of Object.keys(this.mx.latestStates)){
+                const st = this.mx.latestStates[sid];
+                if (st) this._send(ws, "mx_msg", { msg: st });
+              }
+            }
+          }catch(_){ }
+        }
         // Inform lobby presence list that this user is currently inside a room.
         // This allows the lobby's online list to include room occupants and show their room.
         await this._presenceSet(wantUid, nick, this.meta.roomId);
@@ -851,7 +865,8 @@ export class RoomDO{
 
         if (!duel){
           // Co-op usually requires 2+ humans; allow solo for SuhakTokki and SnakeTail.
-          const minHumans = (this.meta.mode === "suhaktokki" || this.meta.mode === "snaketail") ? 1 : 2;
+          const mode = String(this.meta.mode||"").toLowerCase();
+          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer"].includes(mode)) ? 1 : 2;
           if (humanCount < minHumans){
             this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
             return;
@@ -1002,16 +1017,25 @@ export class RoomDO{
       // ----- MathExplorer relay (generic packet) -----
       if (t === "mx_msg") {
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
-        // throttle optional high-frequency packets if introduced later
-        if (String(inner.kind||inner.t||"") === "state") {
+        const mk = String(inner.kind||inner.t||"");
+        // throttle optional high-frequency packets
+        if (mk === "state") {
           const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0 };
           const n = now();
-          if (n - (lim.mxTs||0) < 70) return;
+          if (n - (lim.mxTs||0) < 45) return;
           lim.mxTs = n;
           this._relayLimiter.set(uid, lim);
         }
         // include sender sid so clients can ignore self-echo and track peers
         const out = Object.assign({}, inner, { from: String(uid) });
+        // cache latest transient state for reconnect / late join (no persistence)
+        try{
+          if (!this.mx) this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 };
+          this.mx.lastActiveAt = now();
+          if (mk === 'state') this.mx.latestStates[String(uid)] = out;
+          if (mk === 'world') this.mx.latestWorld = out;
+          if (mk === 'run_reset') this.mx.latestWorld = null;
+        }catch(_){ }
         this._broadcast("mx_msg", { msg: out });
         return;
       }
@@ -1501,6 +1525,9 @@ export class RoomDO{
       // (prevents ghost state and avoids leaving per-user records in memory).
       try{ this._relayLimiter.delete(uid); }catch(_){ }
       try{
+        if (this.mx && this.mx.latestStates) delete this.mx.latestStates[uid];
+      }catch(_){ }
+      try{
         if (this.tg && this.tg.players && this.tg.players[uid]){
           delete this.tg.players[uid];
           this._scheduleTgBroadcast();
@@ -1611,6 +1638,8 @@ export class RoomDO{
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null };
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} };
     this.sk = { startPayload: null };
+    // MathExplorer: latest relayed packets for late-join/reconnect sync (transient only)
+    this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 };
     this.da = { active:false, round:0, maxRounds:5, order:[], drawerIdx:0, drawerUid:'', word:'', endAt:0, timer:null, scores:{}, ops:[] };
     this._cpu = { active:false };
 
@@ -2179,6 +2208,8 @@ export class RoomDO{
 
       // SuhakTokki: clear authoritative start payload when returning to lobby.
       try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
+      // MathExplorer transient caches must be cleared when returning to lobby as well.
+      try{ this.mx = { latestWorld:null, latestStates:{}, lastActiveAt:0 }; }catch(_){ }
 
       try{ this.da && this._daReset(); }catch(_){ }
 

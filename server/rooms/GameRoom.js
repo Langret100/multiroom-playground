@@ -175,7 +175,7 @@ this.st = {
       } else {
         // Coop default requires at least 2 humans.
         // SuhakTokki supports solo start (practice mode inside the game).
-        const minHumans = (["suhaktokki","mathexplorer"].includes(this.state.mode)) ? 1 : 2;
+        const minHumans = (["suhaktokki","mathexplorer","math-explorer"].includes(this.state.mode)) ? 1 : 2;
         if (humanCount < minHumans) return;
         this.recomputeReady();
         if (!this.state.allReady) return;
@@ -185,7 +185,7 @@ this.st = {
       // The embedded game must start only from this payload (no in-game lobby/start flow).
       let suhakStartPayload = null;
       let mathStartPayload = null;
-      if (this.state.mode === "mathexplorer") {
+      if (this.state.mode === "mathexplorer" || this.state.mode === "math-explorer") {
         const raw = Number(msg?.coopDifficulty ?? msg?.mathDifficulty ?? 1);
         const difficulty = (raw >= 2) ? 2 : 1;
         mathStartPayload = {
@@ -193,6 +193,7 @@ this.st = {
           difficulty,
           seed: (Date.now() ^ Math.floor(Math.random()*1e9)) >>> 0,
           startedAt: Date.now(),
+          playerCount: humanCount,
         };
       }
       if (this.state.mode === "suhaktokki"){
@@ -224,6 +225,7 @@ this.st = {
             startedAt: Date.now(),
           };
           this._suhakStartPayload = suhakStartPayload;
+      this._mathStartPayload = mathStartPayload;
         }catch(_){ /* best-effort */ }
       }
 
@@ -890,6 +892,7 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
           maxClients: Number(this.maxClients || this.state.maxClients || 0),
           startedAt: this.matchStartedAt || Date.now(),
           ...(this.state.mode === "suhaktokki" && this._suhakStartPayload ? { startPayload: this._suhakStartPayload } : {}),
+          ...(((this.state.mode === "mathexplorer" || this.state.mode === "math-explorer") && this._mathStartPayload) ? { startPayload: this._mathStartPayload } : {}),
         });
       }
     }catch(_){ }
@@ -1028,7 +1031,7 @@ try{
     if (this.state.modeType === "duel"){
       this.state.allReady = (humans >= 1) && nonHostHumansReady;
     } else {
-      const minHumans = (["suhaktokki","mathexplorer"].includes(this.state.mode)) ? 1 : 2;
+      const minHumans = (["suhaktokki","mathexplorer","math-explorer"].includes(this.state.mode)) ? 1 : 2;
       this.state.allReady = (humans >= minHumans) && nonHostHumansReady;
     }
   }
