@@ -457,12 +457,19 @@
         </div>
         
         <div id="errorMsg" class="error-msg"></div>
+
+        <div style="margin-top:12px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.08);font-size:0.9rem;line-height:1.45;color:#eef;">
+            <div style="font-weight:700;margin-bottom:6px;">조작 설명</div>
+            <div>모바일: 화면 터치 시 위치에 가상 조이스틱 생성(이동), 우측 버튼으로 <b>밀기 / 바닥생성 / 점프</b></div>
+            <div>PC: ← → 이동 / Z 점프 / X 밀기 / C 바닥생성</div>
+            <div style="opacity:.85;margin-top:4px;">목표는 깃발까지 도착! (멀티는 1명만 닿아도 전원 다음 라운드) 화면 밖이면 작은 화살표로 깃발 방향이 표시됩니다. 라운드당 120초 제한.</div>
+        </div>
     </div>
     
     <!-- 게임 화면 -->
     <div id="gameContainer" style="display:none;">
         <div id="gameHeader">
-            <span class="room-code" id="displayRoomCode">방: ----</span>
+            <span class="room-code" id="displayRoomCode">⏱ 120</span>
             <span class="level-info" id="levelInfo">레벨 1</span>
             <div class="header-right">
                 <span class="death-count" id="deathCount">💀 0</span>
@@ -476,7 +483,8 @@
 
         <div id="actionButtons" aria-label="액션 버튼">
             <button id="pushBtn" class="action-btn" type="button" title="앞에 있는 캐릭터를 밀기">밀기</button>
-            <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥 0/2</button>
+            <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥 2/2</button>
+            <button id="jumpBtn" class="action-btn" type="button" title="점프">점프</button>
         </div>
         
         <!-- in-game controls hint removed (shown in room UI instead) -->
@@ -506,6 +514,23 @@
             bridgeSend('tg_sync', {});
         }
 
+        // 멀티(임베드)에서는 호스트만 상자 물리를 authoritative 하게 시뮬레이션한다.
+        // practice(게스트모드) 여부와 무관하게, non-host는 서버/호스트 스냅샷을 따른다.
+        function isAuthoritativeBoxSim(){
+            return !EMBED || !!isHost;
+        }
+        function usesRemoteAuthoritativeBoxes(){
+            if (!EMBED || isHost) return false;
+            const now = performance.now();
+            const recentPuzzle = (now - (lastTgPuzzleSnapshotAt || 0)) < 1800;
+            const recentAnyNet = (now - (lastTgAnyNetAt || 0)) < 1800;
+            // 로컬 테스트/브릿지 미연결 상태에서는 원격 스냅샷을 기다리다 박스가 멈춰보일 수 있으므로 폴백
+            return recentPuzzle || recentAnyNet;
+        }
+        function isAuthoritativePuzzleSim(){
+            return !EMBED || !!isHost;
+        }
+
         // ==================== 게임 상태 ====================
         let db = null;
         let roomRef = null;
@@ -515,6 +540,9 @@
         let isGuestMode = false;
         let currentLevel = 1;
         let levelClearLock = false; // 레벨 클리어 중복 트리거 방지
+        let roundTimeLimitSec = 120;
+        let roundDeadlineAt = 0;
+        let roundTimedOut = false;
         
         const HAMSTER_COLORS = ['#ff6b6b', '#4ecdc4', '#ffe66d', '#a29bfe'];
         // 기본 슈퍼마리오 느낌(스르륵 멈춤/부드러운 가속, 공중제어는 약간 약하게)
@@ -573,9 +601,16 @@
         
         let players = {};
         let smoothedPlayers = {};
+        let lastPlayerListSig = '';
         let tgFloors = {}; // id -> platform (temporary floors)
         // 발판(임시 바닥) 동기화가 초기 로딩 타이밍에 유실되지 않도록 버퍼
         let pendingFloorFullSync = null; // Array<platform>
+        let pendingBoxSnapshot = null; // { level, boxes } from host
+        let pendingPuzzleSnapshot = null; // { level, ... } from host authoritative puzzle state
+        let lastSentBoxSnapshotSig = '';
+        let lastSentBoxSnapshotAt = 0;
+        let lastTgPuzzleSnapshotAt = 0;
+        let lastTgAnyNetAt = 0;
         let pendingFloorAdds = [];
         let pendingFloorRemoves = [];
         let pendingFloorAddSet = new Set();
@@ -626,6 +661,9 @@
         
         // 터치 상태
         let touches = {};
+        let mobileJoystick = { active:false, id:null, baseX:0, baseY:0, x:0, y:0, dx:0, dy:0 };
+        const JOY_DEADZONE = 12;
+        const JOY_MAX_RADIUS = 42;
 
         // 가변 점프 입력 상태
         let jumpKeyDown = false;
@@ -656,7 +694,7 @@
                 bgmEl.loop = true;
                 bgmEl.preload = 'auto';
                 // 기본 볼륨 (너무 크지 않게)
-                if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.5;
+                if (typeof bgmEl.volume === 'number') bgmEl.volume = 0.125;
             }
         }
 
@@ -733,15 +771,23 @@
             playTone(400, 0.1, 'sine', 0.2, 400);
         }
         
-        // 버튼 누름 - 밝은 "딩!"
+        // 버튼 누름 - 밝은 "딩!" (연속 트리거 방지)
+        let lastButtonSfxTime = 0;
         function sfxButton() {
+            const now = performance.now();
+            if (now - lastButtonSfxTime < 140) return;
+            lastButtonSfxTime = now;
             initAudio();
             playTone(880, 0.1, 'sine', 0.2);
             setTimeout(() => playTone(1100, 0.15, 'sine', 0.15), 50);
         }
         
-        // 문 열림 - 상승 멜로디
+        // 문 열림 - 상승 멜로디 (중복 재생 완화)
+        let lastDoorOpenSfxTime = 0;
         function sfxDoorOpen() {
+            const now = performance.now();
+            if (now - lastDoorOpenSfxTime < 220) return;
+            lastDoorOpenSfxTime = now;
             initAudio();
             playTone(440, 0.1, 'triangle', 0.15);
             setTimeout(() => playTone(550, 0.1, 'triangle', 0.15), 80);
@@ -800,7 +846,7 @@
         
         
                // ==================== 모바일 세로 진행 레벨 ====================
-        // 25라운드: 맵 반복 없이, 라운드가 올라갈수록 함정/퍼즐 난이도가 증가하도록 구성
+        // 20라운드: 맵 반복 없이, 라운드가 올라갈수록 함정/퍼즐 난이도가 증가하도록 구성
         // (기존: 8개 맵 반복 -> 개선: 25개 맵을 결정론적으로 생성)
 
         const TG_STAGE_W = 520;
@@ -989,19 +1035,93 @@
             return y - step*3;
         }
 
+
+        function _chunkRelayPuzzle({rng, platforms, doors, buttons, bridges, lifts, spikes, y, step, diff}){
+            // 협동 릴레이 퍼즐: 버튼1(다리) -> 버튼2(문) -> 버튼3(리프트)
+            const yA = y - step;
+            const yB = y - step*2;
+            const yC = y - step*3;
+
+            _addPlatform(platforms, 30, yA, 150, 20);
+            _addPlatform(platforms, 340, yA, 150, 20);
+            bridges.push({ x: 180, y: yA, width: 160, height: 20, color: '#00cec9', active: false });
+
+            const btn1PlatY = yA + 130;
+            _addPlatform(platforms, 40, btn1PlatY, 170, 20);
+            buttons.push({ x: 85, y: _buttonOn(btn1PlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
+
+            doors.push({ x: 0, y: yB - 40, width: TG_STAGE_W, height: 26, open: false, color: '#d63031' });
+            _addPlatform(platforms, 330, yB, 160, 20);
+            buttons.push({ x: 370, y: _buttonOn(yB), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#e17055' });
+
+            const liftBottom = yC + 70;
+            const liftTop = yC - 80;
+            _addPlatform(platforms, 35, yC + 40, 160, 20);
+            lifts.push({ x: 355, y: liftBottom, width: 120, height: 20, minY: liftTop, maxY: liftBottom, speed: _lerp(2.4, 3.6, diff), color: '#6c5ce7' });
+            _addPlatform(platforms, 40, yC + 170, 170, 20);
+            buttons.push({ x: 90, y: _buttonOn(yC + 170), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
+
+            _addPlatform(platforms, 230, liftTop - 40, 220, 20);
+            if (diff > 0.35) spikes.push({ x: 170, y: yA + 58, width: 180, height: 34 });
+            if (diff > 0.65) spikes.push({ x: 205, y: yC + 104, width: 120, height: 34 });
+            return y - step*4;
+        }
+
+        function _chunkSplitDual({rng, platforms, doors, buttons, bridges, y, step, diff}){
+            const y0 = y - step;
+            const y1 = y - step*2;
+            const y2 = y - step*3;
+            _addPlatform(platforms, 35, y0, 150, 20);
+            _addPlatform(platforms, 345, y0, 150, 20);
+            bridges.push({ x: 185, y: y0, width: 160, height: 20, color: '#00cec9', active: false });
+            const b1y = y0 + 135; _addPlatform(platforms, 45, b1y, 170, 20);
+            buttons.push({ x: 95, y: _buttonOn(b1y), width:70, height:12, pressed:false, bridgeId: bridges.length-1, color:'#00b894' });
+            doors.push({ x: 0, y: y1, width: TG_STAGE_W, height: 26, open:false, color:'#d63031' });
+            _addPlatform(platforms, 140, y1 - 85, 220, 20);
+            const b2y = y1 + 85; _addPlatform(platforms, 320, b2y, 160, 20);
+            buttons.push({ x: 365, y: _buttonOn(b2y), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#e17055' });
+            _addPlatform(platforms, 60, y2, 150, 20);
+            _addPlatform(platforms, 300, y2, 150, 20);
+            if (diff > 0.45) _addPlatform(platforms, 190, y2 - 90, 120, 20);
+            return y - step*4;
+        }
+
+        function _chunkBoxRelay({rng, platforms, doors, buttons, boxes, lifts, spikes, y, step, diff}){
+            const yA = y - step; const yB = y - step*2; const yC = y - step*3;
+            _addPlatform(platforms, 90, yA, 300, 20);
+            boxes.push({ x: 210, y: yA - 40, width:40, height:40 });
+            const pocketX = (rng() < 0.5) ? 40 : 330;
+            _addPlatform(platforms, pocketX, yA + 120, 150, 20);
+            doors.push({ x:0, y:yB, width:TG_STAGE_W, height:26, open:false, color:'#d35400' });
+            buttons.push({ x:pocketX + 40, y:_buttonOn(yA + 120), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#fdcb6e' });
+            _addPlatform(platforms, 150, yB - 85, 220, 20);
+            lifts.push({ x: 350, y: yC + 80, width: 120, height: 20, minY: yC - 90, maxY: yC + 80, speed: _lerp(2.5,3.7,diff), color:'#6c5ce7' });
+            _addPlatform(platforms, 55, yC + 155, 170, 20);
+            buttons.push({ x: 105, y: _buttonOn(yC + 155), width:70, height:12, pressed:false, liftId: lifts.length-1, color:'#a29bfe' });
+            _addPlatform(platforms, 220, yC - 120, 220, 20);
+            if (diff > 0.5) spikes.push({ x: 155, y: yA + 42, width: 210, height: 34 });
+            return y - step*4;
+        }
+
         function _seqForLevel(lv, rng){
             const pick = (arr)=>_pick(rng, arr);
-            if (lv <= 3) return ['stairs','stairs','door','stairs','stairs'];
-            if (lv <= 6) return ['stairs', pick(['door','bridge']), 'stairs', pick(['spike','gap']), 'stairs'];
-            if (lv <= 10) return [pick(['door','bridge']), 'spike', pick(['lift','gap']), 'stairs', pick(['door','bridge'])];
-            if (lv <= 15) return ['spike', pick(['door','box']), pick(['lift','bridge']), 'gap', 'stairs'];
-            if (lv <= 20) return [pick(['door','box']), 'spike', pick(['lift','bridge']), pick(['door','gap']), 'spike'];
-            return [pick(['box','door']), 'spike', pick(['lift','bridge']), 'box', 'spike'];
+            // 마리오식 진행감: 소개 -> 안전 응용 -> 작은 테스트 -> 마무리
+            if (lv <= 3) return ['stairs','stairs','stairs'];
+            if (lv === 4) return ['stairs','bridge','stairs','gap','bridge'];
+            if (lv === 5) return ['stairs','door','stairs','bridge','door'];
+            if (lv === 6) return ['stairs','box','door','stairs','bridge'];
+            if (lv === 7) return ['bridge','gap','lift','stairs','door'];
+            if (lv === 8) return ['box','bridge','door','lift','stairs'];
+            if (lv === 9) return ['relay','stairs','bridge','door','spike'];
+            if (lv === 10) return ['split','bridge','lift','door','spike'];
+            if (lv <= 14) return [pick(['relay','boxrelay']), pick(['door','box']), pick(['lift','bridge']), 'stairs', pick(['split','gap']), 'spike'];
+            if (lv <= 17) return [pick(['door','box']), pick(['relay','split']), 'spike', pick(['boxrelay','lift']), 'stairs', pick(['door','gap'])];
+            return [pick(['relay','split']), pick(['boxrelay','door']), 'spike', pick(['lift','bridge']), pick(['relay','boxrelay']), 'stairs', pick(['split','box']), pick(['door','gap'])];
         }
 
         function _genLevel(lv){
             const rng = _mulberry32(0x51F15 + lv * 1337);
-            const diff = clamp((lv - 1) / 24, 0, 1);
+            const diff = clamp((lv - 1) / 19, 0, 1);
 
             const step = Math.round(_lerp(170, 135, diff));
             const wMax = Math.round(_lerp(290, 175, diff));
@@ -1014,6 +1134,71 @@
             const boxes = [];
             const lifts = [];
             const bridges = [];
+            if (lv === 1){
+                // 튜토리얼 1: 매우 짧은 이동/점프 입문 (혼자 쉽게 가능)
+                platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
+                _addPlatform(platforms, 90, 2230, 260, 20);
+                _addPlatform(platforms, 250, 2165, 170, 20);
+                _addPlatform(platforms, 120, 2100, 180, 20);
+                _addPlatform(platforms, 260, 2038, 150, 20);
+                return {
+                    spawn:{x:120,y:2320},
+                    goal:{x:305,y:1948,width:90,height:80},
+                    platforms, buttons, doors, spikes, boxes, lifts, bridges,
+                    message:'튜토리얼 1: 이동/점프로 짧게 도착!'
+                };
+            }
+
+            if (lv === 2){
+                // 튜토리얼 2: 상자→버튼→다리 (혼자 안전하게 체험)
+                platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
+                _addPlatform(platforms, 80, 2230, 300, 20);
+                _addPlatform(platforms, 70, 2145, 210, 20);
+                boxes.push({ x: 220, y: 2105, width: 40, height: 40 });
+                buttons.push({ x: 95, y: _buttonOn(2145), width: 70, height: 12, pressed: false, bridgeId: 0, color: '#00b894' });
+
+                const yBridge = 2060;
+                _addPlatform(platforms, 40, yBridge, 150, 20);
+                bridges.push({ x: 190, y: yBridge, width: 140, height: 20, color: '#00cec9', active: false });
+                _addPlatform(platforms, 330, yBridge, 150, 20);
+
+                _addPlatform(platforms, 260, 1978, 170, 20);
+                _addPlatform(platforms, 130, 1912, 170, 20);
+                return {
+                    spawn:{x:120,y:2320},
+                    goal:{x:165,y:1822,width:95,height:80},
+                    platforms, buttons, doors, spikes, boxes, lifts, bridges,
+                    message:'튜토리얼 2: 상자를 버튼에 올리면 다리가 생겨요!'
+                };
+            }
+
+            if (lv === 3){
+                // 튜토리얼 3: 문/리프트를 순서대로 익히는 퍼즐 입문 (혼자 가능)
+                platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
+                _addPlatform(platforms, 70, 2230, 310, 20);
+
+                // 1) 문 기믹 소개
+                _addPlatform(platforms, 60, 2145, 190, 20);
+                _addPlatform(platforms, 300, 2145, 150, 20);
+                boxes.push({ x: 340, y: 2105, width: 40, height: 40 });
+                buttons.push({ x: 92, y: _buttonOn(2145), width: 70, height: 12, pressed: false, doorId: 0, color: '#fdcb6e' });
+                doors.push({ x: 210, y: 2066, width: 120, height: 24, open: false, color: '#d35400' });
+                _addPlatform(platforms, 200, 2060, 150, 20);
+                _addPlatform(platforms, 130, 1980, 200, 20);
+
+                // 2) 리프트 기믹 소개
+                _addPlatform(platforms, 55, 1905, 160, 20);
+                buttons.push({ x: 82, y: _buttonOn(1905), width: 70, height: 12, pressed: false, liftId: 0, color: '#a29bfe' });
+                boxes.push({ x: 165, y: 1865, width: 40, height: 40 });
+                lifts.push({ x: 340, y: 1905, width: 110, height: 20, minY: 1795, maxY: 1905, speed: 2.2, color: '#6c5ce7' });
+                _addPlatform(platforms, 235, 1755, 170, 20);
+                return {
+                    spawn:{x:120,y:2320},
+                    goal:{x:270,y:1665,width:95,height:80},
+                    platforms, buttons, doors, spikes, boxes, lifts, bridges,
+                    message:'튜토리얼 3: 문과 리프트를 순서대로 사용해보세요!'
+                };
+            }
 
             // 바닥
             platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
@@ -1038,10 +1223,13 @@
                 else if (t === 'lift') y = _chunkLift({rng, platforms, lifts, buttons, spikes, y, step, diff});
                 else if (t === 'box') y = _chunkBox({rng, platforms, doors, buttons, boxes, spikes, y, step, diff});
                 else if (t === 'gap') y = _chunkGap({rng, platforms, spikes, y, step, diff});
+                else if (t === 'relay') y = _chunkRelayPuzzle({rng, platforms, doors, buttons, bridges, lifts, spikes, y, step, diff});
+                else if (t === 'split') y = _chunkSplitDual({rng, platforms, doors, buttons, bridges, y, step, diff});
+                else if (t === 'boxrelay') y = _chunkBoxRelay({rng, platforms, doors, buttons, boxes, lifts, spikes, y, step, diff});
                 else y = _chunkStairs({rng, platforms, y, step, wMin, wMax});
 
                 // 라운드가 높을수록 쉬는 구간이 짧아짐: 추가 발판을 덜 줌
-                if (diff < 0.25 && rng() < 0.35){
+                if (diff < 0.18 && rng() < 0.45){
                     const w = _rint(rng, wMin+40, wMax);
                     const x = _rint(rng, 60, TG_STAGE_W - w - 60);
                     _addPlatform(platforms, x, y, w, 20);
@@ -1069,10 +1257,10 @@
             };
         }
 
-        const LEVELS = Array.from({ length: 25 }, (_, i) => _genLevel(i + 1));
+        const LEVELS = Array.from({ length: 20 }, (_, i) => _genLevel(i + 1));
 
 // ==================== 라운드/맵 처리 ====================
-        // 25라운드 고정: 맵 반복 없이(LEVELS=25), 라운드 표기로 진행
+        // 20라운드 고정: 맵 반복 없이(LEVELS=25), 라운드 표기로 진행
         const TG_MAP_COUNT = LEVELS.length;
         const TG_MAX_ROUNDS = TG_MAP_COUNT;
         const TG_ROUND_MODE = true;
@@ -1140,13 +1328,55 @@
             startGame();
         }
         
-        function updatePlayerList() {
+        function getRoundTimeLeftSec(){
+            if (!roundDeadlineAt) return roundTimeLimitSec;
+            return Math.max(0, Math.ceil((roundDeadlineAt - performance.now()) / 1000));
+        }
+
+        function updateRoundTimerUI(){
+            const el = document.getElementById('displayRoomCode');
+            if (!el) return;
+            const sec = getRoundTimeLeftSec();
+            const m = Math.floor(sec / 60);
+            const ss = String(sec % 60).padStart(2,'0');
+            el.textContent = `⏱ ${m}:${ss}`;
+            el.style.color = sec <= 15 ? '#ff8a80' : '';
+        }
+
+        function onRoundTimeout(){
+            if (roundTimedOut) return;
+            roundTimedOut = true;
+            gameRunning = false;
+            if (rafId) { try{ cancelAnimationFrame(rafId); }catch(e){} rafId = null; }
+            const ws = document.getElementById('winScreen');
+            ws.querySelector('.win-text').textContent = '⏰ 시간 초과! 게임 오버';
+            const hint = document.getElementById('autoNextHint');
+            hint.style.display = 'block';
+            hint.textContent = isGuestMode ? '나가기로 로비로 돌아가세요.' : '팀이 시간 내에 깃발에 도착하지 못했습니다.';
+            ws.classList.add('show');
+            try{ bridgeSendOver(false, 'timeout'); }catch(e){}
+        }
+
+        function buildPlayerListSignature() {
+            const parts = [`me:${localPlayer.name}|${localPlayer.color}|${isGuestMode ? '(P)' : '(M)'}`];
+            if (!isGuestMode) {
+                const arr = Object.values(players || {}).map(p => `${p?.name||''}|${p?.color||''}`).sort();
+                parts.push(...arr);
+            }
+            return parts.join('||');
+        }
+
+        function updatePlayerList(force=false) {
             const container = document.getElementById('playerList');
+            if (!container) return;
+            const sig = buildPlayerListSignature();
+            if (!force && sig === lastPlayerListSig) return;
+            lastPlayerListSig = sig;
+
             let html = `<div class="player-item">
                 <div class="player-dot" style="background:${localPlayer.color}"></div>
                 <span>${localPlayer.name} ${isGuestMode ? '(연습중)' : '(나)'}</span>
             </div>`;
-            
             if (!isGuestMode) {
                 Object.values(players).forEach(p => {
                     html += `<div class="player-item">
@@ -1155,7 +1385,6 @@
                     </div>`;
                 });
             }
-            
             container.innerHTML = html;
         }
         
@@ -1163,7 +1392,7 @@
         function startGame() {
             document.getElementById('lobby').classList.add('hidden');
             document.getElementById('gameContainer').style.display = 'flex';
-            document.getElementById('displayRoomCode').textContent = isGuestMode ? '연습' : ('방: ' + roomId);
+            updateRoundTimerUI();
             
             canvas = document.getElementById('gameCanvas');
             ctx = canvas.getContext('2d');
@@ -1397,6 +1626,9 @@
             document.getElementById('levelInfo').textContent = label;
             document.getElementById('winScreen').classList.remove('show');
             levelClearLock = false;
+            roundTimedOut = false;
+            roundDeadlineAt = performance.now() + roundTimeLimitSec * 1000;
+            updateRoundTimerUI();
             
             // 게임 오브젝트 초기화
             gameObjects = {
@@ -1405,10 +1637,20 @@
                 doors: level.doors.map(d => ({...d, open: false})),
                 spikes: [...level.spikes],
                 goal: {...level.goal},
-                boxes: (level.boxes || []).map(b => ({...b, vx: 0, vy: 0})),
+                boxes: (level.boxes || []).map((b, i) => ({...b, id: (b && b.id != null) ? b.id : `b${i}`, vx: 0, vy: 0})),
                 lifts: (level.lifts || []).map(l => ({...l, y: (typeof l.y === 'number') ? l.y : (typeof l.maxY === 'number' ? l.maxY : 0)})),
                 bridges: (level.bridges || []).map(b => ({...b, active: false}))
             };
+
+            ensureBoxIds();
+            if (pendingPuzzleSnapshot && Number(pendingPuzzleSnapshot.level) === Number(currentLevel)) {
+                applyPuzzleSnapshot(pendingPuzzleSnapshot);
+            } else if (pendingBoxSnapshot && Number(pendingBoxSnapshot.level) === Number(currentLevel)) {
+                applyBoxSnapshot(pendingBoxSnapshot);
+                pendingBoxSnapshot = null;
+            }
+            lastSentBoxSnapshotSig = '';
+            lastSentBoxSnapshotAt = 0;
 
             // 동적 발판(바닥 버튼) 초기화
             clearAllFloors();
@@ -1527,9 +1769,15 @@ cameraX = 0;
             respawnLocal();
         }
 
+        function queueFloorBtnRefresh(){
+            try{ updateFloorBtn(); }catch(_){ }
+            try{ requestAnimationFrame(() => updateFloorBtn()); }catch(_){ }
+            try{ setTimeout(() => updateFloorBtn(), 0); }catch(_){ }
+            try{ setTimeout(() => updateFloorBtn(), 120); }catch(_){ }
+            try{ setTimeout(() => updateFloorBtn(), 350); }catch(_){ }
+        }
+
         function respawnLocal(){
-            // 목숨(리스폰)마다 발판 쿼터 리셋
-            resetFloorQuotaLocal();
             const level = getLevelForRound(currentLevel);
             if (!level) return;
             const colorIndex = HAMSTER_COLORS.indexOf(localPlayer.color);
@@ -1544,20 +1792,40 @@ cameraX = 0;
             localPlayer.jumpUsed = false;
             localPlayer.deadAt = 0;
             localPlayer.nextRespawnAt = performance.now() + 120;
+            // 목숨(리스폰)마다 발판 쿼터 리셋 (isDead 해제 이후 호출해야 버튼 비활성 상태가 풀림)
+            resetFloorQuotaLocal();
+            queueFloorBtnRefresh();
             bridgeSendState(true);
         }
 
         
         function updateFloorBtn(){
             const btn = document.getElementById('floorBtn');
-            if (!btn) return;
+            if (!btn || !localPlayer) return;
             const used = Math.max(0, floorUsedThisLife|0);
-            const can = (used < FLOOR_LIMIT_PER_LIFE) && !localPlayer.isDead;
-            btn.textContent = `바닥 ${Math.min(used, FLOOR_LIMIT_PER_LIFE)}/${FLOOR_LIMIT_PER_LIFE}`;
-            // UX: 2번 쓰면 다음 라운드/리스폰까지 버튼 자체를 비활성화
-            btn.disabled = !can;
-            btn.style.pointerEvents = can ? 'auto' : 'none';
-            btn.style.opacity = can ? '1' : '0.45';
+            const exhausted = used >= FLOOR_LIMIT_PER_LIFE;
+            const remain = Math.max(0, FLOOR_LIMIT_PER_LIFE - used);
+            btn.textContent = `바닥 ${remain}/${FLOOR_LIMIT_PER_LIFE}`;
+
+            // 정책 변경: "죽었을 때"는 반투명 처리하지 않고,
+            // "목숨당 2개를 다 썼을 때만" 반투명/비활성 처리한다.
+            // 사망 중 입력은 createFloorUnderFoot()에서 별도로 막는다.
+            if (!exhausted) {
+                btn.disabled = false;
+                btn.removeAttribute('disabled');
+                btn.removeAttribute('aria-disabled');
+                btn.classList.remove('is-disabled');
+                btn.style.pointerEvents = 'auto';
+                btn.style.opacity = '1';
+                btn.style.filter = 'none';
+                btn.style.transform = '';
+            } else {
+                btn.disabled = true;
+                btn.setAttribute('aria-disabled', 'true');
+                btn.classList.add('is-disabled');
+                btn.style.pointerEvents = 'none';
+                btn.style.opacity = '0.45';
+            }
         }
 
         function resetFloorQuotaLocal(){
@@ -1568,7 +1836,8 @@ cameraX = 0;
 function setupActionButtons(){
             const pushBtn = document.getElementById('pushBtn');
             const floorBtn = document.getElementById('floorBtn');
-            if (!pushBtn || !floorBtn) return;
+            const jumpBtn = document.getElementById('jumpBtn');
+            if (!pushBtn || !floorBtn || !jumpBtn) return;
 
             updateFloorBtn();
 
@@ -1580,6 +1849,11 @@ function setupActionButtons(){
                     doPushAction();
                 };
                 pushBtn.addEventListener('pointerdown', h, { passive: false });
+            }
+            if (!jumpBtn._bound){
+                jumpBtn._bound = true;
+                const h = (e)=>{ try{ e.preventDefault(); e.stopPropagation(); }catch(_){ } initAudio(); doJump(); };
+                jumpBtn.addEventListener('pointerdown', h, { passive: false });
             }
             if (!floorBtn._bound){
                 floorBtn._bound = true;
@@ -1760,164 +2034,134 @@ function setupActionButtons(){
 
         // ==================== 터치 컨트롤 ====================
         function setupControls() {
-            // 터치 시작
+            const setJoystickFromPoint = (x, y) => {
+                if (!mobileJoystick.active) return;
+                const rawDx = x - mobileJoystick.baseX;
+                const rawDy = y - mobileJoystick.baseY;
+                const dist = Math.hypot(rawDx, rawDy) || 1;
+                const clamped = Math.min(JOY_MAX_RADIUS, dist);
+                mobileJoystick.dx = rawDx;
+                mobileJoystick.dy = rawDy;
+                mobileJoystick.x = mobileJoystick.baseX + (rawDx / dist) * clamped;
+                mobileJoystick.y = mobileJoystick.baseY + (rawDy / dist) * clamped;
+                if (Math.abs(rawDx) <= JOY_DEADZONE) moveDirection = 0;
+                else moveDirection = rawDx < 0 ? -1 : 1;
+            };
+            const releaseJoystick = () => {
+                mobileJoystick.active = false;
+                mobileJoystick.id = null;
+                mobileJoystick.dx = mobileJoystick.dy = 0;
+                moveDirection = 0;
+            };
+
+            const bindHoldButton = (el, onDown, onUp) => {
+                if (!el) return;
+                const down = (e) => { e.preventDefault(); e.stopPropagation(); initAudio(); onDown && onDown(); };
+                const up = (e) => { e.preventDefault(); e.stopPropagation(); onUp && onUp(); };
+                el.addEventListener('touchstart', down, { passive:false });
+                el.addEventListener('touchend', up, { passive:false });
+                el.addEventListener('touchcancel', up, { passive:false });
+                el.addEventListener('mousedown', down);
+                el.addEventListener('mouseup', up);
+                el.addEventListener('mouseleave', up);
+            };
+
+            bindHoldButton(document.getElementById('jumpBtn'), () => {
+                if (!jumpTouchDown) { jumpTouchDown = true; doJump(); }
+            }, () => {
+                jumpTouchDown = false;
+                handleJumpRelease();
+            });
+
             canvas.addEventListener('touchstart', (e) => {
                 e.preventDefault();
-                
                 for (let touch of e.changedTouches) {
-                    touches[touch.identifier] = {
-                        x: touch.clientX,
-                        y: touch.clientY,
-                        startX: touch.clientX
-                    };
-                }
-                
-                // 두 개 이상 터치 = 점프(길게 유지하면 더 높게)
-                if (Object.keys(touches).length >= 2) {
-                    if (!jumpTouchDown) {
-                        jumpTouchDown = true;
-                        doJump();
+                    touches[touch.identifier] = { x: touch.clientX, y: touch.clientY };
+                    if (!mobileJoystick.active) {
+                        mobileJoystick.active = true;
+                        mobileJoystick.id = touch.identifier;
+                        mobileJoystick.baseX = touch.clientX;
+                        mobileJoystick.baseY = touch.clientY;
+                        mobileJoystick.x = touch.clientX;
+                        mobileJoystick.y = touch.clientY;
+                        mobileJoystick.dx = 0;
+                        mobileJoystick.dy = 0;
+                        moveDirection = 0;
                     }
-                } else {
-                    jumpTouchDown = false;
-                    
-                    // 단일 터치 = 이동 방향 결정
-                    updateMoveDirection();
                 }
-            });
-            
-            // 터치 이동
+            }, { passive:false });
+
             canvas.addEventListener('touchmove', (e) => {
                 e.preventDefault();
-                
                 for (let touch of e.changedTouches) {
                     if (touches[touch.identifier]) {
                         touches[touch.identifier].x = touch.clientX;
                         touches[touch.identifier].y = touch.clientY;
                     }
+                    if (mobileJoystick.active && touch.identifier === mobileJoystick.id) {
+                        setJoystickFromPoint(touch.clientX, touch.clientY);
+                    }
                 }
-                
-                if (Object.keys(touches).length === 1) {
-                    updateMoveDirection();
-                }
-            });
-            
-            // 터치 종료
+            }, { passive:false });
+
             canvas.addEventListener('touchend', (e) => {
                 e.preventDefault();
-
-                const before = Object.keys(touches).length;
                 for (let touch of e.changedTouches) {
                     delete touches[touch.identifier];
+                    if (mobileJoystick.active && touch.identifier === mobileJoystick.id) releaseJoystick();
                 }
-                const after = Object.keys(touches).length;
-                if (before >= 2 && after < 2) {
-                    jumpTouchDown = false;
-                    handleJumpRelease();
-                }
+            }, { passive:false });
 
-                if (after === 0) {
-                    moveDirection = 0;
-                } else if (Object.keys(touches).length === 1) {
-                    updateMoveDirection();
-                }
-            });
-            
             canvas.addEventListener('touchcancel', (e) => {
                 e.preventDefault();
-                const before = Object.keys(touches).length;
                 for (let touch of e.changedTouches) {
                     delete touches[touch.identifier];
+                    if (mobileJoystick.active && touch.identifier === mobileJoystick.id) releaseJoystick();
                 }
-                const after = Object.keys(touches).length;
-                if (before >= 2 && after < 2) {
-                    jumpTouchDown = false;
-                    handleJumpRelease();
-                }
-                if (after === 0) {
-                    moveDirection = 0;
-                }
-            });
-            
-            // 마우스 컨트롤 (데스크톱) - 터치와 완전히 동일한 방식
-            // 좌클릭 = 손가락1, 우클릭 = 손가락2
+            }, { passive:false });
+
+            // 마우스 컨트롤 (데스크톱) - 기존 방식 유지
             canvas.addEventListener('mousedown', (e) => {
                 e.preventDefault();
                 initAudio();
-                
-                if (e.button === 0) { // 왼쪽 클릭 = 손가락 1
-                    touches['mouseLeft'] = { x: e.clientX, y: e.clientY };
-                } else if (e.button === 2) { // 오른쪽 클릭 = 손가락 2
-                    touches['mouseRight'] = { x: e.clientX, y: e.clientY };
-                }
-                
-                // 두 개 이상 = 점프 (우클릭 유지 시 더 높게)
+                if (e.button === 0) touches['mouseLeft'] = { x: e.clientX, y: e.clientY };
+                else if (e.button === 2) touches['mouseRight'] = { x: e.clientX, y: e.clientY };
                 if (Object.keys(touches).length >= 2) {
-                    if (!jumpTouchDown) {
-                        jumpTouchDown = true;
-                        doJump();
-                    }
+                    if (!jumpTouchDown) { jumpTouchDown = true; doJump(); }
                 } else {
                     jumpTouchDown = false;
-                    
                     updateMoveDirection();
                 }
             });
-            
+
             canvas.addEventListener('mousemove', (e) => {
-                if (touches['mouseLeft']) {
-                    touches['mouseLeft'] = { x: e.clientX, y: e.clientY };
-                }
-                if (touches['mouseRight']) {
-                    touches['mouseRight'] = { x: e.clientX, y: e.clientY };
-                }
-                
-                if (Object.keys(touches).length === 1) {
-                    updateMoveDirection();
-                }
+                if (touches['mouseLeft']) touches['mouseLeft'] = { x: e.clientX, y: e.clientY };
+                if (touches['mouseRight']) touches['mouseRight'] = { x: e.clientX, y: e.clientY };
+                if (Object.keys(touches).length === 1) updateMoveDirection();
             });
-            
+
             canvas.addEventListener('mouseup', (e) => {
                 const before = Object.keys(touches).length;
-                if (e.button === 0) {
-                    delete touches['mouseLeft'];
-                } else if (e.button === 2) {
-                    delete touches['mouseRight'];
-                }
+                if (e.button === 0) delete touches['mouseLeft'];
+                else if (e.button === 2) delete touches['mouseRight'];
                 const after = Object.keys(touches).length;
-                if (before >= 2 && after < 2) {
-                    jumpTouchDown = false;
-                    handleJumpRelease();
-                }
-                
-                if (after === 0) {
-                    moveDirection = 0;
-                } else if (after === 1) {
-                    updateMoveDirection();
-                }
+                if (before >= 2 && after < 2) { jumpTouchDown = false; handleJumpRelease(); }
+                if (after === 0) moveDirection = 0;
+                else if (after === 1) updateMoveDirection();
             });
-            
+
             canvas.addEventListener('mouseleave', () => {
                 const before = Object.keys(touches).length;
-                delete touches['mouseLeft'];
-                delete touches['mouseRight'];
+                delete touches['mouseLeft']; delete touches['mouseRight'];
                 const after = Object.keys(touches).length;
-                if (before >= 2 && after < 2) {
-                    jumpTouchDown = false;
-                    handleJumpRelease();
-                }
+                if (before >= 2 && after < 2) { jumpTouchDown = false; handleJumpRelease(); }
                 moveDirection = 0;
             });
-            
-            // 우클릭 메뉴 비활성화
-            canvas.addEventListener('contextmenu', (e) => {
-                e.preventDefault();
-            });
-            
+
+            canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); });
+
             // PC 단축키
-            // ←→ 이동 / Z 점프 / X 밀기 / C 바닥
             const shouldHandleKeys = () => {
-                // 로비/입력 중에는 무시
                 const lobby = document.getElementById('lobby');
                 if (lobby && !lobby.classList.contains('hidden')) return false;
                 const ae = document.activeElement;
@@ -1928,23 +2172,11 @@ function setupActionButtons(){
             document.addEventListener('keydown', (e) => {
                 if (!shouldHandleKeys()) return;
                 const code = e.code || '';
-
                 if (code === 'ArrowLeft') { e.preventDefault(); moveDirection = -1; }
                 if (code === 'ArrowRight') { e.preventDefault(); moveDirection = 1; }
-
-                if (code === 'KeyZ') {
-                    e.preventDefault();
-                    jumpKeyDown = true;
-                    if (!e.repeat) { initAudio(); doJump(); }
-                }
-                if (code === 'KeyX') {
-                    e.preventDefault();
-                    if (!e.repeat) { initAudio(); doPushAction(); }
-                }
-                if (code === 'KeyC') {
-                    e.preventDefault();
-                    if (!e.repeat) { initAudio(); createFloorUnderFoot(); }
-                }
+                if (code === 'KeyZ') { e.preventDefault(); jumpKeyDown = true; if (!e.repeat) { initAudio(); doJump(); } }
+                if (code === 'KeyX') { e.preventDefault(); if (!e.repeat) { initAudio(); doPushAction(); } }
+                if (code === 'KeyC') { e.preventDefault(); if (!e.repeat) { initAudio(); createFloorUnderFoot(); } }
             });
 
             document.addEventListener('keyup', (e) => {
@@ -1952,13 +2184,10 @@ function setupActionButtons(){
                 const code = e.code || '';
                 if (code === 'ArrowLeft' && moveDirection === -1) moveDirection = 0;
                 if (code === 'ArrowRight' && moveDirection === 1) moveDirection = 0;
-                if (code === 'KeyZ') {
-                    jumpKeyDown = false;
-                    handleJumpRelease();
-                }
+                if (code === 'KeyZ') { jumpKeyDown = false; handleJumpRelease(); }
             });
         }
-        
+
         function updateMoveDirection() {
             const touchList = Object.values(touches);
             if (touchList.length === 0) {
@@ -2067,14 +2296,23 @@ function setupActionButtons(){
                 }
             }
 
+            // 이번 프레임 원격 플레이어 위치 캐시 (멀티 인원 많을 때 중복 계산 줄임)
+            let remoteLogicCache = null;
+            if (!isGuestMode) {
+                remoteLogicCache = [];
+                try {
+                    for (const [sid, p] of Object.entries(players || {})) {
+                        if (!p || p.isDead) continue;
+                        const pos = getRemotePosForLogic(sid, p || {});
+                        remoteLogicCache.push({ sid, x: (typeof pos.x === 'number') ? pos.x : (p.x || 0), y: (typeof pos.y === 'number') ? pos.y : (p.y || 0) });
+                    }
+                } catch(_) { remoteLogicCache = []; }
+            }
+
             // 플레이어-플레이어 충돌 (요청사항: 옆 충돌 + 위에 올라타기 가능)
             if (!isGuestMode) {
                 try {
-                    Object.entries(players).forEach(([sid, p]) => {
-                        if (!p || p.isDead) return;
-                        const pos = getRemotePosForLogic(sid, p || {});
-                        const px = (typeof pos.x === 'number') ? pos.x : (p.x || 0);
-                        const py = (typeof pos.y === 'number') ? pos.y : (p.y || 0);
+                    (remoteLogicCache || []).forEach(({sid, x:px, y:py}) => {
                         const remoteRect = { x: px + PVP_PAD_X, y: py, width: PVP_W, height: PVP_H };
                         const myRect = { x: localPlayer.x + PVP_PAD_X, y: localPlayer.y, width: PVP_W, height: PVP_H };
 
@@ -2089,8 +2327,12 @@ function setupActionButtons(){
             // 착지하면 점프 사용권 복구 (공중에서 아직 점프 안했으면 1회 가능)
             if (localPlayer.onGround) { localPlayer.jumpUsed = false; localPlayer.jumpHolding = false; }
             
-            // 박스 물리
-            for (let box of gameObjects.boxes) {
+            // 박스 물리 (멀티에서는 호스트 권한 시뮬레이션 + 스냅샷 동기화)
+            const hostAuthBoxes = !!(EMBED && isHost);
+            const remoteAuthBoxes = usesRemoteAuthoritativeBoxes();
+            if (!remoteAuthBoxes) for (let box of gameObjects.boxes) {
+                box.prevX = box.x;
+                box.prevY = box.y;
                 // 박스 중력
                 box.vy += GRAVITY;
                 if (box.vy > MAX_FALL_SPEED) box.vy = MAX_FALL_SPEED;
@@ -2114,64 +2356,83 @@ function setupActionButtons(){
                     }
                 }
             }
+            if (hostAuthBoxes) maybeBroadcastPuzzleState();
             
-            // 플레이어-박스 충돌 (밀기)
+            // 플레이어-박스 충돌 (밀기 + 상자 위 안정 착지/이동 상자 탑승)
             for (let box of gameObjects.boxes) {
+                const prevX = (typeof box.prevX === 'number') ? box.prevX : box.x;
+                const prevY = (typeof box.prevY === 'number') ? box.prevY : box.y;
+                const boxDx = box.x - prevX;
+                const boxDy = box.y - prevY;
+
+                const feetY = localPlayer.y + 40;
+                const prevFeetY = feetY - (Number(localPlayer.vy) || 0);
+                const overlapXTop = (localPlayer.x + 34 > box.x) && (localPlayer.x + 6 < box.x + box.width);
+                const topCatch = Math.max(12, Math.abs(boxDy) + 8);
+                const crossedTop = (prevFeetY <= prevY + 6) && (feetY >= box.y - topCatch);
+                const nearTopNow = (feetY >= box.y - topCatch) && (feetY <= box.y + Math.max(14, Math.abs(boxDy) + 8));
+                const canStandOnBox = overlapXTop && (localPlayer.vy >= -2.0) && (crossedTop || nearTopNow);
+
+                if (canStandOnBox) {
+                    localPlayer.x += boxDx;
+                    localPlayer.y = box.y - 40;
+                    localPlayer.onGround = true;
+                    if (localPlayer.vy > 0) localPlayer.vy = 0;
+                    continue;
+                }
+
                 if (checkPlayerBoxCollision(localPlayer, box)) {
                     pushBox(localPlayer, box);
                 }
             }
             
-            // 버튼 체크 (플레이어 또는 박스)
-            gameObjects.buttons.forEach((button, idx) => {
-                let somethingOnButton = false;
-                
-                // 플레이어가 버튼 위에 있는지
-                const playerOnButton = localPlayer.x + 20 > button.x && 
-                                localPlayer.x < button.x + button.width &&
-                                localPlayer.y + 40 > button.y &&
-                                localPlayer.y + 40 < button.y + button.height + 10;
-                if (playerOnButton) somethingOnButton = true;
-                
-                // 박스가 버튼 위에 있는지
-                for (let box of gameObjects.boxes) {
-                    const boxOnButton = box.x + box.width/2 > button.x && 
-                                       box.x < button.x + button.width &&
-                                       box.y + box.height > button.y &&
-                                       box.y + box.height < button.y + button.height + 10;
-                    if (boxOnButton) somethingOnButton = true;
-                }
-                
-                // 다른 플레이어가 버튼 위에 있는지 (멀티플레이)
-                if (!isGuestMode) {
-                    Object.entries(players).forEach(([sid, p]) => {
-                        const pos = getRemotePosForLogic(sid, p || {});
-                        const px = (typeof pos.x === 'number') ? pos.x : (p.x || 0);
-                        const py = (typeof pos.y === 'number') ? pos.y : (p.y || 0);
-                        if (px + 20 > button.x && px < button.x + button.width &&
-                            py + 40 > button.y && py + 40 < button.y + button.height + 10) {
-                            somethingOnButton = true;
-                        }
-                    });
-                }
-                
-                // 버튼 상태 업데이트
-                if (somethingOnButton && !button.pressed) {
-                    button.pressed = true;
-                    sfxButton();
-                    bridgeSend("tg_button", { idx, pressed: true });
-                } else if (!somethingOnButton && button.pressed && !isGuestMode) {
-                    // 멀티 모드에서만 버튼 해제 (게스트 모드는 박스로 영구 고정)
-                    button.pressed = false;
-                    bridgeSend("tg_button", { idx, pressed: false });
-                }
-            });
-            
-            localPlayer.onButton = gameObjects.buttons.some(btn => btn.pressed);
-            
-            updateDoors();
-            updateBridges();
-            updateLifts();
+            // 버튼/문/리프트/브리지 퍼즐 상태는 호스트 authoritative로 계산/브로드캐스트한다.
+            // 게스트는 tg_puzzle 스냅샷을 적용만 해서 퍼즐 상태가 엇갈리지 않게 유지한다.
+            if (isAuthoritativePuzzleSim()) {
+                gameObjects.buttons.forEach((button, idx) => {
+                    let somethingOnButton = false;
+
+                    // 플레이어가 버튼 위에 있는지
+                    const playerOnButton = localPlayer.x + 20 > button.x && 
+                                    localPlayer.x < button.x + button.width &&
+                                    localPlayer.y + 40 > button.y &&
+                                    localPlayer.y + 40 < button.y + button.height + 10;
+                    if (playerOnButton) somethingOnButton = true;
+
+                    // 박스가 버튼 위에 있는지
+                    for (let box of gameObjects.boxes) {
+                        const boxOnButton = box.x + box.width/2 > button.x && 
+                                           box.x < button.x + button.width &&
+                                           box.y + box.height > button.y &&
+                                           box.y + box.height < button.y + button.height + 10;
+                        if (boxOnButton) somethingOnButton = true;
+                    }
+
+                    // 다른 플레이어가 버튼 위에 있는지 (멀티플레이)
+                    if (!isGuestMode) {
+                        (remoteLogicCache || []).forEach(({x:px, y:py}) => {
+                            if (px + 20 > button.x && px < button.x + button.width &&
+                                py + 40 > button.y && py + 40 < button.y + button.height + 10) {
+                                somethingOnButton = true;
+                            }
+                        });
+                    }
+
+                    const wasPressed = !!button.pressed;
+                    button.pressed = !!somethingOnButton;
+                    if (button.pressed && !wasPressed) sfxButton();
+                });
+
+                localPlayer.onButton = gameObjects.buttons.some(btn => btn.pressed);
+
+                updateDoors();
+                updateBridges();
+                updateLifts();
+            } else {
+                // 게스트: 버튼/문/리프트/브리지 상태는 호스트 스냅샷을 신뢰.
+                // 단, 로컬 플레이어 UI/효과용 onButton 은 현재 스냅샷 기준으로 계산.
+                localPlayer.onButton = gameObjects.buttons.some(btn => btn.pressed);
+            }
             
             // 이미 죽은 상태면 사망 처리 스킵
             if (!localPlayer.isDead) {
@@ -2237,6 +2498,7 @@ function setupActionButtons(){
             const _now = performance.now();
             localPlayer.deadAt = _now;
             localPlayer.nextRespawnAt = _now + RESPAWN_COOLDOWN_MS;
+            updateFloorBtn();
             // 내 발판(바닥 버튼) 제거
             try{
                 const _owner = (EMBED && mySessionId) ? mySessionId : (playerId || 'local');
@@ -2326,7 +2588,6 @@ function setupActionButtons(){
             // 브릿지: 리셋 전파(호스트만)
             if (!isGuestMode && isHost) {
                 bridgeSend("tg_reset", { t: Date.now() });
-                gameObjects.buttons.forEach((btn, idx) => bridgeSend("tg_button", { idx, pressed: false }));
                 bridgeSendState(true);
             }
         }
@@ -2485,6 +2746,7 @@ function setupActionButtons(){
         
         // 박스 밀기
         function pushBox(player, box) {
+            const remoteAuthBoxes = usesRemoteAuthoritativeBoxes();
             const overlapX = Math.min(player.x + 40 - box.x, box.x + box.width - player.x);
             const overlapY = Math.min(player.y + 40 - box.y, box.y + box.height - player.y);
             
@@ -2492,11 +2754,13 @@ function setupActionButtons(){
                 // 옆에서 충돌 - 박스 밀기
                 sfxPush();
                 if (player.x < box.x) {
-                    box.vx = 3;
+                    box.vx = remoteAuthBoxes ? box.vx : 3;
                     player.x = box.x - 40;
+                    if (remoteAuthBoxes) bridgeSend('tg_box_impulse', { level: currentLevel, id: String(box.id || ''), vx: 3, fromLeft: true });
                 } else {
-                    box.vx = -3;
+                    box.vx = remoteAuthBoxes ? box.vx : -3;
                     player.x = box.x + box.width;
+                    if (remoteAuthBoxes) bridgeSend('tg_box_impulse', { level: currentLevel, id: String(box.id || ''), vx: -3, fromLeft: false });
                 }
             } else {
                 // 위아래 충돌
@@ -3021,12 +3285,130 @@ function setupActionButtons(){
             // globalAlpha 복원
             ctx.globalAlpha = 1;
         }
+        function drawGoalEdgeIndicatorOverlay(){
+            if (!canvas || !ctx || !gameObjects || !gameObjects.goal || !localPlayer) return;
+            const goal = gameObjects.goal;
+            // 목적지 도착 시 화살표 숨김
+            if (localPlayer.x + 20 > goal.x && localPlayer.x < goal.x + goal.width &&
+                localPlayer.y + 40 > goal.y && localPlayer.y < goal.y + goal.height) return;
+
+            const gx = goal.x + (goal.width || 0) * 0.5;
+            const gy = goal.y + (goal.height || 0) * 0.5;
+            const sx = gx - cameraX;
+            const sy = gy - cameraY;
+
+            // UI 침범 방지 safe 영역 (상단 HUD / 우상단 UI 여백)
+            const margin = 16;
+            const safeTop = 108;
+            const safeRight = 152;
+            const left = margin;
+            const right = canvas.width - margin;
+            const top = safeTop;
+            const bottom = canvas.height - margin;
+
+            // goal 중심이 안전 화면 안에 보이면 표시하지 않음
+            if (sx >= left && sx <= (right - safeRight) && sy >= top && sy <= bottom) return;
+
+            // 안전 영역 중심에서 goal 방향으로 향하는 선과 경계의 교점 계산
+            const rcLeft = left;
+            const rcRight = right - safeRight;
+            const rcTop = top;
+            const rcBottom = bottom;
+            const ox = (rcLeft + rcRight) * 0.5;
+            const oy = (rcTop + rcBottom) * 0.5;
+            const dx = sx - ox;
+            const dy = sy - oy;
+            if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) return;
+
+            let t = Infinity;
+            if (dx > 0) t = Math.min(t, (rcRight - ox) / dx);
+            if (dx < 0) t = Math.min(t, (rcLeft - ox) / dx);
+            if (dy > 0) t = Math.min(t, (rcBottom - oy) / dy);
+            if (dy < 0) t = Math.min(t, (rcTop - oy) / dy);
+            if (!Number.isFinite(t) || t <= 0) return;
+
+            let cx = ox + dx * t;
+            let cy = oy + dy * t;
+            // 경계에서 살짝 안쪽으로 밀기
+            const inset = 7;
+            cx = clamp(cx, rcLeft + inset, rcRight - inset);
+            cy = clamp(cy, rcTop + inset, rcBottom - inset);
+
+            const ang = Math.atan2(dy, dx);
+            const pulse = 1 + Math.sin(performance.now() * 0.01) * 0.06;
+
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(ang);
+            ctx.scale(pulse, pulse);
+
+            ctx.globalAlpha = 0.18;
+            ctx.fillStyle = '#000';
+            ctx.beginPath();
+            ctx.arc(0, 0, 7.2, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.globalAlpha = 0.78;
+            ctx.fillStyle = '#ff4d4d';
+            ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+            ctx.lineWidth = 1.1;
+            ctx.beginPath();
+            ctx.moveTo(10, 0);
+            ctx.lineTo(-1.5, -6);
+            ctx.lineTo(0.8, -2.6);
+            ctx.lineTo(-7.5, -2.6);
+            ctx.lineTo(-7.5, 2.6);
+            ctx.lineTo(0.8, 2.6);
+            ctx.lineTo(-1.5, 6);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.globalAlpha = 0.45;
+            ctx.strokeStyle = '#fff';
+            ctx.beginPath();
+            ctx.moveTo(5.5, 0);
+            ctx.lineTo(-2.4, 0);
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        function drawMobileJoystickOverlay(){
+            if (!mobileJoystick.active) return;
+            ctx.save();
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(mobileJoystick.baseX, mobileJoystick.baseY, JOY_MAX_RADIUS, 0, Math.PI*2);
+            ctx.fill();
+            ctx.globalAlpha = 0.55;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(mobileJoystick.baseX, mobileJoystick.baseY, JOY_MAX_RADIUS, 0, Math.PI*2);
+            ctx.stroke();
+            ctx.globalAlpha = 0.7;
+            ctx.fillStyle = '#74b9ff';
+            ctx.beginPath();
+            ctx.arc(mobileJoystick.x, mobileJoystick.y, 20, 0, Math.PI*2);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        function drawOverlays(){
+            drawGoalEdgeIndicatorOverlay();
+            drawMobileJoystickOverlay();
+        }
 
         // ==================== 게임 루프 ====================
         function gameLoop() {
             if (!gameRunning) return;
+            updateRoundTimerUI();
+            if (!roundTimedOut && getRoundTimeLeftSec() <= 0){ onRoundTimeout(); return; }
             updatePhysics();
             render();
+            drawOverlays();
             rafId = requestAnimationFrame(gameLoop);
         }
         
@@ -3175,6 +3557,142 @@ function setupActionButtons(){
             updateLifts();
         }
 
+        function ensureBoxIds(){
+            if (!gameObjects || !Array.isArray(gameObjects.boxes)) return;
+            for (let i = 0; i < gameObjects.boxes.length; i++) {
+                const b = gameObjects.boxes[i];
+                if (!b) continue;
+                if (b.id == null) b.id = `b${i}`;
+            }
+        }
+
+        function normalizeBoxArrayForSync(boxes){
+            if (!Array.isArray(boxes)) return [];
+            return boxes.map((b, i) => ({
+                id: String((b && b.id != null) ? b.id : `b${i}`),
+                x: Math.round(Number(b?.x) || 0),
+                y: Math.round(Number(b?.y) || 0),
+                vx: Number(b?.vx) || 0,
+                vy: Number(b?.vy) || 0,
+                width: Math.max(8, Math.round(Number(b?.width) || 40)),
+                height: Math.max(8, Math.round(Number(b?.height) || 40))
+            }));
+        }
+
+        function applyBoxSnapshot(payload){
+            lastTgPuzzleSnapshotAt = performance.now();
+            const level = parseInt(payload?.level, 10) || currentLevel;
+            const incoming = normalizeBoxArrayForSync(payload?.boxes || []);
+            if (!gameObjects || !Array.isArray(gameObjects.boxes)) {
+                pendingBoxSnapshot = { level, boxes: incoming };
+                return;
+            }
+            if (level !== currentLevel) {
+                pendingBoxSnapshot = { level, boxes: incoming };
+                return;
+            }
+            ensureBoxIds();
+            const localMap = new Map((gameObjects.boxes || []).map((b, idx) => [String(b.id ?? `b${idx}`), b]));
+            for (const src of incoming) {
+                const dst = localMap.get(String(src.id));
+                if (!dst) continue;
+                dst.prevX = dst.x;
+                dst.prevY = dst.y;
+                dst.x = src.x;
+                dst.y = src.y;
+                dst.vx = src.vx;
+                dst.vy = src.vy;
+                if (src.width) dst.width = src.width;
+                if (src.height) dst.height = src.height;
+            }
+        }
+
+        function normalizePuzzleSnapshotForSync(payload){
+            const level = parseInt(payload?.level, 10) || currentLevel;
+            const buttons = {};
+            if (payload && payload.buttons && typeof payload.buttons === 'object') {
+                for (const [k,v] of Object.entries(payload.buttons)) buttons[String(k)] = !!v;
+            }
+            const doors = Array.isArray(payload?.doors) ? payload.doors.map((d,i)=>({ idx:i, open: !!(d&&d.open) })) : [];
+            const lifts = Array.isArray(payload?.lifts) ? payload.lifts.map((l,i)=>({ idx:i, y: Number(l?.y)||0 })) : [];
+            const bridges = Array.isArray(payload?.bridges) ? payload.bridges.map((b,i)=>({ idx:i, active: !!(b&&b.active) })) : [];
+            const boxes = normalizeBoxArrayForSync(payload?.boxes || []);
+            return { level, buttons, doors, lifts, bridges, boxes };
+        }
+
+        function applyPuzzleSnapshot(payload){
+            lastTgPuzzleSnapshotAt = performance.now();
+            const snap = normalizePuzzleSnapshotForSync(payload);
+            if (!gameObjects || !Array.isArray(gameObjects.boxes)) {
+                pendingPuzzleSnapshot = snap;
+                return;
+            }
+            if (snap.level !== currentLevel) {
+                pendingPuzzleSnapshot = snap;
+                return;
+            }
+
+            // Buttons first so derived local logic stays consistent if some systems still query them.
+            if (gameObjects.buttons && snap.buttons) {
+                for (const [idxStr, pressed] of Object.entries(snap.buttons)) {
+                    const idx = parseInt(idxStr, 10);
+                    if (gameObjects.buttons[idx]) gameObjects.buttons[idx].pressed = !!pressed;
+                }
+            }
+
+            if (Array.isArray(gameObjects.doors) && Array.isArray(snap.doors)) {
+                snap.doors.forEach(({idx, open}) => { if (gameObjects.doors[idx]) gameObjects.doors[idx].open = !!open; });
+            }
+            if (Array.isArray(gameObjects.lifts) && Array.isArray(snap.lifts)) {
+                snap.lifts.forEach(({idx, y}) => { if (gameObjects.lifts[idx]) gameObjects.lifts[idx].y = y; });
+            }
+            if (Array.isArray(gameObjects.bridges) && Array.isArray(snap.bridges)) {
+                snap.bridges.forEach(({idx, active}) => { if (gameObjects.bridges[idx]) gameObjects.bridges[idx].active = !!active; });
+            }
+
+            applyBoxSnapshot({ level: snap.level, boxes: snap.boxes });
+            pendingPuzzleSnapshot = null;
+        }
+
+        function maybeBroadcastPuzzleState(){
+            if (!EMBED || isGuestMode || !isAuthoritativeBoxSim()) return;
+            if (!gameObjects) return;
+            ensureBoxIds();
+            const now = performance.now();
+            if (now - lastSentBoxSnapshotAt < 66) return;
+            const boxes = normalizeBoxArrayForSync(gameObjects.boxes || []);
+            const buttons = {};
+            (gameObjects.buttons || []).forEach((b, idx) => { buttons[String(idx)] = !!b.pressed; });
+            const doors = (gameObjects.doors || []).map(d => ({ open: !!d.open }));
+            const lifts = (gameObjects.lifts || []).map(l => ({ y: Math.round(Number(l.y) || 0) }));
+            const bridges = (gameObjects.bridges || []).map(b => ({ active: !!b.active }));
+            const sig = [
+                boxes.map(b => `${b.id}:${b.x},${b.y},${Math.round(b.vx*10)},${Math.round(b.vy*10)}`).join('|'),
+                Object.entries(buttons).map(([k,v])=>`${k}:${v?1:0}`).join(','),
+                doors.map((d,i)=>`${i}:${d.open?1:0}`).join(','),
+                lifts.map((l,i)=>`${i}:${l.y}`).join(','),
+                bridges.map((b,i)=>`${i}:${b.active?1:0}`).join(',')
+            ].join('#');
+            if (sig === lastSentBoxSnapshotSig && now - lastSentBoxSnapshotAt < 180) return;
+            lastSentBoxSnapshotSig = sig;
+            lastSentBoxSnapshotAt = now;
+            bridgeSend('tg_puzzle', { level: currentLevel, boxes, buttons, doors, lifts, bridges });
+        }
+
+        function maybeBroadcastBoxes(){
+            if (!EMBED || isGuestMode || !isAuthoritativeBoxSim()) return;
+            if (!gameObjects || !Array.isArray(gameObjects.boxes) || !gameObjects.boxes.length) return;
+            ensureBoxIds();
+            const now = performance.now();
+            if (now - lastSentBoxSnapshotAt < 66) return; // ~15Hz
+            const boxes = normalizeBoxArrayForSync(gameObjects.boxes);
+            const sig = boxes.map(b => `${b.id}:${b.x},${b.y},${Math.round(b.vx*10)},${Math.round(b.vy*10)}`).join('|');
+            if (sig === lastSentBoxSnapshotSig && now - lastSentBoxSnapshotAt < 180) return;
+            lastSentBoxSnapshotSig = sig;
+            lastSentBoxSnapshotAt = now;
+            bridgeSend('tg_boxes', { level: currentLevel, boxes });
+        }
+
         function bridgeSendState(force=false){
             if (!EMBED || isGuestMode) return;
             const now = performance.now();
@@ -3215,6 +3733,7 @@ function setupActionButtons(){
         window.addEventListener("message", (e)=>{
             const d = e.data || {};
             if (!d || typeof d !== "object") return;
+            if (typeof d.type === 'string' && d.type.startsWith('tg_')) lastTgAnyNetAt = performance.now();
 
             if (d.type === "bridge_init"){
                 mySessionId = String(d.sessionId || "");
@@ -3261,6 +3780,31 @@ function setupActionButtons(){
                     updateBridges();
                     updateLifts();
                 }
+                return;
+            }
+
+            if (d.type === "tg_puzzle"){
+                applyPuzzleSnapshot(d);
+                return;
+            }
+
+            if (d.type === "tg_boxes"){
+                applyBoxSnapshot(d);
+                return;
+            }
+
+            if (d.type === "tg_box_impulse"){
+                const level = parseInt(d.level, 10) || currentLevel;
+                if (level !== currentLevel || !gameObjects || !Array.isArray(gameObjects.boxes)) return;
+                ensureBoxIds();
+                const id = String(d.id || '');
+                const box = gameObjects.boxes.find(b => String(b.id||'') === id);
+                if (!box) return;
+                const ivx = clamp(Number(d.vx) || 0, -8, 8);
+                if (!ivx) return;
+                // 호스트만 박스 물리를 실제로 업데이트한다.
+                // 게스트는 곧 tg_puzzle/tg_boxes 스냅샷이 오므로 여기서 물리 상태를 덮어쓰지 않는다.
+                if (isAuthoritativeBoxSim()) box.vx = ivx;
                 return;
             }
 

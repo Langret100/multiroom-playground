@@ -70,7 +70,7 @@
       const id = (coop && coop.meta && coop.meta.id)
         ? coop.meta.id
         : ((room && room.state && room.state.mode) || "");
-      return (id === "togester" || id === "snaketail");
+      return (id === "togester" || id === "snaketail" || id === "mathexplorer");
     }catch(_){
       return false;
     }
@@ -250,6 +250,9 @@ function setupBgm(audioElId, btnId){
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "mid").toLowerCase();
+  let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
+  let mathDiffWrap = null;
+  let mathDiffSelect = null;
   let cpuDiffWrap = null;
   let cpuDiffSelect = null;
 
@@ -261,6 +264,8 @@ function setupBgm(audioElId, btnId){
       if (document.getElementById('cpuDiffWrap')){
         cpuDiffWrap = document.getElementById('cpuDiffWrap');
         cpuDiffSelect = document.getElementById('cpuDiffSel');
+        mathDiffWrap = document.getElementById('mathDiffWrap');
+        mathDiffSelect = document.getElementById('mathDiffSel');
         return;
       }
 
@@ -290,6 +295,30 @@ function setupBgm(audioElId, btnId){
           try{ localStorage.setItem('cpu_difficulty', cpuDifficulty); }catch(_){ }
         });
       }
+
+      // Math Explorer difficulty selector (host lobby only)
+      const mwrap = document.createElement('div');
+      mwrap.id = 'mathDiffWrap';
+      mwrap.style.display = 'none';
+      mwrap.style.alignItems = 'center';
+      mwrap.style.gap = '8px';
+      mwrap.style.marginBottom = '8px';
+      mwrap.innerHTML = `
+        <span class="muted" style="font-size:13px;">수학 탐험가 난이도</span>
+        <select id="mathDiffSel" class="input" style="max-width:140px; padding:8px 10px;">
+          <option value="1">기본</option>
+          <option value="2">하드</option>
+        </select>`;
+      controls.parentElement?.insertBefore(mwrap, controls);
+      mathDiffWrap = mwrap;
+      mathDiffSelect = mwrap.querySelector('#mathDiffSel');
+      if (mathDiffSelect){
+        mathDiffSelect.value = String(mathDifficulty);
+        mathDiffSelect.addEventListener('change', ()=>{
+          mathDifficulty = (Number(mathDiffSelect.value) === 2) ? 2 : 1;
+          try{ localStorage.setItem('math_explorer_difficulty', String(mathDifficulty)); }catch(_){ }
+        });
+      }
     }catch(_){ }
   }
 
@@ -312,7 +341,7 @@ function setupBgm(audioElId, btnId){
     _gameBgm.el = document.getElementById("bgmGame");
     if (_gameBgm.el && window.AudioManager){
       // Slightly lower than room BGM; music should sit behind gameplay.
-      _gameBgm.handle = window.AudioManager.attachAudioManager(_gameBgm.el, { label: "게임 음악", storageKey: "audio_enabled", volume: 0.55 });
+      _gameBgm.handle = window.AudioManager.attachAudioManager(_gameBgm.el, { label: "게임 음악", storageKey: "audio_enabled", volume: 0.275 });
     }
   }
 
@@ -947,6 +976,13 @@ function updatePreview(modeId){
       return;
     }
 
+    // MathExplorer iframe -> server relay (generic packet, stage2 coop hooks)
+    if (d.type === "mx_msg"){
+      if (!fromMain) return;
+      try{ room.send("mx_msg", { msg: d.msg || {} }); }catch(_){ }
+      return;
+    }
+
     // DrawAnswer iframe -> server relay
     if (d.type === "da_enter"){
       if (!fromMain) return;
@@ -1522,6 +1558,11 @@ else if (isCoop){
     canStart = true;
     startText = "혼자 시작";
     startAction = "start";
+  } else if (modeId === "mathexplorer" && humanCount === 1){
+    // 수학 탐험가: 1~4인 협동 플레이(최대 4인). 혼자도 시작 가능.
+    canStart = true;
+    startText = "혼자 시작";
+    startAction = "start";
   } else {
     if (humanCount < 2) reason = "2명 이상 필요합니다.";
     else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
@@ -1553,6 +1594,14 @@ els.startBtn.title = canStart ? startText : reason;
       const showCpuDiff = !!(isHost && state.phase === "lobby" && isDuel && humanCount === 1);
       cpuDiffWrap.style.display = showCpuDiff ? "flex" : "none";
       if (cpuDiffSelect) cpuDiffSelect.value = cpuDifficulty;
+    }
+  }catch(_){ }
+
+  try{
+    if (mathDiffWrap){
+      const showMathDiff = !!(isHost && state.phase === "lobby" && modeId === "mathexplorer");
+      mathDiffWrap.style.display = showMathDiff ? "flex" : "none";
+      if (mathDiffSelect) mathDiffSelect.value = String(mathDifficulty);
     }
   }catch(_){ }
 
@@ -1897,7 +1946,7 @@ function sendCoopBridgeInit(){
 function maybeSendCoopGameStart(){
   try{
     if (!coop || !coop.active) return;
-    if (!coop.meta || coop.meta.id !== "suhaktokki") return;
+    if (!coop.meta || !["suhaktokki","mathexplorer"].includes(coop.meta.id)) return;
     if (!coop.startPayload || coop.sentGameStart) return;
     if (!coop.iframeReady) return;
     if (!duel?.iframeEl?.contentWindow) return;
@@ -2320,7 +2369,7 @@ try{
 
         // SuhakTokki: capture authoritative start payload from server and forward to iframe.
         try{
-          if ((room?.state?.mode === "suhaktokki") && m && m.startPayload){
+          if (((room?.state?.mode === "suhaktokki") || (room?.state?.mode === "mathexplorer")) && m && m.startPayload){
             coop.startPayload = m.startPayload;
             coop.sentGameStart = false;
             maybeSendCoopGameStart();
@@ -2369,6 +2418,12 @@ try{
       room.onMessage("sk_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
         postToMain({ type:"sk_msg", msg: inner || {} });
+      });
+
+      // MathExplorer relay: server -> iframe (generic packet, stage2 coop hooks)
+      room.onMessage("mx_msg", (msg)=>{
+        const inner = (msg && msg.msg) ? msg.msg : msg;
+        postToMain({ type:"mx_msg", msg: inner || {} });
       });
 
       // DrawAnswer (그림맞추기) relay: server -> iframe
@@ -2535,7 +2590,7 @@ try{
           return;
         }
 
-        room.send("start", { cpuDifficulty });
+        room.send("start", { cpuDifficulty, coopDifficulty: (room?.state?.mode === "mathexplorer" ? mathDifficulty : undefined) });
       });
 
       // Leave
@@ -2643,5 +2698,5 @@ try{
   // keep handle so we can stop/resume on fullscreen game transitions
   // Slightly lower room BGM (was a bit loud)
   // Reduce room BGM volume by ~30%
-  window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.294 });
+  window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.147 });
 })();

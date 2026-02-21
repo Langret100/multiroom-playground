@@ -12,7 +12,7 @@ function setupBgm(audioElId, btnId){
     try{
       audio.loop = true;
       audio.muted = true;     // autoplay usually allowed only when muted
-      audio.volume = 0.7;
+      audio.volume = 0.0875;
       await audio.play();
       // Unmute on first user interaction
       const unlock = async () => {
@@ -250,6 +250,7 @@ function statusDot(room){
         window.__lobbyBgmPausedByEmbed = false;
         const el = document.getElementById('bgmLobby');
         if (el && window.AudioManager && window.AudioManager.isEnabled('audio_enabled')){
+          el.volume = (typeof LOBBY_BGM_VOLUME === 'number') ? LOBBY_BGM_VOLUME : 0.0875;
           el.muted = false;
           el.play().catch(()=>{});
         }
@@ -384,7 +385,8 @@ function statusDot(room){
     const meta = (window.gameById ? window.gameById(mode) : null);
     const modeType = meta?.type || "coop";
     const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
-    const maxClients = Math.max(2, Math.min(cap, parseInt(els.maxClients.value||String(cap),10)||cap));
+    const minCap = (mode === "mathexplorer") ? 1 : 2;
+    const maxClients = Math.max(minCap, Math.min(cap, parseInt(els.maxClients.value||String(cap),10)||cap));
 
     try{
       const room = await client.create("game_room", { title, mode, modeType, maxClients, hostNick: myNick, nick: myNick });
@@ -414,7 +416,8 @@ function statusDot(room){
         const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
 
         // label hint
-        if (els.maxClientsLabel) els.maxClientsLabel.textContent = `최대 인원 (2~${cap})`;
+        const minCap = (mode === "mathexplorer") ? 1 : 2;
+        if (els.maxClientsLabel) els.maxClientsLabel.textContent = `최대 인원 (${minCap}~${cap})`;
 
         const sel = els.maxClients;
         if (!sel) return;
@@ -544,7 +547,8 @@ function statusDot(room){
   const storageKey = 'audio_enabled';
   // Slightly lower lobby BGM (was a bit loud)
   // Reduce lobby BGM volume by ~30%
-  const handle = window.AudioManager.attachAudioManager(el, { label: '로비 음악', storageKey, volume: 0.294 });
+  const LOBBY_BGM_VOLUME = 0.0875;
+  const handle = window.AudioManager.attachAudioManager(el, { label: '로비 음악', storageKey, volume: LOBBY_BGM_VOLUME });
   try{ window.__bgmLobbyHandle = handle; }catch(_){}
 
   const btn = document.getElementById('toggleMute');

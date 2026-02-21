@@ -137,7 +137,7 @@ this.st = {
       this.recomputeReady();
     });
 
-    this.onMessage("start", (client) => {
+    this.onMessage("start", (client, msg = {}) => {
       const p = this.state.players.get(client.sessionId);
       if (!p?.isHost) return;
       if (this.state.phase !== "lobby") return;
@@ -173,7 +173,7 @@ this.st = {
       } else {
         // Coop default requires at least 2 humans.
         // SuhakTokki supports solo start (practice mode inside the game).
-        const minHumans = (this.state.mode === "suhaktokki") ? 1 : 2;
+        const minHumans = (["suhaktokki","mathexplorer"].includes(this.state.mode)) ? 1 : 2;
         if (humanCount < minHumans) return;
         this.recomputeReady();
         if (!this.state.allReady) return;
@@ -182,6 +182,17 @@ this.st = {
       // SuhakTokki: build an authoritative start payload once.
       // The embedded game must start only from this payload (no in-game lobby/start flow).
       let suhakStartPayload = null;
+      let mathStartPayload = null;
+      if (this.state.mode === "mathexplorer") {
+        const raw = Number(msg?.coopDifficulty ?? msg?.mathDifficulty ?? 1);
+        const difficulty = (raw >= 2) ? 2 : 1;
+        mathStartPayload = {
+          mode: "mathexplorer",
+          difficulty,
+          seed: (Date.now() ^ Math.floor(Math.random()*1e9)) >>> 0,
+          startedAt: Date.now(),
+        };
+      }
       if (this.state.mode === "suhaktokki"){
         try{
           const humans = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
@@ -223,6 +234,7 @@ this.st = {
         maxClients: Number(this.maxClients || this.state.maxClients || 0),
         startedAt: this.matchStartedAt || Date.now(),
         ...(suhakStartPayload ? { startPayload: suhakStartPayload } : {}),
+        ...(mathStartPayload ? { startPayload: mathStartPayload } : {}),
       });
 
       // Reset transient co-op state (no persistence)
@@ -300,6 +312,18 @@ this.st = {
 
     // SuhakTokki match end -> reset room back to lobby (like Together)
     // Called by the parent room page when the embedded iframe reports match_end/host_exit.
+
+    // MathExplorer embedded coop relay (generic packet for stage2 sync UI/choices)
+    this.onMessage("mx_msg", (client, payload) => {
+      try{
+        if (!payload || typeof payload !== "object") return;
+        const inner = payload.msg && typeof payload.msg === "object" ? payload.msg : {};
+        this.broadcast("mx_msg", {
+          msg: Object.assign({}, inner, { from: client.sessionId })
+        });
+      }catch(_){ }
+    });
+
     this.onMessage("sk_over", (client, payload) => {
       if (this.state.mode !== "suhaktokki") return;
       if (this.state.phase !== "playing") return;
@@ -931,7 +955,7 @@ try{
     if (this.state.modeType === "duel"){
       this.state.allReady = (humans >= 1) && nonHostHumansReady;
     } else {
-      const minHumans = (this.state.mode === "suhaktokki") ? 1 : 2;
+      const minHumans = (["suhaktokki","mathexplorer"].includes(this.state.mode)) ? 1 : 2;
       this.state.allReady = (humans >= minHumans) && nonHostHumansReady;
     }
   }

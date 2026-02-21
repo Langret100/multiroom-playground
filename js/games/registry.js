@@ -79,6 +79,21 @@
       embedPath: "games/suhaktokki/embed.html"
     },
 
+
+
+    {
+      id: "mathexplorer",
+      name: "수학 탐험가",
+      mobileHint: "모바일: 터치로 이동 · 캐릭터/업그레이드 선택",
+      descLines: [
+        "수학 문제를 풀며 몬스터를 물리치는 협동 RPG!",
+        "캐릭터 선택 후 라운드를 함께 버티고 성장하세요.",
+      ],
+      type: "coop",
+      badgeClass: "coop",
+      maxClients: 4,
+      embedPath: "games/mathexplorer/index.html"
+    },
     // SnakeTail (shape snake) - free-for-all up to 8 players
     {
       id: "snaketail",

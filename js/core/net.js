@@ -130,7 +130,7 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer"]);
+const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer"]);
 const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
 

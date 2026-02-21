@@ -683,12 +683,26 @@ function onEventRecv(payload){
   if(!ev) return;
   if(seenEvents.has(key)) return;
   seenEvents.add(key);
+
+  // Ignore my own echoed events.
+  // (The duel server broadcasts duel_event to everyone, including sender.)
+  const senderPid = payload?.pid || ev?.from || ev?.pid || null;
+  if(senderPid && pid && senderPid === pid){
+    if(!EMBED){
+      try{ api.remove(api.child(eventsRef, key)).catch(()=>{}); }catch{}
+    }
+    return;
+  }
+
   if(ev.kind === "garbage"){
-    applyGarbageTo(meGame, (ev.payload && ev.payload.n) || 0);
-    // 공격 들어올 때 이펙트
-    shake("strong");
-    flash("bad");
-    audio.sfx("attackHit");
+    const n = Math.max(0, (ev.payload && ev.payload.n) | 0);
+    if(n > 0){
+      applyGarbageTo(meGame, n);
+      // 공격 들어올 때 이펙트
+      shake("strong");
+      flash("bad");
+      audio.sfx("attackHit");
+    }
   }
   // consume/delete immediately to avoid logs
   if(!EMBED){

@@ -301,7 +301,8 @@ export class LobbyDO{
       const title = String(opts.title || "방").slice(0, 30);
       const mode = String(opts.mode || "stackga").slice(0, 24);
       // Allow larger rooms for some coop modes (e.g., snaketail). UI still limits per-game.
-      const maxPlayers = Math.max(2, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
+      const minPlayers = (mode === "mathexplorer") ? 1 : 2;
+      const maxPlayers = Math.max(minPlayers, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
       this.rooms[roomId] = {
         roomId, title, mode,
         maxPlayers,
@@ -398,7 +399,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -476,7 +477,7 @@ export class RoomDO{
     };
 
     this.tour = null;              // tournament state for duel mode
-    this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null }; // coop state aggregation
+    this.tg = { players:{}, floors:{}, buttons:{}, boxes:{}, lastBroadcast:0, timer:null }; // coop state aggregation
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
 
     // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
@@ -789,6 +790,13 @@ export class RoomDO{
             const floors = Object.values(this.tg.floors || {});
             this._send(ws, "tg_floors", { floors });
           }catch(_){ }
+          try{
+            const boxes = Object.values(this.tg.boxes || {});
+            if (boxes.length) this._send(ws, "tg_boxes", { level: this.tg.level || 1, boxes });
+          }catch(_){ }
+          try{
+            if (this.tg.puzzle) this._send(ws, "tg_puzzle", this.tg.puzzle);
+          }catch(_){ }
         }
 
         // DrawAnswer: if a match is already running, sync current round state + replay ops
@@ -989,6 +997,24 @@ export class RoomDO{
         return;
       }
 
+
+
+      // ----- MathExplorer relay (generic packet) -----
+      if (t === "mx_msg") {
+        const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
+        // throttle optional high-frequency packets if introduced later
+        if (String(inner.kind||inner.t||"") === "state") {
+          const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0 };
+          const n = now();
+          if (n - (lim.mxTs||0) < 70) return;
+          lim.mxTs = n;
+          this._relayLimiter.set(uid, lim);
+        }
+        // include sender sid so clients can ignore self-echo and track peers
+        const out = Object.assign({}, inner, { from: String(uid) });
+        this._broadcast("mx_msg", { msg: out });
+        return;
+      }
       // ----- DrawAnswer (Pictionary-like) -----
       if (t === "da_enter"){
         if (this.meta.mode !== "drawanswer" || this.meta.phase !== "playing") return;
@@ -1111,6 +1137,8 @@ export class RoomDO{
 
       if (t === "tg_button"){
         if (this.meta.mode === "togester"){
+          const sender = this.users.get(uid);
+          if (!sender || !sender.isHost) return;
           if (!this.tg.buttons) this.tg.buttons = {};
           this.tg.buttons[String(d.idx)] = !!d.pressed;
         }
@@ -1119,6 +1147,8 @@ export class RoomDO{
       }
       if (t === "tg_buttons"){
         if (this.meta.mode === "togester"){
+          const sender = this.users.get(uid);
+          if (!sender || !sender.isHost) return;
           this.tg.buttons = d.buttons || {};
         }
         this._broadcast("tg_buttons", { buttons: d.buttons || {} });
@@ -1130,9 +1160,13 @@ export class RoomDO{
           // Level change: clear transient state (floors/buttons) so everyone stays in sync
           this.tg.floors = {};
           this.tg.buttons = {};
+          this.tg.boxes = {};
           this.tg.floorUsed = {};
+          this.tg.puzzle = null;
           this._broadcast("tg_floors", { floors: [] });
           this._broadcast("tg_buttons", { buttons: {} });
+          this._broadcast("tg_boxes", { level: d.level, boxes: [] });
+          this._broadcast("tg_puzzle", { level: d.level, boxes: [], buttons: {}, doors: [], lifts: [], bridges: [] });
         }
         this._broadcast("tg_level", { level: d.level });
         return;
@@ -1140,8 +1174,13 @@ export class RoomDO{
       if (t === "tg_reset"){
         if (this.meta.mode === "togester"){
           this.tg.floors = {};
+          this.tg.buttons = {};
+          this.tg.boxes = {};
           this.tg.floorUsed = {};
+          this.tg.puzzle = null;
           this._broadcast("tg_floors", { floors: [] });
+          this._broadcast("tg_boxes", { level: this.tg.level || 1, boxes: [] });
+          this._broadcast("tg_puzzle", { level: this.tg.level || 1, boxes: [], buttons: {}, doors: [], lifts: [], bridges: [] });
         }
         this._broadcast("tg_reset", { t: d.t || now() });
         return;
@@ -1155,6 +1194,8 @@ export class RoomDO{
         }catch(_){ }
         try{ this._send(ws, "tg_level", { level: this.tg.level || 1 }); }catch(_){ }
         try{ this._send(ws, "tg_buttons", { buttons: this.tg.buttons || {} }); }catch(_){ }
+        try{ this._send(ws, "tg_boxes", { level: this.tg.level || 1, boxes: Object.values(this.tg.boxes || {}) }); }catch(_){ }
+        try{ if (this.tg.puzzle) this._send(ws, "tg_puzzle", this.tg.puzzle); }catch(_){ }
         try{
           const used = (this.tg.floorUsed && this.tg.floorUsed[uid]) ? this.tg.floorUsed[uid] : 0;
           this._send(ws, "tg_floor_quota", { used, limit: 2 });
@@ -1166,6 +1207,76 @@ export class RoomDO{
         if (this.meta.mode !== "togester") return;
         // Broadcast a push impulse (clients will filter by `to`)
         this._broadcast("tg_push", { to: String(d.to||""), dx: Number(d.dx)||0, dy: Number(d.dy)||0, from: uid });
+        return;
+      }
+
+      if (t === "tg_box_impulse"){
+        if (this.meta.mode !== "togester") return;
+        const id = String(d.id || "").slice(0, 32);
+        if (!id) return;
+        this._broadcast("tg_box_impulse", {
+          id,
+          level: Number(d.level) || (this.tg.level || 1),
+          vx: Math.max(-8, Math.min(8, Number(d.vx) || 0)),
+          from: uid
+        });
+        return;
+      }
+
+      if (t === "tg_puzzle") {
+        if (this.meta.mode !== "togester") return;
+        const sender = this.users.get(uid);
+        if (!sender || !sender.isHost) return;
+        const level = Number(d.level) || (this.tg.level || 1);
+        const buttons = (d.buttons && typeof d.buttons === 'object') ? d.buttons : {};
+        const doors = Array.isArray(d.doors) ? d.doors.map(x => ({ open: !!(x && x.open) })) : [];
+        const lifts = Array.isArray(d.lifts) ? d.lifts.map(x => ({ y: Number(x && x.y) || 0 })) : [];
+        const bridges = Array.isArray(d.bridges) ? d.bridges.map(x => ({ active: !!(x && x.active) })) : [];
+        const arr = Array.isArray(d.boxes) ? d.boxes : [];
+        this.tg.boxes = {};
+        for (const raw of arr){
+          const id = String(raw && raw.id || "").slice(0, 32);
+          if (!id) continue;
+          this.tg.boxes[id] = {
+            id,
+            x: Number(raw.x) || 0,
+            y: Number(raw.y) || 0,
+            vx: Number(raw.vx) || 0,
+            vy: Number(raw.vy) || 0,
+            width: Math.max(8, Number(raw.width) || 40),
+            height: Math.max(8, Number(raw.height) || 40)
+          };
+        }
+        // Keep button cache for legacy tg_button/tg_buttons sync compatibility.
+        this.tg.buttons = {};
+        for (const k of Object.keys(buttons)) this.tg.buttons[String(k)] = !!buttons[k];
+        this.tg.puzzle = { level, boxes: Object.values(this.tg.boxes), buttons: this.tg.buttons, doors, lifts, bridges };
+        this._broadcast("tg_puzzle", this.tg.puzzle);
+        return;
+      }
+
+      if (t === "tg_boxes"){
+        if (this.meta.mode !== "togester") return;
+        const sender = this.users.get(uid);
+        if (!sender || !sender.isHost) return; // host authoritative snapshot only
+        const level = Number(d.level) || (this.tg.level || 1);
+        if (level !== (this.tg.level || level)) this.tg.level = level;
+        const arr = Array.isArray(d.boxes) ? d.boxes : [];
+        this.tg.boxes = {};
+        for (const raw of arr){
+          const id = String(raw && raw.id || "").slice(0, 32);
+          if (!id) continue;
+          this.tg.boxes[id] = {
+            id,
+            x: Number(raw.x) || 0,
+            y: Number(raw.y) || 0,
+            vx: Number(raw.vx) || 0,
+            vy: Number(raw.vy) || 0,
+            width: Math.max(8, Number(raw.width) || 40),
+            height: Math.max(8, Number(raw.height) || 40)
+          };
+        }
+        this._broadcast("tg_boxes", { level, boxes: Object.values(this.tg.boxes) });
         return;
       }
 
@@ -1469,7 +1580,8 @@ export class RoomDO{
       }catch(_){ }
 
       if (this.users.size === 0){
-        // No persistence: delete room immediately from lobby.
+        // No persistence: delete room immediately from lobby and hard-reset transient state.
+        try{ this._resetTransientRoomState(); }catch(_){}
         this._deleteFromLobby();
         return;
       }
@@ -1478,6 +1590,33 @@ export class RoomDO{
       this._scheduleLobbyUpdate();
       this._broadcast("room_state", this._snapshot());
     });
+  }
+
+
+  _resetTransientRoomState(){
+    // Hard-reset all in-memory transient room/game state when the room becomes empty.
+    // This prevents ghost timers/state surviving hibernation or object reuse.
+    try{ if (this._lobbyUpdateTimer){ clearTimeout(this._lobbyUpdateTimer); this._lobbyUpdateTimer = null; } }catch(_){}
+    try{ if (this.tg && this.tg.timer){ clearTimeout(this.tg.timer); } }catch(_){}
+    try{ if (this.st && this.st.timer){ clearTimeout(this.st.timer); } }catch(_){}
+    try{ if (this.da && this.da.timer){ clearTimeout(this.da.timer); } }catch(_){}
+
+    try{ this.sockets = new Map(); }catch(_){}
+    try{ this.userSockets = new Map(); }catch(_){}
+    try{ this.users = new Map(); }catch(_){}
+    try{ this._relayLimiter = new Map(); }catch(_){}
+    try{ this._wired = new WeakSet(); }catch(_){}
+
+    this.tour = null;
+    this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null };
+    this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} };
+    this.sk = { startPayload: null };
+    this.da = { active:false, round:0, maxRounds:5, order:[], drawerIdx:0, drawerUid:'', word:'', endAt:0, timer:null, scores:{}, ops:[] };
+    this._cpu = { active:false };
+
+    this.meta.phase = 'lobby';
+    this.meta.status = 'waiting';
+    this.meta.ownerUserId = '';
   }
 
   _roomIdFromPath(pathHint){
