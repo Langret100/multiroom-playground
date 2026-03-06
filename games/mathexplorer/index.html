@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
-    <title>수학 탐험가</title>
+    <title>수학 탐험대</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -285,7 +285,7 @@
     <button id="soundBtn" class="sound-btn hidden" onclick="G.toggleSound()">🔊</button>
     
     <div id="mainScreen" class="screen" onclick="SoundManager.startTitleMusic()">
-        <h1 class="title" onclick="event.stopPropagation(); G.toggleHardMode();" style="cursor:pointer;">🧮 수학 탐험가 🧮</h1>
+        <h1 class="title" onclick="event.stopPropagation(); G.toggleHardMode();" style="cursor:pointer;">🧮 수학 탐험대 🧮</h1>
         <div class="gameInfo">
             <h3>게임 설명</h3>
             <p>수학 문제를 풀며 몬스터들과 싸우는 교육 RPG!</p>
@@ -333,10 +333,22 @@
     <div id="gameOverScreen" class="screen hidden">
         <h1 class="title">게임 오버</h1>
         <div id="finalStats" style="font-size:clamp(20px,4vw,28px);margin:20px"></div>
-        <button class="button" onclick="location.reload()">다시 시작</button>
+        <button class="button" onclick="restartOrQuit()">다시 시작</button>
     </div>
 
 <script>
+
+function restartOrQuit(){
+  const sp = new URLSearchParams(location.search);
+  const embed = sp.get('embed') === '1';
+  if (embed){
+    try{ parent.postMessage({ type:'mx_quit', gameId:'mathexplorer', reason:'game_over' }, '*'); }catch(_){}
+    // fallback: if parent doesn't respond, show the game over screen anyway
+    return;
+  }
+  location.reload();
+}
+
 // ===== 사운드 매니저 (Web Audio API) =====
 const SoundManager = {
     ctx: null,
@@ -1493,6 +1505,7 @@ const G = {
         this.petProjectiles = [];  // 펫 투사체 초기화
         this.rangedEffectQueue = [];  // 원거리 효과 큐 초기화
         this.enemyProjectiles = [];  // 적 투사체 초기화
+        this.lastChestSpawnTime = 0; // 멀티 동기화용 보물상자 쿨타임
         
         // 델타 타임 초기화
         lastFrameTime = 0;
@@ -2159,6 +2172,13 @@ const G = {
     gameOver() {
         this.running = false;
         document.getElementById('gameOverScreen').classList.remove('hidden');
+        try{
+            const sp = new URLSearchParams(location.search);
+            if (sp.get('embed') === '1'){
+                // In room/embedded mode, return to the room instead of reloading the iframe.
+                setTimeout(()=>{ try{ parent.postMessage({ type:'mx_quit', gameId:'mathexplorer', reason:'game_over' }, '*'); }catch(_){ } }, 120);
+            }
+        }catch(_){ }
         document.getElementById('finalStats').innerHTML = `
             <div>최종 점수: ${Math.floor(this.score)}</div>
             <div>레벨: ${this.player.level}</div>
@@ -3080,12 +3100,12 @@ G.toggleHardMode = function() {
     hardMode = !hardMode;
     const titleEl = document.querySelector('#mainScreen .title');
     if (hardMode) {
-        titleEl.innerHTML = '🔥 수학 탐험가 🔥';
+        titleEl.innerHTML = '🔥 수학 탐험대 🔥';
         titleEl.style.color = '#f44';
         SoundManager.play('square', 880, 0.1);
         setTimeout(() => SoundManager.play('square', 1100, 0.1), 100);
     } else {
-        titleEl.innerHTML = '🧮 수학 탐험가 🧮';
+        titleEl.innerHTML = '🧮 수학 탐험대 🧮';
         titleEl.style.color = '';
         SoundManager.play('square', 440, 0.1);
     }
@@ -3512,10 +3532,17 @@ class Player {
             this.range = 100;        // 짧은 공격 범위
         }
         
+        // 궁수: 원거리
+        if (design.type.includes('ranger')) {
+            this.range = 220;
+            this.atkSpeed = 420;
+        }
+        
         // 법사: 초기 스탯 약간 조정 (공격력 감소)
         if (design.type.includes('mage')) {
             this.damage = 16;
             this.atkSpeed = 450;
+            this.range = 220;
         }
     }
     
@@ -3706,6 +3733,11 @@ class Player {
             G.textParticle(enemy.x, enemy.y - 30, '치명타!', '#ff0', 1);
         }
         
+        // 멀티 동기화용 마지막 타격자 기록 (호스트 XP 중복 계산 보정)
+        try {
+            enemy.__mxLastHitAt = Date.now();
+        } catch (e) {}
+
         // 적에게 데미지 적용
         enemy.hp -= finalDmg;
         
@@ -3839,13 +3871,15 @@ class Player {
             G.score += enemy.score;
             this.gainExp(enemy.exp);
             
-            // 보물상자 최대 3개 제한
+            // 보물상자 최대 1개 + 최소 10초 쿨타임
             const currentChests = G.items.filter(item => item.type === 'chest').length;
+            const nowChest = Date.now();
+            const chestReady = !this.lastChestSpawnTime || (nowChest - this.lastChestSpawnTime >= 10000);
             
             // 보물상자 또는 경험치 아이템 드롭
-            // 보물상자: 10% 확률 (반토막)
-            if (Math.random() < 0.1 && currentChests < 3) {
+            if (Math.random() < 0.1 && currentChests < 1 && chestReady) {
                 G.items.push({x: enemy.x, y: enemy.y, type: 'chest'});
+                this.lastChestSpawnTime = nowChest;
             } else if (Math.random() < 0.3) {
                 G.items.push({x: enemy.x, y: enemy.y, type: 'exp', value: enemy.exp});
             }
@@ -4073,6 +4107,7 @@ class Enemy {
             this.speed = (1.2 + Math.random() * 0.3) * (1 + stage * 0.05) * speedMultiplier;
             const baseDmg = dmgStage <= 2 ? 8 + dmgStage * 2 : dmgStage <= 5 ? 12 + dmgStage * 3 : dmgStage <= 7 ? 18 + dmgStage * 4 : dmgStage <= 9 ? 26 + dmgStage * 5 : 35 + dmgStage * 6;
             this.damage = baseDmg * postBossMultiplier * (hardMode ? 1.3 : 1);
+            this.damage *= 1.2; // v27: 몬스터 공격력 1.2배 상향
         } else if (this.type === 1) {
             // 악마 - 빠르고 공격력 높음
             const baseHp = stage <= 2 ? 25 + stage * 8 : stage <= 5 ? 60 + stage * 18 : stage <= 7 ? 120 + stage * 35 : stage <= 9 ? 180 + stage * 50 : 250 + stage * 65;
@@ -4159,9 +4194,46 @@ class Enemy {
     }
     
     update() {
+        // v32: 멀티 어그로(타겟) 안정화
+        // - bridge에서 targetX/targetY를 주입해도, 환경에 따라 주입 타이밍/동기화가 어긋나면
+        //   여전히 방장(로컬 플레이어)만 따라가는 증상이 남을 수 있다.
+        // - 따라서 Enemy.update()에서 "현재 알고 있는 모든 플레이어 좌표" 중 가장 가까운 대상을
+        //   매 프레임 직접 선택한다. (호스트/게스트 화면 결과 동일)
         const p = G.player;
-        const dx = p.x - this.x;
-        const dy = p.y - this.y;
+        let tx = p ? p.x : this.x;
+        let ty = p ? p.y : this.y;
+
+        try {
+            const rsMap = window.__mxRemoteStates || null;
+            if (rsMap && typeof rsMap === 'object') {
+                let bestD = Infinity;
+                // 후보: 원격 플레이어
+                for (const rs of Object.values(rsMap)) {
+                    if (!rs) continue;
+                    const hp = Number(rs.hp);
+                    if (Number.isFinite(hp) && hp <= 0) continue; // 죽은 플레이어 제외
+                    const x = Number(rs.x), y = Number(rs.y);
+                    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+                    const dx0 = x - this.x, dy0 = y - this.y;
+                    const d0 = dx0 * dx0 + dy0 * dy0;
+                    if (d0 < bestD) { bestD = d0; tx = x; ty = y; }
+                }
+                // 후보: 로컬 플레이어도 같이 비교
+                if (p && Number.isFinite(p.x) && Number.isFinite(p.y) && Number(p.hp ?? 1) > 0) {
+                    const dx1 = p.x - this.x, dy1 = p.y - this.y;
+                    const d1 = dx1 * dx1 + dy1 * dy1;
+                    if (d1 < bestD) { tx = p.x; ty = p.y; }
+                }
+            }
+        } catch (_) { }
+
+        // bridge에서 주입한 targetX/targetY가 있으면 그 값을 마지막으로 우선한다(도발 등 특수 룰).
+        if (typeof this.targetX === 'number' && typeof this.targetY === 'number') {
+            tx = this.targetX; ty = this.targetY;
+        }
+
+        const dx = tx - this.x;
+        const dy = ty - this.y;
         const dist = Math.hypot(dx, dy);
         
         // ===== 이동 =====

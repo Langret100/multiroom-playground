@@ -243,6 +243,7 @@ this.st = {
       this.matchStartedAt = Date.now();
       this.setMetadata({ ...this.metadata, status: "playing" });
       this.broadcast("started", {
+        mode: this.state.mode,
         tickRate: this.tickRate,
         playerCount: Number(this.state.playerCount || 0),
         maxClients: Number(this.maxClients || this.state.maxClients || 0),
@@ -321,8 +322,8 @@ this.st = {
         inner.text = String(inner.text || "").replace(/[\r\n\t]/g, " ").slice(0, 120);
       }
 
-      this.broadcast("sk_msg", { msg: inner });
-    });
+      this.broadcast("sk_msg", { msg: Object.assign({}, inner, { from: client.sessionId, sid: client.sessionId, sessionId: client.sessionId, nick: (this.state.players.get(client.sessionId)?.nick || "Player") }) });
+});
 
     // SuhakTokki match end -> reset room back to lobby (like Together)
     // Called by the parent room page when the embedded iframe reports match_end/host_exit.
@@ -902,11 +903,13 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     try{
       if (this.state.modeType === "coop" && this.state.phase === "playing"){
         client.send("started", {
+          mode: this.state.mode,
           tickRate: this.tickRate,
           playerCount: Number(this.state.playerCount || 0),
           maxClients: Number(this.maxClients || this.state.maxClients || 0),
           startedAt: this.matchStartedAt || Date.now(),
           ...(this.state.mode === "suhaktokki" && this._suhakStartPayload ? { startPayload: this._suhakStartPayload } : {}),
+          ...( (this.state.mode === "mathexplorer" || this.state.mode === "math-explorer") && this._mathStartPayload ? { startPayload: this._mathStartPayload } : {}),
         });
       }
     }catch(_){ }

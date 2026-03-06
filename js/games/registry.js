@@ -83,7 +83,7 @@
 
     {
       id: "mathexplorer",
-      name: "수학 탐험가",
+      name: "수학 탐험대",
       mobileHint: "모바일: 터치로 이동 · 캐릭터/업그레이드 선택",
       descLines: [
         "수학 문제를 풀며 몬스터를 물리치는 협동 RPG!",

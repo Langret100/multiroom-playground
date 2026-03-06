@@ -334,6 +334,15 @@ function drawOpp(state){
   if(!state || !state.w || !state.h) return;
 
   const shapes = window.SHAPES || [];
+  const bodyList = Array.isArray(state.bodies) && state.bodies.length
+    ? state.bodies
+    : (Array.isArray(state.objects) ? state.objects.map(o => ({
+        x: (o.x || 0) * state.w,
+        y: (o.y || 0) * state.h,
+        a: o.a || 0,
+        i: (typeof o.i === 'number') ? o.i : 0,
+        r: o.r ? 1 : 0,
+      })) : []);
 
   // --- Fit inside the preview canvas with padding (prevents bottom clipping)
   // A bit more padding to prevent the bowl bottom from being clipped in the preview
@@ -353,9 +362,9 @@ function drawOpp(state){
   // Draw opponent bowl outline + danger line (same geometry as the real physics cup)
   drawOppCup(oppCtx, cv, state, s, ox, oy);
 
-  if(!state.bodies) return;
+  if(!bodyList.length) return;
 
-  for(const b of state.bodies){
+  for(const b of bodyList){
     const x = b.x * s + ox;
     const y = b.y * s + oy;
     const a = b.a || 0;
@@ -564,7 +573,8 @@ async function enterRoom(joined){
   publishTimer = setInterval(()=>{
     if(!game || mode === "offline") return;
     publishMyState({ api, statesRef: refs.statesRef, pid, state: game.getNetState() }).catch(()=>{});
-  }, 120);
+  }, 80);
+  try{ publishMyState({ api, statesRef: refs.statesRef, pid, state: game.getNetState() }).catch(()=>{}); }catch{}
 
   // hook combo -> attack & gameover -> result
   if(game){
@@ -815,7 +825,8 @@ async function bootEmbeddedBridge(){
   publishTimer = setInterval(()=>{
     if(!game) return;
     publishMyState({ pid, state: game.getNetState() }).catch(()=>{});
-  }, 120);
+  }, 80);
+  try{ publishMyState({ pid, state: game.getNetState() }).catch(()=>{}); }catch{}
 
   // Hook attacks/gameover
   if(game){

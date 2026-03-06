@@ -228,6 +228,8 @@ if (isDuel && humans.length === 1){
         "st_timer","st_foods","st_spawn","st_eaten","st_players","st_scores","st_event",
         // SuhakTokki (coop)
         "sk_msg",
+        // MathExplorer (coop)
+        "mx_msg",
         // misc
         "frame"
       ]);

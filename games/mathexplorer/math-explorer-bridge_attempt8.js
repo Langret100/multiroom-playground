@@ -20,65 +20,6 @@
     ghostCache:{ monsters:Object.create(null), projectiles:Object.create(null), enemyProjectiles:Object.create(null) }, remoteFx:[], phaseParticipants:[], mapAppliedHash:''
   };
   const now=()=>Date.now();
-
-  function ensureRemoteTrack(st, tNow){
-    try{
-      if(!st) return st;
-      const ts = safeNum(tNow, now());
-      if(!Array.isArray(st.samples)) st.samples = [];
-      const x = safeNum(st.x, safeNum(st.rx, NaN));
-      const y = safeNum(st.y, safeNum(st.ry, NaN));
-      const vx = safeNum(st.vx, 0), vy = safeNum(st.vy, 0);
-      const last = st.samples.length ? st.samples[st.samples.length-1] : null;
-      if(!last || Math.abs(safeNum(last.x)-x) > 0.5 || Math.abs(safeNum(last.y)-y) > 0.5 || (ts - safeNum(last.t,0)) > 24){
-        st.samples.push({ t: ts, x, y, vx, vy });
-        if(st.samples.length > 18) st.samples.shift();
-      }
-      if(!Number.isFinite(safeNum(st.rx, NaN))) st.rx = x;
-      if(!Number.isFinite(safeNum(st.ry, NaN))) st.ry = y;
-    }catch(_){ }
-    return st;
-  }
-  function updateRemoteRenderTracks(){
-    try{
-      const tNow = now();
-      const targetT = tNow - 95;
-      for(const st of Object.values(state.remoteStates||{})){
-        if(!st) continue;
-        ensureRemoteTrack(st, safeNum(st.lastUpdateAt, st.ts || tNow));
-        const samples = Array.isArray(st.samples) ? st.samples : [];
-        if(!samples.length) continue;
-        while(samples.length >= 3 && safeNum(samples[1].t,0) < targetT - 900) samples.shift();
-        let px, py;
-        const first = samples[0], last = samples[samples.length-1];
-        if(targetT <= safeNum(first.t,0)){
-          px = safeNum(first.x); py = safeNum(first.y);
-        } else if(targetT >= safeNum(last.t,0)){
-          const dtSec = Math.max(0, Math.min(0.20, (targetT - safeNum(last.t,0))/1000));
-          px = safeNum(last.x) + safeNum(last.vx,0) * dtSec;
-          py = safeNum(last.y) + safeNum(last.vy,0) * dtSec;
-        } else {
-          let s0 = first, s1 = last;
-          for(let i=0;i<samples.length-1;i++){
-            const a=samples[i], b=samples[i+1];
-            if(safeNum(a.t,0) <= targetT && targetT <= safeNum(b.t,0)) { s0=a; s1=b; break; }
-          }
-          const denom = Math.max(1, safeNum(s1.t,0) - safeNum(s0.t,0));
-          const u = Math.max(0, Math.min(1, (targetT - safeNum(s0.t,0)) / denom));
-          px = safeNum(s0.x) + (safeNum(s1.x) - safeNum(s0.x)) * u;
-          py = safeNum(s0.y) + (safeNum(s1.y) - safeNum(s0.y)) * u;
-        }
-        const dx = px - safeNum(st.rx, px), dy = py - safeNum(st.ry, py);
-        const dist = Math.hypot(dx, dy);
-        if(dist > 260){ st.rx = px; st.ry = py; }
-        else {
-          const a = dist > 100 ? 0.34 : (dist > 36 ? 0.24 : 0.18);
-          st.rx = Number.isFinite(safeNum(st.rx, NaN)) ? (safeNum(st.rx) + dx * a) : px;
-          st.ry = Number.isFinite(safeNum(st.ry, NaN)) ? (safeNum(st.ry) + dy * a) : py;
-        }
-      }
-    }catch(_){ }
-  }
   const G=()=>window.G||null;
   const mySid=()=>String(state.localSid||'');
   const hostSid=()=>String(state.hostSid || (state.startPayload?.roster?.[0]?.sid || ''));
@@ -103,19 +44,11 @@
   const mxDbg=()=>{};
   function dbgBump(){}
   function post(msg){ try{ parent.postMessage(Object.assign({ gameId: GAME_ID }, msg), "*"); }catch(_){ } }
-  // Always include sender identity inside the payload itself.
-  // Some room relays do not preserve `sid` on custom packets, so we carry both
-  // `from` and `sid` fields to make routing deterministic.
-  function send(kind,payload){
-    const base = { kind, ts: now() };
-    const sid = (mySid()||state.localSid||'');
-    if (sid){ base.from = sid; base.sid = sid; }
-    post({ type:'mx_msg', msg:Object.assign(base, payload||{}) });
-  }
+  function send(kind,payload){ post({ type:'mx_msg', msg:Object.assign({ kind, ts: now() }, payload||{}) }); }
   const sendPhase=(phase,payload)=>send('mx_phase',Object.assign({phase},payload||{}));
   const sendWorld=(payload)=>send('mx_world',payload||{});
   const sendState=(payload)=>send('mx_state',payload||{});
-  const sendEvent=(evt,payload)=>send('mx_event',Object.assign({evt,id:`${evt}:${now()}:${Math.random().toString(36).slice(2,7)}`,sid:(mySid()||'')},payload||{}));
+  const sendEvent=(evt,payload)=>send('mx_event',Object.assign({evt,id:`${evt}:${now()}:${Math.random().toString(36).slice(2,7)}`},payload||{}));
   function markPeer(sid){ sid=String(sid||'').trim(); if(!sid) return; const low=sid.toLowerCase(); if(low==='server'||low==='system'||low==='worker') return; state.peers.add(sid); }
   function activeCount(){ const e=Math.max(1, Number(state.expectedHumans||1)); const r=state.rosterSids.length?state.rosterSids.length:0; const p=Math.max(1, Array.from(state.peers||[]).filter(Boolean).length||0); return Math.min(4, Math.max(e,r,p)); }
   function ensureOverlay(){ if(state.overlay) return state.overlay; const el=document.createElement('div'); el.id='mxBridgeOverlay'; el.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:7px 12px;color:#fff;font:600 13px/1.2 sans-serif;pointer-events:none;display:none;'; document.body.appendChild(el); state.overlay=el; return el; }
@@ -164,35 +97,6 @@
       }, true);
     }catch(_){ }
   }
-
-  // ---- Early embed safeguards ----
-  // In some environments the parent can send bridge_init before this script is fully loaded,
-  // or the init can be missed due to iframe load timing. If we allow the default single-player
-  // start flow to run before we are initialized, the game appears to "become single".
-  // So we install the start lock immediately (even before bridge_init) and keep pinging
-  // the parent with bridge_ready until init arrives.
-  try{
-    installEmbedStartLock();
-    forceEmbedScreens();
-    setOverlay('룸 연결 대기중…');
-  }catch(_){ }
-
-  // Re-send bridge_ready a few times until we receive bridge_init.
-  // Room shell uses this as a reliable signal to re-send bridge_init/game_start.
-  try{
-    let tries = 0;
-    const ping = ()=>{
-      try{
-        if (state.init) return;
-        // send both with and without gameId for maximum compatibility
-        parent.postMessage({ type:'bridge_ready' }, '*');
-        post({ type:'bridge_ready' });
-        if (++tries >= 20) { clearInterval(tid); }
-      }catch(_){ }
-    };
-    const tid = setInterval(ping, 300);
-    setTimeout(ping, 60);
-  }catch(_){ }
   function pauseGame(v){ try{ if(G()) G().paused=!!v; }catch(_){ } }
   function isLocalChoiceLock(){ return !!state.selecting && (state.choiceType==='레벨업' || state.choiceType==='보물' || !!isChoiceVisible()); }
   function setSelecting(v, label){ state.selecting=!!v; state.choiceType=label||''; const g=G(); if(g&&g.player){ g.player.__mxInvuln = !!v; if(v){ try{ state.selectLockPos={ x:safeNum(g.player.x), y:safeNum(g.player.y) }; if('vx' in g.player) g.player.vx=0; if('vy' in g.player) g.player.vy=0; }catch(_){} } else { state.selectLockPos=null; } } else if(!v){ state.selectLockPos=null; } }
@@ -208,7 +112,7 @@
     const prevPhase = state.phase;
     const prevDeadline = safeNum(state.phaseDeadline,0);
     const nextDeadline = opts.deadline ? (Number(opts.deadline)||0) : prevDeadline;
-    const sameChoicePhase = ((phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE) && prevPhase===phase && (Math.abs(nextDeadline-prevDeadline)<=1200 || localChoiceFinished() || localPickedCardInVisibleChoice() || !!state.selecting));
+    const sameChoicePhase = ((phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE) && prevPhase===phase && Math.abs(nextDeadline-prevDeadline)<=1200);
     state.phase=phase; if(opts.deadline) state.phaseDeadline=Number(opts.deadline)||0;
     if(Array.isArray(opts.participants)) state.phaseParticipants = opts.participants.map(v=>String(v||'')).filter(Boolean);
     if(state.phaseTimer){ clearInterval(state.phaseTimer); state.phaseTimer=null; }
@@ -241,8 +145,7 @@
     const tooSoon = samePhase && (nowTs - safeNum(state.lastChoiceAckSentAt,0) < 250) && prevVal===!!ok;
     if(tooSoon) return;
     state.choiceAckKey=key; state.choiceDoneBySid[sid]=!!ok; state.lastChoiceAckSentAt = nowTs;
-    try{ state.__mxChoicePulse = (safeNum(state.__mxChoicePulse,0)+1)|0; state.__mxChoicePhase = String(state.phase||''); state.__mxChoicePulseAt = nowTs; }catch(_){ }
-    sendEvent('choice_done',{ sid, phase:state.phase, ok:!!ok, deadline:safeNum(state.phaseDeadline,0) });
+    sendEvent('choice_done',{ phase:state.phase, ok:!!ok, deadline:safeNum(state.phaseDeadline,0) });
     if(iAmHost()) maybeFinishSharedChoice();
   }
   function maybeFinishSharedChoice(){
@@ -270,20 +173,11 @@
     if(!targetList.length) targetList = Array.from(live);
     if(!targetList.length) targetList = participants;
     const doneMap = state.choiceDoneBySid||{};
-    const doneKeys = Object.keys(doneMap||{}).filter(k=>Object.prototype.hasOwnProperty.call(doneMap,k));
     const done = targetList.every(sid => Object.prototype.hasOwnProperty.call(doneMap, sid));
     if(done){ endChoicePhase(); return; }
     const doneCount = targetList.filter(sid => Object.prototype.hasOwnProperty.call(doneMap, sid)).length;
-    if(doneKeys.length && doneKeys.length >= Math.max(1, live.size)){ endChoicePhase(); return; }
-    const uniqueDoneKnown = Array.from(new Set(doneKeys)).filter(sid => live.has(String(sid||'')) || participants.includes(String(sid||'')));
-    const expectedNow = Math.max(1, Math.min(activeCount(), Math.max(live.size, participants.length||0)));
-    if(uniqueDoneKnown.length >= expectedNow){ endChoicePhase(); return; }
     const liveHumans = Math.max(1, (me?1:0) + Object.values(state.remoteStates||{}).filter(rs=>rs && (nowTs-safeNum(rs.ts,0))<=2500 && safeNum(rs.hp,1)>0).length);
     if(doneCount >= Math.min(liveHumans, targetList.length||liveHumans)){ endChoicePhase(); return; }
-    // root-cause guard: same choice phase re-sync can re-open timer even after local/remote pick.
-    // If all currently alive humans have sent choice_done at least once in this phase, end immediately.
-    if(Object.keys(doneMap).length >= liveHumans && liveHumans>=1){ endChoicePhase(); return; }
-    try{ const cands=targetList.filter(Boolean); let inferred=0; for(const sid of cands){ if(Object.prototype.hasOwnProperty.call(doneMap,sid)) { inferred++; continue; } const rs=state.remoteStates&&state.remoteStates[sid]; if(rs && String(rs.choicePhase||'')===String(state.phase||'') && safeNum(rs.choicePulse,0)>0){ inferred++; } } if(cands.length && inferred>=cands.length){ endChoicePhase(); return; } }catch(_){}
   }
   function forceOpenChoiceUiForPhase(){ try{ const g=G(); if(!g) return; const before=isChoiceVisible(); state.__mxForceChoiceUi=true; try{ if(state.phase===PHASES.LEVEL_CHOICE && !before && typeof g.showLevelUp==='function') g.showLevelUp(); if(state.phase===PHASES.CHEST_CHOICE && !before){ if(state.__mxChestAbortedLocal) return; if(state.__mxChestMathSolved && typeof g.showItemScreen==='function') g.showItemScreen(); else if(typeof g.showMathScreen==='function') g.showMathScreen(g?.player?.x||0,g?.player?.y||0); else if(typeof g.showItemScreen==='function') g.showItemScreen(); } } finally { state.__mxForceChoiceUi=false; } if(isChoiceVisible()) state.__mxChoiceUiOpened=true; }catch(_){ state.__mxForceChoiceUi=false; } }
   function broadcastPhaseSync(phase, deadline, extra){ if(!iAmHost()) return; const participants = (phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE) ? getExpectedChoiceParticipants() : []; sendPhase(phase,Object.assign({ deadline: deadline||0, expectedHumans: activeCount(), selectedBySid: state.selectedBySid||{}, phaseParticipants: participants }, extra||{})); }
@@ -322,14 +216,9 @@ function hostRetargetAndBuffEnemies(g){
   if(!iAmHost() || !g || !Array.isArray(g.enemies)) return;
   const me=mySid()||'self';
   let targetSid='';
-  if(state.tauntSid){
-    // v27: 도발의 방패(taunt) 소지자는 호스트 자신일 수도 있음.
-    if(state.tauntSid===me){
-      if(g && g.player) targetSid = me;
-    } else {
-      const tp = state.remoteStates[state.tauntSid] || getWorldPlayerBySid(state.tauntSid);
-      if(tp) targetSid = state.tauntSid;
-    }
+  if(state.tauntSid && state.tauntSid!==me){
+    const tp = state.remoteStates[state.tauntSid] || getWorldPlayerBySid(state.tauntSid);
+    if(tp) targetSid=state.tauntSid;
   }
   for(const e of g.enemies){
     if(!e || e.__mxGhost) continue;
@@ -350,7 +239,7 @@ function hostRetargetAndBuffEnemies(g){
       }catch(_){}
     }
     let tgt=null;
-    if(targetSid){ tgt = (targetSid===me && g && g.player) ? g.player : (state.remoteStates[targetSid] || getWorldPlayerBySid(targetSid)); }
+    if(targetSid){ tgt = state.remoteStates[targetSid] || getWorldPlayerBySid(targetSid); }
     if(!tgt){
       let best=null, bestD=Infinity;
       for(const [sid,rs] of Object.entries(state.remoteStates||{})){
@@ -372,12 +261,10 @@ function hostRetargetAndBuffEnemies(g){
       const dx=safeNum(tgt.x)-safeNum(e.x), dy=safeNum(tgt.y)-safeNum(e.y);
       const len=Math.hypot(dx,dy)||1;
       const pull = e.isBoss ? 0.85 : 0.55;
-      // Enemy instances do not always have vx/vy/targetX/targetY declared up-front.
-      // Assign unconditionally so the Enemy.update() logic can see it.
-      e.targetX = safeNum(tgt.x);
-      e.targetY = safeNum(tgt.y);
       if('vx' in e) e.vx = (safeNum(e.vx,0)*0.45) + (dx/len)*pull;
       if('vy' in e) e.vy = (safeNum(e.vy,0)*0.45) + (dy/len)*pull;
+      if('targetX' in e) e.targetX = safeNum(tgt.x);
+      if('targetY' in e) e.targetY = safeNum(tgt.y);
     }catch(_){ }
   }
   // 원격 플레이어 공격 판정은 remote_attack 이벤트로만 처리한다.
@@ -434,7 +321,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       }
       if(score < bestScore){ best=e; bestScore=score; }
     }
-    if(!best){ try{ if(Number.isFinite(tx)||Number.isFinite(ty)) pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', sx, sy, Number.isFinite(tx)?tx:sx, Number.isFinite(ty)?ty:sy); }catch(_){} return; }
+    if(!best) return;
 
     const dmgBase=Math.max(1, safeNum(meta.damage, safeNum(rs?.damage, 10)));
     const critChance=Math.max(0, Math.min(1, safeNum(meta.crit, safeNum(rs?.crit,0))));
@@ -538,51 +425,11 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   function makeGhostProjectile(p, enemy){ return { __mxGhost:true, __mxId:String(p?.id||''), x:safeNum(p?.x), y:safeNum(p?.y), vx:safeNum(p?.vx), vy:safeNum(p?.vy), life:Math.max(1,safeNum(p?.life,5)), size:Math.max(4,safeNum(p?.size||p?.radius, enemy?10:6)), damage:safeNum(p?.damage,0), color:String(p?.color||''), isRock:!!p?.isRock, isBossProjectile:!!p?.isBossProjectile, update(){ this.life=Math.max(0,this.life-1); return this.life>0; }, draw(){ try{ const c=window.ctx; if(!c) return; c.save(); c.globalAlpha=0.95; if(this.isArrow){ const ang=Math.atan2(safeNum(this.vy,0), safeNum(this.vx,1)); const len=Math.max(8, Math.max(this.size,5)*2.2); c.translate(this.x,this.y); c.rotate(ang); c.strokeStyle=this.color || 'rgba(255,210,120,.95)'; c.lineWidth=2; c.beginPath(); c.moveTo(-len*0.45,0); c.lineTo(len*0.4,0); c.stroke(); c.beginPath(); c.moveTo(len*0.4,0); c.lineTo(len*0.15,-3); c.lineTo(len*0.15,3); c.closePath(); c.fillStyle=this.color || 'rgba(255,210,120,.95)'; c.fill(); } else { c.fillStyle=this.color || (enemy?'rgba(255,180,60,.95)':'rgba(120,220,255,.95)'); c.beginPath(); c.arc(this.x,this.y,Math.max(this.size, enemy?6:5),0,Math.PI*2); c.fill(); c.fillStyle='rgba(255,255,255,.45)'; c.fillRect(this.x-1,this.y-1,2,2); } c.restore(); }catch(_){ _ghostDrawCircle(this.x,this.y,this.size, enemy?'rgba(255,180,60,.9)':'rgba(120,220,255,.9)'); } } } }
   function makeGhostDrop(d){ return { __mxGhost:true, __mxId:String(d?.id||''), x:safeNum(d?.x), y:safeNum(d?.y), type:String(d?.type||'exp'), value:safeNum(d?.value,1), update(){ return true; }, draw(){ try{ const c=window.ctx; if(!c) return; c.save(); c.globalAlpha=0.75; c.fillStyle=this.type==='exp'?'rgba(90,180,255,.9)':'rgba(255,220,80,.9)'; c.beginPath(); c.arc(this.x,this.y,4,0,Math.PI*2); c.fill(); c.restore(); }catch(_){} } }; }
   function _mxSyncProps(dst, src){ if(!dst||!src) return dst; for(const k of ['x','y','vx','vy','hp','maxHp','damage','size','radius','width','height','life','type','color','isArrow','isEnemy','isBossProjectile']){ if(k in src){ try{ dst[k]=src[k]; }catch(_){} } } return dst; }
-  function _mxCacheSyncList(kind, list, make){ if(!state.ghostCache||typeof state.ghostCache!=='object'){ state.ghostCache={ monsters:Object.create(null), projectiles:Object.create(null), enemyProjectiles:Object.create(null) }; } const cache=(state.ghostCache&&state.ghostCache[kind])||(state.ghostCache[kind]=Object.create(null)); const out=[]; const seen=Object.create(null); for(const e of (Array.isArray(list)?list:[])){ if(!e) continue; const id=String(e.id||''); if(!id) continue; seen[id]=1; let obj=cache[id]; if(!obj){ obj=make(e); if(!obj) continue; cache[id]=obj; } if(obj && obj.__mxSmooth){ const nx=safeNum(e?.x, safeNum(obj._mxTx, safeNum(obj.x))); const ny=safeNum(e?.y, safeNum(obj._mxTy, safeNum(obj.y))); obj._mxTx = nx; obj._mxTy = ny; const tmp = Object.assign({}, e); try{ delete tmp.x; delete tmp.y; }catch(_){ } _mxSyncProps(obj,tmp); } else { _mxSyncProps(obj,e); } out.push(obj); } for(const id of Object.keys(cache)){ if(!seen[id]) delete cache[id]; } return out; }
-  function makeSyncedEnemy(e, stage){ try{ const x=safeNum(e?.x), y=safeNum(e?.y); let obj=null; const BossCtor=getGlobalCtor('Boss'); const EnemyCtor=getGlobalCtor('Enemy'); if(e&&e.isBoss && typeof BossCtor==='function'){ obj = new BossCtor(x,y, Math.max(1, safeNum(stage,1))); } else if(typeof EnemyCtor==='function'){ const forceType = (e&&typeof e.type==='number') ? e.type : null; obj = new EnemyCtor(x,y, Math.max(1, safeNum(stage,1)), forceType); } if(!obj) return makeGhostEnemy(e); obj.__mxGhost=true; obj.__mxId=String(e?.id||''); obj.__mxNet=true; obj.__mxSmooth=true; _mxSyncProps(obj,e); obj.isBoss=!!e?.isBoss; obj._mxTx = safeNum(e?.x, x); obj._mxTy = safeNum(e?.y, y); if(typeof obj.maxHp!=='number' || !Number.isFinite(obj.maxHp)) obj.maxHp=Math.max(1,safeNum(e?.maxHp, obj.hp||1)); if(typeof obj.hp!=='number' || !Number.isFinite(obj.hp)) obj.hp=safeNum(e?.hp, obj.maxHp||1); if('lastDmg' in obj && typeof e?.lastDmg==='number') obj.lastDmg=e.lastDmg; if('animPhase' in obj && typeof e?.animPhase==='number') obj.animPhase=e.animPhase; obj.update=function(){ this.animPhase=safeNum(this.animPhase,0)+0.12; const tx=safeNum(this._mxTx, this.x), ty=safeNum(this._mxTy, this.y); const dx=tx-safeNum(this.x), dy=ty-safeNum(this.y); const d=Math.hypot(dx,dy); if(d>90){ this.x=tx; this.y=ty; } else if(d>0.01){ const a=Math.min(1, 0.28 + Math.min(0.42, d/140)); this.x += dx*a; this.y += dy*a; } return this.hp>0; }; return obj; }catch(_){ return makeGhostEnemy(e); } }
+  function _mxCacheSyncList(kind, list, make){ if(!state.ghostCache||typeof state.ghostCache!=='object'){ state.ghostCache={ monsters:Object.create(null), projectiles:Object.create(null), enemyProjectiles:Object.create(null) }; } const cache=(state.ghostCache&&state.ghostCache[kind])||(state.ghostCache[kind]=Object.create(null)); const out=[]; const seen=Object.create(null); for(const e of (Array.isArray(list)?list:[])){ if(!e) continue; const id=String(e.id||''); if(!id) continue; seen[id]=1; let obj=cache[id]; if(!obj){ obj=make(e); if(!obj) continue; cache[id]=obj; } _mxSyncProps(obj,e); out.push(obj); } for(const id of Object.keys(cache)){ if(!seen[id]) delete cache[id]; } return out; }
+  function makeSyncedEnemy(e, stage){ try{ const x=safeNum(e?.x), y=safeNum(e?.y); let obj=null; const BossCtor=getGlobalCtor('Boss'); const EnemyCtor=getGlobalCtor('Enemy'); if(e&&e.isBoss && typeof BossCtor==='function'){ obj = new BossCtor(x,y, Math.max(1, safeNum(stage,1))); } else if(typeof EnemyCtor==='function'){ const forceType = (e&&typeof e.type==='number') ? e.type : null; obj = new EnemyCtor(x,y, Math.max(1, safeNum(stage,1)), forceType); } if(!obj) return makeGhostEnemy(e); obj.__mxGhost=true; obj.__mxId=String(e?.id||''); obj.__mxNet=true; _mxSyncProps(obj,e); obj.isBoss=!!e?.isBoss; if(typeof obj.maxHp!=='number' || !Number.isFinite(obj.maxHp)) obj.maxHp=Math.max(1,safeNum(e?.maxHp, obj.hp||1)); if(typeof obj.hp!=='number' || !Number.isFinite(obj.hp)) obj.hp=safeNum(e?.hp, obj.maxHp||1); if('lastDmg' in obj && typeof e?.lastDmg==='number') obj.lastDmg=e.lastDmg; if('animPhase' in obj && typeof e?.animPhase==='number') obj.animPhase=e.animPhase; obj.update=function(){ this.animPhase=safeNum(this.animPhase,0)+0.12; return this.hp>0; }; return obj; }catch(_){ return makeGhostEnemy(e); } }
   function makeSyncedProjectile(p, enemy){ try{ let obj=null; const ProjectileCtor=getGlobalCtor('Projectile'); if(typeof ProjectileCtor==='function' && !enemy){ const ang=Math.atan2(safeNum(p?.vy,0), safeNum(p?.vx,1)); const owner={ x:safeNum(p?.x), y:safeNum(p?.y), damage:safeNum(p?.damage,1), pierce:99, dealDamage(){} }; obj = new ProjectileCtor(safeNum(p?.x), safeNum(p?.y), ang, owner, !!p?.isArrow); obj.owner=owner; obj.hit = new Set(); obj.angle=ang; } else { obj = makeGhostProjectile(p, enemy); } obj.__mxGhost=true; obj.__mxId=String(p?.id||''); _mxSyncProps(obj,p); if('vx' in obj || 'vy' in obj) obj.angle=Math.atan2(safeNum(obj.vy,0), safeNum(obj.vx,1)); if(obj.owner){ obj.owner.x=safeNum(p?.x,obj.owner.x); obj.owner.y=safeNum(p?.y,obj.owner.y); obj.owner.damage=safeNum(p?.damage,obj.owner.damage); } obj.update=function(){ return true; }; return obj; }catch(_){ return makeGhostProjectile(p, enemy); } }
   function buildGhostWorld(s){ const ents=s?.entities||{}; const stage=safeNum(s?.stage,1); return { monsters:_mxCacheSyncList('monsters', (Array.isArray(ents.monsters)?ents.monsters:[]), (e)=>makeSyncedEnemy(e, stage)), projectiles:_mxCacheSyncList('projectiles', (Array.isArray(ents.projectiles)?ents.projectiles:[]), (p)=>makeSyncedProjectile(p,false)), enemyProjectiles:_mxCacheSyncList('enemyProjectiles', (Array.isArray(ents.enemyProjectiles)?ents.enemyProjectiles:[]), (p)=>makeSyncedProjectile(p,true)), drops:(Array.isArray(ents.drops)?ents.drops:[]).map(makeGhostDrop), slashes:(Array.isArray(ents.slashes)?ents.slashes:[]).map(v=>Object.assign({},v)), obstacles:(Array.isArray(ents.obstacles)?ents.obstacles:[]).map(v=>Object.assign({},v)) }; }
-  function applyWorldSnapshotToGuest(s){ const g=G(); if(!g||!s) return; try{ const seq=safeNum(s.seq,0); if(seq && seq < safeNum(state.lastWorldSeq,0)) return; if(seq) state.lastWorldSeq = seq; state.lastWorldAppliedAt = now(); const ph=String(s.phase||''); if(ph && ph!==state.phase && Object.values(PHASES).includes(ph)){ setPhase(ph,{ deadline:safeNum(state.phaseDeadline,0) }); } applyHostPlayerProgressToGuest(s); /* NOTE: player movement primarily trusts dedicated mx_state packets.
-         However, if a peer's mx_state is briefly delayed, the body could disappear entirely even though
-         attack events still arrive. Use world.players only as a stale-data fallback, never as the primary source. */
-         try{
-           const players = (s && s.players && typeof s.players === 'object') ? s.players : null;
-           if (players){
-             const tNow = now();
-             for (const [sid, ps] of Object.entries(players)){
-               if(!sid || sid===mySid()) continue;
-               const prev = state.remoteStates[sid] || null;
-               const stale = !prev || ((tNow - safeNum(prev.lastUpdateAt, prev.ts || 0)) > 900);
-               if (!stale) continue;
-               const nx = safeNum(ps?.x, safeNum(prev?.x, NaN));
-               const ny = safeNum(ps?.y, safeNum(prev?.y, NaN));
-               if (!Number.isFinite(nx) || !Number.isFinite(ny)) continue;
-               const rx = Number.isFinite(prev?.rx) ? prev.rx : nx;
-               const ry = Number.isFinite(prev?.ry) ? prev.ry : ny;
-               state.remoteStates[sid] = Object.assign({}, prev || {}, {
-                 sid, x:nx, y:ny, rx, ry,
-                 hp:safeNum(ps?.hp, safeNum(prev?.hp, 1)),
-                 maxHp:safeNum(ps?.maxHp, safeNum(prev?.maxHp, 1)),
-                 lvl:safeNum(ps?.lvl, safeNum(prev?.lvl, 1)),
-                 exp:safeNum(ps?.exp, safeNum(prev?.exp, 0)),
-                 expNext:safeNum(ps?.expNext, safeNum(prev?.expNext, 1)),
-                 selecting: !!ps?.selecting,
-                 name: String(ps?.name || prev?.name || ''),
-                 charType: String(ps?.charType || prev?.charType || ''),
-                 damage:safeNum(ps?.damage, safeNum(prev?.damage,0)),
-                 range:safeNum(ps?.range, safeNum(prev?.range,0)),
-                 atkSpeed:safeNum(ps?.atkSpeed, safeNum(prev?.atkSpeed,0)),
-                 crit:safeNum(ps?.crit, safeNum(prev?.crit,0)),
-                 speed:safeNum(ps?.speed, safeNum(prev?.speed,0)),
-                 multishot:safeNum(ps?.multishot, safeNum(prev?.multishot,0)),
-                 pierce:safeNum(ps?.pierce, safeNum(prev?.pierce,0)),
-                 ts:tNow, lastUpdateAt:tNow
-               });
-             }
-             try{ window.__mxRemoteStates = state.remoteStates; }catch(_){}
-           }
-         }catch(_){}
-         state.worldGhost = buildGhostWorld(s); try{ const obs=state.worldGhost&&state.worldGhost.obstacles; const g=G(); if(g && Array.isArray(obs) && obs.length){ const hash=JSON.stringify(obs); if(hash!==state.mapAppliedHash){ g.obstacles = obs.map(o=>({x:o.x,y:o.y,size:o.size,type:o.type})); state.mapAppliedHash=hash; } } }catch(_){ } }catch(_){ } }
+  function applyWorldSnapshotToGuest(s){ const g=G(); if(!g||!s) return; try{ const seq=safeNum(s.seq,0); if(seq && seq < safeNum(state.lastWorldSeq,0)) return; if(seq) state.lastWorldSeq = seq; state.lastWorldAppliedAt = now(); const ph=String(s.phase||''); if(ph && ph!==state.phase && Object.values(PHASES).includes(ph)){ setPhase(ph,{ deadline:safeNum(state.phaseDeadline,0) }); } applyHostPlayerProgressToGuest(s); syncRemoteStatesFromWorldPlayers(s); state.worldGhost = buildGhostWorld(s); try{ const obs=state.worldGhost&&state.worldGhost.obstacles; const g=G(); if(g && Array.isArray(obs) && obs.length){ const hash=JSON.stringify(obs); if(hash!==state.mapAppliedHash){ g.obstacles = obs.map(o=>({x:o.x,y:o.y,size:o.size,type:o.type})); state.mapAppliedHash=hash; } } }catch(_){ } }catch(_){ } }
   function teamXpEstimate(){ const g=G(); const p=g&&g.player; return Math.max(0, safeNum(p?.exp,0)); }
   function getHostTeamProgress(){ const g=G(); const p=g&&g.player; if(!g||!p) return null; return { level:Math.round(safeNum(p.level,1)), exp:Math.round(safeNum(p.exp,0)), expNext:Math.round(safeNum(p.expNext,1)) }; }
   function mirrorTeamProgressToRemotes(){ if(!iAmHost()) return; const tp=getHostTeamProgress(); if(!tp) return; for(const rs of Object.values(state.remoteStates||{})){ if(!rs) continue; rs.lvl=tp.level; rs.exp=tp.exp; rs.expNext=tp.expNext; } }
@@ -618,65 +465,11 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       });
     }
   }
-  function drawRemoteLabels(){ ensureRemoteLabelCanvas(); const c=state.labelsCanvas, ctx=state.labelsCtx; if(!ctx) return; const tNow = now(); ctx.clearRect(0,0,c.width,c.height); try{ drawRemoteFxOnOverlayCanvas(ctx,c); }catch(_){} if(!iAmHost() && state.worldGhost && state.phase===PHASES.PLAYING){ try{ const g=G(), lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0, camY=lp?(safeNum(lp.y)-c.height/2):0; const mons=Array.isArray(state.worldGhost.monsters)?state.worldGhost.monsters:[]; if((g?.enemies?.length||0)===0){ for(const m of mons){ if(!m) continue; const x=safeNum(m.x)-camX, y=safeNum(m.y)-camY; if(x<-80||y<-80||x>c.width+80||y>c.height+80) continue; ctx.save(); ctx.globalAlpha=.85; ctx.fillStyle=m.isBoss?'rgba(255,120,40,.85)':'rgba(220,60,60,.8)'; ctx.beginPath(); ctx.arc(x,y,Math.max(8,safeNum(m.size,16)),0,Math.PI*2); ctx.fill(); ctx.restore(); } } const prs=[...(Array.isArray(state.worldGhost.projectiles)?state.worldGhost.projectiles:[]),...(Array.isArray(state.worldGhost.enemyProjectiles)?state.worldGhost.enemyProjectiles:[])]; for(const p of prs){ const x=safeNum(p.x)-camX, y=safeNum(p.y)-camY; if(x<-40||y<-40||x>c.width+40||y>c.height+40) continue; ctx.save(); ctx.globalAlpha=.9; if(p && p.isArrow){ const ang=Math.atan2(safeNum(p.vy,0), safeNum(p.vx,1)); const len=Math.max(8, safeNum(p.size,5)*2.2); ctx.translate(x,y); ctx.rotate(ang); ctx.strokeStyle='rgba(255,210,120,.95)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-len*0.45,0); ctx.lineTo(len*0.4,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(len*0.4,0); ctx.lineTo(len*0.15,-3); ctx.lineTo(len*0.15,3); ctx.closePath(); ctx.fillStyle='rgba(255,210,120,.95)'; ctx.fill(); } else { ctx.fillStyle=p.isBossProjectile?'rgba(255,120,80,.95)':(p.damage?'rgba(255,210,120,.95)':'rgba(120,220,255,.95)'); ctx.beginPath(); ctx.arc(x,y,Math.max(3,safeNum(p.size,5)),0,Math.PI*2); ctx.fill(); } ctx.restore(); } }catch(_){} } const arr=Object.values(state.remoteStates||{}); const g=G();
+  function drawRemoteLabels(){ ensureRemoteLabelCanvas(); const c=state.labelsCanvas, ctx=state.labelsCtx; if(!ctx) return; ctx.clearRect(0,0,c.width,c.height); if(!iAmHost() && state.worldGhost && state.phase===PHASES.PLAYING){ try{ const g=G(), lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0, camY=lp?(safeNum(lp.y)-c.height/2):0; const mons=Array.isArray(state.worldGhost.monsters)?state.worldGhost.monsters:[]; if((g?.enemies?.length||0)===0){ for(const m of mons){ if(!m) continue; const x=safeNum(m.x)-camX, y=safeNum(m.y)-camY; if(x<-80||y<-80||x>c.width+80||y>c.height+80) continue; ctx.save(); ctx.globalAlpha=.85; ctx.fillStyle=m.isBoss?'rgba(255,120,40,.85)':'rgba(220,60,60,.8)'; ctx.beginPath(); ctx.arc(x,y,Math.max(8,safeNum(m.size,16)),0,Math.PI*2); ctx.fill(); ctx.restore(); } } const prs=[...(Array.isArray(state.worldGhost.projectiles)?state.worldGhost.projectiles:[]),...(Array.isArray(state.worldGhost.enemyProjectiles)?state.worldGhost.enemyProjectiles:[])]; if((g?.projectiles?.length||0)+(g?.enemyProjectiles?.length||0)===0){ for(const p of prs){ const x=safeNum(p.x)-camX, y=safeNum(p.y)-camY; if(x<-40||y<-40||x>c.width+40||y>c.height+40) continue; ctx.save(); ctx.globalAlpha=.9; if(p && p.isArrow){ const ang=Math.atan2(safeNum(p.vy,0), safeNum(p.vx,1)); const len=Math.max(8, safeNum(p.size,5)*2.2); ctx.translate(x,y); ctx.rotate(ang); ctx.strokeStyle='rgba(255,210,120,.95)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(-len*0.45,0); ctx.lineTo(len*0.4,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(len*0.4,0); ctx.lineTo(len*0.15,-3); ctx.lineTo(len*0.15,3); ctx.closePath(); ctx.fillStyle='rgba(255,210,120,.95)'; ctx.fill(); } else { ctx.fillStyle=p.isBossProjectile?'rgba(255,120,80,.95)':(p.damage?'rgba(255,210,120,.95)':'rgba(120,220,255,.95)'); ctx.beginPath(); ctx.arc(x,y,Math.max(3,safeNum(p.size,5)),0,Math.PI*2); ctx.fill(); } ctx.restore(); } } }catch(_){} } const arr=Object.values(state.remoteStates||{}); const g=G();
     if(isChoiceVisible()) return;
     // guest overlay for host-synced monsters/projectiles (disabled by default; game loop injects ghost entities)
     try{ if(false && !iAmHost() && state.worldGhost){ const lp0=g&&g.player; const camX0=lp0?(safeNum(lp0.x)-c.width/2):0; const camY0=lp0?(safeNum(lp0.y)-c.height/2):0; const lpMon=g&&g.player; const camXm=lpMon?(safeNum(lpMon.x)-c.width/2):0; const camYm=lpMon?(safeNum(lpMon.y)-c.height/2):0; for(const mon of (Array.isArray(state.worldGhost.monsters)?state.worldGhost.monsters:[])){ if(!mon) continue; const mx=safeNum(mon.x)-camXm, my=safeNum(mon.y)-camYm; if(mx<-60||my<-60||mx>c.width+60||my>c.height+60) continue; ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=mon.isBoss?'rgba(255,120,40,.8)':'rgba(220,60,60,.8)'; ctx.beginPath(); ctx.arc(mx,my,Math.max(8,safeNum(mon.size,16)),0,Math.PI*2); ctx.fill(); ctx.restore(); } const projs=[...(Array.isArray(state.worldGhost.projectiles)?state.worldGhost.projectiles:[]), ...(Array.isArray(state.worldGhost.enemyProjectiles)?state.worldGhost.enemyProjectiles:[])]; for(const pr of projs){ if(!pr) continue; const x0=safeNum(pr.x)-camX0, y0=safeNum(pr.y)-camY0; if(x0<-40||y0<-40||x0>c.width+40||y0>c.height+40) continue; ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=(pr&&pr.isBossProjectile)?'rgba(255,120,80,.95)':((pr&&pr.damage)?'rgba(255,210,120,.95)':'rgba(120,220,255,.95)'); ctx.beginPath(); ctx.arc(x0,y0,Math.max(3,safeNum(pr.size,5)),0,Math.PI*2); ctx.fill(); ctx.restore(); } } }catch(_){}
-    if(!arr.length) return; const lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0; const camY=lp?(safeNum(lp.y)-c.height/2):0; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; updateRemoteRenderTracks(); for(const st of arr){ if(!st||!st.sid||st.sid===mySid()) continue; const rx = Number.isFinite(safeNum(st.rx, NaN)) ? safeNum(st.rx) : safeNum(st.x, NaN); const ry = Number.isFinite(safeNum(st.ry, NaN)) ? safeNum(st.ry) : safeNum(st.y, NaN); if(!Number.isFinite(rx) || !Number.isFinite(ry)) continue; const x=rx-camX, y=ry-camY; if(!Number.isFinite(x) || !Number.isFinite(y)) continue; if(x<-100||y<-120||x>c.width+100||y>c.height+100) continue; ctx.save(); ctx.translate(x,y); ctx.globalAlpha=0.94; ctx.fillStyle='rgba(0,0,0,0.30)'; ctx.beginPath(); ctx.ellipse(0,25,20,10,0,0,Math.PI*2); ctx.fill(); const char=(Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]).find(ch=>String(ch?.type||'')===String(st.charType||'')); if(char&&typeof char.draw==='function'){ try{ const frame=(Math.floor((tNow/140))%2); char.draw(ctx, frame, 1.5); }catch(_){ } } else { ctx.fillStyle='rgba(80,180,255,.85)'; ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill(); } ctx.restore();
-        // v27: 도발의 방패(taunt) 표시 - 머리 위 말풍선 느낌의 "!" 애니메이션
-        try{
-          if(state.tauntSid && String(state.tauntSid)===String(st.sid)){
-            const t = now();
-            const bob = Math.sin(t/160)*3;
-            const s = 1 + 0.08*Math.sin(t/120);
-            const cx = x, cy = y - 92 + bob;
-            ctx.save();
-            ctx.globalAlpha = 0.92;
-            ctx.translate(cx, cy);
-            ctx.scale(s, s);
-            // bubble
-            ctx.fillStyle = 'rgba(255,255,255,0.92)';
-            ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(0, 0, 14, 0, Math.PI*2);
-            ctx.fill();
-            ctx.stroke();
-            // tail
-            ctx.beginPath();
-            ctx.moveTo(4, 12);
-            ctx.lineTo(12, 22);
-            ctx.lineTo(-2, 16);
-            ctx.closePath();
-            ctx.fill();
-            ctx.stroke();
-            // exclamation
-            ctx.fillStyle = 'rgba(255,60,60,0.95)';
-            ctx.font = 'bold 18px sans-serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('!', 0, -1);
-            ctx.restore();
-          }
-        }catch(_){ }
-        const name=String(st.name||`유저-${String(st.sid).slice(0,4)}`); if(st.selecting){ ctx.fillStyle='rgba(255,255,0,.95)'; ctx.fillText('선택중',x,y-64); } ctx.fillStyle='rgba(0,0,0,.72)'; ctx.fillRect(x-46,y-80,92,18); ctx.fillStyle='white'; ctx.fillText(name,x,y-65); if(typeof st.hp==='number'&&typeof st.maxHp==='number'&&st.maxHp>0){ const w=62,h=5, px=x-w/2, py=y-54; ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(px,py,w,h); ctx.fillStyle='lime'; ctx.fillRect(px,py,Math.max(0,Math.min(w,w*(st.hp/st.maxHp))),h); } } }
-  function drawRemoteFxOnOverlayCanvas(ctx,c){
-    try{
-      const arr=Array.isArray(state.remoteFx)?state.remoteFx:[]; if(!arr.length) return;
-      const g=G(), lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0, camY=lp?(safeNum(lp.y)-c.height/2):0;
-      const t=now();
-      for(let i=arr.length-1;i>=0;i--){
-        const fx=arr[i]; const age=t-safeNum(fx.t,0); if(age>420) continue;
-        const a=Math.max(0,1-age/420);
-        const x=safeNum(fx.x)-camX, y=safeNum(fx.y)-camY, tx=safeNum(fx.tx,fx.x)-camX, ty=safeNum(fx.ty,fx.y)-camY;
-        ctx.save(); ctx.globalAlpha=0.25+a*0.75;
-        if(fx.kind==='archer'){ const ang=Math.atan2(ty-y,tx-x); const len=Math.max(12,Math.hypot(tx-x,ty-y)*Math.min(1,0.35+a*0.35)); ctx.translate(x,y); ctx.rotate(ang); ctx.strokeStyle='rgba(255,210,120,.95)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(len,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(len,0); ctx.lineTo(len-6,-3); ctx.lineTo(len-6,3); ctx.closePath(); ctx.fillStyle='rgba(255,220,140,.95)'; ctx.fill(); }
-        else if(fx.kind==='mage'){ const px=x+(tx-x)*(0.2+0.6*(1-a)), py=y+(ty-y)*(0.2+0.6*(1-a)); ctx.fillStyle='rgba(170,225,255,.95)'; ctx.beginPath(); ctx.arc(px,py,4+a*3,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='rgba(120,200,255,.7)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(px,py); ctx.stroke(); }
-        else { ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x,y,10+a*8,-0.8,0.8); ctx.stroke(); }
-        ctx.restore();
-      }
-    }catch(_){}
-  }
+    if(!arr.length) return; const lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0; const camY=lp?(safeNum(lp.y)-c.height/2):0; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; const tNow=now(); for(const st of arr){ if(!st||!st.sid||st.sid===mySid()) continue; const age=Math.max(0,Math.min(160,tNow-safeNum(st.lastUpdateAt,st.ts||tNow))); const tx=safeNum(st.x)+safeNum(st.vx,0)*(age/1000)*0.12; const ty=safeNum(st.y)+safeNum(st.vy,0)*(age/1000)*0.12; const dx=tx-safeNum(st.rx,tx), dy=ty-safeNum(st.ry,ty); const dist=Math.hypot(dx,dy); const a=dist>80?0.68:(dist>30?0.48:0.30); st.rx=Number.isFinite(st.rx)?(st.rx+dx*a):tx; st.ry=Number.isFinite(st.ry)?(st.ry+dy*a):ty; if(dist>180){ st.rx=tx; st.ry=ty; } const x=safeNum(st.rx)-camX, y=safeNum(st.ry)-camY; if(x<-100||y<-120||x>c.width+100||y>c.height+100) continue; ctx.save(); ctx.translate(x,y); ctx.globalAlpha=0.94; ctx.fillStyle='rgba(0,0,0,0.30)'; ctx.beginPath(); ctx.ellipse(0,25,20,10,0,0,Math.PI*2); ctx.fill(); const char=(Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]).find(ch=>String(ch?.type||'')===String(st.charType||'')); if(char&&typeof char.draw==='function'){ try{ const frame=(Math.floor((tNow/140))%2); char.draw(ctx, frame, 1.5); }catch(_){ } } else { ctx.fillStyle='rgba(80,180,255,.85)'; ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill(); } ctx.restore(); const name=String(st.name||`유저-${String(st.sid).slice(0,4)}`); if(st.selecting){ ctx.fillStyle='rgba(255,255,0,.95)'; ctx.fillText('선택중',x,y-64); } ctx.fillStyle='rgba(0,0,0,.72)'; ctx.fillRect(x-46,y-80,92,18); ctx.fillStyle='white'; ctx.fillText(name,x,y-65); if(typeof st.hp==='number'&&typeof st.maxHp==='number'&&st.maxHp>0){ const w=62,h=5, px=x-w/2, py=y-54; ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(px,py,w,h); ctx.fillStyle='lime'; ctx.fillRect(px,py,Math.max(0,Math.min(w,w*(st.hp/st.maxHp))),h); } } }
   function pushRemoteFx(kind, x, y, tx, ty){
     try{
       if(!Number.isFinite(x)||!Number.isFinite(y)) return;
@@ -692,8 +485,8 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       const t=now();
       for(let i=arr.length-1;i>=0;i--){
         const fx=arr[i]; const age=t-safeNum(fx.t,0);
-        if(age>420){ arr.splice(i,1); continue; }
-        const a=Math.max(0,1-age/420);
+        if(age>220){ arr.splice(i,1); continue; }
+        const a=Math.max(0,1-age/220);
         const x=safeNum(fx.x), y=safeNum(fx.y), tx=safeNum(fx.tx,x), ty=safeNum(fx.ty,y);
         c.save(); c.globalAlpha = 0.25 + a*0.75;
         if(fx.kind==='archer'){
@@ -710,146 +503,10 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       }
     }catch(_){}
   }
-  function handlePhaseSync(m){ if(typeof m.expectedHumans==='number') state.expectedHumans=Math.max(1,Number(m.expectedHumans||1)); if(m.selectedBySid&&typeof m.selectedBySid==='object') state.selectedBySid=Object.assign({}, m.selectedBySid); refreshCharSelectLocks(); const phase=String(m.phase||''); if(Object.values(PHASES).includes(phase)){ if(phase===PHASES.CHAR_SELECT && !openCharSelect()){ setTimeout(()=>handlePhaseSync(m),120); return; } const incomingDeadline=(Number(m.deadline||0)||0); const isChoice=(phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE); const alreadyPicked=(isChoice && (localChoiceFinished() || localPickedCardInVisibleChoice())); const sameChoiceResync=(isChoice && phase===state.phase && (alreadyPicked || !!state.selecting)); if(sameChoiceResync){ if(Array.isArray(m.phaseParticipants)&&m.phaseParticipants.length){ state.phaseParticipants = m.phaseParticipants.map(v=>String(v||'')).filter(Boolean); } if(alreadyPicked){ setOverlay('다른 플레이어 선택 대기'); try{ pauseGame(true); }catch(_){} return; } } setPhase(phase,{ deadline:(sameChoiceResync && alreadyPicked ? safeNum(state.phaseDeadline,incomingDeadline) : incomingDeadline), participants:Array.isArray(m.phaseParticipants)?m.phaseParticipants:undefined }); if(phase===PHASES.LEVEL_CHOICE || phase===PHASES.CHEST_CHOICE) forceOpenChoiceUiForPhase(); } }
-  function handleMxEvent(m){ const id=String(m.id||''); if(id&&id===state.lastEventId) return; if(id) state.lastEventId=id; const evt=String(m.evt||''); if(evt==='boss_spawn' && !iAmHost()){ try{ if (G() && G().boss == null && typeof G().spawnBoss==='function') G().spawnBoss(); }catch(_){ } } if(evt==='char_conflict'){ const to=String(m.to||''); if(to && to!==(mySid()||'')) return; const c=String(m.character||''); if(state.localCharType && state.localCharType===c){ state.localCharChosen=false; state.localCharType=''; const me=mySid()||'self'; delete state.selectedBySid[me]; refreshCharSelectLocks(); setOverlay('같은 캐릭터 선택됨 · 다른 캐릭터를 골라주세요'); } return; } if(evt==='chest_touch'){ if(iAmHost()){ try{ if(inChoicePhase()) return; const g=G(); if(!g) return; const tx=safeNum(m.x, NaN), ty=safeNum(m.y, NaN); let hit=null, idx=-1; const items=Array.isArray(g.items)?g.items:[]; for(let i=0;i<items.length;i++){ const it=items[i]; if(!it||it.type!=='chest') continue; const dx=safeNum(it.x)-tx, dy=safeNum(it.y)-ty; if(!Number.isFinite(tx)||!Number.isFinite(ty) || (dx*dx+dy*dy)<=900){ hit=it; idx=i; break; } } if(hit && idx>=0){ try{ g.items.splice(idx,1); }catch(_){} } if(typeof g.showMathScreen==='function') g.showMathScreen(hit?hit.x:tx||0, hit?hit.y:ty||0); }catch(_){} } return; } if(evt==='choice_request'){ if(iAmHost()){ const phaseReq=String(m.phase||''); const uiNow = isChoiceVisible(); /* guest 요청으로도 페이즈를 시작할 수 있어야 함 (host UI 표시 여부와 무관) */ if(inChoicePhase() && state.phase===phaseReq){ return; } const deadline = now() + (phaseReq===PHASES.CHEST_CHOICE ? 20000 : 12000); state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(phaseReq, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(phaseReq,{deadline, participants: state.phaseParticipants.slice()}); } return; } if(evt==='remote_attack'){ const sid=String(m.from||m.sid||''); if(iAmHost()){ if(sid && sid===String(mySid()||'')) return; try{ const ctype=String(m.charType||'').toLowerCase(); pushRemoteFx(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee'), safeNum(m.x,NaN), safeNum(m.y,NaN), safeNum(m.tx,safeNum(m.x,0)), safeNum(m.ty,safeNum(m.y,0))); }catch(_){} const rs=(state.remoteStates&&state.remoteStates[sid])||Object.assign({sid}, m||{}); simulateRemoteAttackOnHost(rs,{ sid, x:m.x, y:m.y, tx:m.tx, ty:m.ty, damage:m.damage, range:m.range, crit:m.crit, charType:m.charType, pulse:m.pulse }); return; } try{ if(sid && sid===String(mySid()||'')) return; const g=G(); if(!g) return; const x=safeNum(m.x, NaN), y=safeNum(m.y, NaN), tx=safeNum(m.tx, x), ty=safeNum(m.ty, y); if(!Number.isFinite(x)||!Number.isFinite(y)) return; const ctype=String(m.charType||'').toLowerCase(); const isRanged=/ranger|archer|mage|wizard/.test(ctype); const ang=Math.atan2((Number.isFinite(ty)?ty:y)-y,(Number.isFinite(tx)?tx:x)-x); try{ pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', x, y, tx, ty); }catch(_){} if(isRanged){ const archer=/ranger|archer/.test(ctype), mage=/mage|wizard/.test(ctype); const dx=(Number.isFinite(tx)?tx:x)-x, dy=(Number.isFinite(ty)?ty:y)-y; const mx=x + dx*0.55, my=y + dy*0.55; try{ if(typeof g.textParticle==='function'){ g.textParticle(x, y-10, archer?'↗':'✦', archer?'#ffd27a':'#9fd8ff', 0.45); g.textParticle(mx, my, archer?'➶':'✦', archer?'#ffcf66':'#8ed0ff', 0.45); if(mage) g.textParticle(x+dx*0.78, y+dy*0.78, '✦', '#b8e6ff', 0.45); } }catch(_){} } else if(Array.isArray(g.slashes)){ g.slashes.push({ x, y, angle:ang, opacity:0.95, life:6, color:'#ffffff' }); if(g.slashes.length>140) g.slashes.splice(0,g.slashes.length-140); } }catch(_){} return; } if(evt==='choice_done'){ const sid=String(m.from||m.sid||''); const ph=String(m.phase||''); if(!sid) return; if(ph && ph!==state.phase && !(state.phase===PHASES.PLAYING && (ph===PHASES.LEVEL_CHOICE||ph===PHASES.CHEST_CHOICE))) return; state.choiceDoneBySid = state.choiceDoneBySid||{}; state.choiceDoneBySid[sid]=!!m.ok; maybeFinishSharedChoice(); return; } if(evt==='taunt_shield_pick'){ const sid=String(m.sid||m.from||''); if(sid){ state.tauntSid=sid; state.tauntChosen=true; } return; } if(evt==='game_over_all'){ try{ showGameOverThenQuit('game_over_all'); }catch(_){ try{ const g=G(); if(g){ g.paused=true; g.gameOver=true; } }catch(_){} setOverlay('팀 전멸 · 게임 오버'); } return; }
+  function handlePhaseSync(m){ if(typeof m.expectedHumans==='number') state.expectedHumans=Math.max(1,Number(m.expectedHumans||1)); if(m.selectedBySid&&typeof m.selectedBySid==='object') state.selectedBySid=Object.assign({}, m.selectedBySid); refreshCharSelectLocks(); const phase=String(m.phase||''); if(Object.values(PHASES).includes(phase)){ if(phase===PHASES.CHAR_SELECT && !openCharSelect()){ setTimeout(()=>handlePhaseSync(m),120); return; } const incomingDeadline=(Number(m.deadline||0)||0); const sameChoiceResync=((phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE) && phase===state.phase && localChoiceFinished()); setPhase(phase,{ deadline:(sameChoiceResync ? safeNum(state.phaseDeadline,incomingDeadline) : incomingDeadline), participants:Array.isArray(m.phaseParticipants)?m.phaseParticipants:undefined }); if(phase===PHASES.LEVEL_CHOICE || phase===PHASES.CHEST_CHOICE) forceOpenChoiceUiForPhase(); } }
+  function handleMxEvent(m){ const id=String(m.id||''); if(id&&id===state.lastEventId) return; if(id) state.lastEventId=id; const evt=String(m.evt||''); if(evt==='boss_spawn' && !iAmHost()){ try{ if (G() && G().boss == null && typeof G().spawnBoss==='function') G().spawnBoss(); }catch(_){ } } if(evt==='char_conflict'){ const to=String(m.to||''); if(to && to!==(mySid()||'')) return; const c=String(m.character||''); if(state.localCharType && state.localCharType===c){ state.localCharChosen=false; state.localCharType=''; const me=mySid()||'self'; delete state.selectedBySid[me]; refreshCharSelectLocks(); setOverlay('같은 캐릭터 선택됨 · 다른 캐릭터를 골라주세요'); } return; } if(evt==='chest_touch'){ if(iAmHost()){ try{ if(inChoicePhase()) return; const g=G(); if(!g) return; const tx=safeNum(m.x, NaN), ty=safeNum(m.y, NaN); let hit=null, idx=-1; const items=Array.isArray(g.items)?g.items:[]; for(let i=0;i<items.length;i++){ const it=items[i]; if(!it||it.type!=='chest') continue; const dx=safeNum(it.x)-tx, dy=safeNum(it.y)-ty; if(!Number.isFinite(tx)||!Number.isFinite(ty) || (dx*dx+dy*dy)<=900){ hit=it; idx=i; break; } } if(hit && idx>=0){ try{ g.items.splice(idx,1); }catch(_){} } if(typeof g.showMathScreen==='function') g.showMathScreen(hit?hit.x:tx||0, hit?hit.y:ty||0); }catch(_){} } return; } if(evt==='choice_request'){ if(iAmHost()){ const phaseReq=String(m.phase||''); const uiNow = isChoiceVisible(); /* guest 요청으로도 페이즈를 시작할 수 있어야 함 (host UI 표시 여부와 무관) */ if(inChoicePhase() && state.phase===phaseReq){ return; } const deadline = now() + (phaseReq===PHASES.CHEST_CHOICE ? 20000 : 12000); state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(phaseReq, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(phaseReq,{deadline, participants: state.phaseParticipants.slice()}); } return; } if(evt==='remote_attack'){ const sid=String(m.from||m.sid||''); if(iAmHost()){ if(sid && sid===String(mySid()||'')) return; const rs=(state.remoteStates&&state.remoteStates[sid])||Object.assign({sid}, m||{}); simulateRemoteAttackOnHost(rs,{ sid, x:m.x, y:m.y, tx:m.tx, ty:m.ty, damage:m.damage, range:m.range, crit:m.crit, charType:m.charType, pulse:m.pulse }); return; } try{ if(sid && sid===String(mySid()||'')) return; const g=G(); if(!g) return; const x=safeNum(m.x, NaN), y=safeNum(m.y, NaN), tx=safeNum(m.tx, x), ty=safeNum(m.ty, y); if(!Number.isFinite(x)||!Number.isFinite(y)) return; const ctype=String(m.charType||'').toLowerCase(); const isRanged=/ranger|archer|mage|wizard/.test(ctype); const ang=Math.atan2((Number.isFinite(ty)?ty:y)-y,(Number.isFinite(tx)?tx:x)-x); try{ pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', x, y, tx, ty); }catch(_){} if(isRanged){ const archer=/ranger|archer/.test(ctype), mage=/mage|wizard/.test(ctype); const dx=(Number.isFinite(tx)?tx:x)-x, dy=(Number.isFinite(ty)?ty:y)-y; const mx=x + dx*0.55, my=y + dy*0.55; try{ if(typeof g.textParticle==='function'){ g.textParticle(x, y-10, archer?'↗':'✦', archer?'#ffd27a':'#9fd8ff', 0.45); g.textParticle(mx, my, archer?'➶':'✦', archer?'#ffcf66':'#8ed0ff', 0.45); if(mage) g.textParticle(x+dx*0.78, y+dy*0.78, '✦', '#b8e6ff', 0.45); } }catch(_){} } else if(Array.isArray(g.slashes)){ g.slashes.push({ x, y, angle:ang, opacity:0.95, life:6, color:'#ffffff' }); if(g.slashes.length>140) g.slashes.splice(0,g.slashes.length-140); } }catch(_){} return; } if(evt==='choice_done'){ const sid=String(m.from||''); const ph=String(m.phase||''); if(!sid||!inChoicePhase()|| (ph&&ph!==state.phase)) return; if(getExpectedChoiceParticipants().includes(sid)){ state.choiceDoneBySid[sid]=!!m.ok; } maybeFinishSharedChoice(); return; } if(evt==='taunt_shield_pick'){ const sid=String(m.sid||m.from||''); if(sid){ state.tauntSid=sid; state.tauntChosen=true; } return; } if(evt==='game_over_all'){ try{ const g=G(); if(g){ g.paused=true; g.gameOver=true; } }catch(_){} setOverlay('팀 전멸 · 게임 오버'); return; }
   }
-  function handleMxMsg(msg){
-    const m=(msg&&typeof msg==='object')?msg:{};
-    // Prefer explicit from, fall back to sid carried inside payload.
-    const from=String(m.from || m.sid || '');
-    if(from) { m.from = from; markPeer(from); }
-    let k=String(m.kind||m.t||'');
-    if(k==='mx_chat'||k==='chat_msg'){ k='chat'; m.kind='chat'; }
-    if(k==='mx_phase'||k==='phase'){ k='phase_sync'; }
-    if(k==='mx_state'){ k='state'; }
-    if(k==='mx_world'){ k='world'; }
-    if(k==='hello'){ send('hello_ack',{}); return; }
-    if(k==='hello_ack'){ if(from) markPeer(from); return; }
-    if(k==='chat'){
-      dbgBump('in'); dbgBump('chatIn');
-      if(!m.text) return;
-      ensureChat();
-      const cid=String(m.id||'');
-      if(cid){
-        if(state.chatSeen.has(cid)) return;
-        state.chatSeen.add(cid);
-        if(state.chatSeen.size>300){ try{ state.chatSeen = new Set(Array.from(state.chatSeen).slice(-200)); }catch(_){ } }
-      }
-      if(from&&from===mySid()) return;
-      state.chat.append(m.nick||m.name||`유저-${(from||'').slice(0,4)}`, String(m.text||''), false);
-      return;
-    }
-    if(k==='phase_sync'||k==='mx_phase'){ dbgBump('in'); handlePhaseSync(m); return; }
-    if(k==='mx_event'){ handleMxEvent(m); return; }
-    if(k==='char_selected'){
-      dbgBump('in');
-      if(from){
-        const chosen=String(m.character||'');
-        state.selectedBySid[from]=chosen;
-        refreshCharSelectLocks();
-        if(iAmHost()){
-          const me=mySid()||'self';
-          const duplicateOwner=Object.entries(state.selectedBySid||{}).find(([sid,v])=>sid!==from && String(v||'')===chosen);
-          if(chosen && duplicateOwner){
-            delete state.selectedBySid[from];
-            broadcastPhaseSync(PHASES.CHAR_SELECT, Math.max(now()+3000, safeNum(state.phaseDeadline,0)||0), { selectedBySid: state.selectedBySid||{} });
-            sendEvent('char_conflict',{ to:from, character:chosen });
-            return;
-          }
-        }
-        if(state.phase===PHASES.CHAR_SELECT){
-          if(iAmHost()) finalizeCharSelect(false);
-          else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`);
-        }
-      }
-      return;
-    }
-    if(k==='state'||k==='mx_state'){
-      dbgBump('in'); dbgBump('stateIn');
-      if(!from) return;
-      if(from===String(mySid()||'')) return;
-      if(!iAmHost() && state.worldSnap && from===String(state.hostSid||'')){ return; }
-      const prev=state.remoteStates[from]||{};
-      const nxRaw=safeNum(m.x, NaN), nyRaw=safeNum(m.y, NaN);
-      const nx=Number.isFinite(nxRaw) ? nxRaw : safeNum(prev.x, NaN);
-      const ny=Number.isFinite(nyRaw) ? nyRaw : safeNum(prev.y, NaN);
-      if(!Number.isFinite(nx) || !Number.isFinite(ny)) return;
-      const tNow=now();
-      const dtMs=Math.max(1, tNow - safeNum(prev.lastUpdateAt, tNow));
-      const dt=Math.min(0.25, dtMs/1000);
-      const estVx=Number.isFinite(prev.x)?(nx-safeNum(prev.x))/dt:0;
-      const estVy=Number.isFinite(prev.y)?(ny-safeNum(prev.y))/dt:0;
-      state.remoteStates[from]={
-        sid:from,
-        x:nx, y:ny,
-        rx:Number.isFinite(prev.rx)?prev.rx:nx,
-        ry:Number.isFinite(prev.ry)?prev.ry:ny,
-        vx:(safeNum(prev.vx,estVx)*0.45)+(estVx*0.55),
-        vy:(safeNum(prev.vy,estVy)*0.45)+(estVy*0.55),
-        hp:safeNum(m.hp), maxHp:safeNum(m.maxHp),
-        lvl:safeNum(m.lvl,1), exp:safeNum(m.exp,0), expNext:safeNum(m.expNext,1),
-        score:safeNum(m.score,0), stage:safeNum(m.stage,1),
-        selecting:!!m.selecting,
-        name:String(m.name||m.nick||''), charType:String(m.charType||''),
-        damage:safeNum(m.damage, safeNum(prev.damage,0)),
-        range:safeNum(m.range, safeNum(prev.range,0)),
-        atkSpeed:safeNum(m.atkSpeed, safeNum(prev.atkSpeed,0)),
-        crit:safeNum(m.crit, safeNum(prev.crit,0)),
-        speed:safeNum(m.speed, safeNum(prev.speed,0)),
-        multishot:safeNum(m.multishot, safeNum(prev.multishot,0)),
-        pierce:safeNum(m.pierce, safeNum(prev.pierce,0)),
-        attackPulse:safeNum(m.attackPulse, safeNum(prev.attackPulse,0)),
-        attacking:!!m.attacking,
-        attackAimX:safeNum(m.attackAimX, safeNum(prev.attackAimX, nx)),
-        attackAimY:safeNum(m.attackAimY, safeNum(prev.attackAimY, ny)),
-        choicePulse:safeNum(m.choicePulse, safeNum(prev.choicePulse,0)),
-        choicePhase:String(m.choicePhase||prev.choicePhase||''),
-        ts:tNow, lastUpdateAt:tNow
-      };;
-      try{ window.__mxRemoteStates = state.remoteStates; }catch(_){ }
-
-      try{
-        if(iAmHost() && inChoicePhase()){
-          const cPulseNow=safeNum(m.choicePulse,0), cPulsePrev=safeNum(prev.choicePulse,0);
-          const cPhase=String(m.choicePhase||'');
-          if(cPulseNow && cPulseNow!==cPulsePrev && cPhase===String(state.phase||'')){
-            state.choiceDoneBySid = state.choiceDoneBySid||{};
-            state.choiceDoneBySid[from]=true;
-            maybeFinishSharedChoice();
-          }
-        }
-      }catch(_){}
-      try{
-        if(!iAmHost()){
-          const pulseNow=safeNum(m.attackPulse,0), pulsePrev=safeNum(prev.attackPulse,0);
-          if(pulseNow && pulseNow!==pulsePrev){
-            const ct=String(m.charType||prev.charType||'').toLowerCase();
-            const rng=safeNum(m.range, safeNum(prev.range, 80));
-            const vx=safeNum(state.remoteStates[from].vx,0), vy=safeNum(state.remoteStates[from].vy,0);
-            const mag=Math.hypot(vx,vy)||1;
-            const tx=safeNum(m.attackAimX, nx + (vx/mag)*Math.max(24, Math.min(220, rng)));
-            const ty=safeNum(m.attackAimY, ny + (vy/mag)*Math.max(24, Math.min(220, rng)));
-            pushRemoteFx(/ranger|archer/.test(ct)?'archer':(/mage|wizard/.test(ct)?'mage':'melee'), nx, ny, tx, ty);
-          }
-        }
-      }catch(_){ }
-      if(iAmHost()){
-        try{
-          const pulseNow=safeNum(m.attackPulse,0), pulsePrev=safeNum(prev.attackPulse,0);
-          if(pulseNow && pulseNow!==pulsePrev){
-            simulateRemoteAttackOnHost(state.remoteStates[from], { sid:from, x:nx, y:ny, damage:safeNum(m.damage,0), range:safeNum(m.range,0), crit:safeNum(m.crit,0), charType:String(m.charType||''), pulse:pulseNow });
-          }
-        }catch(_){}
-      }
-      return;
-    }
-    if(k==='world'||k==='mx_world'){
-      dbgBump('in'); dbgBump('worldIn');
-      state.worldSnap=m;
-      if(!iAmHost()) applyWorldSnapshotToGuest(m);
-      return;
-    }
-  }
+  function handleMxMsg(msg){ const m=(msg&&typeof msg==='object')?msg:{}; const from=String(m.from||''); if(from) markPeer(from); let k=String(m.kind||m.t||''); if(k==='mx_chat'||k==='chat_msg'){ k='chat'; m.kind='chat'; } if(k==='mx_phase'||k==='phase'){ k='phase_sync'; } if(k==='mx_state'){ k='state'; } if(k==='mx_world'){ k='world'; } if(k==='hello'){ send('hello_ack',{}); return; } if(k==='hello_ack'){ if(from) markPeer(from); return; } if(k==='chat'){ dbgBump('in'); dbgBump('chatIn'); if(!m.text) return; ensureChat(); const cid=String(m.id||''); if(cid){ if(state.chatSeen.has(cid)) return; state.chatSeen.add(cid); if(state.chatSeen.size>300){ try{ state.chatSeen = new Set(Array.from(state.chatSeen).slice(-200)); }catch(_){ } } } if(from&&from===mySid()) return; state.chat.append(m.nick||m.name||`유저-${(from||'').slice(0,4)}`, String(m.text||''), false); return; } if(k==='phase_sync'||k==='mx_phase'){ dbgBump('in'); handlePhaseSync(m); return; } if(k==='mx_event'){ handleMxEvent(m); return; } if(k==='char_selected'){ dbgBump('in'); if(from){ const chosen=String(m.character||''); state.selectedBySid[from]=chosen; refreshCharSelectLocks(); if(iAmHost()){ const me=mySid()||'self'; const duplicateOwner=Object.entries(state.selectedBySid||{}).find(([sid,v])=>sid!==from && String(v||'')===chosen); if(chosen && duplicateOwner){ delete state.selectedBySid[from]; broadcastPhaseSync(PHASES.CHAR_SELECT, Math.max(now()+3000, safeNum(state.phaseDeadline,0)||0), { selectedBySid: state.selectedBySid||{} }); sendEvent('char_conflict',{ to:from, character:chosen }); return; } } if(state.phase===PHASES.CHAR_SELECT){ if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); } } return; } if(k==='state'||k==='mx_state'){ dbgBump('in'); dbgBump('stateIn'); if(!from) return; if(from===String(mySid()||'')) return; if(!iAmHost() && state.worldSnap && from===String(state.hostSid||'')){ return; } const prev=state.remoteStates[from]||{}; const nx=safeNum(m.x), ny=safeNum(m.y); const tNow=now(); const dtMs=Math.max(1, tNow - safeNum(prev.lastUpdateAt, tNow)); const dt=Math.min(0.25, dtMs/1000); const estVx=Number.isFinite(prev.x)?(nx-safeNum(prev.x))/dt:0; const estVy=Number.isFinite(prev.y)?(ny-safeNum(prev.y))/dt:0; state.remoteStates[from]={ sid:from, x:nx, y:ny, rx:Number.isFinite(prev.rx)?prev.rx:nx, ry:Number.isFinite(prev.ry)?prev.ry:ny, vx:(safeNum(prev.vx,estVx)*0.45)+(estVx*0.55), vy:(safeNum(prev.vy,estVy)*0.45)+(estVy*0.55), hp:safeNum(m.hp), maxHp:safeNum(m.maxHp), lvl:safeNum(m.lvl,1), exp:safeNum(m.exp,0), expNext:safeNum(m.expNext,1), score:safeNum(m.score,0), stage:safeNum(m.stage,1), selecting:!!m.selecting, name:String(m.name||m.nick||''), charType:String(m.charType||''), damage:safeNum(m.damage, safeNum(prev.damage,0)), range:safeNum(m.range, safeNum(prev.range,0)), atkSpeed:safeNum(m.atkSpeed, safeNum(prev.atkSpeed,0)), crit:safeNum(m.crit, safeNum(prev.crit,0)), speed:safeNum(m.speed, safeNum(prev.speed,0)), multishot:safeNum(m.multishot, safeNum(prev.multishot,0)), pierce:safeNum(m.pierce, safeNum(prev.pierce,0)), attackPulse:safeNum(m.attackPulse, safeNum(prev.attackPulse,0)), attacking:!!m.attacking, ts:tNow, lastUpdateAt:tNow }; if(iAmHost()){ try{ const pulseNow=safeNum(m.attackPulse,0), pulsePrev=safeNum(prev.attackPulse,0); if(pulseNow && pulseNow!==pulsePrev){ simulateRemoteAttackOnHost(state.remoteStates[from], { sid:from, x:nx, y:ny, damage:safeNum(m.damage,0), range:safeNum(m.range,0), crit:safeNum(m.crit,0), charType:String(m.charType||''), pulse:pulseNow }); } }catch(_){} } return; } if(k==='world'||k==='mx_world'){ dbgBump('in'); dbgBump('worldIn'); state.worldSnap=m; if(!iAmHost()) applyWorldSnapshotToGuest(m); return; } }
   function ensureLocalAttackSendWrap(){
     try{
       const g=G(), pl=g&&g.player;
@@ -859,13 +516,12 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         const t0 = Date.now();
         const ret = oa.apply(this, arguments);
         try{
-          if((window.location.search||'').includes('embed=1') && !inChoicePhase()){
+          if((window.location.search||'').includes('embed=1') && !iAmHost() && !inChoicePhase()){
             const ctype = String((this.design&&this.design.type)||state.localCharType||'');
             const nonce = `${Math.floor(t0/20)}:${Math.round(safeNum(this.x,0))}:${Math.round(safeNum(this.y,0))}`;
             if(state.__mxLastAttackNonce !== nonce){
               state.__mxLastAttackNonce = nonce;
-              try{ state.__mxLastAttackAim={ x:safeNum(target&&target.x, safeNum(this.x,0)), y:safeNum(target&&target.y, safeNum(this.y,0)), t:now(), kind:(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee')) }; if(!iAmHost()) pushRemoteFx(state.__mxLastAttackAim.kind, safeNum(this.x,0), safeNum(this.y,0), state.__mxLastAttackAim.x, state.__mxLastAttackAim.y); }catch(_){} 
-              sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(this.x,0)), y:Math.round(safeNum(this.y,0)), tx:Math.round(safeNum(target&&target.x, NaN)), ty:Math.round(safeNum(target&&target.y, NaN)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), crit:safeNum(this.crit,0), charType:ctype, pulse:(getLocalAttackPulse(this)||t0) });
+              sendEvent('remote_attack',{ x:Math.round(safeNum(this.x,0)), y:Math.round(safeNum(this.y,0)), tx:Math.round(safeNum(target&&target.x, NaN)), ty:Math.round(safeNum(target&&target.y, NaN)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), crit:safeNum(this.crit,0), charType:ctype, pulse:(getLocalAttackPulse(this)||t0) });
             }
           }
         }catch(_){}
@@ -882,7 +538,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     if(origStart){ g.start=function(){ const r=origStart(); if(state.phase!==PHASES.PLAYING) pauseGame(true); try{ applyCoopScaling(); }catch(_){ } return r; }; }
     const origShowCharSelect=g.showCharSelect?.bind(g); if(origShowCharSelect && !g.__mxShowCharSelectWrapped){ g.__mxShowCharSelectWrapped=true; g.showCharSelect=function(){ const r=origShowCharSelect(); try{ const grid=document.getElementById('charSelectGrid'); const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; Array.from(grid?.children||[]).forEach((el,idx)=>{ if(el&&el.dataset) el.dataset.charType=String(arr[idx]?.type||''); }); refreshCharSelectLocks(); }catch(_){ } return r; }; }
     if(origSelect){ g.selectChar=function(type){ const t=String(type||''); if(isCharTakenByOther(t)){ setOverlay('이미 다른 플레이어가 선택한 캐릭터입니다'); refreshCharSelectLocks(); return; } const sid=mySid()||'self'; state.localCharChosen=true; state.localCharType=t; state.selectedBySid[sid]=state.localCharType; refreshCharSelectLocks(); const r=origSelect(type); pauseGame(true); send('char_selected',{ character: state.localCharType }); if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); return r; }; }
-    if(origUpdate){ g.update=function(){ const pl=g&&g.player; const lock=isLocalChoiceLock(); const sx=lock&&pl?safeNum(pl.x):0, sy=lock&&pl?safeNum(pl.y):0; const savedPaused=g.paused; if(lock) g.paused=true; if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(!iAmHost() && state.phase!==PHASES.PLAYING) g.paused=true; const r=origUpdate(); if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(lock&&pl){ try{ pl.x=sx; pl.y=sy; if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; }catch(_){} } if(lock){ g.paused=savedPaused||true; }  return r; }; }
+    if(origUpdate){ g.update=function(){ const pl=g&&g.player; const lock=isLocalChoiceLock(); const sx=lock&&pl?safeNum(pl.x):0, sy=lock&&pl?safeNum(pl.y):0; const savedPaused=g.paused; if(lock) g.paused=true; if(!iAmHost() && state.phase!==PHASES.PLAYING) g.paused=true; const r=origUpdate(); if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(lock&&pl){ try{ pl.x=sx; pl.y=sy; if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; }catch(_){} } if(lock){ g.paused=savedPaused||true; }  return r; }; }
     if(!g.__mxAuthoritativeWrapped){
       g.__mxAuthoritativeWrapped = true;
       const noBossSpawn = function(){ return; };
@@ -926,7 +582,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         return origLoop2(timestamp);
       }; }
     }
-    if(origShowLevel){ g.showLevelUp=function(){ if(inChoicePhase() && localChoiceFinished() && !state.__mxForceChoiceUi){ setOverlay('다른 플레이어 선택 대기'); try{ g.paused=true; }catch(_){} return; } if(state.phase===PHASES.LEVEL_CHOICE && (isChoiceVisible()||state.selecting) && !state.__mxForceChoiceUi) return; if(inChoicePhase() && state.phase!==PHASES.LEVEL_CHOICE && !state.__mxForceChoiceUi) return; if(!iAmHost() && !state.__mxForceChoiceUi){ sendEvent('choice_request',{ phase:PHASES.LEVEL_CHOICE }); return; } const r=origShowLevel(); try{ const root=document.getElementById('levelUpScreen'); try{ if(root && !localChoiceFinished()){ delete root.dataset.mxSelectedLocked; } }catch(_){} const cards=[...document.querySelectorAll('#upgrades .upgradeCard')]; try{ if(root && !root.__mxChoiceClickCap){ root.addEventListener('click', ()=>{ try{ if(state.phase===PHASES.LEVEL_CHOICE){ queueLocalChoiceCommit('level'); setTimeout(()=>flushPendingLocalChoiceCommit(),0); } }catch(_){} }, true); root.__mxChoiceClickCap=1; } }catch(_){} cards.forEach(card=>{ try{ delete card.dataset.mxPicked; }catch(_){} if(card.dataset.mxWrapped==='1') return; card.dataset.mxWrapped='1'; const oc=card.onclick; card.onclick=(ev)=>{ if(card.dataset.mxPicked==='1') return; card.dataset.mxPicked='1'; try{ markChoiceUiPicked(root, card); }catch(_){} if(inChoicePhase()){ try{ queueLocalChoiceCommit(state.phase===PHASES.LEVEL_CHOICE?'level':'item'); markChoiceDoneLocal(true); }catch(_){} } if(typeof oc==='function') oc.call(card,ev); if(inChoicePhase()){ try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} const _mxChoiceKey=currentPhaseKey(); setTimeout(()=>{ if(!inChoicePhase() || currentPhaseKey()!==_mxChoiceKey) return; try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} },0); setOverlay('다른 플레이어 선택 대기'); try{ queueLocalChoiceCommit('level'); markChoiceDoneLocal(true); }catch(_){} } }; }); }catch(_){} if(iAmHost() && !state.__mxForceChoiceUi && state.phase!==PHASES.LEVEL_CHOICE){ const deadline=now()+12000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.LEVEL_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.LEVEL_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); } state.__mxChoiceUiOpened = state.__mxChoiceUiOpened || !!isChoiceVisible(); return r; }; }
+    if(origShowLevel){ g.showLevelUp=function(){ if(inChoicePhase() && localChoiceFinished() && !state.__mxForceChoiceUi){ setOverlay('다른 플레이어 선택 대기'); try{ g.paused=true; }catch(_){} return; } if(state.phase===PHASES.LEVEL_CHOICE && (isChoiceVisible()||state.selecting) && !state.__mxForceChoiceUi) return; if(inChoicePhase() && state.phase!==PHASES.LEVEL_CHOICE && !state.__mxForceChoiceUi) return; if(!iAmHost() && !state.__mxForceChoiceUi){ sendEvent('choice_request',{ phase:PHASES.LEVEL_CHOICE }); return; } const r=origShowLevel(); try{ const root=document.getElementById('levelUpScreen'); try{ if(root && !localChoiceFinished()){ delete root.dataset.mxSelectedLocked; } }catch(_){} const cards=[...document.querySelectorAll('#upgrades .upgradeCard')]; try{ if(root && !root.__mxChoiceClickCap){ root.addEventListener('click', ()=>{ try{ if(state.phase===PHASES.LEVEL_CHOICE){ queueLocalChoiceCommit('level'); setTimeout(()=>flushPendingLocalChoiceCommit(),0); } }catch(_){} }, true); root.__mxChoiceClickCap=1; } }catch(_){} cards.forEach(card=>{ try{ delete card.dataset.mxPicked; }catch(_){} if(card.dataset.mxWrapped==='1') return; card.dataset.mxWrapped='1'; const oc=card.onclick; card.onclick=(ev)=>{ if(card.dataset.mxPicked==='1') return; card.dataset.mxPicked='1'; if(typeof oc==='function') oc.call(card,ev); try{ markChoiceUiPicked(root, card); }catch(_){} if(inChoicePhase()){ try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} const _mxChoiceKey=currentPhaseKey(); setTimeout(()=>{ if(!inChoicePhase() || currentPhaseKey()!==_mxChoiceKey) return; try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} },0); setOverlay('다른 플레이어 선택 대기'); try{ queueLocalChoiceCommit('level'); markChoiceDoneLocal(true); }catch(_){} } }; }); }catch(_){} if(iAmHost() && !state.__mxForceChoiceUi && state.phase!==PHASES.LEVEL_CHOICE){ const deadline=now()+12000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.LEVEL_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.LEVEL_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); } state.__mxChoiceUiOpened = state.__mxChoiceUiOpened || !!isChoiceVisible(); return r; }; }
     if(origShowMath){ g.showMathScreen=function(x,y){ if(state.phase===PHASES.CHEST_CHOICE && (isChoiceVisible()||state.selecting) && !state.__mxForceChoiceUi) return; if(!iAmHost() && !state.__mxForceChoiceUi){ sendEvent('chest_touch',{ x:safeNum(x,0), y:safeNum(y,0) }); return; } try{ state.__mxChestAbortedLocal=false; }catch(_){} const r=origShowMath(x,y); if(iAmHost() && !state.__mxForceChoiceUi && state.phase!==PHASES.CHEST_CHOICE){ const deadline=now()+20000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.CHEST_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.CHEST_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); } state.__mxChoiceUiOpened = state.__mxChoiceUiOpened || !!isChoiceVisible(); return r; }; }
     const origCheckMath = g.checkMathAnswer?.bind(g);
     if(origCheckMath && !g.__mxCheckMathWrapped){
@@ -944,8 +600,8 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       };
     }
     if(origCloseMath){ g.closeMath=function(){ const r=origCloseMath(); try{ if(state.phase===PHASES.CHEST_CHOICE){ state.__mxChestAbortedLocal=true; markChoiceDoneLocal(false); setSelecting(true,'보물'); setOverlay('다른 플레이어 선택 대기'); g.paused=true; document.getElementById('mathScreen')?.classList.add('hidden'); document.getElementById('itemScreen')?.classList.add('hidden'); } }catch(_){} return r; }; }
-    if(origShowItem){ g.showItemScreen=function(){ if(inChoicePhase() && localChoiceFinished() && !state.__mxForceChoiceUi){ setOverlay('다른 플레이어 선택 대기'); try{ g.paused=true; }catch(_){} return; } if(state.phase===PHASES.CHEST_CHOICE && isChoiceVisible()==='itemScreen' && !state.__mxForceChoiceUi){ try{ state.__mxChestMathSolved=true; }catch(_){} return; } if(!iAmHost() && !state.__mxForceChoiceUi){ sendEvent('choice_request',{ phase:PHASES.CHEST_CHOICE }); return; } const r=origShowItem(); try{ const root=document.getElementById('itemScreen'); try{ if(root && !localChoiceFinished()){ delete root.dataset.mxSelectedLocked; } }catch(_){} const cards=[...document.querySelectorAll('#items .upgradeCard')]; try{ if(root && !root.__mxChoiceClickCap){ root.addEventListener('click', ()=>{ try{ if(state.phase===PHASES.CHEST_CHOICE){ queueLocalChoiceCommit('item'); setTimeout(()=>flushPendingLocalChoiceCommit(),0); } }catch(_){} }, true); root.__mxChoiceClickCap=1; } }catch(_){} cards.forEach(card=>{ try{ delete card.dataset.mxPicked; }catch(_){} if(card.dataset.mxWrapped==='1') return; card.dataset.mxWrapped='1'; const oc=card.onclick; card.onclick=(ev)=>{ if(card.dataset.mxPicked==='1') return; card.dataset.mxPicked='1'; try{ markChoiceUiPicked(root, card); }catch(_){} if(inChoicePhase()){ try{ queueLocalChoiceCommit(state.phase===PHASES.LEVEL_CHOICE?'level':'item'); markChoiceDoneLocal(true); }catch(_){} } if(typeof oc==='function') oc.call(card,ev); if(inChoicePhase()){ try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} const _mxChoiceKey=currentPhaseKey(); setTimeout(()=>{ if(!inChoicePhase() || currentPhaseKey()!==_mxChoiceKey) return; try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} },0); setOverlay('다른 플레이어 선택 대기'); try{ queueLocalChoiceCommit('item'); markChoiceDoneLocal(true); }catch(_){} } }; }); }catch(_){} try{ maybeInjectTauntShieldCard(); }catch(_){} try{ if(state.phase===PHASES.CHEST_CHOICE){ state.__mxChestMathSolved = true; } }catch(_){} if(iAmHost() && !state.__mxForceChoiceUi && state.phase!==PHASES.CHEST_CHOICE){ const deadline=now()+20000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.CHEST_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.CHEST_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); } state.__mxChoiceUiOpened = state.__mxChoiceUiOpened || !!isChoiceVisible(); return r; }; }
-    try{ const PlayerCtor=getGlobalCtor('Player') || window.Player; if(PlayerCtor&&PlayerCtor.prototype && !PlayerCtor.prototype.__mxRemoteAttackHooked){ const _oa=PlayerCtor.prototype.attack; if(typeof _oa==='function'){ PlayerCtor.prototype.attack=function(target){ const r=_oa.apply(this, arguments); try{ if((window.location.search||'').includes('embed=1') && !inChoicePhase()){ const pulse = getLocalAttackPulse(this) || Date.now(); if(pulse !== safeNum(state.lastAttackPulseSent,0)){ state.lastAttackPulseSent = pulse; sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(this.x)), y:Math.round(safeNum(this.y)), tx:Math.round(safeNum(target&&target.x, NaN)), ty:Math.round(safeNum(target&&target.y, NaN)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), crit:safeNum(this.crit,0), charType:String((this.design&&this.design.type)||state.localCharType||''), pulse }); } } }catch(_){} return r; }; } PlayerCtor.prototype.__mxRemoteAttackHooked=true; } }catch(_){}
+    if(origShowItem){ g.showItemScreen=function(){ if(inChoicePhase() && localChoiceFinished() && !state.__mxForceChoiceUi){ setOverlay('다른 플레이어 선택 대기'); try{ g.paused=true; }catch(_){} return; } if(state.phase===PHASES.CHEST_CHOICE && isChoiceVisible()==='itemScreen' && !state.__mxForceChoiceUi){ try{ state.__mxChestMathSolved=true; }catch(_){} return; } if(!iAmHost() && !state.__mxForceChoiceUi){ sendEvent('choice_request',{ phase:PHASES.CHEST_CHOICE }); return; } const r=origShowItem(); try{ const root=document.getElementById('itemScreen'); try{ if(root && !localChoiceFinished()){ delete root.dataset.mxSelectedLocked; } }catch(_){} const cards=[...document.querySelectorAll('#items .upgradeCard')]; try{ if(root && !root.__mxChoiceClickCap){ root.addEventListener('click', ()=>{ try{ if(state.phase===PHASES.CHEST_CHOICE){ queueLocalChoiceCommit('item'); setTimeout(()=>flushPendingLocalChoiceCommit(),0); } }catch(_){} }, true); root.__mxChoiceClickCap=1; } }catch(_){} cards.forEach(card=>{ try{ delete card.dataset.mxPicked; }catch(_){} if(card.dataset.mxWrapped==='1') return; card.dataset.mxWrapped='1'; const oc=card.onclick; card.onclick=(ev)=>{ if(card.dataset.mxPicked==='1') return; card.dataset.mxPicked='1'; if(typeof oc==='function') oc.call(card,ev); try{ markChoiceUiPicked(root, card); }catch(_){} if(inChoicePhase()){ try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} const _mxChoiceKey=currentPhaseKey(); setTimeout(()=>{ if(!inChoicePhase() || currentPhaseKey()!==_mxChoiceKey) return; try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} },0); setOverlay('다른 플레이어 선택 대기'); try{ queueLocalChoiceCommit('item'); markChoiceDoneLocal(true); }catch(_){} } }; }); }catch(_){} try{ maybeInjectTauntShieldCard(); }catch(_){} try{ if(state.phase===PHASES.CHEST_CHOICE){ state.__mxChestMathSolved = true; } }catch(_){} if(iAmHost() && !state.__mxForceChoiceUi && state.phase!==PHASES.CHEST_CHOICE){ const deadline=now()+20000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.CHEST_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.CHEST_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); } state.__mxChoiceUiOpened = state.__mxChoiceUiOpened || !!isChoiceVisible(); return r; }; }
+    try{ const PlayerCtor=getGlobalCtor('Player') || window.Player; if(PlayerCtor&&PlayerCtor.prototype && !PlayerCtor.prototype.__mxRemoteAttackHooked){ const _oa=PlayerCtor.prototype.attack; if(typeof _oa==='function'){ PlayerCtor.prototype.attack=function(target){ const r=_oa.apply(this, arguments); try{ if((window.location.search||'').includes('embed=1') && !iAmHost() && !inChoicePhase()){ const pulse = getLocalAttackPulse(this) || Date.now(); if(pulse !== safeNum(state.lastAttackPulseSent,0)){ state.lastAttackPulseSent = pulse; sendEvent('remote_attack',{ x:Math.round(safeNum(this.x)), y:Math.round(safeNum(this.y)), tx:Math.round(safeNum(target&&target.x, NaN)), ty:Math.round(safeNum(target&&target.y, NaN)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), crit:safeNum(this.crit,0), charType:String((this.design&&this.design.type)||state.localCharType||''), pulse }); } } }catch(_){} return r; }; } PlayerCtor.prototype.__mxRemoteAttackHooked=true; } }catch(_){}
     if(typeof g.processRangedEffectQueue==='function' && !g.__mxRangedFreezeWrapped){ const _prq=g.processRangedEffectQueue.bind(g); g.processRangedEffectQueue=function(){ if(state.phase===PHASES.LEVEL_CHOICE || state.phase===PHASES.CHEST_CHOICE) return; return _prq(); }; g.__mxRangedFreezeWrapped=true; }
     if(origCheckBossSpawn){ g.checkBossSpawn=function(){ if(!iAmHost()) return; return origCheckBossSpawn(); }; }
     if(origSpawnBoss){ g.spawnBoss=function(){ const r=origSpawnBoss(); try{ if (g.boss){ g.boss.x = Math.round((window.MAP_WIDTH||2000)/2); g.boss.y = Math.round((window.MAP_HEIGHT||2000)/2); if (Array.isArray(g.enemies)){ const be = g.enemies.find(e=>e&&e.isBoss); if (be){ be.x=g.boss.x; be.y=g.boss.y; } } } }catch(_){ } if(iAmHost()) sendEvent('boss_spawn',{ stage:safeNum(g.stage,1) }); return r; };
@@ -1007,7 +663,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     const curPulse=getLocalAttackPulse(p);
     if(!iAmHost() && !inChoicePhase() && curPulse && curPulse!==safeNum(state.lastAttackPulseSent,0)){
       state.lastAttackPulseSent=curPulse;
-      try{ const _ct=String((p.design&&p.design.type)||state.localCharType||''); const _ax=safeNum(state.__mxLastAttackAim&&state.__mxLastAttackAim.x, safeNum(p.x)); const _ay=safeNum(state.__mxLastAttackAim&&state.__mxLastAttackAim.y, safeNum(p.y)); if(!iAmHost()) pushRemoteFx((/ranger|archer/.test(_ct)?'archer':(/mage|wizard/.test(_ct)?'mage':'melee')), safeNum(p.x), safeNum(p.y), _ax, _ay); sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(p.x)), y:Math.round(safeNum(p.y)), tx:Math.round(_ax), ty:Math.round(_ay), damage:safeNum(p.damage,0), range:safeNum(p.range,0), crit:safeNum(p.crit,0), charType:_ct, pulse:curPulse }); }catch(_){ sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(p.x)), y:Math.round(safeNum(p.y)), damage:safeNum(p.damage,0), range:safeNum(p.range,0), crit:safeNum(p.crit,0), charType:String((p.design&&p.design.type)||state.localCharType||''), pulse:curPulse }); }
+      sendEvent('remote_attack',{ x:Math.round(safeNum(p.x)), y:Math.round(safeNum(p.y)), damage:safeNum(p.damage,0), range:safeNum(p.range,0), crit:safeNum(p.crit,0), charType:String((p.design&&p.design.type)||state.localCharType||''), pulse:curPulse });
     }
     sendState({
       x: Math.round(safeNum(p.x)), y: Math.round(safeNum(p.y)),
@@ -1020,9 +676,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       damage: safeNum(p.damage,0), range: safeNum(p.range,0), atkSpeed: safeNum(p.atkSpeed,0),
       crit: safeNum(p.crit,0), speed: safeNum(p.speed,0),
       multishot: safeNum(p.multishot,0), pierce: safeNum(p.pierce,0),
-      attacking: !!p.isAttacking, attackPulse: getLocalAttackPulse(p),
-      attackAimX: Math.round(safeNum(state.__mxLastAttackAim&&state.__mxLastAttackAim.x, p.x)), attackAimY: Math.round(safeNum(state.__mxLastAttackAim&&state.__mxLastAttackAim.y, p.y)),
-      choicePhase: String(state.__mxChoicePhase||''), choicePulse: safeNum(state.__mxChoicePulse,0)
+      attacking: !!p.isAttacking, attackPulse: getLocalAttackPulse(p)
     });
   }
   function hostChestTouchFallback(){
@@ -1057,82 +711,11 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     }
   }catch(_){} }, true);
   function onGameStart(payload){ state.startPayload=payload||{}; try{ post({ type:'mx_game_start_ack' }); }catch(_){ } installEmbedStartLock(); forceEmbedScreens(); state.expectedHumans=Math.max(1, Number(payload?.playerCount || state.expectedHumans || 1)); state.rosterSids=Array.isArray(payload?.roster)?payload.roster.map(r=>String(r?.sid||'')).filter(Boolean):[]; state.hostSid = state.hostSid || (state.rosterSids[0]||''); state.isHost = state.isHost || (mySid() && mySid()===state.hostSid); applyDifficulty(payload?.difficulty||1); maybeStartSequence(); }
-  function stopAllAudio(){
-    try{
-      // HTMLAudioElement
-      const auds = Array.from(document.querySelectorAll('audio')||[]);
-      for (const a of auds){
-        try{ a.pause(); a.currentTime = 0; }catch(_){ }
-      }
-    }catch(_){ }
-    try{
-      // Common patterns in this project: window.sounds / window.bgm / Audio handles
-      const cand = [window.sounds, window.__sounds, window.bgm, window.__bgm, window.audio];
-      for (const o of cand){
-        if (!o) continue;
-        for (const k of Object.keys(o||{})){
-          const v = o[k];
-          try{ v?.stop?.(); }catch(_){ }
-          try{ v?.pause?.(); }catch(_){ }
-        }
-      }
-    }catch(_){ }
-    try{
-      // If a WebAudio context is used, suspend it.
-      const ctx = window.__audioCtx || window.audioCtx || window.__ctx;
-      if (ctx && typeof ctx.suspend === 'function') ctx.suspend().catch(()=>{});
-    }catch(_){ }
-  }
-  function showGameOverThenQuit(reason){
-    try{
-      const g=G();
-      if(g){
-        try{ g.running=false; }catch(_){ }
-        try{ g.paused=true; }catch(_){ }
-        try{ g.gameOver=true; }catch(_){ }
-      }
-      try{
-        const scr=document.getElementById('gameOverScreen');
-        if(scr) scr.classList.remove('hidden');
-        const fs=document.getElementById('finalStats');
-        if(fs && g && g.player){
-          fs.innerHTML = `
-            <div>최종 점수: ${Math.floor(Number(g.score||0))}</div>
-            <div>레벨: ${Math.floor(Number(g.player.level||1))}</div>
-            <div>처치 수: ${Math.floor(Number(g.kills||0))}</div>
-            <div>진행 시간: ${Math.floor(Number(g.gameTime||0))}초</div>
-          `;
-        }
-      }catch(_){ }
-      setOverlay('게임 오버');
-      stopAllAudio();
-    }catch(_){ }
-    setTimeout(()=>{ try{ post({ type:'mx_quit', reason: reason||'game_over' }); }catch(_){ } }, 1800);
-  }
-
-  window.addEventListener('message',(e)=>{
-    const d=e.data||{};
-    if(d&&d.type){ dbgBump('in'); }
-    if(d.type==='bridge_init' && (!d.gameId || d.gameId===GAME_ID || d.gameId==='math-explorer')) return onBridgeInit(d);
-    if(d.type==='bridge_host'){
-      state.hostSid=String(d.hostSessionId||state.hostSid||'');
-      state.isHost=!!d.isHost || (mySid() && mySid()===state.hostSid);
-      return;
-    }
-    if(d.type==='game_start' && d.payload){
-      const pm=String(d.payload.mode||sp.get('embedGame')||'');
-      if(!pm || pm==='mathexplorer' || pm==='math-explorer') return onGameStart(Object.assign({ mode: pm||'mathexplorer' }, d.payload));
-      return;
-    }
-    if(d.type==='mx_set_difficulty') return applyDifficulty(d.difficulty||1);
-    if(d.type==='mx_msg') return handleMxMsg(d.msg||{});
-    if(d.type==='mx_show_gameover') return showGameOverThenQuit(String(d.reason||'game_over'));
-    if(d.type==='stop_audio') return stopAllAudio();
-  });
+  window.addEventListener('message',(e)=>{ const d=e.data||{}; if(d&&d.type){ dbgBump('in'); } if(d.type==='bridge_init' && (!d.gameId || d.gameId===GAME_ID || d.gameId==='math-explorer')) return onBridgeInit(d); if(d.type==='bridge_host'){ state.hostSid=String(d.hostSessionId||state.hostSid||''); state.isHost=!!d.isHost || (mySid() && mySid()===state.hostSid); return; } if(d.type==='game_start' && d.payload){ const pm=String(d.payload.mode||sp.get('embedGame')||''); if(!pm || pm==='mathexplorer' || pm==='math-explorer') return onGameStart(Object.assign({ mode: pm||'mathexplorer' }, d.payload)); } if(d.type==='mx_set_difficulty') return applyDifficulty(d.difficulty||1); if(d.type==='mx_msg') return handleMxMsg(d.msg||{}); });
   function patchGlobalCombatGuards(){ try{ const PlayerCtor=getGlobalCtor('Player') || window.Player; if(PlayerCtor&&PlayerCtor.prototype&&!PlayerCtor.prototype.__mxBridgeGuardPatched){ const oTD=PlayerCtor.prototype.takeDamage; if(typeof oTD==='function'){ PlayerCtor.prototype.takeDamage=function(d){ if((window.location.search||'').includes('embed=1') && !iAmHost()) return; if(this&&this.__mxInvuln) return; return oTD.call(this,d); }; } const oGE=PlayerCtor.prototype.gainExp; if(typeof oGE==='function'){ PlayerCtor.prototype.gainExp=function(v){ if((window.location.search||'').includes('embed=1') && !iAmHost()) return; return oGE.call(this,v); }; } PlayerCtor.prototype.__mxBridgeGuardPatched=true; } }catch(_){} }
-  function raf(){ try{ updateRemoteRenderTracks(); forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks(); const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectTauntShieldCard(); }catch(_){} } if(choiceId && state.phase!==PHASES.CHAR_SELECT){ if(!state.selecting || (state.choiceType!==choiceLabelById(choiceId))){ setSelecting(true, choiceLabelById(choiceId)); } } else if(state.selecting && state.phase!==PHASES.CHAR_SELECT && !choiceId){ try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); pauseGame(true); } else { setSelecting(false,''); } } const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); try{ const g=G(); if(g){ g.paused=false; } }catch(_){} } try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); if(localChoiceFinished() && (now()-safeNum(state.lastChoiceAckSentAt,0))>700){ try{ markChoiceDoneLocal(!!((state.choiceDoneBySid||{})[(mySid()||'')])); }catch(_){} } if(localPickedCardInVisibleChoice() && !localChoiceFinished()){ try{ markChoiceDoneLocal(true); setOverlay('다른 플레이어 선택 대기'); }catch(_){} } pauseGame(true); const blockChestReopen = (state.phase===PHASES.CHEST_CHOICE && state.__mxChestAbortedLocal); if(!isChoiceVisible() && !localChoiceFinished() && !blockChestReopen) { try{ forceOpenChoiceUiForPhase(); }catch(_){} } } if(state.selecting){ try{ const g=G(); const pl=g&&g.player; const lp=state.selectLockPos; if(pl&&lp){ pl.x=safeNum(lp.x); pl.y=safeNum(lp.y); if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; } }catch(_){} } try{ if(iAmHost() && state.phase===PHASES.PLAYING){ hostChestTouchFallback(); } }catch(_){} try{ if(iAmHost() && inChoicePhase() && safeNum(state.phaseDeadline,0)>0 && now()>=safeNum(state.phaseDeadline,0)+500){ const parts=getExpectedChoiceParticipants(); for(const sid of parts){ if(!Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid)) state.choiceDoneBySid[sid]=false; } maybeFinishSharedChoice(); if(inChoicePhase() && now()>=safeNum(state.phaseDeadline,0)+2000){ endChoicePhase(); } } }catch(_){} drawRemoteLabels(); drawRemoteFx(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
+  function raf(){ try{ forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks(); const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectTauntShieldCard(); }catch(_){} } if(choiceId && state.phase!==PHASES.CHAR_SELECT){ if(!state.selecting || (state.choiceType!==choiceLabelById(choiceId))){ setSelecting(true, choiceLabelById(choiceId)); } } else if(state.selecting && state.phase!==PHASES.CHAR_SELECT && !choiceId){ try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); pauseGame(true); } else { setSelecting(false,''); } } const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); try{ const g=G(); if(g){ g.paused=false; } }catch(_){} } try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); if(localPickedCardInVisibleChoice() && !localChoiceFinished()){ try{ markChoiceDoneLocal(true); setOverlay('다른 플레이어 선택 대기'); }catch(_){} } pauseGame(true); const blockChestReopen = (state.phase===PHASES.CHEST_CHOICE && state.__mxChestAbortedLocal); if(!isChoiceVisible() && !localChoiceFinished() && !blockChestReopen) { try{ forceOpenChoiceUiForPhase(); }catch(_){} } } if(state.selecting){ try{ const g=G(); const pl=g&&g.player; const lp=state.selectLockPos; if(pl&&lp){ pl.x=safeNum(lp.x); pl.y=safeNum(lp.y); if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; } }catch(_){} } try{ if(iAmHost() && state.phase===PHASES.PLAYING){ hostChestTouchFallback(); } }catch(_){} try{ if(iAmHost() && inChoicePhase() && safeNum(state.phaseDeadline,0)>0 && now()>=safeNum(state.phaseDeadline,0)+500){ const parts=getExpectedChoiceParticipants(); for(const sid of parts){ if(!Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid)) state.choiceDoneBySid[sid]=false; } maybeFinishSharedChoice(); if(inChoicePhase() && now()>=safeNum(state.phaseDeadline,0)+2000){ endChoicePhase(); } } }catch(_){} drawRemoteLabels(); drawRemoteFx(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
   setInterval(()=>{ try{ if(mySid()) send('hello',{}); }catch(_){ } },4000);
-  setInterval(()=>{ try{ postLocalState(); }catch(_){ } },33);
+  setInterval(()=>{ try{ postLocalState(); }catch(_){ } },80);
   setInterval(()=>{ try{ postWorldIfHost(); }catch(_){ } },50);
   setTimeout(()=>{ try{ maybeStartSequence(); }catch(_){ } },800);
   setTimeout(()=>post({ type:'bridge_ready' }),50);

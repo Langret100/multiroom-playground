@@ -20,21 +20,7 @@
   function exitGameFullscreen(){
     try{ document.body.classList.remove("in-game"); }catch(_){ }
 
-    // Proactively stop audio that may continue playing after returning to the room.
-    // (Some embedded games create looping Audio elements that survive UI hide.)
-    try{
-      const stopMsg = { type: "stop_audio", reason: "exit" };
-      try{ if (typeof postToMain === "function") postToMain(stopMsg); }catch(_){ }
-      try{ if (typeof postToMathExplorer === "function") postToMathExplorer(stopMsg); }catch(_){ }
-    }catch(_){ }
-
-    
-    // Stop any <audio> elements on the room page itself.
-    try{
-      const auds = Array.from(document.querySelectorAll('audio')||[]);
-      for (const a of auds){ try{ a.pause(); a.currentTime = 0; }catch(_){ } }
-    }catch(_){ }
-// Coop (수학토끼): when leaving the embedded game view back to the room,
+    // Coop (수학토끼): when leaving the embedded game view back to the room,
     // notify the iframe so the host can remove this player from the match state.
     try{
       if (typeof postToMain === "function" && coop && coop.active && coop.meta && coop.meta.id === "suhaktokki"){
@@ -56,16 +42,6 @@
       duel.ui?.frameWrap?.classList.add("hidden");
       const fr = duel.ui?.frame;
       if (fr) fr.src = "about:blank";
-    }catch(_){ }
-
-    // Last-resort: blank any remaining iframes to guarantee embedded audio stops.
-    try{
-      const ifs = Array.from(document.querySelectorAll('iframe')||[]);
-      for (const f of ifs){
-        if (!f) continue;
-        try{ f.contentWindow?.postMessage?.({ type:"stop_audio", reason:"exit" }, '*'); }catch(_){ }
-        try{ f.src = 'about:blank'; }catch(_){ }
-      }
     }catch(_){ }
     try{
       const dock = document.getElementById("tgDock");
@@ -328,7 +304,7 @@ function setupBgm(audioElId, btnId){
       mwrap.style.gap = '8px';
       mwrap.style.marginBottom = '8px';
       mwrap.innerHTML = `
-        <span class="muted" style="font-size:13px;">수학 탐험대 난이도</span>
+        <span class="muted" style="font-size:13px;">수학 탐험가 난이도</span>
         <select id="mathDiffSel" class="input" style="max-width:140px; padding:8px 10px;">
           <option value="1">기본</option>
           <option value="2">하드</option>
@@ -851,18 +827,15 @@ function updatePreview(modeId){
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
     const srcWin = e.source;
-    const duelWin = (()=>{ try{ return duel?.iframeEl?.contentWindow || null; }catch(_){ return null; } })();
-    const fromMain = !!(duelWin && srcWin === duelWin);
+    const fromMain = !!(duel.iframeEl && srcWin === duel.iframeEl.contentWindow);
     const fromCpu  = !!(cpuFrame.iframeEl && srcWin === cpuFrame.iframeEl.contentWindow);
+    const isMathExplorerCoop = !!(coop && coop.active && isMathExplorerCoopMode());
     const isMxPacket = (d.type === "bridge_ready" || d.type === "mx_game_start_ack" || d.type === "mx_msg" || d.type === "mx_quit");
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
-    const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
-    const fromStoredMxWin = !!(coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
-    // MathExplorer only fallback: allow mx_* packets when the current visible duel iframe is the sender,
-    // or when tagged mx_* packets arrive during the MathExplorer coop embed lifecycle before cache is set.
-    const fromMxCoopFallback = !!(isMxPacket && mxGameTagOk && !fromCpu && (fromMain || (mxModeLikely && srcWin)));
+    const fromStoredMxWin = !!(isMathExplorerCoop && coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
+    const fromMxCoopFallback = !!(!fromMain && !fromCpu && isMathExplorerCoop && isMxPacket && mxGameTagOk);
     const fromMainForMx = fromMain || fromStoredMxWin || fromMxCoopFallback;
-    if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
+    if (isMathExplorerCoop && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
     }
 
@@ -1028,9 +1001,7 @@ function updatePreview(modeId){
 
     // In-game "나가기" from embedded MathExplorer iframe (return to room UI only)
     if (d.type === "mx_quit"){
-      // Some environments may not classify the iframe as "mainForMx" due to reloads/timing.
-      // Accept quit from the main game iframe as well.
-      if (!fromMainForMx && !fromMain) return;
+      if (!fromMainForMx) return;
       forceLobbyUI = true;
       try{ exitGameFullscreen(); }catch(_){ }
       try{ renderPlayers(); }catch(_){ }
@@ -1646,7 +1617,7 @@ else if (isCoop){
     startText = "혼자 시작";
     startAction = "start";
   } else if (modeId === "mathexplorer" && humanCount === 1){
-    // 수학 탐험대: 1~4인 협동 플레이(최대 4인). 혼자도 시작 가능.
+    // 수학 탐험가: 1~4인 협동 플레이(최대 4인). 혼자도 시작 가능.
     canStart = true;
     startText = "혼자 시작";
     startAction = "start";
@@ -1805,19 +1776,11 @@ function isMathExplorerCoopMode(){
 function postToMathExplorer(msg){
   try{
     if (!isMathExplorerCoopMode()) return;
-    const sent = new Set();
-    const sendWin = (w)=>{
-      try{
-        if (!w || typeof w.postMessage !== "function") return;
-        if (sent.has(w)) return;
-        sent.add(w);
-        w.postMessage(msg, "*");
-      }catch(_){ }
-    };
-    // MathExplorer only: some builds recreate/nest the iframe window and the cached source can go stale.
-    // Fan-out to both known targets (deduped) to avoid one-way relay (chat/selection packets missing).
-    sendWin(coop && coop.mxFrameWin);
-    sendWin(duel?.iframeEl?.contentWindow);
+    if (coop && coop.mxFrameWin && typeof coop.mxFrameWin.postMessage === "function") {
+      coop.mxFrameWin.postMessage(msg, "*");
+      return;
+    }
+    postTo(duel?.iframeEl, msg);
   }catch(_){ }
 }
 function postToCpu(msg){ postTo(cpuFrame.iframeEl, msg); }
@@ -2596,36 +2559,13 @@ try{
       // SuhakTokki relay: server -> iframe (generic packet)
       room.onMessage("sk_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
-        // IMPORTANT: preserve sender identity so the embedded game can route inputs/state.
-        // The game expects `from` (or `cid`) to be stable per remote peer.
-        const payload = Object.assign({}, inner || {});
-        if (payload.from == null && msg && msg.sid != null) payload.from = msg.sid;
-        if (payload.cid == null && payload.from != null) payload.cid = payload.from;
-        postToMain({ type:"sk_msg", msg: payload });
+        postToMain({ type:"sk_msg", msg: inner || {} });
       });
 
       // MathExplorer relay: server -> iframe (generic packet, stage2 coop hooks)
       room.onMessage("mx_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
-        // IMPORTANT: preserve sender identity so the embedded bridge can build remoteStates.
-        // The bridge expects msg.from to exist.
-        const payload = Object.assign({}, inner || {});
-        if (payload.from == null && msg && msg.sid != null) payload.from = msg.sid;
-
-        // Team game-over: if any player dies, everyone should return to the room.
-        // The embedded bridge broadcasts this as an mx_event with evt=game_over_all.
-        try{
-          const k = String(payload.kind || payload.t || '');
-          const evt = String(payload.evt || payload.event || '');
-          if ((k === 'mx_event' || k === 'event') && evt === 'game_over_all'){
-            // Let the iframe show its own game-over screen and then quit itself.
-            // Exiting the room page here was racing the in-game UI, so users only saw an abrupt return.
-            forceLobbyUI = true;
-            try{ postToMathExplorer({ type:"mx_show_gameover", reason:"game_over_all" }); }catch(_){ }
-            // Do not early-return: still relay into iframe so it can stop timers and freeze gameplay.
-          }
-        }catch(_){ }
-        postToMathExplorer({ type:"mx_msg", msg: payload });
+        postToMathExplorer({ type:"mx_msg", msg: inner || {} });
         try{
           // If bridge is receiving mx_msg but still waiting for game_start, re-push start payload.
           if (coop && coop.active){

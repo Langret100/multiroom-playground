@@ -724,17 +724,43 @@
       if (!G.host) G.host = {};
       if (!G.host.inputs) G.host.inputs = new Map();
       if (!G.host._moveByToken) G.host._moveByToken = new Map();
+      if (!G.host._clientReportedState) G.host._clientReportedState = new Map();
+
+      // Ensure we keep the strongest routing map up-to-date.
+      // Some room relays can drop joinToken on the initial join packet,
+      // but still forward it on later input packets. If that happens, movement
+      // looks like "rubber-banding" because the host never binds the token to the player.
+      if (!G.host._joinTokenToPlayer) G.host._joinTokenToPlayer = new Map();
 
       const pid = resolvePlayerIdFromMsg(msg);
       const mvx = clamp(msg.mvx || 0, -1, 1);
       const mvy = clamp(msg.mvy || 0, -1, 1);
       const at = now();
 
+      // Opportunistically bind joinToken -> pid when possible.
+      // This fixes cases where join/joinAck/state binding was delayed or stripped,
+      // but input packets still carry joinToken.
+      try{
+        const jtRaw = (msg && msg.joinToken != null) ? String(msg.joinToken) : '';
+        if (pid && jtRaw) {
+          const p = G.state && G.state.players && G.state.players[pid];
+          if (p && (!p.joinToken || String(p.joinToken) !== jtRaw)) {
+            p.joinToken = jtRaw;
+          }
+          G.host._joinTokenToPlayer.set(jtRaw, pid);
+        }
+      }catch(_){ }
+
       // Primary key: joinToken (per-iframe unique)
       let key = (msg && msg.joinToken != null) ? String(msg.joinToken) : '';
       if (!key && pid) {
         const p = G.state && G.state.players && G.state.players[pid];
         if (p && p.joinToken) key = String(p.joinToken);
+      }
+      // Fallback: embed sessionId (stable per tab / relay)
+      if (!key) {
+        const sid = (msg && msg.sessionId != null) ? String(msg.sessionId) : '';
+        if (sid) key = `sid:${sid}`;
       }
       // Fallback: cid/from (still stable per iframe)
       if (!key) {
@@ -747,6 +773,18 @@
         const p = G.state.players && G.state.players[pid];
         if (p) p.lastSeen = at;
         G.host.inputs.set(pid, { mvx, mvy, at });
+        try{
+          const hasPose = Number.isFinite(Number(msg && msg.px)) && Number.isFinite(Number(msg && msg.py));
+          if (hasPose) {
+            G.host._clientReportedState.set(pid, {
+              x: Number(msg.px), y: Number(msg.py),
+              vx: Number(msg.pvx || 0), vy: Number(msg.pvy || 0),
+              dir: Number.isFinite(Number(msg && msg.dir)) ? Number(msg.dir) : null,
+              facing: Number.isFinite(Number(msg && msg.facing)) ? Number(msg.facing) : null,
+              at
+            });
+          }
+        }catch(_){ }
       }
     }catch(_){ }
   }
@@ -2942,6 +2980,57 @@
           continue;
         }
       }
+      // Non-host human players: trust the latest pose reported by that client.
+      // This removes the host-side re-simulation / pull-back loop that caused visible rubber-banding.
+      try{
+        const rep = G.host && G.host._clientReportedState && G.host._clientReportedState.get(p.id);
+        const repAge = rep ? (now() - Number(rep.at || 0)) : 1e9;
+        // Treat remote human movement as client-driven for a longer window.
+        // Falling back to host-side re-simulation after ~220ms caused the classic
+        // "go a bit, then spring back" jitter whenever a packet was late.
+        if (!p.isBot && p.id !== hostPid && rep) {
+          let rx = Number(rep.x || 0);
+          let ry = Number(rep.y || 0);
+          if (repAge > 120 && repAge < 1800) {
+            const dtRep = Math.min(0.65, Math.max(0, repAge / 1000));
+            rx += Number(rep.vx || 0) * dtRep;
+            ry += Number(rep.vy || 0) * dtRep;
+          }
+          if (repAge < 1800) {
+            p.x = rx;
+            p.y = ry;
+            p.vx = Number(rep.vx || 0);
+            p.vy = Number(rep.vy || 0);
+            if (rep.dir != null) p.dir = rep.dir;
+            if (rep.facing != null) p.facing = rep.facing;
+            // Keep host-side render smoothing samples for remotes too.
+            try{
+              if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 110, k: 16, snapDist: TS * 7 };
+              const sm = G.remoteSmooth.remotes || (G.remoteSmooth.remotes = new Map());
+              let ex = sm.get(p.id);
+              const tNow = now();
+              if (!ex) {
+                ex = { rx: p.x, ry: p.y, samples: [{ t: tNow, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0 }], alive: !!p.alive, down: !!p.down, vent: !!p.vent };
+                sm.set(p.id, ex);
+              } else {
+                ex.alive = !!p.alive; ex.down = !!p.down; ex.vent = !!p.vent;
+                if (!ex.samples) ex.samples = [];
+                ex.samples.push({ t: tNow, x: p.x, y: p.y, vx: p.vx || 0, vy: p.vy || 0 });
+                if (ex.samples.length > 14) ex.samples.shift();
+              }
+            }catch(_){ }
+            continue;
+          }
+          // If the stream is briefly late, hold the last client pose instead of falling back
+          // to host-side re-simulation, which is what caused the visible pull-back.
+          if (repAge < 2600) {
+            p.vx = 0;
+            p.vy = 0;
+            continue;
+          }
+        }
+      }catch(_){ }
+
       const frozen = now() < p.frozenUntil;
 
       // Prefer movement intent keyed by joinToken (more robust than numeric playerId in embed mode).
@@ -2949,7 +3038,8 @@
       let inpRec = G.host.inputs.get(p.id) || { mvx: 0, mvy: 0, at: 0 };
       try{
         const key = (p.joinToken != null && String(p.joinToken) !== '') ? String(p.joinToken)
-          : ((p.clientId != null && String(p.clientId) !== '') ? `cid:${String(p.clientId)}` : '');
+          : ((p.sessionId != null && String(p.sessionId) !== '') ? `sid:${String(p.sessionId)}`
+            : ((p.clientId != null && String(p.clientId) !== '') ? `cid:${String(p.clientId)}` : ''));
         if (key && G.host._moveByToken && G.host._moveByToken.has(key)) {
           const rec = G.host._moveByToken.get(key);
           if (rec && (!inpRec.at || (rec.at || 0) >= inpRec.at)) inpRec = rec;
@@ -6538,8 +6628,9 @@ try{
 
       let wx = p.x, wy = p.y;
       let pDraw = p;
-      // Client-side smoothing for remote players (render-only)
-      if (G.net && !G.net.isHost && G.remoteSmooth && G.remoteSmooth.remotes) {
+      // Render smoothing for other players (host and guest alike).
+      // Never smooth my own avatar here; only remotes should use the buffered render pose.
+      if (G.net && G.remoteSmooth && G.remoteSmooth.remotes && Number(p.id || 0) !== Number(G.net.myPlayerId || 0)) {
         const ex = G.remoteSmooth.remotes.get(p.id);
         if (ex && typeof ex.rx === 'number' && typeof ex.ry === 'number') {
           wx = ex.rx;
@@ -8770,7 +8861,8 @@ try{
     const ny = me.y + me.vy * dt;
     moveWithCollision(me, nx, ny);
 
-    // soft-correct towards host auth position (reduces rubber-banding)
+    // With client-reported movement relayed by the host, only correct on very large desyncs
+    // or special state changes. Small drift should never yank the player backward.
     try{
       const ax = (typeof me._authX === 'number') ? me._authX : null;
       const ay = (typeof me._authY === 'number') ? me._authY : null;
@@ -8778,31 +8870,22 @@ try{
         const dx = ax - me.x;
         const dy = ay - me.y;
         const dist = Math.hypot(dx, dy);
-        if (dist > 0.5) {
-          if (dist > 64) {
-            me.x = ax;
-            me.y = ay;
-            me.vx = 0;
-            me.vy = 0;
-          } else {
-            const maxStep = Math.max(48, TS * 6) * dt;
-            const step = Math.min(dist, maxStep);
-            const nx2 = me.x + (dx / dist) * step;
-            const ny2 = me.y + (dy / dist) * step;
-            moveWithCollision(me, nx2, ny2);
-          }
+        const special = (!!me.down) || (!!me.vent);
+        // Do not softly pull the local player back during normal movement.
+        // Only snap on extreme desyncs or special transitions like death/vent.
+        if (dist > 640 || special) {
+          me.x = ax; me.y = ay; me.vx = 0; me.vy = 0;
         }
       }
     }catch(_){ }
   }
-  
-  // ---------- Remote player smoothing (non-host render) ----------
+// ---------- Remote player smoothing (non-host render) ----------
   // Non-host clients receive host snapshots with jitter and variable cadence.
   // We keep a per-player render state, dead-reckon using host velocities, and
   // smooth towards the predicted position each frame.
   function clientUpdateRemoteRender(dt) {
     const net = G.net;
-    if (!net || net.isHost) return;
+    if (!net) return;
     const rs = G.remoteSmooth;
     if (!rs || !rs.remotes) return;
 
@@ -8875,6 +8958,21 @@ try{
     const dt = Math.min(0.05, (t - lastFrame) / 1000);
     lastFrame = t;
 
+    // Capture host local input *before* simulation so the host's own movement
+    // uses the freshest stick/keyboard state this frame.
+    try {
+      if (G.net && G.net.isHost) {
+        const pid0 = Number(G.net.myPlayerId || 0);
+        if (pid0) {
+          G.host.inputs.set(pid0, {
+            mvx: clamp(G.local.mvx || 0, -1, 1),
+            mvy: clamp(G.local.mvy || 0, -1, 1),
+            at: t,
+          });
+        }
+      }
+    } catch (_) {}
+
     // Host disconnect watchdog (non-host clients): if we stop receiving host packets,
     // reset back to the room instead of getting stuck.
     try {
@@ -8910,7 +9008,7 @@ try{
 // - 33ms마다: 플레이어 이동만(가벼운 패킷) 전송
 // - 180ms마다: 전체 상태(미션/문/시간 등) 스냅샷 전송
       if (!G.host._lastPlayersBroadcast) G.host._lastPlayersBroadcast = 0;
-      if (t - G.host._lastPlayersBroadcast > 33) {
+      if (t - G.host._lastPlayersBroadcast > 25) {
         G.host._lastPlayersBroadcast = t;
         broadcastPlayers();
       }
@@ -8940,23 +9038,42 @@ try{
       }
     }
 
+    // predict my movement locally before packaging the pose we send to the host.
+    // Sending the pre-prediction pose made the host relay a slightly older position,
+    // which looked like "go forward, then get pulled back" on both host and guest screens.
+    try { clientPredictLocalMove(dt); } catch (_) {}
+
     // client input send
     if (G.net && inPlay()) {
       // If I'm the host, apply my input locally (do NOT rely on server echo)
       // so solo/practice play always responds.
       const pid = Number(G.net.myPlayerId || 0);
       if (G.net.isHost && pid){
-        G.host.inputs.set(pid, { mvx: clamp(G.local.mvx || 0, -1, 1), mvy: clamp(G.local.mvy || 0, -1, 1), at: now() });
+        // Host input is already captured at the top of the frame before hostTick().
       } else {
         // Always send movement intent using joinToken as fallback.
         // This fixes: "방장 외 이동이 안 됨" when joinAck was dropped and the client
         // never bound myPlayerId (pid=0). The host can resolve pid via joinToken.
         if (!G.local._lastInputAt) G.local._lastInputAt = 0;
-        if (t - G.local._lastInputAt > 33) {
+        if (t - G.local._lastInputAt > 16) {
           G.local._lastInputAt = t;
           const jt = G.net.joinToken || null;
-          // Send movement intent (host-authoritative). joinToken is the primary identity in embed.
-          G.net.post({ t: 'moveIntent', playerId: pid || 0, joinToken: jt, mvx: G.local.mvx, mvy: G.local.mvy });
+          const meNow = G.state && G.state.players ? G.state.players[pid] : null;
+          // Hybrid: movement is effectively client-driven, but the host still relays the latest
+          // reported pose so every client converges to the same visible result.
+          G.net.post({
+            t: 'moveIntent',
+            playerId: pid || 0,
+            joinToken: jt,
+            mvx: G.local.mvx,
+            mvy: G.local.mvy,
+            px: meNow ? meNow.x : undefined,
+            py: meNow ? meNow.y : undefined,
+            pvx: meNow ? meNow.vx : undefined,
+            pvy: meNow ? meNow.vy : undefined,
+            dir: meNow ? meNow.dir : undefined,
+            facing: meNow ? meNow.facing : undefined,
+          });
         }
         // Best-effort: if we still haven't bound our id, occasionally request a resync.
         if (!pid) {
@@ -8968,9 +9085,6 @@ try{
         }
       }
     }
-
-    // predict my movement locally when I'm not the host (prevents choppy self-move)
-    try { clientPredictLocalMove(dt); } catch (_) {}
 
     // smooth remote players (non-host) every frame
     try { clientUpdateRemoteRender(dt); } catch (_) {}
@@ -9363,11 +9477,11 @@ try{
 
     // state (all clients)
     net.on('state', (m) => {
+      // Host already owns the authoritative simulation. Re-applying echoed network
+      // snapshots on the host can reintroduce older positions into the live state and
+      // make the host's own movement feel choppy/sticky. Ignore echoed state on host.
+      if (net.isHost) return;
       try { net._lastHostSeenAt = now(); } catch (_) {}
-      // client에선 state를 그대로 반영
-      if (net.isHost) {
-        // 호스트도 UI 반영을 위해 받아도 됨
-      }
       G.phase = m.phase;
       if (typeof m.started !== 'undefined') G.state.started = !!m.started;
       // Embed: hide the HTML boot loading overlay as soon as the match is running.
@@ -9397,7 +9511,10 @@ try{
           const dx = (inc.x || 0) - (prev.x || 0);
           const dy = (inc.y || 0) - (prev.y || 0);
           const err = Math.hypot(dx, dy);
-          const hard = (err > 64) || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || (!!inc.vent) || (!!prev.vent);
+          const lastInpAt = (G.local && G.local._lastInputAt) ? G.local._lastInputAt : 0;
+          const movingNow = (Math.hypot((G.local&&G.local.mvx)||0, (G.local&&G.local.mvy)||0) > 0.08);
+          const recentlyMoving = movingNow || ((now() - lastInpAt) < 320);
+          const hard = (err > 420) || (!!inc.down !== !!prev.down) || (!!inc.alive !== !!prev.alive) || (!!inc.vent) || (!!prev.vent);
 
           // copy authoritative fields but keep predicted position unless we must hard snap
           for (const [k, v] of Object.entries(inc)) {
@@ -9405,11 +9522,13 @@ try{
             prev[k] = v;
           }
 
-          prev._authX = (inc.x || 0);
-          prev._authY = (inc.y || 0);
-          prev._authAt = now();
-
+          // For the local player, avoid feeding every host snapshot back into movement.
+          // That feedback loop was the main source of visible pull-back / rubber-banding.
+          // Keep authoritative positions only for major state transitions.
           if (hard) {
+            prev._authX = (inc.x || 0);
+            prev._authY = (inc.y || 0);
+            prev._authAt = now();
             prev.x = inc.x;
             prev.y = inc.y;
             prev.vx = inc.vx || 0;
@@ -9488,7 +9607,7 @@ try{
       // Smooth remote players on clients so other players look less 'choppy'.
       try{
         if (!net.isHost) {
-          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 220, k: 20, snapDist: TS * 7 };
+          if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 110, k: 16, snapDist: TS * 7 };
           const sm = G.remoteSmooth.remotes;
           const tNow = now();
           const myId = Number(net.myPlayerId || 0);
@@ -9616,10 +9735,15 @@ G.state.missions = m.missions;
         if (typeof up.isBot === 'boolean') p.isBot = !!up.isBot;
         if (up.clientId != null) p.clientId = String(up.clientId);
         if (up.joinToken != null) p.joinToken = up.joinToken;
-        if (typeof up.x === 'number') p.x = up.x;
-        if (typeof up.y === 'number') p.y = up.y;
-        if (typeof up.vx === 'number') p.vx = up.vx;
-        if (typeof up.vy === 'number') p.vy = up.vy;
+        const rosterMyId = Number(net.myPlayerId || 0);
+        const rosterIsMe = (rosterMyId && pid === rosterMyId);
+        const rosterInPlay = (effectivePhase() === 'play');
+        if (!(rosterIsMe && rosterInPlay)) {
+          if (typeof up.x === 'number') p.x = up.x;
+          if (typeof up.y === 'number') p.y = up.y;
+          if (typeof up.vx === 'number') p.vx = up.vx;
+          if (typeof up.vy === 'number') p.vy = up.vy;
+        }
         if (typeof up.facing === 'number') p.facing = up.facing;
         if (typeof up.dir === 'number') p.dir = up.dir;
         p.vent = up.vent ? 1 : 0;
@@ -9711,7 +9835,7 @@ G.state.missions = m.missions;
 
       // Keep a render buffer for other players.
       try{
-        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 220, k: 20, snapDist: TS * 7 };
+        if (!G.remoteSmooth) G.remoteSmooth = { remotes: new Map(), bufferMs: 110, k: 16, snapDist: TS * 7 };
       }catch(_){ }
 
       const tNow = now();
@@ -9743,11 +9867,13 @@ G.state.missions = m.missions;
           const dx = (up.x || 0) - (p.x || 0);
           const dy = (up.y || 0) - (p.y || 0);
           const err = Math.hypot(dx, dy);
-          const hard = (err > 64) || (!!up.down !== !!p.down) || (!!up.alive !== !!p.alive) || (!!up.vent) || (!!p.vent);
+          const lastInpAt = (G.local && G.local._lastInputAt) ? G.local._lastInputAt : 0;
+          const movingNow = (Math.hypot((G.local&&G.local.mvx)||0, (G.local&&G.local.mvy)||0) > 0.08);
+          const recentlyMoving = movingNow || ((tNow - lastInpAt) < 320);
+          const hard = (err > 420) || (!!up.down !== !!p.down) || (!!up.alive !== !!p.alive) || (!!up.vent) || (!!p.vent);
 
-          p._authX = (up.x || 0);
-          p._authY = (up.y || 0);
-          p._authAt = tNow;
+          // Same rule as full state snapshots: don't continuously feed my rendered
+          // host position back into movement unless the divergence is truly huge.
 
           // Copy non-pos fields
           if (typeof up.alive === 'boolean') p.alive = !!up.alive;
@@ -9759,6 +9885,9 @@ G.state.missions = m.missions;
           if (typeof up.missionStage === 'number') p.missionStage = up.missionStage;
 
           if (hard) {
+            p._authX = (up.x || 0);
+            p._authY = (up.y || 0);
+            p._authAt = tNow;
             p.x = up.x; p.y = up.y;
             p.vx = up.vx || 0; p.vy = up.vy || 0;
             if (typeof up.facing === 'number') p.facing = up.facing;
