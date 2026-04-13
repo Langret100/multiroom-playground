@@ -1,0 +1,1277 @@
+:root{
+  --bg1:#f4f9ff;
+  --bg2:#e3f0ff;
+  --panel:rgba(255,255,255,.82);
+  --line:rgba(15,45,70,.18);
+  --text:#0b1b2b;
+  --muted:#4a6a86;
+  --accent:#1c8cff;
+  --warn:#c08900;
+  --danger:#d93333;
+  --ok:#0f9d58;
+  --shadow: 0 10px 30px rgba(0,0,0,.12);
+  --radius:14px;
+  --font: system-ui, -apple-system, Segoe UI, Roboto, Apple SD Gothic Neo, "Noto Sans KR", sans-serif;
+  /* visualViewport-aware sizing (mobile keyboard) */
+  --vvh: 1vh;
+  --kb: 0px;
+  --tgDockH: 0px;
+}
+
+*{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+html,body{ position:relative; height:100%; margin:0; font-family:var(--font); color:var(--text); background: transparent; }
+a{ color:inherit; text-decoration:none; }
+button, input, select{ font:inherit; }
+small{ color:var(--muted); }
+
+.app{ position:relative; z-index:1;
+  height:100%;
+  display:flex;
+  flex-direction:column;
+}
+
+/* Pre-login: keep only the auth modal visible (prevents bright bars behind the modal) */
+body.logged-out .topbar,
+body.logged-out .main,
+body.logged-out #statusBanner{
+  display:none !important;
+}
+body.logged-out{
+  overflow:hidden;
+}
+
+
+.topbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:8px;
+  padding:8px 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.72));
+  backdrop-filter: blur(10px);
+  border-bottom:1px solid var(--line);
+}
+
+.topbar.slim{
+  padding:6px 8px;
+}
+.nickChip{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  padding:6px 8px;
+  border-radius:999px;
+  font-size:11px;
+}
+.iconbtn{
+  width:34px;
+  height:34px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border:1px solid rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
+  color:var(--text);
+  border-radius:12px;
+  cursor:pointer;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+  font-size:16px;
+  line-height:1;
+}
+.iconbtn:active{ transform: translateY(1px); }
+
+.brand{
+  display:flex; align-items:center; gap:10px;
+}
+.brand .logo{
+  width:34px; height:34px; border-radius:10px;
+  background: radial-gradient(circle at 30% 30%, #6df, #1583ff 55%, #0b2c66);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.25), var(--shadow);
+}
+.brand .title{
+  line-height:1.1;
+}
+.brand .title b{ font-size:15px; }
+.brand .title div{ font-size:12px; color:var(--muted); }
+
+.actions{ display:flex; gap:8px; align-items:center; }
+.btn{
+  border:1px solid rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
+  color:var(--text);
+  padding:8px 10px;
+  border-radius:12px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+  cursor:pointer;
+}
+.btn.primary{
+  border-color: rgba(53,208,255,.45);
+  background: linear-gradient(180deg, rgba(53,208,255,.28), rgba(53,208,255,.10));
+}
+.btn.danger{
+  border-color: rgba(255,77,77,.45);
+  background: linear-gradient(180deg, rgba(255,77,77,.22), rgba(255,77,77,.08));
+}
+.btn:disabled{ opacity:.45; cursor:not-allowed; }
+
+/* Button micro-interactions */
+.btn, .iconbtn{
+  transition: transform 140ms ease, box-shadow 140ms ease, filter 140ms ease;
+  will-change: transform;
+}
+@media (hover:hover){
+  .btn:hover:not(:disabled), .iconbtn:hover{
+    transform: translateY(-1px);
+    filter: brightness(1.03);
+  }
+}
+.btn:active:not(:disabled){ transform: translateY(1px) scale(0.98); }
+.iconbtn:active{ transform: translateY(1px) scale(0.98); }
+
+.main{
+  flex:1;
+  display:flex;
+  gap:10px;
+  padding:10px;
+  min-height:0;
+}
+
+.panel{
+  background: var(--panel);
+  border:1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+}
+
+.panelHeader{
+  /* Header bar thickness: reduced to ~50% (requested) */
+  padding:2px 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.02));
+  border-bottom:1px solid var(--line);
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+/* Make the status badge inside headers thinner as well */
+.panelHeader .badge{ padding:2px 6px; }
+.panelHeader h2{
+  margin:0;
+  font-size:12px;
+  letter-spacing:.2px;
+}
+.panelHeader .sub{
+  font-size:11px;
+  color:var(--muted);
+}
+
+.rooms{
+  flex:1;
+  min-height:0;
+}
+.tableWrap{
+  flex:1;
+  min-height:0;
+  overflow:auto;
+}
+table{
+  width:100%;
+  border-collapse:collapse;
+  table-layout: fixed;
+  font-size:12px;
+}
+thead th{
+  position:sticky;
+  top:0;
+  z-index:2;
+  text-align:left;
+  padding:8px 8px;
+  background: linear-gradient(180deg, rgba(255,255,255,.85), rgba(255,255,255,.65));
+  backdrop-filter: blur(10px);
+  border-bottom:1px solid var(--line);
+  color: var(--text);
+}
+
+/* Room list column sizing (mobile-first) */
+.col-status{ width: 92px; }
+.col-game{ width: 110px; }
+.col-count{ width: 56px; text-align:center; }
+.col-join{ width: 66px; }
+.col-title{ width: auto; }
+
+td, th{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tdTitle .title1{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tdCount{ text-align:center; }
+.tdJoin{ text-align:right; }
+
+tbody td{
+  padding:10px 10px;
+  border-bottom:1px solid var(--line);
+  vertical-align:middle;
+}
+tbody tr{
+  cursor:pointer;
+}
+tbody tr:hover{
+  background: rgba(255,255,255,.05);
+}
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.14);
+  background: rgba(0,0,0,.18);
+  font-size:12px;
+  color: #d9efff;
+}
+.dot{
+  width:10px; height:10px; border-radius:99px;
+  box-shadow: 0 0 0 2px rgba(0,0,0,.25) inset;
+}
+.dot.ok{ background: var(--ok); }
+.dot.warn{ background: var(--warn); }
+.dot.danger{ background: var(--danger); }
+.muted{ color: var(--muted); }
+
+.bottomBar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  padding:10px 12px;
+  border-top:1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+}
+.kpi{
+  font-size:12px;
+  color: var(--muted);
+}
+.kpi b{ color: var(--text); }
+
+.chatLog{
+  flex:1;
+  min-height:0;
+  overflow:auto;
+  padding:10px 12px;
+  background: rgba(0,0,0,.14);
+}
+
+/* Chat constraints: prevent logs from growing the whole page */
+.splitRight .chatLog{
+  flex: 0 0 auto;
+  height: clamp(160px, 26vh, 300px);
+}
+.roomBottom .panel.chat{
+  /* More room for chatting in lobby/room */
+  height: clamp(340px, 46vh, 620px);
+}
+.roomBottom .chatLog{
+  flex: 1;
+  min-height: 0;
+}
+.chatLine{
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.msg{
+  display:flex;
+  gap:8px;
+  margin:0 0 8px 0;
+  line-height:1.35;
+}
+.msg .who{
+  font-weight:700;
+  color:#cfefff;
+  white-space:nowrap;
+}
+.msg .text{ color:var(--text); }
+.msg .time{ color:var(--muted); font-size:11px; margin-left:auto; }
+
+.chatInput{
+  display:flex;
+  gap:8px;
+  padding:10px 12px;
+  border-top:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+}
+.chatInput input{
+  flex:1;
+  padding:10px 12px;
+  border-radius:12px;
+  background: rgba(0,0,0,.28);
+  border:1px solid rgba(255,255,255,.12);
+  color:var(--text);
+  outline:none;
+}
+.chatInput input:focus{
+  border-color: rgba(53,208,255,.55);
+  box-shadow: 0 0 0 3px rgba(53,208,255,.12);
+}
+
+.splitRight{
+  width: 340px;
+  min-width: 300px;
+  max-width: 440px;
+}
+body.page-lobby .splitRight{
+  width: 420px;
+  min-width: 360px;
+  max-width: 520px;
+}
+body.page-lobby .splitRight .chatLog{
+  flex: 1 1 auto;
+  min-height: 220px;
+  height: auto;
+}
+body.page-lobby .splitRight .userList{
+  flex: 0 0 auto;
+  height: 112px;
+  max-height: 112px;
+  overflow: auto;
+}
+.userList{
+  flex:1;
+  overflow:auto;
+  padding:10px 12px;
+}
+.user{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 10px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  background: rgba(0,0,0,.14);
+  margin-bottom:10px;
+}
+.user .avatar{
+  width:28px;height:28px;border-radius:10px;
+  background: radial-gradient(circle at 30% 30%, #fff, #70c7ff 35%, #1451a5);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+}
+.user .name{ font-weight:700; }
+.user .meta{ margin-left:auto; color:var(--muted); font-size:12px; }
+
+/* room page */
+.roomGrid{
+  flex:1;
+  display:flex;
+  flex-direction:column;
+  min-height:0;
+}
+.roomTop{
+  display:flex; gap:10px; padding:10px; min-height:0; flex:1;
+  align-items: stretch;
+}
+.canvasWrap{
+  flex:1; min-height:0;
+  display:flex;
+  flex-direction:column;
+}
+.canvasWrap canvas{
+  width:100%;
+  height:100%;
+  background: rgba(0,0,0,.25);
+  border-top:1px solid var(--line);
+}
+.playersPanel{
+  width: 360px;
+  min-width: 320px;
+  max-width: 420px;
+}
+.pList{
+  padding:10px 12px;
+  overflow:auto;
+  flex:1;
+}
+.pRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  padding:10px 10px;
+  border:1px solid rgba(255,255,255,.10);
+  border-radius:14px;
+  background: rgba(0,0,0,.14);
+  margin-bottom:10px;
+}
+.pRow .pill{
+  margin-left:auto;
+  font-size:11px;
+  padding:3px 7px;
+  border-radius:999px;
+  border:1px solid rgba(255,255,255,.12);
+  background: rgba(0,0,0,.18);
+}
+.pRow .pill.ready{ border-color: rgba(48,224,123,.45); }
+.pRow .pill.wait{ border-color: rgba(255,204,51,.45); }
+.controls{
+  display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line);
+  background: rgba(255,255,255,.03);
+}
+
+
+/* Togester in-game docked chat (shown only during gameplay/practice) */
+.canvasWrap{ position: relative; }
+
+.tgDock, .tgDock *{ touch-action: auto; }
+
+.tgDock{
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--kb, 0px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  background: rgba(255,255,255,0.86);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid rgba(0,0,0,.10);
+  z-index: 50;
+}
+
+.tgDockLog{
+  height: 96px; /* ~4 lines */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 6px 8px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,.08);
+  background: rgba(255,255,255,.55);
+}
+
+.tgDockLog .chatLine{
+  font-size: 0.92rem;
+  line-height: 1.2;
+}
+
+.tgDockInputRow{
+  display: flex;
+  gap: 8px;
+}
+
+.tgDockInputRow .input{
+  flex: 1;
+}
+
+/* Togester: in-game docked chat should stick to viewport bottom and avoid mobile keyboard gaps */
+body.tg-mode #tgDock{
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: var(--kb);
+}
+
+/* When Togester is running fullscreen, keep the iframe/game area above the dock (and keyboard) */
+body.tg-mode.in-game #duelFrameWrap{
+  position: fixed !important;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--kb) + var(--tgDockH));
+  border-radius: 0 !important;
+}
+body.tg-mode.in-game #duelFrame{
+  height: 100% !important;
+}
+
+
+
+/* Utility */
+.hidden{ display:none !important; }
+
+/* Modal */
+.modalBackdrop{
+  position:fixed; inset:0;
+  z-index: 10000;
+  background: rgba(0,0,0,.55);
+  display:none;
+  align-items:center;
+  justify-content:center;
+  padding:14px;
+}
+.modal{
+  width:min(520px, 100%);
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(12px);
+  border:1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  max-height: calc(100vh - 28px);
+}
+.modalHeader{
+  padding:12px 14px;
+  border-bottom:1px solid var(--line);
+  display:flex; align-items:center; justify-content:space-between;
+
+  flex: 0 0 auto;
+}
+.modalHeader b{ font-size:14px; }
+.modalBody{ padding:12px 14px; 
+  overflow:auto;
+  -webkit-overflow-scrolling: touch;
+}
+.field{ margin-bottom:12px; }
+.field label{ display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+.field input, .field select{
+  width:100%;
+  padding:10px 12px;
+  border-radius:12px;
+  background: rgba(0,0,0,.28);
+  border:1px solid rgba(255,255,255,.12);
+  color:var(--text);
+  outline:none;
+}
+.modalFooter{
+  padding:12px 14px;
+  border-top:1px solid var(--line);
+  display:flex; gap:10px; justify-content:flex-end;
+
+  flex: 0 0 auto;
+}
+
+/* Auth (login modal) */
+.authForm{ margin:0; }
+.authRow{ display:flex; gap:10px; margin-top:8px; }
+
+.authRow.three{
+  display:flex;
+  gap:10px;
+  flex-wrap:nowrap;
+}
+.authRow.three .btn{
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 10px 8px;
+  font-size: 13px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+
+.authRow .btn{
+  border:1px solid rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
+  color:var(--text);
+  padding:8px 10px;
+  border-radius:12px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+  cursor:pointer;
+}
+#loginStatus{ min-height: 1.2em; }
+
+/* Login brand logo (above the login modal) */
+#loginModal.modalBackdrop{
+  /* place the modal a bit lower so the logo is always visible (mobile included) */
+  align-items:flex-start;
+  padding-top: calc(14px + env(safe-area-inset-top));
+}
+#loginModal .loginBrand{
+  position:absolute;
+  top: calc(14px + env(safe-area-inset-top));
+  left:50%;
+  transform: translateX(-50%);
+  width: min(96vw, 840px);
+  max-width: 840px;
+  /* Ensure the logo is never visually covered by the login panel (desktop). */
+  z-index: 3;
+  pointer-events:none;
+  display:flex;
+  justify-content:center;
+}
+#loginModal .loginBrand img{
+  width:100%;
+  height:auto;
+  /* Make the logo noticeably larger while still staying within the viewport */
+  max-height: 48vh;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 22px rgba(0,0,0,.35));
+}
+#loginModal .modal{
+  /* Bring the login box up a bit on mobile while leaving room for the logo */
+  margin-top: clamp(120px, 22vh, 220px);
+  z-index: 2;
+}
+
+/* Desktop: prevent the enlarged logo from being covered by the login box. */
+@media (min-width: 921px){
+  #loginModal .loginBrand{
+    width: min(88vw, 900px);
+    max-width: 900px;
+  }
+  #loginModal .loginBrand img{
+    /* keep it big, but not so tall that it collides with the modal */
+    max-height: 30vh;
+  }
+  #loginModal .modal{
+    /* push the login panel down a bit more on desktop */
+    margin-top: clamp(240px, 34vh, 360px);
+  }
+}
+
+.modalBackdrop.show{ display:flex; }
+
+/* Responsive - mobile first */
+@media (max-width: 920px){
+  .main{ flex-direction:column; }
+  .splitRight{ width:auto; max-width:none; min-width:0; }
+  .roomTop{ flex-direction:column; }
+  .playersPanel{ width:auto; max-width:none; }
+  body.page-room .playersPanel{ width:auto; min-width:0; max-width:none; }
+  body.page-room .pList{ max-height: 120px; }
+
+  /* Mobile: while a game is in progress, hide the separate player list panel
+     so the play area doesn't get squashed. */
+  body.is-playing:not(.mode-togester) .playersPanel{ display:none !important; }
+
+  /* Mobile lobby: show only ~4 users at once; scroll for the rest */
+  body.page-lobby .splitRight .userList{
+    flex: 0 0 auto;
+    height: 56px;
+    max-height: 56px;
+    overflow: auto;
+  }
+
+  /* Mobile lobby: slightly shorter chat log so the room list can be taller */
+  body.page-lobby .splitRight .chatLog{
+    flex: 1 1 auto;
+    min-height: 170px;
+    height: auto;
+  }
+
+  /* Mobile lobby: compact user rows so 4 fit comfortably */
+  body.page-lobby .userList .userItem{
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(255,255,255,.10);
+    line-height: 1.25;
+  }
+  body.page-lobby .userList .userItem:last-child{ border-bottom: 0; }
+
+}
+
+
+
+/* ===== v5: mobile-first tweaks + status banner + room list columns ===== */
+.status{
+  margin: 10px 12px 0 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.75);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.status.error{ border-color: rgba(255,77,77,.6); background: rgba(60,10,10,.45); }
+.status.info{ border-color: rgba(53,208,255,.55); }
+
+.panelHeader h2{ font-size: clamp(0.95rem, 3.4vw, 1.05rem); }
+.panelHeader .sub{ font-size: clamp(0.78rem, 2.8vw, 0.9rem); }
+
+tbody td{ padding: 10px 8px; }
+.tdState{ white-space:nowrap; overflow: visible; text-overflow: clip; }
+.tdState .dot{ margin-right:8px; }
+.tdState .stateTxt{ font-weight:700; font-size:0.92rem; }
+.tdCount{ width: 56px; text-align:right; white-space:nowrap; }
+.tdStatus{ width: 92px; white-space:nowrap; }
+.tdJoin{ width: 66px; text-align:right; }
+.tdMode{ width: 110px; }
+.tdTitle .title1{ font-weight: 800; font-size: 0.98rem; line-height: 1.1; }
+.tdTitle .title2{ font-size: 0.78rem; margin-top: 4px; }
+.modeTag{
+  display:inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,.04);
+  font-size: 0.82rem;
+  /* Allow explicit newlines (mobile: drawanswer -> "그림\n맞추기") */
+  white-space: pre-line;
+  text-align: center;
+}
+.modeTag.tetris{ border-color: rgba(53,208,255,.55); }
+.modeTag.suika{ border-color: rgba(255,146,84,.55); }
+.modeTag.coop{ border-color: rgba(48,224,123,.55); }
+.modeTag.snake{ border-color: rgba(188, 109, 255, .60); }
+
+/* Room rows: entry-disabled visual */
+.roomRow.disabled{ opacity: 0.72; }
+.roomRow.playing{ opacity: 0.62; filter: saturate(0.65); background: rgba(255,255,255,.03); }
+.roomRow.playing:hover{ background: rgba(255,255,255,.03); }
+.btn.small{ padding: 7px 9px; font-size: 0.82rem; }
+
+/* Lobby table spacing tweaks */
+.tdCount{ padding-right: 4px; }
+.tdJoin{ padding-left: 6px; padding-right: 6px; }
+.tdMode{ padding-right: 6px; }
+
+.chatInputRow{
+  display:flex;
+  gap: 8px;
+  padding: 10px;
+  border-top: 1px solid var(--line);
+}
+.chatInputRow .input{
+  flex:1;
+}
+
+/* Room layout: add bottom chat panel */
+.roomGrid{
+  gap: 12px;
+}
+.roomBottom{
+  padding: 0 12px 12px 12px;
+}
+.roomTop{
+  padding: 12px 12px 0 12px;
+}
+
+/* Mobile optimizations */
+@media (max-width: 480px){
+  .app{ padding-bottom: env(safe-area-inset-bottom); }
+  .topbar{
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .title b{ font-size: 1.05rem; }
+  .title .muted{ font-size: 0.82rem; }
+  .actions{ gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .btn{
+  border:1px solid rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
+  color:var(--text);
+  padding:8px 10px;
+  border-radius:12px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+  cursor:pointer;
+}
+  .badge{ font-size: 0.88rem; }
+  .panel{ border-radius: 14px; }
+  /* Header bar thickness: reduced to ~50% (requested) */
+  .panelHeader{ padding: 5px 12px; }
+  tbody td{ padding: 10px 6px; }
+  
+  .tdJoin{ width: 78px; }
+  .tdCount{ width: 44px; }
+  .users{ display:none; } /* 로비 유저목록 패널 숨김(채팅/방목록 우선) */
+  .chatLog{ min-height: 160px; }
+
+  /* Lobby (mobile): make the chat log ~2 lines shorter so rooms list grows */
+  body.page-lobby .chatLog{ min-height: 120px; }
+  body.page-lobby .splitRight .chatLog{ min-height: 170px; height: auto; }
+
+  /* Lobby (mobile): show 4 users; the rest scroll */
+  body.page-lobby .splitRight .userList{ height: 33px; max-height: 33px; padding: 6px 8px; }
+  .controls .btn{
+  border:1px solid rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
+  color:var(--text);
+  padding:8px 10px;
+  border-radius:12px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+  cursor:pointer;
+}
+  /* mobile room table: make title wide, others narrow */
+  .col-status{ width:74px; }
+  .col-game{ width:66px; }
+  .col-count{ width:48px; }
+  .col-join{ width:62px; }
+  tbody td{ padding: 12px 6px; }
+
+}
+
+/* Very small devices */
+@media (max-width: 360px){
+  .tdJoin{ display:none; }
+  .col-join{ width:0; }
+  .tdCount{ width: 44px; }
+  .chatInputRow{ padding: 8px; }
+  .chatInputRow .btn{
+  border:1px solid rgba(0,0,0,.12);
+  background: linear-gradient(180deg, rgba(0,0,0,.02), rgba(0,0,0,.00));
+  color:var(--text);
+  padding:8px 10px;
+  border-radius:12px;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.55);
+  cursor:pointer;
+}
+}
+
+.legendRow{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  padding:10px 12px 12px 12px;
+  justify-content:space-between;
+  border-top:1px solid var(--line);
+}
+
+
+.iconBtn{border:1px solid var(--line); background:rgba(255,255,255,.78); color:var(--text); border-radius:12px; padding:8px 10px; font-size:14px; line-height:1; box-shadow:0 6px 12px rgba(0,0,0,.12);}
+.iconBtn:active{transform:translateY(1px);}
+
+
+.audioEnableBtn{position:fixed;right:12px;bottom:12px;z-index:9999;background:rgba(16,38,64,.85);border:1px solid rgba(96,170,255,.35);color:#eaf3ff;border-radius:12px;padding:10px 12px;font-size:18px;line-height:1;box-shadow:0 8px 20px rgba(0,0,0,.35)}
+.audioEnableBtn:active{transform:scale(.98)}
+
+
+/* --- Stackga UI (mobile-first) --- */
+.stackga-ui.hidden{ display:none; }
+.stackga-ui{ margin-top: 10px; }
+.sg-grid{ display:flex; gap:10px; align-items:flex-start; }
+.sg-col{ flex:1 1 auto; min-width:0; }
+.sg-side{ width: 42%; max-width: 180px; }
+.sg-card{ position:relative; background: rgba(0,0,0,0.18); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:10px; }
+.sg-tag{ position:absolute; top:8px; left:10px; font-size:12px; opacity:0.9; background: rgba(0,0,0,0.35); padding:3px 8px; border-radius:999px; }
+.sg-next{ margin-top:10px; }
+.sg-card canvas{ width:100%; height:auto; display:block; }
+@media (max-width: 420px){
+  .sg-side{ width: 40%; }
+  .sg-tag{ font-size:11px; }
+}
+
+
+/* Duel embedded games */
+.duel-ui{ width:100%; }
+.duel-info{ display:flex; flex-direction:column; gap:4px; padding:8px 10px; border-radius:12px; background:rgba(255,255,255,0.04); margin-bottom:8px; }
+.duel-line{ font-weight:700; font-size:14px; }
+.duel-sub{ font-size:12px; }
+.duel-frameWrap{ width:100%; border-radius:0; overflow:hidden; background:transparent; }
+.duel-frame{ width:100%; height:520px; border:0; display:block; background:transparent; }
+@media (max-width: 480px){
+  .duel-frame{ height:560px; }
+}
+.duel-spectate{ padding:10px; border-radius:12px; background:rgba(255,255,255,0.03); }
+.mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+
+.duel-bracket{ margin-top:6px; }
+
+/* Tournament UI: 카드형 + 얇은 연결선(혼합형) */
+.bracketGrid{
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap:10px;
+  align-items:stretch;
+}
+.bracketCol{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+.bracketCard{
+  position:relative;
+  padding:8px 10px;
+  border-radius:12px;
+  background: rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.10);
+  font-size:12px;
+  min-width:0;
+}
+.bracketCard .tag{ font-size:10px; opacity:0.75; }
+.bracketCard .names{ margin-top:4px; display:flex; flex-direction:column; gap:2px; min-width:0; }
+.bracketCard .name{
+  font-weight:650;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.bracketCard .name.lose{ opacity:0.55; text-decoration:line-through; }
+.bracketCard .vs{ font-size:10px; opacity:0.6; }
+.bracketCard.done{ opacity:0.70; }
+.bracketCard.active{ border-color: rgba(56,189,248,0.45); box-shadow: 0 0 0 1px rgba(56,189,248,0.12) inset; }
+.bracketCard.bye{ opacity:0.85; }
+
+/* 연결선 */
+.bracketCol.semi .bracketCard::after{
+  content:"";
+  position:absolute;
+  right:-10px;
+  top:50%;
+  width:10px;
+  height:1px;
+  background: rgba(255,255,255,0.18);
+}
+.bracketCol.final{ position:relative; }
+.bracketCol.final::before{
+  content:"";
+  position:absolute;
+  left:-10px;
+  top:12px;
+  bottom:12px;
+  width:1px;
+  background: rgba(255,255,255,0.18);
+}
+.bracketCol.final .bracketCard::before{
+  content:"";
+  position:absolute;
+  left:-10px;
+  top:50%;
+  width:10px;
+  height:1px;
+  background: rgba(255,255,255,0.18);
+}
+
+.bracketChampion{
+  margin-top:6px;
+  padding:8px 10px;
+  border-radius:12px;
+  background: rgba(34,197,94,0.12);
+  border:1px solid rgba(34,197,94,0.22);
+  font-weight:800;
+  font-size:12px;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+@media (max-width:420px){
+  .bracketGrid{ gap:8px; }
+  .bracketCard{ padding:7px 9px; font-size:11px; }
+  .bracketCol.semi .bracketCard::after{ right:-8px; width:8px; }
+  .bracketCol.final::before{ left:-8px; }
+  .bracketCol.final .bracketCard::before{ left:-8px; width:8px; }
+}
+.resultOverlay.hidden{ display:none; }
+.resultOverlay{
+  position:fixed;
+  inset:0;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 1000;
+  padding: 16px;
+}
+.resultCard{
+  width: min(460px, 92vw);
+  background: rgba(255,255,255,0.92);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 18px 18px 16px;
+  text-align:center;
+  box-shadow: var(--shadow);
+  animation: resultPop .18s ease-out both;
+}
+@keyframes resultPop{
+  from{ transform: translateY(10px) scale(0.98); opacity:0; }
+  to{ transform: translateY(0) scale(1); opacity:1; }
+}
+.resultTitle{
+  font-weight: 900;
+  font-size: 20px;
+  letter-spacing: -0.2px;
+}
+.resultDesc{
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.resultOverlay.win .resultTitle{ color: var(--ok); }
+.resultOverlay.lose .resultTitle{ color: var(--danger); }
+
+/* Modal - small screens */
+@media (max-width: 480px){
+  .modalBackdrop{ padding:8px; }
+  .modal{ border-radius:14px; }
+}
+
+
+.legendBadges{ display:flex; align-items:center; gap:8px; }
+
+.audioEnableBtn{ display:none !important; }
+
+
+/* Background image (swapable) */
+:root{
+  --bg-image: url("../assets/images/backgrounds/basewall.jpg");
+}
+
+/* page background */
+body{
+  position: relative;
+}
+body::before{
+  content:"";
+  position: fixed;
+  inset: 0;
+  background-image: var(--bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: 0.92;
+  z-index: 0;
+  pointer-events: none;
+}
+body::after{
+  content:"";
+  position: fixed;
+  inset: 0;
+  background: linear-gradient(180deg, var(--bg1), var(--bg2));
+  z-index: 0;
+  opacity: 0.22;
+  pointer-events: none;
+}
+
+/* Panels become slightly translucent so background can show through,
+   while text remains fully opaque. */
+.panel{
+  background: rgba(255,255,255,0.82) !important;
+  border-color: rgba(15,23,42,0.14) !important;
+}
+.topbar{
+  background: rgba(255,255,255,0.78) !important;
+  border-bottom-color: rgba(15,23,42,0.14) !important;
+  backdrop-filter: blur(8px);
+}
+
+/* Pre-game room preview */
+.gamePreview{
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-top:1px solid var(--line);
+}
+.gamePreview .gpThumb{
+  width: 96px;
+  height: 64px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(28,140,255,.35), rgba(28,140,255,.10));
+  box-shadow: inset 0 0 0 1px rgba(15,23,42,.10);
+}
+.gamePreview .gpTitle{ font-weight: 800; }
+.gamePreview .gpSub{ font-size: 12px; }
+.gamePreview .gpDesc{
+  font-size: 12px;
+  line-height: 1.35;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Game preview thumbnails (per game) */
+.gamePreview .gpThumb{
+  position: relative;
+  overflow: hidden;
+}
+.gamePreview .gpThumb::after{
+  content: attr(data-label);
+  position:absolute; inset:0;
+  display:flex; align-items:center; justify-content:center;
+  font-weight: 900;
+  font-size: 14px;
+  letter-spacing: -0.2px;
+  color: rgba(255,255,255,.92);
+  text-shadow: 0 2px 10px rgba(0,0,0,.35);
+  white-space: pre-line;
+  text-align: center;
+  line-height: 1.05;
+  padding: 0 6px;
+}
+.gamePreview .gpThumb.has-art::after{
+  content:"";
+}
+.gamePreview .gpThumb.has-art::before{
+  display:none;
+}
+
+.gamePreview .gpThumb.label-drawanswer-mobile::after{
+  content: "그림\A맞추기";
+  white-space: pre;
+}
+.gamePreview .gpThumb::before{
+  content:"";
+  position:absolute; inset:-30%;
+  background: radial-gradient(circle at 30% 30%, rgba(255,255,255,.35), rgba(255,255,255,0) 55%);
+  transform: rotate(12deg);
+  opacity: .55;
+}
+.gamePreview .gpThumb[data-game="stackga"]{ background-image:url("../assets/images/game_thumbs/stackga.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="suika"]{ background-image:url("../assets/images/game_thumbs/suika.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="drawanswer"]{ background-image:url("../assets/images/game_thumbs/drawanswer.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="togester"]{ background-image:url("../assets/images/game_thumbs/togester.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="suhaktokki"]{ background-image:url("../assets/images/game_thumbs/suhaktokki.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="mathexplorer"]{ background-image:url("../assets/images/game_thumbs/mathexplorer.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="backrooms3d"]{ background-image:url("../assets/images/game_thumbs/backrooms3d.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="snaketail"]{ background-image:url("../assets/images/game_thumbs/snaketail.webp"); background-size:cover; background-position:center; }
+/* In room lobby: hide the heavy game area, keep just preview */
+body:not(.in-game) #duelUI,
+body:not(.in-game) #stackgaUI,
+body:not(.in-game) #gameCanvas,
+body:not(.in-game) .canvasWrap > .controls{
+  display: none !important;
+}
+/* In lobby, the game panel should not take the whole screen */
+body:not(.in-game) .canvasWrap{
+  flex: 0 0 auto;
+}
+body.in-game .gamePreview{ display: none !important; }
+
+/* Start button styling */
+.btn.start{
+  background: rgba(28,140,255,.92);
+  border-color: rgba(28,140,255,.35);
+  color: #fff;
+}
+.btn.start:disabled{ opacity: .45; }
+
+/* Remove mobile focus blue rectangles while keeping keyboard focus visible */
+button:focus{ outline: none; }
+button:focus-visible,
+.btn:focus-visible,
+input:focus-visible{
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(28,140,255,.20);
+}
+
+/* Start shake */
+@keyframes uiShake{
+  0%{ transform: translate3d(0,0,0); }
+  20%{ transform: translate3d(-3px, 1px, 0); }
+  40%{ transform: translate3d(3px, -1px, 0); }
+  60%{ transform: translate3d(-2px, -1px, 0); }
+  80%{ transform: translate3d(2px, 1px, 0); }
+  100%{ transform: translate3d(0,0,0); }
+}
+body.shake .canvasWrap{ animation: uiShake 320ms linear; }
+.modal{
+  background: rgba(255,255,255,0.92) !important;
+  backdrop-filter: blur(10px);
+}
+.tableHead, .roomTable thead th{
+  background: rgba(255,255,255,0.88) !important;
+}
+
+/* Fullscreen game mode (room.html) */
+body.in-game .topbar,
+body.in-game .roomBottom,
+body.in-game .panelHeader,
+body.in-game .roomSide,
+body.in-game .panel.players,
+body.in-game .panel.chat{
+  display:none !important;
+}
+body.in-game .playersPanel{
+  display:none !important;
+}
+body.in-game .roomTop{
+  padding:0 !important;
+}
+body.in-game .canvasWrap{
+  border-radius:0 !important;
+  border:0 !important;
+  background: transparent !important;
+}
+body.in-game .duel-ui{
+  display:flex !important;
+  flex-direction:column;
+  height: 100vh;
+  padding: 0 !important;
+  background: transparent !important;
+}
+body.in-game .duel-info{ display:none !important; }
+body.in-game .duel-frameWrap{
+  flex:1;
+  border-radius:0 !important;
+  background: transparent !important;
+}
+body.in-game .duel-frame{
+  height: 100vh !important;
+}
+
+/* When the mobile keyboard is open while typing in the Togester dock,
+   use visualViewport height so the game area shrinks accordingly. */
+body.kb-open.in-game .duel-ui{
+  height: calc(var(--vvh, 1vh) * 100);
+}
+body.kb-open.in-game .duel-frame{
+  height: calc(var(--vvh, 1vh) * 100) !important;
+}
+
+
+/* System chat lines */
+.chatLine.sys{ color: var(--muted); }
+.chatLine.sys .sysMsg{ font-weight: 600; }
+
+
+/* Game controls hint shown in room preview (e.g., Togester) */
+.gameControlsHint{
+  margin-top: 10px;
+  font-size: 13px;
+  line-height: 1.25;
+  opacity: .9;
+}
+@media (max-width: 520px){
+  .gameControlsHint{ font-size: 12px; }
+}
+
+/* Embedded room overlay (used to keep browser fullscreen across lobby -> room)
+   Most browsers exit fullscreen on top-level navigations. When the user is
+   already in fullscreen and enters a room, we render room.html in an iframe
+   overlay instead.
+*/
+.embedRoomOverlay{
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+}
+.embedRoomOverlay iframe{
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+
+/* v16 layout fixes */
+html, body, .app, .main, .panel, .splitRight, .roomGrid, .roomTop, .canvasWrap, .roomBottom { box-sizing: border-box; }
+body.page-lobby .main > .panel,
+body.page-lobby .splitRight,
+body.page-lobby .rooms{ min-width:0; }
+body.page-lobby .splitRight,
+body.page-lobby .rooms,
+body.page-lobby .panel{ max-width:100%; }
+body.page-lobby .splitRight .chatLog,
+body.page-lobby .splitRight .userList,
+body.page-room .roomBottom .chatLog{ overflow:auto; min-height:0; max-height:none; }
+body.page-lobby .splitRight .chatLog{ height:clamp(180px, 28vh, 320px); }
+body.page-lobby .splitRight .userList{ height:112px; max-height:112px; }
+body.page-room .topbar{ gap:10px; align-items:center; }
+body.page-room .topbar .brand{ min-width:0; flex:1 1 auto; }
+body.page-room .topbar .title{ min-width:0; }
+body.page-room .topbar .title b,
+body.page-room .topbar .title .muted{ display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+body.page-room .topbar .actions{ flex:0 0 auto; flex-wrap:nowrap; align-items:center; }
+body.page-room .topbar .actions .btn,
+body.page-room .topbar .actions .iconbtn{ white-space:nowrap; }
+@media (max-width: 920px){
+  body.page-lobby .main{ align-items:stretch; }
+  body.page-lobby .main > .panel,
+  body.page-lobby .splitRight{ width:100%; max-width:100%; min-width:0; }
+}
+@media (max-width: 520px){
+  body.page-lobby .main{ gap:10px; }
+  body.page-lobby .rooms,
+  body.page-lobby .splitRight,
+  body.page-lobby .panel{ width:100%; max-width:100%; min-width:0; overflow:hidden; }
+  body.page-lobby .tableWrap,
+  body.page-lobby .chatLog,
+  body.page-lobby .chatInput,
+  body.page-lobby .userList,
+  body.page-lobby .legendRow{ width:100%; max-width:100%; box-sizing:border-box; }
+  body.page-lobby .modal{ width:min(92vw, 420px); max-width:92vw; }
+  body.page-room .topbar{ flex-wrap:nowrap; gap:8px; }
+  body.page-room .topbar .actions{ gap:6px; flex-wrap:nowrap; }
+  body.page-room .topbar .actions .btn{ padding:8px 9px; font-size:12px; }
+  body.page-room .topbar .actions .iconbtn{ width:36px; height:36px; }
+}
+
+.roomRow.disabled .modeTag{ filter:grayscale(1); opacity:0.72; }
+.roomRow.disabled .title1, .roomRow.disabled .stateTxt{ color:#a7adb8; }
+.roomRow.disabled .btn.small{ background:#5a616d; border-color:#5a616d; color:#d9dde6; cursor:not-allowed; }

@@ -1,0 +1,3708 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
+<title>Backrooms 3D (Solo Test) - Clean v4</title>
+<style>
+  :root{
+    --safeB: env(safe-area-inset-bottom, 0px);
+    --safeT: env(safe-area-inset-top, 0px);
+    --chatH: 156px;
+  }
+  html,body{margin:0;height:100%;background:#05070c;color:#e9eefc;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;overscroll-behavior:none}
+  canvas{display:block;touch-action:none}
+
+  #hud{position:fixed;left:12px;right:12px;top:calc(10px + var(--safeT));z-index:30;display:flex;gap:10px;flex-wrap:wrap;align-items:center;pointer-events:none}
+  .pill{pointer-events:auto;display:inline-flex;gap:8px;align-items:center;padding:8px 10px;border-radius:12px;background:rgba(20,24,32,.72);border:1px solid rgba(255,255,255,.10);backdrop-filter: blur(6px);font-size:13px}
+  #helpBtn{cursor:pointer}
+
+  #prompt{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--chatH) + 76px + var(--safeB));z-index:26;
+          padding:10px 12px;border-radius:12px;background:rgba(20,24,32,.78);border:1px solid rgba(255,255,255,.12);
+          font-weight:900;display:none;max-width:min(92vw,520px)}
+  #tip{display:none;position:fixed;left:12px;bottom:calc(var(--chatH) + 12px + var(--safeB));z-index:25;
+       width:min(520px,92vw);padding:10px 12px;border-radius:12px;background:rgba(20,24,32,.72);
+       border:1px solid rgba(255,255,255,.10);font-size:12px;line-height:1.35}
+  @media (max-width:520px){ #tip{display:none} #tip.show{display:block} }
+
+  #chatWrap{position:fixed;left:12px;right:12px;bottom:calc(12px + var(--safeB));z-index:20;width:auto;max-width:520px}
+  #chatLog{height:108px;overflow:auto;padding:10px 12px;border-radius:12px;background:rgba(20,24,32,.72);border:1px solid rgba(255,255,255,.10);font-size:12px}
+  #chatRow{display:flex;gap:8px;margin-top:8px}
+  #chatIn{flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:rgba(8,10,16,.8);color:#e9eefc;padding:10px 12px;outline:none}
+  #sendBtn{border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#5067ff;color:white;padding:10px 14px;font-weight:900;cursor:pointer}
+
+  #loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:99;
+           background:radial-gradient(ellipse at center, rgba(10,12,18,.80), rgba(0,0,0,.92))}
+  #loading .box{display:flex;flex-direction:column;align-items:center;gap:10px;padding:18px;border-radius:16px;
+                background:rgba(20,24,32,.78);border:1px solid rgba(255,255,255,.10);min-width:230px}
+  #loading .t{font-size:14px;font-weight:900}
+  #loading .s{font-size:12px;opacity:.9}
+  #loading .spin{width:28px;height:28px;border-radius:999px;border:3px solid rgba(255,255,255,.18);border-top-color:rgba(255,255,255,.85);animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  #fallback{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:98;background:rgba(0,0,0,.72)}
+  #fallback .box{display:flex;flex-direction:column;align-items:center;gap:12px;padding:18px;border-radius:16px;
+                 background:rgba(20,24,32,.92);border:1px solid rgba(255,255,255,.10);max-width:340px;text-align:center}
+  #fallback button{cursor:pointer}
+  #c2d{position:fixed;inset:0;display:none;z-index:1;background:#0b0e14}
+
+  #mathModal{position:fixed;inset:0;display:none;align-items:center;justify-content:center;z-index:60;background:rgba(4,6,12,.55);backdrop-filter: blur(3px)}
+  #mathModal.show{display:flex}
+  #mathCard{width:min(92vw,420px);padding:16px;border-radius:18px;background:rgba(20,24,32,.96);border:1px solid rgba(255,255,255,.14);box-shadow:0 16px 60px rgba(0,0,0,.38)}
+  #mathTitle{font-size:16px;font-weight:900;margin-bottom:6px}
+  #mathProgress{font-size:12px;opacity:.82;margin-bottom:10px}
+  #mathQuestion{font-size:28px;font-weight:900;text-align:center;margin:8px 0 14px}
+  #mathRow{display:flex;gap:8px}
+  #mathInput{flex:1;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(8,10,16,.85);color:#e9eefc;padding:12px 14px;outline:none;font-size:18px}
+  #mathOk,#mathCancel{border-radius:12px;border:1px solid rgba(255,255,255,.12);padding:12px 14px;font-weight:900;cursor:pointer}
+  #mathOk{background:#5067ff;color:#fff}
+  #mathCancel{background:rgba(255,255,255,.06);color:#e9eefc}
+  #mathHint{font-size:12px;opacity:.85;margin-top:8px}
+
+  /* minimap */
+  #minimap{position:fixed;right:12px;top:calc(10px + var(--safeT));width:170px;height:170px;border-radius:14px;z-index:22;
+           background:rgba(20,24,32,.55);border:1px solid rgba(255,255,255,.10);backdrop-filter: blur(6px);}
+  #brActionRow{position:fixed;right:18px;top:calc(188px + var(--safeT));z-index:23;display:flex;gap:6px;align-items:center}
+  #brExitBtn,#bgmBtn{padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.14);background:rgba(20,24,32,.82);color:#eef3ff;font-size:12px;font-weight:900;
+    backdrop-filter: blur(6px);cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.22)}
+  #bgmBtn{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;font-size:15px}
+  #brExitBtn:hover,#bgmBtn:hover{background:rgba(36,42,60,.9)}
+  @media (max-width:520px){ #minimap{width:145px;height:145px; right:10px; top:calc(10px + var(--safeT));} #brActionRow{right:12px;top:calc(162px + var(--safeT));} #brExitBtn,#bgmBtn{font-size:11px;padding:5px 9px;} #bgmBtn{width:30px;height:28px;padding:0;font-size:14px} }
+
+  /* mobile overlay */
+  #mobile{position:fixed;inset:0;z-index:40;pointer-events:none}
+  .rbtn{position:fixed;right:12px;display:flex;align-items:center;justify-content:center;pointer-events:auto;
+        border-radius:16px;background:rgba(20,24,32,.78);border:1px solid rgba(255,255,255,.12);backdrop-filter: blur(6px);
+        color:#e9eefc;font-weight:900;overflow:hidden;}
+
+  #btnE{width:56px;height:56px;bottom:calc(var(--chatH) + 16px + var(--safeB));}
+
+  #joyBase{position:fixed;left:0;top:0;width:104px;height:104px;border-radius:999px;display:none;pointer-events:auto;
+           background:rgba(20,24,32,.45);border:1px solid rgba(255,255,255,.10)}
+  #joyKnob{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:48px;height:48px;border-radius:999px;
+           background:rgba(233,238,252,.18);border:1px solid rgba(255,255,255,.20)}
+  @media (pointer:fine){ #mobile{display:block} #joyBase{display:none !important} }
+
+
+/* Sprint meter (sprint charge indicator) */
+  .rbtn .meter{position:absolute;inset:0;pointer-events:none;border-radius:16px;
+    /* Used portion overlay: make it clearly visible but never fully opaque */
+    background:
+      linear-gradient(to bottom,
+        rgba(0,0,0,0.82) 0%,
+        rgba(0,0,0,0.88) 55%,
+        rgba(0,0,0,0.92) 100%),
+      repeating-linear-gradient(135deg,
+        rgba(255,255,255,0.10) 0px,
+        rgba(255,255,255,0.10) 6px,
+        rgba(255,255,255,0.00) 6px,
+        rgba(255,255,255,0.00) 14px);
+    opacity:1.0;
+    box-shadow:
+      inset 0 0 0 2px rgba(255,255,255,0.14),
+      inset 0 0 18px rgba(0,0,0,0.55);
+    transform-origin: top;
+    transform: scaleY(0);
+    will-change: transform;
+  }
+
+  .rbtn .meterEdge{position:absolute;left:8px;right:8px;height:2px;pointer-events:none;border-radius:2px;
+    background:rgba(150,240,255,0.92);
+    box-shadow:0 0 10px rgba(150,240,255,0.45), 0 0 2px rgba(255,255,255,0.35);
+    top:0; transform: translateY(0);
+    opacity:0.95;
+  }
+
+  #countdown{position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:50;display:none;font-weight:800;letter-spacing:0.3px;}
+
+  /* UI trim: only keep time, door progress, help */
+  #pName,#pKey,#pMode,#huntTimer{display:none !important;}
+
+
+/* HUD cleanup: keep only time, door progress, and ? */
+#pRole, #pKey, #pMode, #pMonster, #p3d, #pName { display:none !important; }
+
+</style>
+</head>
+<body>
+  <div id="loading"><div class="box"><div class="spin"></div><div class="t">로딩 중…</div><div class="s" id="loadingSub">three.js 준비</div></div></div>
+  <div id="fallback"><div class="box">
+    <div class="t" style="font-weight:900">3D 시작 실패</div>
+    <div class="s" id="fbMsg" style="font-size:12px;opacity:.9">three.js 로드/초기화 실패. 2D 테스트로 전환할 수 있어요.</div>
+    <button class="pill" id="fbBtn">2D 모드 시작</button>
+  </div></div>
+  <canvas id="c2d"></canvas>
+
+
+  <div id="mathModal" aria-hidden="true">
+    <div id="mathCard">
+      <div id="mathTitle">철창 탈출 문제</div>
+      <div id="mathProgress">0 / 7</div>
+      <div id="mathQuestion">3 + 4 = ?</div>
+      <div id="mathRow">
+        <input id="mathInput" inputmode="numeric" autocomplete="off" placeholder="정답 입력"/>
+        <button id="mathOk">확인</button>
+      </div>
+      <div id="mathHint">초등 3학년 수준 사칙연산 7문제를 맞히면 탈출합니다.</div>
+    </div>
+  </div>
+
+  <div id="hud">
+    <div class="pill" id="pName">나: 토끼</div>
+    <div class="pill" id="pKey">🔑 0</div>
+    <div class="pill" id="pTime">⏱ 05:00</div>
+    <div class="pill" id="pDoor">문: 0/3</div>
+    <div class="pill" id="pMode">🎮 3D</div>
+    <button class="pill" id="helpBtn">❓</button>
+  </div>
+
+  <div id="countdown" class="pill">괴물 해방까지 10</div>
+  <div id="huntTimer" class="pill" style="position:fixed;top:64px;right:12px;z-index:50;display:none;font-weight:900">술래 제한 90</div>
+
+  <div id="prompt"></div>
+
+  <div id="helpModal" style="position:fixed;inset:0;z-index:80;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.55);padding:18px;">
+    <div style="max-width:420px;width:100%;border-radius:16px;background:rgba(20,24,32,.92);border:1px solid rgba(255,255,255,.14);backdrop-filter: blur(8px);padding:14px 14px 12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div id="helpTitle" style="font-weight:900">토끼 도움말</div>
+        <button id="helpClose" class="pill" style="cursor:pointer">닫기</button>
+      </div>
+      <div id="helpBody" style="margin-top:10px;font-size:13px;line-height:1.6;color:rgba(233,238,252,.92)"></div>
+        <div>미니맵(우측): 내 위치/방향, 주요 오브젝트(문/철창/특수표시)를 표시합니다. 현재 버전에서는 테스트용 표식이 일부 남아 있을 수 있습니다.</div>
+        <div>탈출문 위에는 <b>형광 EXIT 표지</b>가 붙어 있고, 미니맵에서 <b>문 위치 표시는 녹색 점</b>입니다.</div>
+
+        <div style="margin-top:12px;font-weight:900;margin-bottom:6px;">주의</div>
+        <div style="opacity:.9">멀티 테스트 버전입니다. 역할/동기화는 방 서버 기준으로 적용됩니다.</div>
+      </div>      </div>
+    </div>
+  </div>
+
+  <div id="tip">
+    W/S 전진·후진 · A/D 회전(시야 포함) · E 상호작용 · 가까운 책장 E로 쓰러뜨리기 · 카트/큰 공은 밀어서 이동<br/>
+    (싱글 테스트) 열쇠 사용 시 새 열쇠 1개 재생성 · 중앙 철창 · 철창 수학 7문제 탈출 가능 · 문 3회 해제 후 탈출 · G: 괴물 AI<br/>
+    당근은 맵에 최대 5개 유지 · 괴물은 문 1회 10초 봉인 가능 · 2번 잡히면 유령화(이동/채팅만 가능) · 모바일: 왼쪽 조이스틱, 오른쪽 E 버튼
+  </div>
+
+  <div id="chatWrap">
+    <div id="chatLog"></div>
+    <div id="chatRow">
+      <input id="chatIn" placeholder="채팅 입력..." autocomplete="off"/>
+      <button id="sendBtn">전송</button>
+    </div>
+  </div>
+
+  <canvas id="minimap"></canvas>
+  <div id="brActionRow"><button id="bgmBtn" type="button" aria-label="배경음 켜기/끄기" title="배경음">🔊</button><button id="brExitBtn" type="button">나가기</button></div>
+
+  <div id="mobile">
+    <div id="joyBase"><div id="joyKnob"></div></div>
+    <div class="rbtn" id="btnE"><span id="btnELabel">E</span><div class="meter" id="sprintMeter"></div><div class="meterEdge" id="sprintMeterEdge"></div></div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+with(window){
+(function(){
+  try{
+    const qs = new URLSearchParams(location.search);
+    const roomId = qs.get('roomId') || '';
+    const sid = qs.get('sid') || '';
+    const nick = qs.get('nick') || '';
+    const host = String(qs.get('host') || '');
+    window.__BR_ROOM_ID__ = roomId;
+    window.__BR_BOOT_ID__ = sid;
+    window.__BR_BOOT_NICK__ = nick;
+    window.__BR_BOOT_HOST__ = (host === '1');
+    window.__BR_BOOT_SEAT__ = Number(qs.get('seat') || -1);
+    window.__BR_START__ = null;
+    const seed = 0;
+    if (seed > 0){
+      let s = seed >>> 0;
+      Math.random = function(){ s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    }
+  }catch(_){ }
+})();
+}
+</script>
+<script>
+
+const $ = (id)=>document.getElementById(id);
+const loading = $("loading");
+const loadingSub = $("loadingSub");
+const fallback = $("fallback");
+const fbBtn = $("fbBtn");
+const fbMsg = $("fbMsg");
+const c2d = $("c2d");
+const promptEl = $("prompt");
+const tip = $("tip");
+const helpModal=$("helpModal");
+const helpClose=$("helpClose");
+const helpTitle=$("helpTitle");
+const helpBody=$("helpBody");
+window.__brUiState = window.__brUiState || { playerRole:'rabbit', rabbitGhost:false };
+function renderHelp(){
+  const ui = window.__brUiState || { playerRole:'rabbit', rabbitGhost:false };
+  const uiPlayerRole = String(ui.playerRole || 'rabbit');
+  const uiRabbitGhost = !!ui.rabbitGhost;
+  const common = `
+    <div><b>조작</b> W/S 이동 · A/D 회전 · E 상호작용/질주</div>
+    <div style="opacity:.82;margin-top:4px;">모바일: 왼쪽 조이스틱 · 오른쪽 E</div>
+    <div style="margin-top:10px"><b>공통</b> 🥕 당근은 최대 5개 유지, 먹으면 5초 버프</div>
+  `;
+  if(uiPlayerRole==='monster'){
+    helpTitle.textContent = '괴물 도움말';
+    helpBody.innerHTML = common + `
+      <div style="margin-top:10px"><b>목표</b> 토끼를 잡아 탈출을 막기</div>
+      <div style="margin-top:6px"><b>시작</b> 12시 방에 10초 갇힌 뒤 출발</div>
+      <div style="margin-top:6px"><b>질주</b> 시작하면 5초간 끊지 못함. 시작 1.5초 동안 토끼 위치가 미니맵에 표시</div>
+      <div style="margin-top:6px"><b>문 봉인</b> 탈출문 앞에서 1번만, 10초 봉인</div>
+      <div style="margin-top:6px"><b>열쇠 시야</b> 바닥 열쇠는 안 보이고, 토끼가 들고 있으면 머리 위 열쇠만 보임</div>
+      <div style="margin-top:6px"><b>책장</b> 넘어진 책장에 빨리 닿으면 2초 기절, 나중엔 부숴 공으로 만들 수 있음</div>
+    `;
+  } else {
+    helpTitle.textContent = uiRabbitGhost ? '유령 도움말' : '토끼 도움말';
+    helpBody.innerHTML = common + (uiRabbitGhost ? `
+      <div style="margin-top:10px"><b>상태</b> 2번 잡혀 유령이 됨</div>
+      <div style="margin-top:6px"><b>가능</b> 이동, 구경, 채팅</div>
+      <div style="margin-top:6px"><b>불가</b> 열쇠 줍기, 문 열기, 철창 열기, 책장 상호작용</div>
+    ` : `
+      <div style="margin-top:10px"><b>목표</b> 열쇠를 문에 3번 써서 탈출</div>
+      <div style="margin-top:6px"><b>열쇠</b> 사용하면 새 열쇠 1개가 랜덤 위치에 다시 생성</div>
+      <div style="margin-top:6px"><b>잡힘</b> 열쇠를 든 채 잡히면 열쇠는 랜덤 위치로 이동</div>
+      <div style="margin-top:6px"><b>철창</b> 다른 토끼가 열쇠로 열어주거나, 안에서 사칙연산 7문제 풀면 탈출</div>
+      <div style="margin-top:6px"><b>주의</b> 2번 잡히면 유령이 되어 상호작용 불가</div>
+      <div style="margin-top:6px"><b>책장</b> E로 쓰러뜨려 괴물을 기절시킬 수 있음</div>
+    `);
+  }
+}
+window.renderHelp = renderHelp;
+window.helpRender = renderHelp;
+$("helpBtn").onclick = ()=>{ renderHelp(); helpModal.style.display="flex"; };
+$("helpBtn").addEventListener("pointerdown", (e)=>{ e.preventDefault(); renderHelp(); helpModal.style.display="flex"; });
+helpClose.addEventListener("click", ()=>{ helpModal.style.display="none"; });
+helpModal.addEventListener("click",(e)=>{ if(e.target===helpModal) helpModal.style.display="none"; });
+function openHelp(){ try{ renderHelp(); }catch(_){ } helpModal.style.display="flex"; }
+$("helpBtn")?.addEventListener("click", (e)=>{ e.preventDefault(); openHelp(); });
+$("helpBtn")?.addEventListener("pointerdown", (e)=>{ e.preventDefault(); openHelp(); });
+addEventListener("keydown", (e)=>{
+  if(document.activeElement===chatIn) return;
+  if(e.key==='F1' || e.key==='?' || (e.shiftKey && e.key==='/')){
+    e.preventDefault();
+    openHelp();
+  }
+});
+
+
+function setSub(t){ if(loadingSub) loadingSub.textContent = t; }
+function hideLoading(){ if(loading) loading.style.display="none"; }
+function reset3DBootState(){ try{ window.__BR3D_RUNNING__ = false; }catch(_){} }
+function cleanup3D(){
+  try{ if(window.__BR3D_RAF_ID__){ cancelAnimationFrame(window.__BR3D_RAF_ID__); window.__BR3D_RAF_ID__ = 0; } }catch(_){}
+  try{ const olds=[...document.querySelectorAll("canvas[data-br3d-main=\"1\"]")]; olds.forEach(c=>{ try{ c.remove(); }catch(_){} }); }catch(_){}
+  try{ if(window.__BR3D_RENDERER__){ window.__BR3D_RENDERER__.dispose?.(); window.__BR3D_RENDERER__ = null; } }catch(_){}
+  reset3DBootState();
+}
+function showFallback(msg){
+  cleanup3D();
+  hideLoading();
+  if(msg) fbMsg.textContent = msg;
+  fallback.style.display="flex";
+}
+
+function addChat(t){
+  const log = $("chatLog");
+  const div = document.createElement("div");
+  div.textContent = t;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+const chatIn = $("chatIn");
+let chatMode = false;
+chatIn.addEventListener("keydown", (e)=>{
+  if(e.key==="Enter"){
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if(sendChat()) exitChat();
+    return;
+  }
+  if(e.key==="Escape"){
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    exitChat();
+    return;
+  }
+  e.stopPropagation();
+});
+
+let playerName = "토끼";
+let seekerView = false; // 디버그/테스트용: 술래 시점이면 바닥 열쇠가 안 보이게
+
+function sendChat(){
+  const v = chatIn.value.trim();
+  if(!v) return false;
+  addChat("나: "+v);
+  chatIn.value="";
+  return true;
+}
+
+function clearControlState(){
+  try{ keysDown.w=0; keysDown.a=0; keysDown.s=0; keysDown.d=0; }catch(e){}
+  try{ shiftHeld = false; }catch(e){}
+  try{ setSprintHold(false); }catch(e){}
+}
+
+function enterChat(){
+  chatMode = true;
+  clearControlState();
+  chatIn.focus();
+  try{ chatIn.setSelectionRange(chatIn.value.length, chatIn.value.length); }catch(e){}
+}
+
+function exitChat(){
+  chatMode = false;
+  clearControlState();
+  chatIn.blur();
+}
+
+$("sendBtn").addEventListener("click", ()=>{
+  if(sendChat()) exitChat();
+});
+
+// PC: Enter toggles chat mode.
+// - If not typing: Enter focuses chat input
+// - If typing: Enter sends and returns to control
+addEventListener("keydown",(e)=>{
+  if(e.key!=="Enter") return;
+  if(document.activeElement === chatIn) return;
+  e.preventDefault();
+  enterChat();
+});
+
+function updateChatH(){
+  const h = Math.ceil($("chatWrap").getBoundingClientRect().height);
+  document.documentElement.style.setProperty("--chatH", h+"px");
+}
+addEventListener("resize", updateChatH);
+addEventListener("orientationchange", updateChatH);
+setTimeout(updateChatH, 0);
+
+function start2D(){
+  fallback.style.display="none";
+  hideLoading();
+  $("pMode").textContent = "🧭 2D";
+  c2d.style.display="block";
+  const ctx = c2d.getContext("2d");
+  c2d.width=innerWidth; c2d.height=innerHeight;
+  ctx.fillStyle="#0b0e14"; ctx.fillRect(0,0,c2d.width,c2d.height);
+  addChat("[2D] three.js 없이 테스트(간단). 3D 환경에서 테스트 권장.");
+}
+fbBtn.addEventListener("click", start2D, {once:true});
+
+function showPrompt(t){ promptEl.textContent=t; promptEl.style.display="block"; }
+function hidePrompt(){ promptEl.style.display="none"; }
+
+  const BGM_STORAGE_KEY = 'backrooms3d_bgm_enabled';
+  const bgmBtn = $("bgmBtn");
+  const bgmAudio = new Audio('./back.mp3');
+  bgmAudio.loop = true;
+  bgmAudio.preload = 'auto';
+  bgmAudio.volume = 0.18;
+  let bgmEnabled = true;
+  try{
+    const saved = localStorage.getItem(BGM_STORAGE_KEY);
+    if(saved === '0') bgmEnabled = false;
+  }catch(_){ }
+  function updateBgmButton(){
+    if(!bgmBtn) return;
+    bgmBtn.textContent = bgmEnabled ? '🔊' : '🔇';
+    bgmBtn.setAttribute('aria-pressed', bgmEnabled ? 'true' : 'false');
+  }
+  async function syncBgmPlayback(){
+    try{
+      if(!bgmEnabled){ bgmAudio.pause(); return; }
+      await bgmAudio.play();
+    }catch(_){ }
+  }
+  if(bgmBtn){
+    bgmBtn.addEventListener('click', async ()=>{
+      bgmEnabled = !bgmEnabled;
+      try{ localStorage.setItem(BGM_STORAGE_KEY, bgmEnabled ? '1' : '0'); }catch(_){ }
+      updateBgmButton();
+      await syncBgmPlayback();
+    });
+  }
+  updateBgmButton();
+
+  // ---------------- Audio (simple synth SFX) ----------------
+  let audioCtx = null, master = null;
+  function ensureAudio(){
+    if(audioCtx) return;
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    master = audioCtx.createGain();
+    master.gain.value = 0.15;
+    master.connect(audioCtx.destination);
+  }
+  function resumeAudio(){
+    try{ ensureAudio(); if(audioCtx.state==="suspended") audioCtx.resume(); }catch(e){}
+    try{ syncBgmPlayback(); }catch(e){}
+  }
+  addEventListener("pointerdown", resumeAudio, {passive:true});
+  addEventListener("keydown", resumeAudio, {passive:true});
+
+  function beep(freq=440, dur=0.08, type="sine", vol=0.6){
+    try{
+      ensureAudio();
+      const t=audioCtx.currentTime;
+      const o=audioCtx.createOscillator();
+      const g=audioCtx.createGain();
+      o.type=type; o.frequency.setValueAtTime(freq,t);
+      g.gain.setValueAtTime(0.0001,t);
+      g.gain.exponentialRampToValueAtTime(vol,t+0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+      o.connect(g); g.connect(master);
+      o.start(t); o.stop(t+dur+0.02);
+    }catch(e){}
+  }
+  // monster sprint loop
+  let mLoop=null, mLoopGain=null;
+  function monsterSprintSfx(on){
+    try{
+      ensureAudio();
+      if(on){
+        if(mLoop) return;
+        mLoop = audioCtx.createOscillator();
+        mLoop.type="sawtooth";
+        mLoop.frequency.value = 75;
+        mLoopGain = audioCtx.createGain();
+        mLoopGain.gain.value = 0.0001;
+        mLoop.connect(mLoopGain); mLoopGain.connect(master);
+        mLoop.start();
+        const t=audioCtx.currentTime;
+        mLoopGain.gain.exponentialRampToValueAtTime(0.18, t+0.05);
+      }else{
+        if(!mLoop) return;
+        const t=audioCtx.currentTime;
+        mLoopGain.gain.exponentialRampToValueAtTime(0.0001, t+0.08);
+        setTimeout(()=>{ try{ mLoop.stop(); }catch(e){} mLoop=null; mLoopGain=null; }, 120);
+      }
+    }catch(e){}
+  }
+
+
+  // Proximity tension music (simple synth drone)
+  // ------------------------------------------------------------
+  // What this is:
+  // - A lightweight "panic" background sound made with WebAudio (no external audio files).
+  // - It becomes audible only when the monster is nearby, to create tension.
+  // How it works:
+  // - Two oscillators (sine + triangle) feed a Gain node.
+  // - updatePanicMusic(dist) maps distance -> intensity, then adjusts volume + pitch.
+  // Notes:
+  // - Browsers require a user gesture before audio starts (first click/key).
+  // - This is intentionally subtle so it doesn't overpower SFX.
+  // ------------------------------------------------------------
+  let panicOsc1=null, panicOsc2=null, panicGain=null, panicOn=false;
+  function ensurePanicMusic(){
+    // Lazily create nodes once. We keep them running and only fade gain in/out for smoothness.
+    ensureAudio();
+    if(panicGain) return;
+    panicGain = audioCtx.createGain();
+    panicGain.gain.value = 0.0001;
+    // keep it subtle under SFX
+    panicGain.connect(master);
+    panicOsc1 = audioCtx.createOscillator();
+    panicOsc2 = audioCtx.createOscillator();
+    panicOsc1.type = "sine";
+    panicOsc2.type = "triangle";
+    panicOsc1.frequency.value = 110;
+    panicOsc2.frequency.value = 165;
+    panicOsc1.connect(panicGain);
+    panicOsc2.connect(panicGain);
+    const t = audioCtx.currentTime;
+    panicOsc1.start(t); panicOsc2.start(t);
+  }
+  function updatePanicMusic(dist){
+    try{
+      if(!audioCtx) return;
+      ensurePanicMusic();
+      const t = audioCtx.currentTime;
+      // Convert distance -> intensity.
+      // a = 0 when far away, a = 1 when very close.
+      const a = Math.max(0, Math.min(1, (12.0 - dist) / 8.0));
+      const target = 0.0001 + a * 0.08;
+      panicGain.gain.setTargetAtTime(target, t, 0.08);
+      // slightly raise pitch as it gets closer
+      const f1 = 110 + a*60;
+      const f2 = 165 + a*90;
+      panicOsc1.frequency.setTargetAtTime(f1, t, 0.12);
+      panicOsc2.frequency.setTargetAtTime(f2, t, 0.12);
+    }catch(e){}
+  }
+
+
+function run3D(){
+  if(window.__BR3D_RUNNING__) return;
+  window.__BR3D_RUNNING__ = true;
+  cleanup3D();
+  window.__BR3D_RUNNING__ = true;
+  if(typeof THREE === "undefined"){ showFallback("three.js를 불러오지 못했습니다(네트워크/차단). 2D로 테스트하세요."); return; }
+
+  setSub("장면 준비…");
+  const renderer = new THREE.WebGLRenderer({antialias:false, powerPreference:"high-performance", alpha:false, desynchronized:true});
+  renderer.domElement.dataset.br3dMain = "1";
+  window.__BR3D_RENDERER__ = renderer;
+  const __brDpr = Math.max(0.55, Math.min(devicePixelRatio || 1, 0.66));
+  renderer.setPixelRatio(__brDpr);
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.shadowMap.enabled = false;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x05070c);
+  scene.fog = new THREE.Fog(0x05070c, 12, 112);
+
+  const camera = new THREE.PerspectiveCamera(56, innerWidth/innerHeight, 0.1, 180);
+
+  const amb = new THREE.AmbientLight(0xfff2cc, 0.88);
+  scene.add(amb);
+
+  const dir = new THREE.DirectionalLight(0xffffff, 0.10);
+  dir.position.set(50, 140, -30);
+  dir.castShadow = false;
+  dir.shadow.mapSize.set(1024,1024);
+  dir.shadow.camera.near = 1;
+  dir.shadow.camera.far = 420;
+  dir.shadow.camera.left = -220;
+  dir.shadow.camera.right = 220;
+  dir.shadow.camera.top = 220;
+  dir.shadow.camera.bottom = -220;
+  scene.add(dir);
+
+  function makeWallpaperTex(){
+    const c=document.createElement("canvas");
+    c.width=256; c.height=256;
+    const g=c.getContext("2d");
+    g.fillStyle="#b7a86a"; g.fillRect(0,0,256,256);
+    g.globalAlpha=0.10;
+    for(let y=0;y<256;y+=24){
+      g.fillStyle = (y/24)%2? "#9e915a":"#c6b876";
+      g.fillRect(0,y,256,12);
+    }
+    g.globalAlpha=0.16;
+    for(let i=0;i<220;i++){
+      const x=Math.random()*256, y=Math.random()*256;
+      g.fillStyle = Math.random()<0.5? "#8a7f50":"#d2c685";
+      g.fillRect(x,y,2+Math.random()*5,1+Math.random()*3);
+    }
+    g.globalAlpha=1;
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+    tex.repeat.set(6,6);
+    tex.anisotropy=1;
+    return tex;
+  }
+  function makeCarpetTex(){
+    const c=document.createElement("canvas");
+    c.width=256; c.height=256;
+    const g=c.getContext("2d");
+    g.fillStyle="#404040"; g.fillRect(0,0,256,256);
+    g.globalAlpha=0.25;
+    for(let i=0;i<1800;i++){
+      const x=Math.random()*256, y=Math.random()*256;
+      const v=80+Math.random()*60;
+      g.fillStyle=`rgb(${v},${v},${v})`;
+      g.fillRect(x,y,1,1);
+    }
+    g.globalAlpha=0.12;
+    for(let i=0;i<80;i++){
+      g.fillStyle="#2f2f2f";
+      g.fillRect(Math.random()*256, Math.random()*256, 10+Math.random()*22, 2+Math.random()*6);
+    }
+    g.globalAlpha=1;
+    const tex=new THREE.CanvasTexture(c);
+    tex.wrapS=tex.wrapT=THREE.RepeatWrapping;
+    tex.repeat.set(10,10);
+    tex.anisotropy=1;
+    return tex;
+  }
+
+  const wallTex = makeWallpaperTex();
+  const floorTex= makeCarpetTex();
+
+  const floorMat = new THREE.MeshStandardMaterial({map:floorTex, color:0xffffff, roughness:0.96, metalness:0.0});
+  const wallMat  = new THREE.MeshStandardMaterial({map:wallTex, color:0xffffff, roughness:0.92, metalness:0.0});
+  const ceilMat  = new THREE.MeshStandardMaterial({color:0x161820, roughness:0.96, metalness:0.0});
+
+  const CELL = 3.2;
+  const WALL_H = 8.4;
+  const CEIL_Y = 11.2;
+  const GW = 115, GH = 115;
+
+  setSub("맵 생성…");
+  const grid = Array.from({length:GH}, ()=>Array(GW).fill(1));
+  function carveRect(x,y,w,h){
+    for(let j=y;j<y+h;j++) for(let i=x;i<x+w;i++){
+      if(i>1&&j>1&&i<GW-2&&j<GH-2) grid[j][i]=0;
+    }
+  }
+  const rooms=[];
+  const mainCount=10;
+  for(let k=0;k<mainCount;k++){
+    const rw = (k<3) ? (18+Math.floor(Math.random()*14)) : (10+Math.floor(Math.random()*10));
+    const rh = (k<3) ? (18+Math.floor(Math.random()*14)) : (10+Math.floor(Math.random()*10));
+    const rx = 3+Math.floor(Math.random()*(GW-rw-6));
+    const ry = 3+Math.floor(Math.random()*(GH-rh-6));
+    carveRect(rx,ry,rw,rh);
+    rooms.push({cx:rx+rw/2, cy:ry+rh/2, rx,ry,rw,rh, theme:"plain"});
+  }
+  const hubSize = 14;
+  const hubX0 = Math.floor(GW/2 - hubSize/2);
+  const hubY0 = Math.floor(GH/2 - hubSize/2);
+  carveRect(hubX0, hubY0, hubSize, hubSize);
+  rooms.unshift({cx:GW/2, cy:GH/2, rx:hubX0, ry:hubY0, rw:hubSize, rh:hubSize, theme:"hub"});
+
+// Carve the monster spawn room into the grid so it's connected on the minimap
+// (room center is near the north edge: y≈7 by construction)
+const mCells = 9;
+const mRx = Math.floor(GW/2 - mCells/2);
+const mRy = 3; // 7 - 4
+carveRect(mRx, mRy, mCells, mCells);
+// Ensure a clear corridor from the monster room south doorway to the hub
+const mDoorX = Math.floor(GW/2);
+const mDoorY = mRy + mCells - 1;
+grid[mDoorY][mDoorX] = 0;
+carveHall(mDoorX, mDoorY + 1, GW/2, GH/2);
+
+  function carveHall(x1,y1,x2,y2){
+    const w=2;
+    let x=Math.floor(x1), y=Math.floor(y1);
+    const tx=Math.floor(x2), ty=Math.floor(y2);
+    const sx = x<tx?1:-1;
+    const sy = y<ty?1:-1;
+    while(x!==tx){
+      for(let dy=-w;dy<=w;dy++) for(let dx=-w;dx<=w;dx++){
+        const ix=x+dx, iy=y+dy;
+        if(ix>1&&iy>1&&ix<GW-2&&iy<GH-2) grid[iy][ix]=0;
+      }
+      x+=sx;
+    }
+    while(y!==ty){
+      for(let dy=-w;dy<=w;dy++) for(let dx=-w;dx<=w;dx++){
+        const ix=x+dx, iy=y+dy;
+        if(ix>1&&iy>1&&ix<GW-2&&iy<GH-2) grid[iy][ix]=0;
+      }
+      y+=sy;
+    }
+  }
+  for(let i=0;i<rooms.length-1;i++) carveHall(rooms[i].cx, rooms[i].cy, rooms[i+1].cx, rooms[i+1].cy);
+  for(let i=0;i<6;i++){
+    const a = rooms[Math.floor(Math.random()*rooms.length)];
+    const b = rooms[Math.floor(Math.random()*rooms.length)];
+    carveHall(a.cx,a.cy,b.cx,b.cy);
+  }
+  for(let y=2;y<GH-2;y+=6){
+    for(let x=2;x<GW-2;x++){
+      if(Math.random()<0.35) grid[y][x]=1;
+    }
+    for(let d=0; d<3; d++){
+      const gx = 6+Math.floor(Math.random()*(GW-12));
+      grid[y][gx]=0;
+    }
+  }
+  const themePool = ["pool","play","ball","storage","plain","plain","plain","plain","plain","plain"];
+  for(let i=1;i<rooms.length;i++){
+    rooms[i].theme = themePool[(i-1) % themePool.length];
+  }
+
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(GW*CELL, GH*CELL), floorMat);
+  floor.rotation.x = -Math.PI/2;
+  floor.receiveShadow = true;
+  scene.add(floor);
+
+  const ceil = new THREE.Mesh(new THREE.PlaneGeometry(GW*CELL, GH*CELL), ceilMat);
+  ceil.rotation.x = Math.PI/2;
+  ceil.position.y = CEIL_Y;
+  scene.add(ceil);
+
+  let wallCount=0;
+  for(let y=0;y<GH;y++) for(let x=0;x<GW;x++) if(grid[y][x]===1) wallCount++;
+  const wallGeo = new THREE.BoxGeometry(CELL, WALL_H, CELL);
+  const walls = new THREE.InstancedMesh(wallGeo, wallMat, wallCount);
+  walls.castShadow = true;
+  walls.receiveShadow = true;
+  walls.frustumCulled = false;
+  const WM = new THREE.Matrix4();
+  let wi=0;
+  for(let y=0;y<GH;y++) for(let x=0;x<GW;x++){
+    if(grid[y][x]!==1) continue;
+    const wx = (x-GW/2)*CELL;
+    const wz = (y-GH/2)*CELL;
+    WM.makeTranslation(wx, WALL_H/2, wz);
+    walls.setMatrixAt(wi++, WM);
+  }
+  walls.instanceMatrix.needsUpdate = true;
+  scene.add(walls);
+
+
+// ---- BOX-BASED WALL COLLIDERS (merged AABBs) ----
+// This replaces per-cell sampling for collision to reduce corner tunneling/bounce.
+const wallBoxes = [];
+(function buildWallBoxes(){
+  const active = new Map(); // key "x0,x1" -> box {x0,x1,y0,y1}
+  for(let y=0; y<GH; y++){
+    const next = new Map();
+    let x=0;
+    while(x<GW){
+      // find run of wall cells
+      while(x<GW && grid[y][x]!==1) x++;
+      if(x>=GW) break;
+      const x0=x;
+      while(x<GW && grid[y][x]===1) x++;
+      const x1=x-1;
+      const key = x0 + "," + x1;
+      const prev = active.get(key);
+      if(prev && prev.y1===y-1){
+        prev.y1 = y;
+        next.set(key, prev);
+      }else{
+        next.set(key, {x0,x1,y0:y,y1:y});
+      }
+    }
+    // finalize boxes that didn't continue
+    for(const [k,b] of active.entries()){
+      if(!next.has(k)){
+        wallBoxes.push(b);
+      }
+    }
+    active.clear();
+    for(const [k,b] of next.entries()) active.set(k,b);
+  }
+  for(const b of active.values()) wallBoxes.push(b);
+
+  // Convert to world-space AABBs {cx,cz,hx,hz}
+  for(let i=0;i<wallBoxes.length;i++){
+    const b = wallBoxes[i];
+    const w = (b.x1 - b.x0 + 1) * CELL;
+    const h = (b.y1 - b.y0 + 1) * CELL;
+    wallBoxes[i] = {
+      cx: ((b.x0 + b.x1)/2 - GW/2) * CELL,
+      cz: ((b.y0 + b.y1)/2 - GH/2) * CELL,
+      hx: w/2,
+      hz: h/2
+    };
+  }
+})();
+
+function collidesWalls(nx,nz,rad){
+  for(const b of wallBoxes){
+    if(hitAABB(nx,nz,b.cx,b.cz,b.hx,b.hz,rad)) return true;
+  }
+  return false;
+}
+
+  // Fluorescent tubes + point lights
+  const tubeGeo = new THREE.BoxGeometry(CELL*6.0, 0.08, 0.30);
+  const tubeMat = new THREE.MeshStandardMaterial({color:0xffffff, emissive:0xffffff, emissiveIntensity:1.5, roughness:0.35});
+  const tubes = [];
+  let tubeCounter = 0;
+  let tubeAnimAcc = 0;
+  function addTube(x,z,rotY){
+    const t = new THREE.Mesh(tubeGeo, tubeMat.clone());
+    t.position.set(x, CEIL_Y-0.5, z);
+    t.rotation.y = rotY;
+    scene.add(t);
+    tubeCounter++;
+    let p = null;
+    if ((tubeCounter % 6) === 1){
+      p = new THREE.PointLight(0xfff6d5, 0.24, 15, 2.0);
+      p.position.set(x, CEIL_Y-1.0, z);
+      scene.add(p);
+    }
+    tubes.push({mesh:t, light:p, flicker:Math.random()*10});
+  }
+  function cellToWorld(gx,gy){ return {x:(gx-GW/2)*CELL, z:(gy-GH/2)*CELL}; }
+  for(const r of rooms){
+    const c = cellToWorld(Math.floor(r.cx), Math.floor(r.cy));
+    addTube(c.x, c.z, (Math.random()<0.5?0:Math.PI/2));
+    if(r.rw>16 && r.rh>16){
+      addTube(c.x+CELL*4, c.z, 0);
+      addTube(c.x-CELL*4, c.z, 0);
+    }
+  }
+  for(let i=0;i<5;i++){
+    let gx=6+Math.floor(Math.random()*(GW-12));
+    let gy=6+Math.floor(Math.random()*(GH-12));
+    if(grid[gy][gx]!==0) continue;
+    const w=cellToWorld(gx,gy);
+    addTube(w.x, w.z, (Math.random()<0.5?0:Math.PI/2));
+  }
+
+  
+  // Cage rebuilt as a real-bar structure (frame + bars + door + lock)
+  function makeCage(){
+    const g = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({color:0x5b667d, roughness:0.65, metalness:0.2});
+    const dark  = new THREE.MeshStandardMaterial({color:0x2a2f3b, roughness:0.85, metalness:0.1});
+    const W=6.6, D=5.8, H=3.4;
+    // floor/ceiling frames
+    const frameTh=0.18;
+    const mkFrame = (y)=>{
+      const fr = new THREE.Group();
+      const a = new THREE.Mesh(new THREE.BoxGeometry(W, frameTh, frameTh), dark);
+      const b = new THREE.Mesh(new THREE.BoxGeometry(W, frameTh, frameTh), dark);
+      const c = new THREE.Mesh(new THREE.BoxGeometry(frameTh, frameTh, D), dark);
+      const d = new THREE.Mesh(new THREE.BoxGeometry(frameTh, frameTh, D), dark);
+      a.position.set(0,y, -D/2); b.position.set(0,y, D/2);
+      c.position.set(-W/2,y, 0); d.position.set(W/2,y, 0);
+      fr.add(a,b,c,d);
+      return fr;
+    };
+    g.add(mkFrame(frameTh/2));
+    g.add(mkFrame(H-frameTh/2));
+
+    // vertical bars
+    const barW=0.10, barD=0.10;
+    const barsN=12;
+    const barGeo = new THREE.BoxGeometry(barW, H-frameTh*1.5, barD);
+    for(let i=0;i<=barsN;i++){
+      const x = -W/2 + (W/barsN)*i;
+      // front side bars (leave a door gap around center)
+      if(Math.abs(x) < 0.85) continue;
+      const b = new THREE.Mesh(barGeo, metal);
+      b.position.set(x, H/2, -D/2);
+      g.add(b);
+      const b2 = new THREE.Mesh(barGeo, metal);
+      b2.position.set(x, H/2, D/2);
+      g.add(b2);
+    }
+    for(let i=0;i<=barsN;i++){
+      const z = -D/2 + (D/barsN)*i;
+      const b = new THREE.Mesh(barGeo, metal);
+      b.rotation.y = Math.PI/2;
+      b.position.set(-W/2, H/2, z);
+      g.add(b);
+      const b2 = new THREE.Mesh(barGeo, metal);
+      b2.rotation.y = Math.PI/2;
+      b2.position.set(W/2, H/2, z);
+      g.add(b2);
+    }
+
+    // Door (hinged)
+    const door = new THREE.Group();
+    door.name = "cageDoor";
+    const doorW=1.4, doorH=H-0.4;
+    const doorFrame = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, 0.16), dark);
+    doorFrame.position.set(0, doorH/2, 0);
+    door.add(doorFrame);
+    // door bars
+    const dbGeo = new THREE.BoxGeometry(0.08, doorH-0.2, 0.08);
+    for(let i=0;i<4;i++){
+      const x = -doorW/2 + 0.2 + i*(doorW-0.4)/3;
+      const bb = new THREE.Mesh(dbGeo, metal);
+      bb.position.set(x, doorH/2, 0);
+      door.add(bb);
+    }
+    // hinge at left
+    const hinge = new THREE.Group();
+    hinge.name="cageHinge";
+    hinge.position.set(-W/2 + frameTh/2, frameTh/2, -D/2 + frameTh/2);
+    door.position.set(doorW/2, 0, 0); // offset from hinge
+    hinge.add(door);
+    g.add(hinge);
+
+    // Lock
+    const lock = new THREE.Group();
+    lock.name="cageLock";
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.55,0.55,0.10), dark);
+    plate.position.set(0, 1.6, -D/2-0.02);
+    const body  = new THREE.Mesh(new THREE.BoxGeometry(0.42,0.48,0.16), metal);
+    body.position.set(0, 1.55, -D/2-0.12);
+    const shackle = new THREE.Mesh(new THREE.TorusGeometry(0.16,0.05,10,18,Math.PI), metal);
+    shackle.rotation.x = Math.PI/2;
+    shackle.position.set(0, 1.78, -D/2-0.12);
+    lock.add(plate, body, shackle);
+    g.add(lock);
+
+    g.userData.W=W; g.userData.D=D; g.userData.H=H;
+    g.userData.locked=true;
+    g.userData.doorOpen=0; // 0 closed, 1 open
+    g.userData.autoCloseT = 0;
+    return g;
+  }
+
+  const cage = makeCage();
+  cage.position.set(0, 0, 0);
+  scene.add(cage);
+  const cageSlots = [
+    {x:-1.6,z:-1.1},{x:0,z:-1.1},{x:1.6,z:-1.1},
+    {x:-1.6,z:0.95},{x:0,z:0.95},{x:1.6,z:0.95},
+    {x:0,z:0}
+  ];
+  function getCageSlot(i=0){
+    const s = cageSlots[Math.max(0, Math.min(cageSlots.length-1, i|0))];
+    return {x:cage.position.x + s.x, z:cage.position.z + s.z};
+  }
+
+  // Cage auto-relock countdown label (appears above the cage when opened)
+  const cageCdCanvas = document.createElement('canvas');
+  cageCdCanvas.width = 256; cageCdCanvas.height = 96;
+  const cageCdCtx = cageCdCanvas.getContext('2d');
+  const cageCdTex = new THREE.CanvasTexture(cageCdCanvas);
+  cageCdTex.colorSpace = THREE.SRGBColorSpace;
+  const cageCdMat = new THREE.SpriteMaterial({map:cageCdTex, transparent:true, depthWrite:false});
+  const cageCdSprite = new THREE.Sprite(cageCdMat);
+  cageCdSprite.scale.set(3.4,1.25,1);
+  cageCdSprite.position.set(0, cage.userData.H + 0.65, 0);
+  cageCdSprite.visible = false;
+  cage.add(cageCdSprite);
+
+  // Escape-from-cage math mini-game (3rd grade arithmetic)
+  let cageEscapeSolved = 0;
+  const cageEscapeNeed = 7;
+  function playerInsideCage(){
+    const dx = player.position.x - cage.position.x;
+    const dz = player.position.z - cage.position.z;
+    // usable interior check
+    return (Math.abs(dx) < cage.userData.W*0.48) && (Math.abs(dz) < cage.userData.D*0.48);
+  }
+  function genMathQ(){
+    const ops = ["+","-","*","/"];
+    const op = ops[Math.floor(Math.random()*ops.length)];
+    let a,b,q,ans;
+    if(op==="+"){
+      a = 2+Math.floor(Math.random()*49);
+      b = 2+Math.floor(Math.random()*49);
+      ans = a+b; q = `${a} + ${b} = ?`;
+    }else if(op==="-"){
+      a = 10+Math.floor(Math.random()*60);
+      b = 2+Math.floor(Math.random()*50);
+      if(b>a) [a,b]=[b,a];
+      ans = a-b; q = `${a} - ${b} = ?`;
+    }else if(op==="*"){
+      a = 2+Math.floor(Math.random()*9);
+      b = 2+Math.floor(Math.random()*9);
+      ans = a*b; q = `${a} × ${b} = ?`;
+    }else{
+      b = 2+Math.floor(Math.random()*9);
+      ans = 2+Math.floor(Math.random()*9);
+      a = b*ans;
+      q = `${a} ÷ ${b} = ?`;
+    }
+    return {q, ans};
+  }
+  const mathModal = $("mathModal");
+  const mathProgress = $("mathProgress");
+  const mathQuestion = $("mathQuestion");
+  const mathInput = $("mathInput");
+  const mathOk = $("mathOk");
+  let currentMathAnswer = null;
+  function hideMathModal(){
+    mathModal.classList.remove("show");
+    currentMathAnswer = null;
+    clearControlState();
+    try{ mathInput.blur(); }catch(e){}
+  }
+  function showMathModal(){
+    const {q, ans} = genMathQ();
+    currentMathAnswer = ans;
+    mathProgress.textContent = `${cageEscapeSolved} / ${cageEscapeNeed}`;
+    mathQuestion.textContent = q;
+    mathInput.value = "";
+    mathModal.classList.add("show");
+    setTimeout(()=>{ try{ mathInput.focus(); }catch(e){} }, 0);
+  }
+  function submitMathAnswer(){
+    if(currentMathAnswer==null) return;
+    const n = Number(String(mathInput.value).trim());
+    if(Number.isFinite(n) && Math.abs(n-currentMathAnswer) < 1e-9){
+      cageEscapeSolved++;
+      beep(880,0.06,'sine',0.24);
+      if(cageEscapeSolved>=cageEscapeNeed){
+        cageEscapeSolved = 0;
+        cage.userData.locked = false;
+        cage.userData.doorOpen = 1;
+        cage.userData.autoCloseT = 5.0;
+        setCageCountdown(cage.userData.autoCloseT);
+        cageCdSprite.visible = true;
+        const lock = cage.getObjectByName("cageLock");
+        if(lock) lock.visible = false;
+        addChat("["+playerName+"]이 탈출했다!");
+        player.userData.trapped = false;
+        const slot = getCageSlot(6);
+        player.position.set(slot.x, 0.05, slot.z + cage.userData.D*0.22);
+        hideMathModal();
+      }else{
+        addChat("정답! ("+cageEscapeSolved+"/"+cageEscapeNeed+")");
+        showMathModal();
+      }
+    }else{
+      beep(180,0.08,'square',0.18);
+      addChat("오답! 다시 시도하세요. ("+cageEscapeSolved+"/"+cageEscapeNeed+")");
+      showMathModal();
+    }
+  }
+  mathOk.addEventListener("click", submitMathAnswer);
+  mathInput.addEventListener("keydown", (e)=>{
+    e.stopPropagation();
+    if(e.key==="Enter"){
+      e.preventDefault();
+      submitMathAnswer();
+    }
+    if(e.key==="Escape"){
+      e.preventDefault();
+      hideMathModal();
+    }
+  });
+  mathModal.addEventListener("pointerdown", (e)=>{ if(e.target===mathModal) e.preventDefault(); });
+  function startCageEscapeMath(){
+    showMathModal();
+  }
+
+
+  function setCageCountdown(t){
+    // Show big white numbers 5,4,3,2,1 above the cage while it is open
+    const tt = Math.max(0, Math.ceil(t)); // 5..0
+    cageCdCtx.clearRect(0,0,256,96);
+    if(tt<=0){
+      cageCdTex.needsUpdate = true;
+      return;
+    }
+    // Transparent background, big number only
+    cageCdCtx.fillStyle = "rgba(255,255,255,0.95)";
+    cageCdCtx.font = "900 76px sans-serif";
+    cageCdCtx.textAlign = "center";
+    cageCdCtx.textBaseline = "middle";
+    cageCdCtx.shadowColor = "rgba(0,0,0,0.55)";
+    cageCdCtx.shadowBlur = 10;
+    cageCdCtx.shadowOffsetY = 4;
+    cageCdCtx.fillText(String(tt), 128, 50);
+    cageCdTex.needsUpdate = true;
+  }
+function makeRabbit(){
+    const g = new THREE.Group();
+    const mat = new THREE.MeshStandardMaterial({color:0xe9eefc, roughness:0.95});
+    const pink = new THREE.MeshStandardMaterial({color:0xffc8d6, roughness:0.9});
+    const eyeM = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.5});
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 16, 16), mat);
+    body.scale.set(1.0,0.92,1.1);
+    body.castShadow=true; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 16, 16), mat);
+    head.position.set(0,0.34,0.35);
+    head.castShadow=true; g.add(head);
+    function ear(x){
+      const e = new THREE.Mesh(new THREE.CapsuleGeometry(0.10,0.45,6,12), mat);
+      e.position.set(x,0.78,0.42); e.rotation.x = 0.12; e.castShadow=true; g.add(e);
+      const inner = new THREE.Mesh(new THREE.CapsuleGeometry(0.06,0.32,6,12), pink);
+      inner.position.set(x,0.78,0.44); inner.rotation.x = 0.12; g.add(inner);
+    }
+    ear(-0.16); ear(0.16);
+    const tail = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12), mat);
+    tail.position.set(0,0.18,-0.54); tail.castShadow=true; g.add(tail);
+    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.05, 10,10), eyeM);
+    const eyeR = eyeL.clone();
+    eyeL.position.set(-0.12,0.40,0.70); eyeR.position.set( 0.12,0.40,0.70);
+    g.add(eyeL,eyeR);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.04, 10,10), pink);
+    nose.position.set(0,0.30,0.75); g.add(nose);
+    g.scale.setScalar(0.72);
+    return g;
+  }
+  const player = makeRabbit();
+  // Start near the central cage
+  player.position.set(0, 0, cage.userData.D/2 + 2.2);
+  scene.add(player);
+  camera.position.set(0, 3.0, 8.8);
+  camera.lookAt(player.position.x, player.position.y + 1.0, player.position.z);
+  $("pName").textContent = "나: "+playerName;
+
+  // Progress state (defined early to avoid TDZ)
+  let keyCount = 0;
+  let doorProg = 0;
+  let rabbitCaughtCount = 0;
+  let rabbitGhost = false;
+  function syncUiState(){
+    try{
+      window.__brUiState = window.__brUiState || {};
+      window.__brUiState.playerRole = String(playerRole || 'rabbit');
+      window.__brUiState.rabbitGhost = !!rabbitGhost;
+      window.playerRole = String(playerRole || 'rabbit');
+      window.rabbitGhost = !!rabbitGhost;
+    }catch(_){ }
+  }
+
+
+  // Key indicator above rabbit head (visible when holding a key)
+  const keyIndicator = makeKey();
+  keyIndicator.name = "keyIndicator";
+  keyIndicator.scale.setScalar(0.75);
+  keyIndicator.position.set(0, 2.15, 0);
+  keyIndicator.visible = false;
+  player.add(keyIndicator);
+  function updateKeyIndicator(){
+    const ki = player.getObjectByName("keyIndicator");
+    if(ki) ki.visible = (keyCount>=1);
+  }
+
+  function makeCaughtCloud(){
+    const g = new THREE.Group();
+    for(let i=0;i<5;i++){
+      const d = new THREE.Mesh(
+        new THREE.SphereGeometry(0.07 + (i%2)*0.015, 10, 10),
+        new THREE.MeshStandardMaterial({color:0x9a9aa1, emissive:0x66666c, emissiveIntensity:0.22, transparent:true, opacity:0.72, roughness:0.9})
+      );
+      d.userData = { ang:(Math.PI*2/5)*i, rad:0.18 + (i%2)*0.04, y:2.18 + (i%3)*0.03, spd:0.9 + i*0.14 };
+      g.add(d);
+    }
+    return g;
+  }
+  const caughtCloud = makeCaughtCloud();
+  caughtCloud.name = "caughtCloud";
+  caughtCloud.position.set(0, 0, 0);
+  caughtCloud.visible = false;
+  player.add(caughtCloud);
+  function updateCaughtCloud(){
+    const cc = player.getObjectByName("caughtCloud");
+    if(cc) cc.visible = (!rabbitGhost && rabbitCaughtCount===1);
+  }
+  function setAvatarGhostVisual(root, ghostOn, alpha=0.38){
+    if(!root) return;
+    root.visible = true;
+    root.traverse?.((obj)=>{
+      const mat = obj && obj.material;
+      if(!mat) return;
+      const mats = Array.isArray(mat) ? mat : [mat];
+      for(const m of mats){
+        if(!m) continue;
+        if(ghostOn){
+          m.transparent = true;
+          m.opacity = Math.min(Number(m.opacity || 1), alpha);
+          m.depthWrite = false;
+        }else{
+          m.transparent = false;
+          m.opacity = 1;
+          m.depthWrite = true;
+        }
+      }
+    });
+  }
+  function makeRabbitGhost(){
+    rabbitGhost = true;
+    player.userData.trapped = false;
+    updateCaughtCloud();
+    syncUiState();
+    try{ monster.userData.warnBeepAt = 0; updatePanicMusic(999); }catch(e){}
+    cage.userData.locked = true;
+    cage.userData.doorOpen = 0;
+    cage.userData.autoCloseT = 0;
+    cageCdSprite.visible = false;
+    const lock = cage.getObjectByName("cageLock"); if(lock) lock.visible = true;
+    player.position.set(cage.position.x + cage.userData.W*0.85, 0.05, cage.position.z);
+    setAvatarGhostVisual(player, true, 0.38);
+    addChat('☁️ 2번 잡혀 유령 토끼가 되었습니다. 이제 채팅과 이동만 가능하고 게임에는 개입할 수 없습니다.');
+  }
+  function trapRabbitInCage(slotIndex=6){
+    cageEscapeSolved = 0;
+    cage.userData.locked = true;
+    cage.userData.doorOpen = 0;
+    cage.userData.autoCloseT = 0;
+    cageCdSprite.visible = false;
+    const lock = cage.getObjectByName("cageLock"); if(lock) lock.visible = true;
+    player.userData.trapped = true;
+    setAvatarGhostVisual(player, false);
+    const slot = getCageSlot(slotIndex);
+    player.position.set(slot.x, 0.05, slot.z);
+    try{ monster.userData.warnBeepAt = 0; updatePanicMusic(999); }catch(e){}
+    addChat('철창으로 끌려갔다! 열쇠 구조 또는 수학 7문제로 탈출하세요.');
+  }
+  function resetRabbitStateVisual(){
+    rabbitGhost = false;
+    player.userData.trapped = false;
+    setAvatarGhostVisual(player, false);
+    updateCaughtCloud();
+    syncUiState();
+  }
+  function animateCaughtCloud(dt){
+    const cc = player.getObjectByName("caughtCloud");
+    if(!cc || !cc.visible) return;
+    for(const d of cc.children){
+      const u = d.userData || {};
+      u.ang = (u.ang || 0) + dt*(u.spd || 1.0);
+      d.position.set(Math.cos(u.ang)*(u.rad||0.18), u.y||2.2, Math.sin(u.ang)*(u.rad||0.18));
+    }
+  }
+  updateCaughtCloud();
+
+  let yaw = 0;
+  // Camera profiles
+  let playerRole = 'rabbit'; // future: 'monster'
+  syncUiState();
+  // Camera tuning:
+  // - Rabbit: narrower FOV to reduce peripheral/rear awareness (more tension).
+  //           Slightly farther back to keep the character visible while still feeling tight.
+  // - Monster: wider FOV to help searching.
+  const CAM_RABBIT = { dist: 7.5, height: 3.0, fov: 48 };
+  const CAM_MONSTER = { dist: 5.0, height: 3.2, fov: 84 };
+  let camDist = CAM_RABBIT.dist;
+  let camHeight = CAM_RABBIT.height;
+  let _camFov = CAM_RABBIT.fov;
+
+
+// Monster spawn room at the far north (12 o'clock). Monster is locked for the first 10 seconds.
+const countdownEl = $("countdown");
+  const huntTimerEl = $("huntTimer");
+  function endGame(msg){
+    if(gameOver) return;
+    gameOver = true;
+    addChat("🏁 "+msg);
+    const cd = $("countdown");
+    cd.style.display="block";
+    cd.textContent = msg;
+    cd.style.background = "rgba(255,80,80,.25)";
+    // freeze input by clearing keysDown
+    for(const k in keysDown) keysDown[k]=0;
+    sprint.active=false; sprint.hold=false;
+    monsterAI=false;
+  }
+
+let monsterReleaseLeft = 10.0; // seconds
+let monsterGate = null; // collider object for the temporary gate
+const monsterRoom = { cx: 0, cz: -(GH/2 - 7) * CELL, w: CELL*9, d: CELL*9, h: 3.2, wallT: 0.35, doorW: 2.0 };
+function buildMonsterRoom(){
+  const g = new THREE.Group();
+  const wallMat = new THREE.MeshStandardMaterial({color:0x343a46, roughness:0.95, metalness:0.05});
+  const floorMat = new THREE.MeshStandardMaterial({color:0x2a2f38, roughness:1.0});
+  // floor
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(monsterRoom.w, 0.22, monsterRoom.d), floorMat);
+  floor.position.set(monsterRoom.cx, 0.11, monsterRoom.cz);
+  floor.receiveShadow = true;
+  g.add(floor);
+  // 4 walls (south wall has a doorway)
+  const y = monsterRoom.h/2;
+  const W=monsterRoom.w, D=monsterRoom.d, T=monsterRoom.wallT, H=monsterRoom.h;
+  const wallNS = new THREE.BoxGeometry(W, H, T);
+  const wallEW = new THREE.BoxGeometry(T, H, D);
+  // north
+  const wn = new THREE.Mesh(wallNS, wallMat);
+  wn.position.set(monsterRoom.cx, y, monsterRoom.cz - D/2);
+  g.add(wn); addAABB(wn, W/2, T/2, "wall");
+  // south split (left/right)
+  const halfDoor = monsterRoom.doorW/2;
+  const leftW = (W/2 - halfDoor);
+  if(leftW>0.2){
+    const wl = new THREE.Mesh(new THREE.BoxGeometry(leftW, H, T), wallMat);
+    wl.position.set(monsterRoom.cx - (halfDoor + leftW/2), y, monsterRoom.cz + D/2);
+    g.add(wl); addAABB(wl, leftW/2, T/2, "wall");
+    const wr = new THREE.Mesh(new THREE.BoxGeometry(leftW, H, T), wallMat);
+    wr.position.set(monsterRoom.cx + (halfDoor + leftW/2), y, monsterRoom.cz + D/2);
+    g.add(wr); addAABB(wr, leftW/2, T/2, "wall");
+  }
+  // east/west
+  const we = new THREE.Mesh(wallEW, wallMat);
+  we.position.set(monsterRoom.cx + W/2, y, monsterRoom.cz);
+  g.add(we); addAABB(we, T/2, D/2, "wall");
+  const ww = new THREE.Mesh(wallEW, wallMat);
+  ww.position.set(monsterRoom.cx - W/2, y, monsterRoom.cz);
+  g.add(ww); addAABB(ww, T/2, D/2, "wall");
+
+  // temporary gate to block the doorway for 10 seconds
+  const gateGeo = new THREE.BoxGeometry(monsterRoom.doorW, H, T);
+  const gateMat = new THREE.MeshStandardMaterial({color:0x1b1f27, roughness:0.9, metalness:0.0});
+  monsterGate = new THREE.Mesh(gateGeo, gateMat);
+  monsterGate.position.set(monsterRoom.cx, y, monsterRoom.cz + D/2);
+  g.add(monsterGate);
+  addAABB(monsterGate, monsterRoom.doorW/2, T/2, "gate");
+  scene.add(g);
+}
+
+  function makeKey(){
+    const g = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({color:0xffd04a, emissive:0x6b4a00, emissiveIntensity:0.55, roughness:0.22, metalness:0.35});
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.22,0.06,12,26), metal);
+    ring.rotation.z = Math.PI/2; ring.position.y = 0.25; g.add(ring);
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.72,12), metal);
+    stem.position.y = -0.20; g.add(stem);
+    const tooth1 = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.10,0.10), metal);
+    tooth1.position.set(0.11,-0.55,0); g.add(tooth1);
+    const tooth2 = tooth1.clone();
+    tooth2.position.set(-0.08,-0.62,0); g.add(tooth2);
+    
+// subtle glow so keys are visible from afar
+const kLight = new THREE.PointLight(0xffd04a, 0.45, 7.0);
+kLight.position.set(0, 0.55, 0);
+g.add(kLight);
+
+// simple sprite glow (no external textures)
+const cv = document.createElement("canvas");
+cv.width = cv.height = 64;
+const cx = cv.getContext("2d");
+const grd = cx.createRadialGradient(32,32,4, 32,32,30);
+grd.addColorStop(0, "rgba(255,208,74,0.65)");
+grd.addColorStop(1, "rgba(255,208,74,0.0)");
+cx.fillStyle = grd;
+cx.beginPath(); cx.arc(32,32,30,0,Math.PI*2); cx.fill();
+const tex = new THREE.CanvasTexture(cv);
+const spr = new THREE.Sprite(new THREE.SpriteMaterial({map: tex, transparent:true, depthWrite:false, blending: THREE.AdditiveBlending}));
+spr.scale.set(2.2, 2.2, 1);
+spr.position.set(0, 0.55, 0);
+g.add(spr);
+
+g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
+    return g;
+  }
+  const keys = [];
+  function randFloorCell(){
+    while(true){
+      const gx = 6+Math.floor(Math.random()*(GW-12));
+      const gy = 6+Math.floor(Math.random()*(GH-12));
+      if(grid[gy][gx]===0) return {gx,gy};
+    }
+  }
+  function spawnKeyAt(wx,wz){
+    // Spawn a floating key at a specific world position (only if none exists in the world)
+    if(keys.length>=1) return;
+    const k = makeKey();
+    k.position.set(wx, 1.25, wz);
+    k.userData.baseY = 1.25;
+    k.userData.phase = Math.random()*Math.PI*2;
+    scene.add(k); keys.push(k);
+  }
+
+  function placeKey(){
+    if(keyCount>=1 || keys.length>=1) return; // only one key exists at a time
+    const {gx,gy} = randFloorCell();
+    const wx = (gx-GW/2)*CELL;
+    const wz = (gy-GH/2)*CELL;
+    spawnKeyAt(wx,wz);
+  }
+  placeKey();
+
+
+  // Carrots (buff items): keep up to 5 on the map at once, respawn at random positions
+  const carrots = [];
+  let rabbitNoDrainUntil = 0;
+  let rabbitFreeSprintUntil = 0;
+  // (Reserved) monster buff placeholder
+  let monsterSpeedBuffUntil = 0;
+
+  function makeCarrot(){
+    const g = new THREE.Group();
+    const bodyM = new THREE.MeshStandardMaterial({color:0xff8a1e, roughness:0.65});
+    const leafM = new THREE.MeshStandardMaterial({color:0x22c55e, roughness:0.8});
+    const root = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.10,0.55,10), bodyM);
+    root.position.y = 0.25;
+    root.rotation.z = (Math.random()-0.5)*0.35;
+    g.add(root);
+
+    const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08,0.18,10), bodyM);
+    tip.position.y = 0.02;
+    tip.rotation.z = root.rotation.z;
+    g.add(tip);
+
+    const leaf = new THREE.Mesh(new THREE.ConeGeometry(0.10,0.26,10), leafM);
+    leaf.position.y = 0.55;
+    leaf.rotation.z = root.rotation.z + 0.25;
+    g.add(leaf);
+    const leaf2 = leaf.clone(); leaf2.rotation.z = root.rotation.z - 0.25; g.add(leaf2);
+
+    // glow to be visible from far away
+    const light = new THREE.PointLight(0xffd06a, 0.35, 5.5);
+    light.position.set(0,0.55,0);
+    g.add(light);
+
+    // soft sprite glow
+    const c = document.createElement('canvas'); c.width=c.height=128;
+    const ctx = c.getContext('2d');
+    const grd = ctx.createRadialGradient(64,64,4,64,64,62);
+    grd.addColorStop(0,'rgba(255,210,110,0.85)');
+    grd.addColorStop(0.6,'rgba(255,210,110,0.18)');
+    grd.addColorStop(1,'rgba(255,210,110,0)');
+    ctx.fillStyle = grd; ctx.fillRect(0,0,128,128);
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending}));
+    spr.scale.set(1.9,1.9,1.9);
+    spr.position.y = 0.55;
+    g.add(spr);
+
+    g.userData.kind = "carrot";
+    return g;
+  }
+
+  function spawnCarrot(){
+    if(carrots.length >= 3) return;
+    const f = randFloorCell();
+    const wx = (f.gx-GW/2)*CELL;
+    const wz = (f.gy-GH/2)*CELL;
+    const c = makeCarrot();
+    c.position.set(wx, 0, wz);
+    // "stuck in ground" effect
+    c.rotation.y = Math.random()*Math.PI*2;
+    scene.add(c);
+    carrots.push(c);
+  }
+
+  function ensureCarrots(){
+    while(carrots.length < 3) spawnCarrot();
+  }
+  ensureCarrots();
+
+  function tryPickupCarrots(){
+    for(let i=carrots.length-1;i>=0;i--){
+      const c = carrots[i];
+      const dx = c.position.x - player.position.x;
+      const dz = c.position.z - player.position.z;
+      if(dx*dx + dz*dz < 1.15*1.15){
+        scene.remove(c);
+        carrots.splice(i,1);
+        // Rabbit carrot buff: for 5s sprint gauge does not drain, so free sprint is possible
+        const now = performance.now();
+        rabbitNoDrainUntil = now + 5000;
+        rabbitFreeSprintUntil = performance.now() + 5000;
+        sprint.charge = 1;
+        addChat("🥕 ["+playerName+"] 5초간 자유 질주!");
+        ensureCarrots();
+      }
+    }
+  }
+
+  function pickWallAttach(){
+    for(let tries=0; tries<4000; tries++){
+      const f = randFloorCell();
+      const dirs = [[1,0,Math.PI/2],[-1,0,-Math.PI/2],[0,1,0],[0,-1,Math.PI]];
+      for(const [dx,dy,rot] of dirs){
+        const wx=f.gx+dx, wy=f.gy+dy;
+        if(wx<=1||wy<=1||wx>=GW-2||wy>=GH-2) continue;
+        if(grid[wy][wx]===1) return {gx:f.gx, gy:f.gy, rot};
+      }
+    }
+    const f=randFloorCell();
+    return {gx:f.gx, gy:f.gy, rot:0};
+  }
+  function makeDoor(){
+    // Double swing door + neon EXIT sign + 3 chain locks
+    const g = new THREE.Group();
+
+    const frameM = new THREE.MeshStandardMaterial({color:0x121723, roughness:0.92});
+    const doorM  = new THREE.MeshStandardMaterial({color:0x2e3a54, roughness:0.80});
+    const metal  = new THREE.MeshStandardMaterial({color:0xcfd6e8, roughness:0.25, metalness:0.70});
+    const lockBodyM = new THREE.MeshStandardMaterial({color:0xffc400, emissive:0x3a2a00, emissiveIntensity:0.20, roughness:0.35, metalness:0.15});
+    const neonM  = new THREE.MeshStandardMaterial({color:0x66ff66, emissive:0x38ff38, emissiveIntensity:0.85, roughness:0.35});
+
+    const W = 2.10, H = 3.65, T = 0.28;
+    const leafW = (W-0.22)/2;
+
+    // Frame
+    const frame = new THREE.Mesh(new THREE.BoxGeometry(W, H, T), frameM);
+    frame.castShadow=true; frame.receiveShadow=true;
+    g.add(frame);
+
+    // Two door leaves with hinges (like auditorium/music room)
+    const leftPivot = new THREE.Group(); leftPivot.name="doorLeftPivot";
+    const rightPivot = new THREE.Group(); rightPivot.name="doorRightPivot";
+    leftPivot.position.set(-W/2 + 0.11, 0, 0.07);
+    rightPivot.position.set( W/2 - 0.11, 0, 0.07);
+    g.add(leftPivot); g.add(rightPivot);
+
+    const leafGeo = new THREE.BoxGeometry(leafW, H-0.38, 0.16);
+    const leftLeaf = new THREE.Mesh(leafGeo, doorM); leftLeaf.name="doorLeft";
+    leftLeaf.position.set(leafW/2, 0, 0);
+    leftLeaf.castShadow=true; leftLeaf.receiveShadow=true;
+    leftPivot.add(leftLeaf);
+
+    const rightLeaf = new THREE.Mesh(leafGeo, doorM); rightLeaf.name="doorRight";
+    rightLeaf.position.set(-leafW/2, 0, 0);
+    rightLeaf.castShadow=true; rightLeaf.receiveShadow=true;
+    rightPivot.add(rightLeaf);
+
+    // Handles
+    const handleGeo = new THREE.CylinderGeometry(0.06,0.06,0.62,14);
+    const h1 = new THREE.Mesh(handleGeo, metal); h1.rotation.z=Math.PI/2;
+    h1.position.set(leafW*0.62, 0.0, 0.12);
+    leftLeaf.add(h1);
+    const h2 = h1.clone();
+    h2.position.set(-leafW*0.62, 0.0, 0.12);
+    rightLeaf.add(h2);
+
+    // EXIT sign above (green emergency sign with white 'EXIT')
+    const signCanvas = document.createElement('canvas');
+    signCanvas.width = 512; signCanvas.height = 160;
+    const sctx = signCanvas.getContext('2d');
+    sctx.fillStyle = '#16a34a'; // green
+    sctx.fillRect(0,0,512,160);
+    sctx.fillStyle = '#ffffff';
+    sctx.font = 'bold 110px sans-serif';
+    sctx.textAlign = 'center';
+    sctx.textBaseline = 'middle';
+    sctx.fillText('EXIT', 256, 82);
+    sctx.lineWidth = 10;
+    sctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    sctx.strokeRect(12,12,512-24,160-24);
+
+    const signTex = new THREE.CanvasTexture(signCanvas);
+    signTex.colorSpace = THREE.SRGBColorSpace;
+    const signMat = new THREE.MeshBasicMaterial({map: signTex, side: THREE.DoubleSide, toneMapped:false});
+    const signPlane = new THREE.Mesh(new THREE.PlaneGeometry(1.75,0.55), signMat);
+    signPlane.position.set(0, H/2 + 0.34, 0.32);
+    g.add(signPlane);
+
+    const glowBox = new THREE.Mesh(new THREE.BoxGeometry(1.80,0.60,0.06), neonM);
+    glowBox.position.set(0, H/2 + 0.34, 0.20);
+    glowBox.castShadow=false;
+    g.add(glowBox);
+
+    const glow = new THREE.PointLight(0x44ff66, 0.65, 4.8);
+    glow.position.set(0, H/2 + 0.34, 0.55);
+    g.add(glow);
+
+    // Chains + 3 padlocks at center (visual only; logic in doorLocks array)
+    const chainM = new THREE.MeshStandardMaterial({color:0x9aa3b6, roughness:0.35, metalness:0.65});
+    const chain = new THREE.Mesh(new THREE.TorusGeometry(0.42,0.06,10,22), chainM);
+    chain.rotation.x = Math.PI/2;
+    chain.position.set(0, 0.36, 0.30);
+    g.add(chain);
+
+    const locks = [];
+    for(let i=0;i<3;i++){
+      const lockG = new THREE.Group();
+      lockG.name = "padlock_"+i;
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.50,0.56,0.24), lockBodyM);
+      body.position.y = 0.00; lockG.add(body);
+      const sh = new THREE.Mesh(new THREE.TorusGeometry(0.22,0.055,10,20,Math.PI), metal);
+      sh.rotation.z = Math.PI; sh.position.y = 0.22; sh.position.z = 0.02;
+      lockG.add(sh);
+      // hasp plate (latch) so it looks like a real padlock
+      const hasp = new THREE.Mesh(new THREE.BoxGeometry(0.52,0.16,0.08), metal);
+      hasp.position.set(0, 0.05, 0.14);
+      lockG.add(hasp);
+      const hole = new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.10,12), new THREE.MeshStandardMaterial({color:0x11151c, roughness:1.0}));
+      hole.rotation.x = Math.PI/2;
+      hole.position.set(0, 0.05, 0.18);
+      lockG.add(hole);
+      // keyhole (slit) on the front
+      const slit = new THREE.Mesh(new THREE.BoxGeometry(0.06,0.18,0.02), new THREE.MeshStandardMaterial({color:0x0b0d12, roughness:1.0}));
+      slit.position.set(0, -0.10, 0.19);
+      lockG.add(slit);
+      lockG.position.set((i-1)*0.56, 0.18, 0.34);
+      lockG.userData = {locked:true, t:0};
+      locks.push(lockG);
+      g.add(lockG);
+    }
+    g.userData = {
+      halfX: W/2, halfZ: 0.75,
+      leftPivot, rightPivot, locks
+    };
+    return g;
+  }
+const doorG = makeDoor();
+  const dp = pickWallAttach();
+  // Attach to wall surface (flush) instead of floating in the cell center
+  const baseX = (dp.gx-GW/2)*CELL;
+  const baseZ = (dp.gy-GH/2)*CELL;
+  const fwdX = Math.sin(dp.rot), fwdZ = Math.cos(dp.rot);
+  const flush = (CELL*0.5 - 0.16); // half cell minus half door thickness
+  doorG.position.set(baseX + fwdX*flush, 1.82, baseZ + fwdZ*flush);
+  // Ensure door faces into the room (fix flipped orientation)
+  doorG.rotation.y = dp.rot + Math.PI;
+  scene.add(doorG);
+  const doorState = {open:false, openT:0, locksUnlocked:0, relockCd:0, sealedUntil:0, sealUsed:false};
+  let sealLeft = 0;
+
+  // One-time monster seal indicator (big lock + countdown over the exit)
+  const sealCanvas = document.createElement('canvas');
+  sealCanvas.width = 512; sealCanvas.height = 160;
+  const sealCtx = sealCanvas.getContext('2d');
+  const sealTex = new THREE.CanvasTexture(sealCanvas);
+  sealTex.colorSpace = THREE.SRGBColorSpace;
+  const sealMat = new THREE.SpriteMaterial({map: sealTex, transparent:true, depthWrite:false});
+  const sealSprite = new THREE.Sprite(sealMat);
+  sealSprite.scale.set(4.6,1.45,1);
+  sealSprite.position.set(0, 4.7, 0.7);
+  sealSprite.visible = false;
+  doorG.add(sealSprite);
+  function updateSealSprite(sec){
+    const t = Math.max(0, Math.ceil(sec));
+    sealCtx.clearRect(0,0,512,160);
+    if(t<=0){ sealTex.needsUpdate = true; return; }
+    sealCtx.fillStyle = 'rgba(12,16,26,0.28)';
+    sealCtx.fillRect(0,0,512,160);
+    sealCtx.strokeStyle = 'rgba(255,230,120,0.92)';
+    sealCtx.lineWidth = 6;
+    sealCtx.strokeRect(8,8,496,144);
+    sealCtx.fillStyle = 'rgba(255,235,130,0.98)';
+    sealCtx.font = '900 86px sans-serif';
+    sealCtx.textAlign = 'center';
+    sealCtx.textBaseline = 'middle';
+    sealCtx.shadowColor = 'rgba(0,0,0,0.6)';
+    sealCtx.shadowBlur = 12;
+    sealCtx.fillText('🔒 '+String(t), 256, 84);
+    sealTex.needsUpdate = true;
+  }
+
+  const props = [];
+  function addAABB(o, halfX, halfZ, kind){
+    o.userData.halfX = halfX;
+    o.userData.halfZ = halfZ;
+    o.userData.kind = kind;
+    props.push(o);
+  }
+
+  // Register always-solid world props for unified collision/push-out
+  try{
+    addAABB(doorG, doorG.userData.halfX, doorG.userData.halfZ, "door");
+  }catch(e){}
+  // Build locked monster spawn room
+  buildMonsterRoom();
+const balls = [];
+  function spawnBall(wx,wz, r=0.85){
+    const m = new THREE.MeshStandardMaterial({color:0xff6b6b, roughness:0.75});
+    const b = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 18), m);
+    b.position.set(wx, r, wz);
+    b.castShadow=true; b.receiveShadow=true;
+    b.userData.vx=0; b.userData.vz=0; b.userData.r=r;
+    scene.add(b);
+    balls.push(b);
+    addAABB(b, r, r, "ball");
+  }
+  function spawnCrate(wx,wz, sx=1.2, sz=1.2, h=1.2){
+    const m = new THREE.MeshStandardMaterial({color:0x6b5b4a, roughness:0.95});
+    const c = new THREE.Mesh(new THREE.BoxGeometry(sx,h,sz), m);
+    c.position.set(wx, h/2, wz);
+    c.castShadow=true; c.receiveShadow=true;
+    scene.add(c);
+    addAABB(c, sx/2, sz/2, "crate");
+    if(!c.userData.netKey) c.userData.netKey = `crate:${props.filter(p=>p?.userData?.kind==='crate').length-1}`;
+  }
+  function spawnPillar(wx,wz, r=0.55, h=4.4){
+  const m = new THREE.MeshStandardMaterial({color:0xb7a86a, roughness:0.92});
+  const sx = r*2, sz = r*2;
+  const p = new THREE.Mesh(new THREE.BoxGeometry(sx,h,sz), m);
+  p.position.set(wx, h/2, wz);
+  p.castShadow=true; p.receiveShadow=true;
+  scene.add(p);
+  addAABB(p, sx/2, sz/2, "pillar");
+  if(!p.userData.netKey) p.userData.netKey = `pillar:${props.filter(p=>p?.userData?.kind==='pillar').length-1}`;
+}
+function spawnShelfPillar(wx,wz, idx=0){
+  const sx = 1.55, sz = 0.92, h = 3.95;
+  const palette = [0x8d7a56, 0x78684b, 0x9a8761];
+  const m = new THREE.MeshStandardMaterial({color:palette[idx % palette.length], roughness:0.94});
+  const box = new THREE.Mesh(new THREE.BoxGeometry(sx,h,sz), m);
+  box.position.set(wx, h/2, wz);
+  box.castShadow = false; box.receiveShadow = true;
+  scene.add(box);
+  addAABB(box, sx/2, sz/2, "block");
+  if(!box.userData.netKey) box.userData.netKey = `block:${props.filter(p=>p?.userData?.kind==='block').length-1}`;
+  return box;
+}
+
+  const shelves = [];
+  const SHELF_SCALE=1.4;
+  function makeShelf(){
+    const g = new THREE.Group();
+    const dark = new THREE.MeshStandardMaterial({color:0x2a2118, roughness:0.95});
+    const wood = new THREE.MeshStandardMaterial({color:0x4a3626, roughness:0.92});
+    const booksMat = new THREE.MeshStandardMaterial({color:0x6e8bb8, roughness:0.88});
+
+    const outerW = 1.9, outerH = 3.9, depth = 0.72;
+    const sideT = 0.10, topBotT = 0.10;
+
+    const leftSide  = new THREE.Mesh(new THREE.BoxGeometry(sideT, outerH, depth), dark);
+    const rightSide = leftSide.clone();
+    leftSide.position.set(-outerW/2 + sideT/2, 0, 0);
+    rightSide.position.set( outerW/2 - sideT/2, 0, 0);
+    leftSide.castShadow=true; leftSide.receiveShadow=true;
+    rightSide.castShadow=true; rightSide.receiveShadow=true;
+    g.add(leftSide, rightSide);
+
+    const top = new THREE.Mesh(new THREE.BoxGeometry(outerW, topBotT, depth), dark);
+    const bot = top.clone();
+    top.position.set(0, outerH/2 - topBotT/2, 0);
+    bot.position.set(0,-outerH/2 + topBotT/2, 0);
+    top.castShadow=true; top.receiveShadow=true;
+    bot.castShadow=true; bot.receiveShadow=true;
+    g.add(top, bot);
+
+    const back = new THREE.Mesh(new THREE.BoxGeometry(1.72, 3.7, 0.06), wood);
+    back.position.set(0,0,-0.32);
+    back.castShadow=true; back.receiveShadow=true;
+    g.add(back);
+
+    for(let i=0;i<4;i++){
+      const y = -1.45 + i*0.95;
+      const board = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.06, 0.66), wood);
+      board.position.set(0, y, 0);
+      board.castShadow=true; board.receiveShadow=true;
+      g.add(board);
+
+      const books = new THREE.Mesh(new THREE.BoxGeometry(1.56, 0.70, 0.20), booksMat);
+      books.position.set(0, y + 0.40, 0.16);
+      books.castShadow=true; books.receiveShadow=true;
+      g.add(books);
+
+      const trim = new THREE.Mesh(new THREE.BoxGeometry(1.60, 0.04, 0.03), dark);
+      trim.position.set(0, y + 0.78, 0.27);
+      g.add(trim);
+    }
+
+    g.userData = {
+      fallen:false,
+      fallT:0,
+      // collider half extents (standing)
+      halfX:(0.95+0.05)*SHELF_SCALE,
+      halfZ:(0.375+0.03)*SHELF_SCALE
+    };
+
+    g.scale.setScalar(SHELF_SCALE);
+    return g;
+  }
+  function spawnShelfInRoom(r, seed=0){
+    const w = Math.max(1, Math.floor(r.rw - 4));
+    const h = Math.max(1, Math.floor(r.rh - 4));
+    const gx0 = Math.floor(r.rx + 2 + ((seed * 3 + r.rx + r.ry) % w));
+    const gy0 = Math.floor(r.ry + 2 + ((seed * 5 + r.rx * 2 + r.ry) % h));
+    let gx = gx0, gy = gy0;
+    for(let t=0;t<8;t++){
+      const tx = Math.max(1, Math.min(GW-2, gx + ((t&1)?1:-1) * Math.floor((t+1)/2)));
+      const ty = Math.max(1, Math.min(GH-2, gy + ((t&2)?1:-1) * Math.floor((t+1)/2)));
+      if(grid[ty] && grid[ty][tx]===0){ gx=tx; gy=ty; break; }
+    }
+    if(!grid[gy] || grid[gy][gx]!==0) return;
+    const x = (gx-GW/2)*CELL, z = (gy-GH/2)*CELL;
+    const box = spawnShelfPillar(x, z, seed);
+    box.rotation.y = (seed % 2 === 0 ? 0 : Math.PI/2);
+  }
+  for(let i=0;i<2;i++){
+    const r = rooms[1 + (i % Math.max(1, rooms.length-1))];
+    spawnShelfInRoom(r, i+1);
+  }
+
+  const carts = [];
+  const CART_SCALE=1.4;
+  function makeCart(){
+    const g = new THREE.Group();
+    const metal = new THREE.MeshStandardMaterial({color:0x5b667d, roughness:0.75});
+    const dark = new THREE.MeshStandardMaterial({color:0x2a2f3b, roughness:0.9});
+    const base = new THREE.Mesh(new THREE.BoxGeometry(1.2,0.22,1.0), metal);
+    base.castShadow=true; base.receiveShadow=true; g.add(base);
+    const basket = new THREE.Mesh(new THREE.BoxGeometry(1.15,0.35,0.95), dark);
+    basket.position.y = 0.30; basket.castShadow=true; basket.receiveShadow=true; g.add(basket);
+    for(const sx of [-0.48,0.48]) for(const sz of [-0.38,0.38]){
+      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.10,0.10,0.06,10), dark);
+      w.rotation.z = Math.PI/2; w.position.set(sx, -0.12, sz); g.add(w);
+    }
+    g.userData = { vx:0, vz:0, halfX:0.70, halfZ:0.60 };
+    g.scale.setScalar(CART_SCALE);
+    return g;
+  }
+  function spawnCartInRoom(r){
+    const gx = Math.floor(r.rx + 3 + Math.random()*(r.rw-6));
+    const gy = Math.floor(r.ry + 3 + Math.random()*(r.rh-6));
+    if(grid[gy][gx]!==0) return;
+    const c = makeCart();
+    c.position.set((gx-GW/2)*CELL, 0.35, (gy-GH/2)*CELL);
+    scene.add(c);
+    carts.push(c);
+    addAABB(c, c.userData.halfX*CART_SCALE, c.userData.halfZ*CART_SCALE, "cart");
+  }
+  for(let i=0;i<3;i++){
+    const r = rooms[1+Math.floor(Math.random()*(rooms.length-1))];
+    spawnCartInRoom(r);
+  }
+
+    const poolZones = [];
+
+// Theme decorate
+  for(const r of rooms){
+    if(r.theme==="hub") continue;
+    const cx = (r.cx-GW/2)*CELL;
+    const cz = (r.cy-GH/2)*CELL;
+    const w = r.rw*CELL, h = r.rh*CELL;
+    if(r.theme==="pool"){
+      const puddleMat = new THREE.MeshStandardMaterial({color:0x68d7ff, roughness:0.18, metalness:0.0, transparent:true, opacity:0.34});
+      const puddleGeo = new THREE.CircleGeometry(1, 28);
+      const puddleCount = 3 + ((Math.random()*2)|0);
+      for(let i=0;i<puddleCount;i++){
+        const rx = Math.max(2.2, w * (0.10 + Math.random()*0.08));
+        const rz = Math.max(1.8, h * (0.08 + Math.random()*0.07));
+        const ox = cx + (Math.random()-0.5) * w * 0.34;
+        const oz = cz + (Math.random()-0.5) * h * 0.34;
+        const puddle = new THREE.Mesh(puddleGeo, puddleMat.clone());
+        puddle.rotation.x = -Math.PI/2;
+        puddle.position.set(ox, 0.03 + i*0.002, oz);
+        puddle.scale.set(rx, rz, 1);
+        puddle.receiveShadow = false;
+        scene.add(puddle);
+        poolZones.push({cx:ox, cz:oz, rx, rz});
+      }
+      for(let i=0;i<1;i++){
+        const ox = cx + (Math.random()<0.5?-1:1)*(w*0.24);
+        const oz = cz + (Math.random()<0.5?-1:1)*(h*0.24);
+        spawnPillar(ox,oz,0.50,4.2);
+      }
+    }else if(r.theme==="play"){
+      const colors=[0xffd93d,0x4ecdc4,0xff6b6b,0x6b5cff];
+      for(let i=0;i<2;i++){
+        const sx = 0.9+Math.random()*1.2;
+        const sz = 0.9+Math.random()*1.2;
+        const hh = 0.6+Math.random()*1.4;
+        const bx = cx + (Math.random()-0.5)*w*0.55;
+        const bz = cz + (Math.random()-0.5)*h*0.55;
+        const m = new THREE.MeshStandardMaterial({color: colors[(Math.random()*colors.length)|0], roughness:0.8});
+        const box = new THREE.Mesh(new THREE.BoxGeometry(sx,hh,sz), m);
+        box.position.set(bx, hh/2, bz);
+        box.castShadow=true; box.receiveShadow=true;
+        scene.add(box);
+        addAABB(box, sx/2, sz/2, "block");
+      }
+    }else if(r.theme==="ball"){
+      for(let i=0;i<2;i++){
+        const bx = cx + (Math.random()-0.5)*w*0.55;
+        const bz = cz + (Math.random()-0.5)*h*0.55;
+        spawnBall(bx,bz,0.85+Math.random()*0.25);
+      }
+      for(let i=0;i<2;i++){
+        const bx = cx + (Math.random()-0.5)*w*0.55;
+        const bz = cz + (Math.random()-0.5)*h*0.55;
+        spawnCrate(bx,bz,1.2,1.2,1.25);
+      }
+    }else if(r.theme==="storage"){
+      for(let i=0;i<2;i++){
+        const bx = cx + (Math.random()-0.5)*w*0.60;
+        const bz = cz + (Math.random()-0.5)*h*0.60;
+        spawnCrate(bx,bz,1.2,1.2,1.2+Math.random()*0.8);
+      }
+      spawnShelfInRoom(r, (r.rx + r.ry + 1)*11);
+    }else{
+      if(Math.random()<0.5){
+        for(let i=0;i<1;i++){
+          const bx = cx + (Math.random()-0.5)*w*0.60;
+          const bz = cz + (Math.random()-0.5)*h*0.60;
+          spawnCrate(bx,bz,1.1,1.1,1.2);
+        }
+      }else{
+        for(let i=0;i<1;i++){
+          const bx = cx + (Math.random()-0.5)*w*0.55;
+          const bz = cz + (Math.random()-0.5)*h*0.55;
+          spawnPillar(bx,bz,0.55,4.0);
+        }
+      }
+    }
+  }
+
+  // Monster
+  let monster = null;
+  let monsterAI = true; // default ON for solo speed test
+  function makeMonster(){
+    const g = new THREE.Group();
+    const black = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.9});
+    const glow = new THREE.MeshStandardMaterial({color:0xff3b3b, emissive:0xff2b2b, emissiveIntensity:1.15});
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.60,1.55,8,16), black);
+    body.position.y = 1.55; body.castShadow=true; g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.50, 16, 16), black);
+    head.position.y = 2.70; head.castShadow=true; g.add(head);
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.70,0.22,0.50), black);
+    jaw.position.set(0,2.40,0.28); g.add(jaw);
+    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 10), glow);
+    const eyeR = eyeL.clone();
+    eyeL.position.set(-0.16,2.72,0.42); eyeR.position.set(0.16,2.72,0.42);
+    g.add(eyeL,eyeR);
+    const armGeo = new THREE.CapsuleGeometry(0.17,0.85,6,12);
+    const armL = new THREE.Mesh(armGeo, black);
+    const armR = armL.clone();
+    armL.position.set(-0.82,1.70,0.05); armL.rotation.z = 0.35;
+    armR.position.set(0.82,1.70,0.05); armR.rotation.z = -0.35;
+    armL.castShadow=true; armR.castShadow=true;
+    g.add(armL,armR);
+
+    // Stun "bangle" effect (brief rings above head)
+    const ringM = new THREE.MeshStandardMaterial({color:0xfff4a3, emissive:0xfff0a0, emissiveIntensity:1.2, roughness:0.35});
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.08, 10, 20), ringM);
+    ring.position.set(0, 3.35, 0);
+    ring.rotation.x = Math.PI/2;
+    ring.visible = false;
+    g.add(ring);
+
+    g.userData = { armL, armR, t:0, stunT:0, stunRing:ring, stunCd:0, patrolX:0, patrolZ:0, patrolT:0 };
+    return g;
+  }
+  function ensureMonster(){
+    if(monster) return;
+    monster = makeMonster();
+    // Spawn inside the locked monster room (north end)
+    monster.position.set(monsterRoom.cx, 0, monsterRoom.cz - monsterRoom.d*0.15);
+    monster.visible = false;
+    scene.add(monster);
+  }
+  keyCount = 0;
+  doorProg = 0;
+  $("pKey").textContent="🔑 "+keyCount;
+  $("pDoor").textContent="문: "+doorProg+"/3";
+  addChat("[3D] 시작");
+  // Spawn monster immediately (locked for 10 seconds)
+  ensureMonster();
+
+  const keysDown={w:0,s:0,a:0,d:0};
+  // Sprint (E button on empty ground / Shift key). Charge drains while sprinting and regenerates.
+  const sprint = { charge: 1, active: false, hold: false, drain: 1/3, regen: 1/20, mult: 1.4 }; // 3s full, 20s regen
+  const mSprint = { charge: 1, active: false, hold: false, drain: 1/4, regen: 1/14, mult: 1.4 }; // 4s full, 14s regen
+  let revealPingT = 0; // monster sprint reveal ping (seconds)
+  let huntLeft = 90; let huntActive = false; // hunter must catch within 90s
+  let gameOver = false;
+  let shiftHeld = false;
+  addEventListener("keydown",(e)=>{ if((chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show"))) return; if(e.key==="Shift") shiftHeld=true; });
+  addEventListener("keyup",(e)=>{ if(e.key==="Shift") shiftHeld=false; });
+
+  // Mobile/PC E button behavior: if prompt is visible (interactable), E triggers interact; otherwise it acts as sprint while held.
+  const btnE = $("btnE");
+  const btnELabel = $("btnELabel");
+  const sprintMeter = $("sprintMeter");
+  const sprintMeterEdge = $("sprintMeterEdge");
+  function promptVisible(){ return $("prompt").style.display!=="none" || $("mathModal").classList.contains("show"); }
+
+  function updateBtnELabel(){ btnELabel.textContent="E"; }
+  updateBtnELabel();
+
+  function setSprintHold(v){
+    sprint.hold = v;
+  }
+  btnE.addEventListener("pointerdown",(e)=>{
+    e.preventDefault();
+    if(promptVisible()){
+      doInteract();
+      return;
+    }
+    setSprintHold(true);
+  });
+  btnE.addEventListener("pointerup",(e)=>{ e.preventDefault(); setSprintHold(false); });
+  btnE.addEventListener("pointercancel",(e)=>{ e.preventDefault(); setSprintHold(false); });
+  btnE.addEventListener("contextmenu",(e)=>e.preventDefault());
+
+  let stepAcc=0;
+
+  addEventListener("keydown",(e)=>{
+    if(chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show")){
+      if(e.key.toLowerCase()!=="escape") return;
+    }
+    const k=e.key.toLowerCase();
+    if(keysDown[k]!=null) keysDown[k]=1;
+    if(k==="e") doInteract();
+    if(k==="g"){ monsterAI=!monsterAI; ensureMonster(); addChat("[테스트] 괴물 AI: "+(monsterAI?"ON":"OFF")); }
+    if(k==="v"){ seekerView=!seekerView; addChat("[테스트] 술래 시점(바닥 열쇠 숨김): "+(seekerView?"ON":"OFF")); }
+  });
+  addEventListener("keyup",(e)=>{ const k=e.key.toLowerCase(); if(keysDown[k]!=null) keysDown[k]=0; });
+
+  // mobile joystick
+  const joyBase=$("joyBase"), joyKnob=$("joyKnob");
+  let joyActive=false, joyCx=0, joyCy=0;
+  let joyX=0, joyY=0;
+  function setJoy(vx,vy){ joyX=vx; joyY=vy; }
+  function joyStart(x,y){
+    if(x>innerWidth*0.55) return;
+    joyActive=true; joyCx=x; joyCy=y;
+    joyBase.style.display="block";
+    joyBase.style.left=(joyCx-joyBase.offsetWidth/2)+"px";
+    joyBase.style.top =(joyCy-joyBase.offsetHeight/2)+"px";
+    joyKnob.style.left="50%"; joyKnob.style.top="50%";
+  }
+  function joyMove(x,y){
+    if(!joyActive) return;
+    const dx=x-joyCx, dy=y-joyCy;
+    const max=42;
+    const nx=Math.max(-max, Math.min(max, dx));
+    const ny=Math.max(-max, Math.min(max, dy));
+    joyKnob.style.left=(50+(nx/max)*30)+"%";
+    joyKnob.style.top =(50+(ny/max)*30)+"%";
+    setJoy(nx/max, ny/max);
+  }
+  function joyEnd(){
+    if(!joyActive) return;
+    joyActive=false; joyBase.style.display="none"; setJoy(0,0);
+  }
+  addEventListener("touchstart",(e)=>{ if(e.touches.length===1){ const t=e.touches[0]; joyStart(t.clientX,t.clientY);} }, {passive:true});
+  addEventListener("touchmove",(e)=>{ if(joyActive && e.touches.length===1){ const t=e.touches[0]; joyMove(t.clientX,t.clientY); e.preventDefault();} }, {passive:false});
+  addEventListener("touchend", joyEnd, {passive:true});
+  addEventListener("touchcancel", joyEnd, {passive:true});
+
+    
+  function nearestObj(arr, maxDist){
+    let best=null, bd=maxDist;
+    for(const o of arr){
+      const dx=o.position.x-player.position.x;
+      const dz=o.position.z-player.position.z;
+      const d=Math.hypot(dx,dz);
+    const nowMs = performance.now();
+
+    // Monster can also pick up carrots: 5s movement speed buff
+    for(let i=carrots.length-1;i>=0;i--){
+      const c = carrots[i];
+      const mdx = c.position.x - monster.position.x;
+      const mdz = c.position.z - monster.position.z;
+      if(mdx*mdx + mdz*mdz < 1.35*1.35){
+        scene.remove(c);
+        carrots.splice(i,1);
+        monsterSpeedBuffUntil = performance.now() + 5000;
+        addChat("🥕 [괴물] 5초간 이동속도 1.5배!");
+        ensureCarrots();
+        break;
+      }
+    }
+
+      if(d<bd){ bd=d; best=o; }
+    }
+    return best;
+  }
+  function toppleNearestShelf(){
+    const s=nearestObj(shelves, 2.7);
+    if(!s || s.userData.fallen) return;
+    s.userData.fallen=true; s.userData.fallT=0; s.userData.fellAt = performance.now(); s.userData.stunArmed = true; s.userData.cleared = false;
+    // Update collider to match fallen footprint (standing -> lying).
+    // Standing footprint: width=1.9, depth=0.75
+    // Lying footprint (after falling forward/back): width=1.9, depth=3.9
+    const yrot = (s.rotation.y||0)%(Math.PI*2);
+    const swap = Math.abs(Math.sin(yrot))>0.5; // rotated 90deg in Y swaps X/Z in world
+    const lieHX   = (0.95+0.05)*SHELF_SCALE;
+    const lieHZ   = (1.95+0.08)*SHELF_SCALE; // half of 3.9 + margin
+    const hx = swap ? lieHZ : lieHX;
+    const hz = swap ? lieHX : lieHZ;
+    s.userData.halfX = hx;
+    s.userData.halfZ = hz;
+    addChat("[싱글] 책장을 쓰러뜨렸다!");
+  }
+  function doInteract(){
+
+    if(chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show")) return;
+    if(rabbitGhost){
+      addChat('유령 상태에서는 상호작용할 수 없습니다.');
+      return;
+    }
+    // If trapped inside a locked cage, pressing E gives math problems to escape.
+    try{
+      if(playerInsideCage() && cage.userData.locked && !cage.userData.doorOpen){
+        startCageEscapeMath();
+        return;
+      }
+    }catch(e){}
+    const k=nearestObj(keys, 2.1);
+    if(k){
+      if(rabbitGhost){ addChat('유령 상태에서는 열쇠를 들 수 없습니다.'); hidePrompt(); return; }
+      scene.remove(k);
+      keys.splice(keys.indexOf(k),1);
+      keyCount = 1; beep(660,0.06,'sine',0.35); $("pKey").textContent="🔑 "+keyCount; updateKeyIndicator();
+      addChat("["+playerName+"]가 열쇠를 먹었습니다.");
+      hidePrompt(); return;
+    }
+    
+    // Cage lock / door interaction
+    const cDist=Math.hypot(cage.position.x-player.position.x, cage.position.z-player.position.z);
+    if(cDist<3.0){
+      const lock = cage.getObjectByName("cageLock");
+      const hinge = cage.getObjectByName("cageHinge");
+      if(cage.userData.locked){
+        if(keyCount>=1){
+          keyCount=Math.max(0,keyCount-1); $("pKey").textContent="🔑 "+keyCount; updateKeyIndicator();
+          try{ placeKey(); }catch(e){}
+          cage.userData.locked=false;
+          if(playerInsideCage()) player.userData.trapped = false;
+          // simple lock "open" animation (hide)
+          if(lock) lock.visible=false;
+          addChat("철창 자물쇠가 열렸다!");
+        }else{
+          addChat("자물쇠를 열려면 열쇠 1개가 필요합니다.");
+        }
+        hidePrompt(); return;
+      }else{
+        // toggle door
+        cage.userData.doorOpen = cage.userData.doorOpen?0:1;
+        if(cage.userData.doorOpen){
+          cage.userData.autoCloseT = 5.0;
+          setCageCountdown(cage.userData.autoCloseT);
+          cageCdSprite.visible = true;
+        }else{
+          cage.userData.autoCloseT = 0;
+          cageCdSprite.visible = false;
+        }
+        addChat(cage.userData.doorOpen? "철창이 열렸다!" : "철창이 닫혔다.");
+        hidePrompt(); return;
+      }
+    }
+    const dDist=Math.hypot(doorG.position.x-player.position.x, doorG.position.z-player.position.z);
+    if(dDist<2.6){
+      const sealLeft = Math.max(0, doorState.sealedUntil - performance.now());
+      if(sealLeft>0){ addChat('🚫 탈출문이 봉인되어 있습니다! ('+Math.ceil(sealLeft/1000)+'초)'); return; }
+      const locks = (doorG.userData && doorG.userData.locks) ? doorG.userData.locks : [];
+      const unlocked = doorState.locksUnlocked;
+      if(unlocked < 3){
+        if(rabbitGhost){ addChat('유령 상태에서는 탈출문을 조작할 수 없습니다.'); return; }
+        if(keyCount<=0){ addChat("[싱글] 자물쇠를 풀려면 열쇠가 필요하다."); return; }
+        keyCount = 0; $("pKey").textContent="🔑 "+keyCount; updateKeyIndicator();
+        try{ placeKey(); }catch(e){}
+        const idx = Math.min(2, doorState.locksUnlocked);
+        const lk = locks[idx];
+        if(lk && lk.userData){ lk.userData.locked = false; lk.userData.t = 1.0; }
+        doorState.locksUnlocked = Math.min(3, doorState.locksUnlocked + 1);
+        doorProg = doorState.locksUnlocked;
+        $("pDoor").textContent="문: "+doorProg+"/3";
+        beep(520,0.08,'triangle',0.30);
+        addChat("[싱글] 자물쇠가 풀렸다! ("+doorProg+"/3)");
+        if(doorProg>=3) addChat("[싱글] 모든 자물쇠가 풀렸다. E로 문을 열고 탈출할 수 있다.");
+        return;
+      }
+      if(!doorState.open){
+        doorState.open = true;
+        doorState.openT = 0;
+        addChat("[싱글] 탈출문이 열린다!");
+        beep(740,0.06,'sine',0.25);
+      }else{
+        addChat("✅ 탈출 성공(테스트)!");
+        endGame("토끼 승리!");
+      }
+      return;
+    }
+    toppleNearestShelf();
+  }
+  function updatePrompt(){
+    const k=nearestObj(keys, 2.1);
+    if(k){ showPrompt("E: 열쇠 줍기"); return; }
+    const dDist=Math.hypot(doorG.position.x-player.position.x, doorG.position.z-player.position.z);
+    if(dDist<2.6){
+      const sealLeft = Math.max(0, doorState.sealedUntil - performance.now());
+      if(sealLeft>0) showPrompt("봉인됨: "+Math.ceil(sealLeft/1000)+"초");
+      else if(doorState.locksUnlocked<3) showPrompt("E: 자물쇠 풀기 (열쇠 1개)  "+doorState.locksUnlocked+"/3");
+      else if(!doorState.open) showPrompt("E: 문 열기");
+      else showPrompt("E: 탈출(테스트)");
+      return;
+    }
+    const cDist=Math.hypot(cage.position.x-player.position.x, cage.position.z-player.position.z);
+    if(cDist<2.7){
+      if(cage.userData && cage.userData.locked) showPrompt("E: 자물쇠 열기 (열쇠 1개)");
+      else showPrompt("E: 철창 문 열기/닫기");
+      return;
+    }
+    const s=nearestObj(shelves, 2.7);
+    if(s && !s.userData.fallen){ showPrompt("E: 책장 쓰러뜨리기"); return; }
+    hidePrompt();
+    updateBtnELabel();
+
+  }
+
+  function isWallAt(x,z){
+    const gx=Math.floor(x/CELL + GW/2);
+    const gy=Math.floor(z/CELL + GH/2);
+    if(gx<0||gy<0||gx>=GW||gy>=GH) return true;
+    return grid[gy][gx]===1;
+  }
+  function hitAABB(px,pz, ox,oz, hx,hz, rad){
+    const cx=Math.max(ox-hx, Math.min(px, ox+hx));
+    const cz=Math.max(oz-hz, Math.min(pz, oz+hz));
+    const dx=px-cx, dz=pz-cz;
+    return (dx*dx + dz*dz) < rad*rad;
+  }
+  function pushOutFromAABB(px,pz, ox,oz, hx,hz, rad){
+    const dx=px-ox, dz=pz-oz;
+    const pxPen=(hx+rad)-Math.abs(dx);
+    const pzPen=(hz+rad)-Math.abs(dz);
+    if(pxPen<=0 || pzPen<=0) return {x:px,z:pz,pushed:false};
+    if(pxPen<pzPen){
+      const sx=Math.sign(dx)||1;
+      return {x:px+sx*pxPen, z:pz, pushed:true};
+    }else{
+      const sz=Math.sign(dz)||1;
+      return {x:px, z:pz+sz*pzPen, pushed:true};
+    }
+  }
+
+  function hitCircle(px,pz, ox,oz, r, rad){
+    const dx=px-ox, dz=pz-oz;
+    const rr = r+rad;
+    return (dx*dx+dz*dz) < rr*rr;
+  }
+  function pushOutFromCircle(px,pz, ox,oz, r, rad){
+    let dx=px-ox, dz=pz-oz;
+    const d=Math.hypot(dx,dz);
+    const nowMs = performance.now();
+    const rr=r+rad;
+    if(d>=rr || d<1e-6) return {x:px,z:pz,pushed:false};
+    const k=(rr-d)/d;
+    return {x:px+dx*k, z:pz+dz*k, pushed:true};
+  }
+  function collidesProps(nx,nz, rad){
+    for(const o of props){
+      if(!o || !o.userData) continue;
+      const kind=o.userData.kind;
+      // Pushables (cart/ball) are allowed to overlap the player so they can be pushed.
+      if(kind==="cart" || kind==="ball") continue;
+      if(kind==="pillar"){ if(hitCircle(nx,nz,o.position.x,o.position.z,o.userData.halfX||0.6,rad)) return true; continue; }
+      const hx=o.userData.halfX||0, hz=o.userData.halfZ||0;
+      if(hitAABB(nx,nz,o.position.x,o.position.z,hx,hz,rad)) return true;
+    }
+    return false;
+  }
+  
+function pushOutWalls(px,pz,rad){
+  // Push-out against merged wall AABBs (more stable than per-cell sampling).
+  let x=px, z=pz;
+  for(let pass=0; pass<2; pass++){
+    for(const b of wallBoxes){
+      // cheap broadphase
+      if(Math.abs(x-b.cx) > (b.hx + rad + CELL)) continue;
+      if(Math.abs(z-b.cz) > (b.hz + rad + CELL)) continue;
+      const po = pushOutFromAABB(x,z,b.cx,b.cz,b.hx,b.hz,rad);
+      if(po.pushed){ x=po.x; z=po.z; }
+    }
+  }
+  return {x,z};
+}
+
+  function resolveMove(nx,nz){
+    const rad=0.60;
+
+    // early accept
+    const wallHit = collidesWalls(nx,nz,rad);
+    if(!wallHit && !collidesProps(nx,nz,rad)) return {x:nx,z:nz};
+
+    // axis-separated attempt
+    let x=player.position.x, z=player.position.z;
+    let tx=x, tz=z;
+
+    // X move
+    tx=nx;
+    // apply wall pushout for candidate
+    let p=pushOutWalls(tx,z,rad);
+    tx=p.x; 
+    // apply props pushout
+    for(const o of props){
+      if(!o || !o.userData) continue;
+      const kind=o.userData.kind;
+      if(kind==="cart" || kind==="ball") continue;
+      const po=(o.userData.kind==="pillar")?pushOutFromCircle(tx,z,o.position.x,o.position.z,o.userData.halfX||0.6,rad):pushOutFromAABB(tx,z,o.position.x,o.position.z,o.userData.halfX,o.userData.halfZ,rad);
+      if(po.pushed){ tx=po.x; z=po.z; }
+    }
+    // if still inside wall at sampling points, revert x
+    if(!collidesWalls(tx,z,rad)) x=tx;
+
+    // Z move
+    tz=nz;
+    p=pushOutWalls(x,tz,rad);
+    tz=p.z;
+    for(const o of props){
+      if(!o || !o.userData) continue;
+      const kind=o.userData.kind;
+      if(kind==="cart" || kind==="ball") continue;
+      const po=(o.userData.kind==="pillar")?pushOutFromCircle(x,tz,o.position.x,o.position.z,o.userData.halfX||0.6,rad):pushOutFromAABB(x,tz,o.position.x,o.position.z,o.userData.halfX,o.userData.halfZ,rad);
+      if(po.pushed){ x=po.x; tz=po.z; }
+    }
+    if(!collidesWalls(x,tz,rad)) z=tz;
+
+    // final depenetration pass (walls then props)
+    p=pushOutWalls(x,z,rad);
+    x=p.x; z=p.z;
+    for(let k=0;k<2;k++){
+      for(const o of props){
+        if(!o || !o.userData) continue;
+        const po=pushOutFromAABB(x,z,o.position.x,o.position.z,o.userData.halfX,o.userData.halfZ,rad);
+        if(po.pushed){ x=po.x; z=po.z; }
+      }
+      p=pushOutWalls(x,z,rad);
+      x=p.x; z=p.z;
+    }
+    return {x,z};
+  }
+
+
+  // Resolve movement for an arbitrary entity (used for monster too),
+  // matching player collision behavior (walls + props + push-out).
+  function resolveMoveAt(posX,posZ,nx,nz,rad){
+    // early accept
+    const wallHit = collidesWalls(nx,nz,rad);
+    if(!wallHit && !collidesProps(nx,nz,rad)) return {x:nx,z:nz};
+
+    let x=posX, z=posZ;
+    let tx=x, tz=z;
+
+    // X move
+    tx=nx;
+    let p=pushOutWalls(tx,z,rad);
+    tx=p.x;
+    for(const o of props){
+      if(!o || !o.userData) continue;
+      const kind=o.userData.kind;
+      if(kind==="cart" || kind==="ball") continue;
+      const po=(kind==="pillar")?pushOutFromCircle(tx,z,o.position.x,o.position.z,o.userData.halfX||0.6,rad)
+                               :pushOutFromAABB(tx,z,o.position.x,o.position.z,o.userData.halfX,o.userData.halfZ,rad);
+      if(po.pushed){ tx=po.x; z=po.z; }
+    }
+    if(!collidesWalls(tx,z,rad)) x=tx;
+
+    // Z move
+    tz=nz;
+    p=pushOutWalls(x,tz,rad);
+    tz=p.z;
+    for(const o of props){
+      if(!o || !o.userData) continue;
+      const kind=o.userData.kind;
+      if(kind==="cart" || kind==="ball") continue;
+      const po=(kind==="pillar")?pushOutFromCircle(x,tz,o.position.x,o.position.z,o.userData.halfX||0.6,rad)
+                               :pushOutFromAABB(x,tz,o.position.x,o.position.z,o.userData.halfX,o.userData.halfZ,rad);
+      if(po.pushed){ x=po.x; tz=po.z; }
+    }
+    if(!collidesWalls(x,tz,rad)) z=tz;
+
+    // final depenetration pass (walls then props)
+    p=pushOutWalls(x,z,rad);
+    x=p.x; z=p.z;
+    for(let k=0;k<2;k++){
+      for(const o of props){
+        if(!o || !o.userData) continue;
+        const kind=o.userData.kind;
+        if(kind==="cart" || kind==="ball") continue;
+        const po=(kind==="pillar")?pushOutFromCircle(x,z,o.position.x,o.position.z,o.userData.halfX||0.6,rad)
+                                 :pushOutFromAABB(x,z,o.position.x,o.position.z,o.userData.halfX,o.userData.halfZ,rad);
+        if(po.pushed){ x=po.x; z=po.z; }
+      }
+      p=pushOutWalls(x,z,rad);
+      x=p.x; z=p.z;
+    }
+    return {x,z};
+  }
+
+  function updatePushables(dt){
+    // Carts and balls are pushable. They should NOT block the player (handled in resolveMove),
+    // but they must not tunnel into walls or solid props.
+    const solidProps = (o)=> o && o.userData && (o.userData.kind!=="cart" && o.userData.kind!=="ball");
+    for(const c of carts){
+      c.userData.vx *= Math.pow(0.06, dt);
+      c.userData.vz *= Math.pow(0.06, dt);
+      let nx = c.position.x + (c.userData.vx||0)*dt;
+      let nz = c.position.z + (c.userData.vz||0)*dt;
+
+      // collide with walls using circle radius approximated from AABB
+      const rad = Math.min(c.userData.halfX||0.7, c.userData.halfZ||0.6) * 0.95;
+      // depenetrate against wall cells
+      let p = pushOutWalls(nx, nz, rad);
+      nx = p.x; nz = p.z;
+
+      // depenetrate against solid props
+      for(const o of props){
+        if(!solidProps(o)) continue;
+        const po = pushOutFromAABB(nx, nz, o.position.x, o.position.z, o.userData.halfX, o.userData.halfZ, rad);
+        if(po.pushed){
+          // damp velocity along the axis we were pushed
+          if(Math.abs(po.x-nx) > Math.abs(po.z-nz)) c.userData.vx *= 0.25;
+          else c.userData.vz *= 0.25;
+          nx = po.x; nz = po.z;
+        }
+      }
+      c.position.x = nx;
+      c.position.z = nz;
+    }
+
+    for(const b of balls){
+      b.userData.vx *= Math.pow(0.03, dt);
+      b.userData.vz *= Math.pow(0.03, dt);
+      let nx = b.position.x + (b.userData.vx||0)*dt;
+      let nz = b.position.z + (b.userData.vz||0)*dt;
+      b.rotation.x += (b.userData.vz||0)*dt*0.6;
+      b.rotation.z -= (b.userData.vx||0)*dt*0.6;
+
+      const rad = (b.userData.r||0.85);
+      let p = pushOutWalls(nx, nz, rad);
+      nx = p.x; nz = p.z;
+      for(const o of props){
+        if(!solidProps(o)) continue;
+        const po = pushOutFromAABB(nx, nz, o.position.x, o.position.z, o.userData.halfX, o.userData.halfZ, rad);
+        if(po.pushed){
+          if(Math.abs(po.x-nx) > Math.abs(po.z-nz)) b.userData.vx *= 0.25;
+          else b.userData.vz *= 0.25;
+          nx = po.x; nz = po.z;
+        }
+      }
+      b.position.x = nx;
+      b.position.z = nz;
+    }
+  }
+  function handlePush(dt){
+    for(const c of carts){
+      const dx=c.position.x-player.position.x;
+      const dz=c.position.z-player.position.z;
+      const d=Math.hypot(dx,dz);
+    const nowMs = performance.now();
+      if(d<1.35){
+        const px=dx/(d||1), pz=dz/(d||1);
+        c.userData.vx += px*16;
+        c.userData.vz += pz*16;
+      }
+    }
+    for(const b of balls){
+      const dx=b.position.x-player.position.x;
+      const dz=b.position.z-player.position.z;
+      const d=Math.hypot(dx,dz);
+    const nowMs = performance.now();
+      if(d < (b.userData.r + 0.85)){
+        const px=dx/(d||1), pz=dz/(d||1);
+        b.userData.vx += px*18;
+        b.userData.vz += pz*18;
+      }
+    }
+  }
+  function updateShelves(dt){
+    for(const s of shelves){
+      if(!s.userData.fallen) continue;
+      if(s.userData.fallT>=1) continue;
+      s.userData.fallT=Math.min(1, s.userData.fallT + dt*1.6);
+      const t=s.userData.fallT;
+      s.rotation.x = -Math.PI/2 * t;
+      s.position.y = 2.73 - 2.205*t;
+      if(t>=1){ s.position.y=0.525; }
+    }
+  }
+
+  let remaining=300, lastTick=performance.now();
+  function tickTimer(now){
+    const dt=(now-lastTick)/1000; lastTick=now;
+    remaining=Math.max(0, remaining-dt);
+    const mm=String(Math.floor(remaining/60)).padStart(2,'0');
+    const ss=String(Math.floor(remaining%60)).padStart(2,'0');
+    $("pTime").textContent="⏱ "+mm+":"+ss;
+  }
+
+  // Vignette
+  let vignette=0;
+  const vign=document.createElement("div");
+  vign.style.position="fixed"; vign.style.inset="0"; vign.style.pointerEvents="none";
+  vign.style.zIndex="24";
+  vign.style.background="radial-gradient(ellipse at center, rgba(0,0,0,0) 55%, rgba(0,0,0,0.78) 100%)";
+  vign.style.opacity="0";
+  document.body.appendChild(vign);
+
+  function updateMonster(dt){
+    if(!monster) return;
+    if(monster.userData.locked) { return; }
+    // If rabbit is already trapped in the locked cage, monster should not re-catch; it will patrol instead.
+    let rabbitInCage=false, rabbitTrapped=false;
+    try{ rabbitInCage = playerInsideCage(); rabbitTrapped = rabbitInCage && cage.userData.locked && !cage.userData.doorOpen; }catch(e){}
+
+    // Stun handling
+    if(monster.userData.stunT && monster.userData.stunT>0){
+      monster.userData.stunT = Math.max(0, monster.userData.stunT - dt);
+      if(monster.userData.stunRing){
+        monster.userData.stunRing.visible = monster.userData.stunT>0;
+        monster.userData.stunRing.rotation.z += dt*6.0;
+      }
+      // While stunned, do not move/chase.
+    }
+    monster.userData.t += dt;
+    const t=monster.userData.t;
+    monster.userData.armL.rotation.x = Math.sin(t*5)*0.22;
+    monster.userData.armR.rotation.x = -Math.sin(t*5)*0.22;
+    monster.position.y = Math.sin(t*3)*0.05;
+
+    // distance to player is used for AI + proximity FX
+    const dx=player.position.x-monster.position.x;
+    const dz=player.position.z-monster.position.z;
+    const d=Math.hypot(dx,dz);
+    const nowMs = performance.now();
+
+    // tension music: only when rabbit is free
+    try{ updatePanicMusic((rabbitGhost || player.userData.trapped || rabbitTrapped || rabbitInCage)?999:d); }catch(e){}
+
+    if(monsterAI){
+      const stunned = (monster.userData.stunT && monster.userData.stunT>0);
+      if(stunned){
+        // While stunned: no movement, no catch.
+        vignette*=0.92;
+        vign.style.opacity=String(vignette*0.9);
+        return;
+      }
+
+      const rabbitSpeed=6.8;
+
+      // Aggro boost: if the rabbit is holding at least one key, monster becomes more persistent.
+      const rabbitHasKey = (typeof keyCount==='number' && keyCount>=1);
+      const chaseLeash = rabbitHasKey ? 45.0 : 25.0; // how far before it gives up and patrols
+      const sprintStartRange = rabbitHasKey ? 14.0 : 9.0;
+      const sprintChargeNeed = rabbitHasKey ? 0.60 : 0.999;
+
+
+      // Patrol logic: when rabbit is trapped or far away, roam to random targets.
+      const worldHalfX = (GW*CELL)*0.5 - 2.0;
+      const worldHalfZ = (GH*CELL)*0.5 - 2.0;
+      function pickPatrol(){
+        monster.userData.patrolX = (Math.random()*2-1)*worldHalfX;
+        monster.userData.patrolZ = (Math.random()*2-1)*worldHalfZ;
+        monster.userData.patrolT = 3.0 + Math.random()*4.0;
+      }
+      function doPatrol(){
+        if(monster.userData.patrolT<=0) pickPatrol();
+        monster.userData.patrolT -= dt;
+        const tx = monster.userData.patrolX;
+        const tz = monster.userData.patrolZ;
+        const pdx = tx - monster.position.x;
+        const pdz = tz - monster.position.z;
+        const pd = Math.hypot(pdx,pdz);
+        const sp = rabbitSpeed*0.95;
+        if(pd>0.05){
+          const vx=(pdx/pd)*sp*dt, vz=(pdz/pd)*sp*dt;
+          const oldX = monster.position.x, oldZ = monster.position.z;
+          const nx=oldX+vx, nz=oldZ+vz;
+          const pos = resolveMoveAt(oldX, oldZ, nx, nz, 0.60);
+          monster.position.x = pos.x; monster.position.z = pos.z;
+          if(pos.x===oldX && pos.z===oldZ){ monster.userData.patrolT = 0; }
+          monster.rotation.y = Math.atan2(pdx,pdz);
+        }else{
+          monster.userData.patrolT = 0;
+        }
+      }
+
+      if(rabbitInCage || d>chaseLeash){
+        doPatrol();
+        vignette*=0.92;
+        vign.style.opacity=String(vignette*0.9);
+        return;
+      }
+
+      // monster sprint (no toggle-cancel; once started runs full then must recharge)
+      // Start only when fully charged; once active, cannot be canceled early.
+      const canStartSprint = (!mSprint.active) && (mSprint.charge>=sprintChargeNeed);
+      const wantStart = canStartSprint && (d<sprintStartRange || (rabbitHasKey && sprint.active));
+      if(wantStart){
+        mSprint.active = true;
+        revealPingT = 2.0; // show rabbit ping on minimap briefly
+      }
+      if(mSprint.active){
+        mSprint.charge = Math.max(0, mSprint.charge - mSprint.drain*dt);
+        if(mSprint.charge<=0){ mSprint.active=false; }
+      }else{
+        mSprint.charge = Math.min(1, mSprint.charge + mSprint.regen*dt);
+      }
+      monsterSprintSfx(mSprint.active);
+      const speedBuff = (nowMs < monsterSpeedBuffUntil) ? 1.5 : 1.0;
+      const sp=7.9*(mSprint.active?mSprint.mult:1)*speedBuff;
+      if(d>0.01){
+        const vx=(dx/d)*sp*dt, vz=(dz/d)*sp*dt;
+        const oldX = monster.position.x, oldZ = monster.position.z;
+        const nx=oldX+vx, nz=oldZ+vz;
+        // Use the same collision resolver as the player (prevents tunneling / wall phasing)
+        let pos = resolveMoveAt(oldX, oldZ, nx, nz, 0.60);
+        monster.position.x = pos.x; 
+        monster.position.z = pos.z;
+
+        // simple unstuck: if blocked, try a few sidesteps
+        if(pos.x===oldX && pos.z===oldZ){
+          for(let s=0;s<4;s++){
+            const ox = (Math.random()*2-1)*0.55;
+            const oz = (Math.random()*2-1)*0.55;
+            const tx = oldX + ox;
+            const tz = oldZ + oz;
+            const p2 = resolveMoveAt(oldX, oldZ, tx, tz, 0.60);
+            if(p2.x!==oldX || p2.z!==oldZ){ monster.position.x=p2.x; monster.position.z=p2.z; break; }
+          }
+        }
+        monster.rotation.y=Math.atan2(dx,dz);
+      }
+
+      // Monster can re-lock one padlock every 120s if at least one is unlocked,
+      // but only when it reaches the door.
+      if(doorState && doorG){
+        const ddx = doorG.position.x - monster.position.x;
+        const ddz = doorG.position.z - monster.position.z;
+        const dd = Math.hypot(ddx,ddz);
+        sealLeft = Math.max(0, doorState.sealedUntil - performance.now());
+        if(doorState.sealedUntil > performance.now()){
+          sealSprite.visible = true;
+          updateSealSprite((doorState.sealedUntil - performance.now())/1000);
+        }else if(sealSprite.visible){
+          sealSprite.visible = false;
+          updateSealSprite(0);
+          if(doorState.sealUsed){ addChat('[싱글] 탈출문 봉인이 해제되었다!'); }
+          doorState.sealedUntil = 0;
+          sealLeft = 0;
+        }
+        // Monster can seal the exit once for 10 seconds.
+        if(!doorState.sealUsed && dd<2.2 && doorState.locksUnlocked>=1){
+          doorState.sealUsed = true;
+          doorState.sealedUntil = performance.now() + 10000;
+          sealLeft = 10000;
+          doorState.open = false;
+          doorState.openT = 0;
+          sealSprite.visible = true;
+          updateSealSprite(10);
+          beep(180,0.12,'sawtooth',0.30);
+          addChat('[싱글] 괴물이 탈출문을 10초간 봉인했다!');
+        }
+      }
+const v=Math.max(0, Math.min(1,(12-d)/10));
+      vignette=vignette*0.90 + v*0.10;
+      vign.style.opacity=String(vignette*0.9);
+      if(!rabbitGhost && !player.userData.trapped && !rabbitInCage && d<7.0){
+        monster.userData.warnBeepAt = monster.userData.warnBeepAt || 0;
+        if(nowMs - monster.userData.warnBeepAt >= 420){
+          monster.userData.warnBeepAt = nowMs;
+          beep(180+Math.random()*30,0.03,"sine",0.045);
+        }
+      }
+      // Bookshelf stun + clear
+      // If monster touches a recently toppled shelf (within 1.5s), it gets stunned for 1s.
+      // Also, monster can "clear" a fallen shelf by turning it into a red ball so it doesn't block paths.
+      monster.userData.stunCd = Math.max(0, (monster.userData.stunCd||0) - dt);
+      for(const s of shelves){
+        if(!s || !s.userData || !s.userData.fallen || s.userData.cleared) continue;
+        const hx = s.userData.halfX || (0.95*SHELF_SCALE);
+        const hz = s.userData.halfZ || (0.375*SHELF_SCALE);
+        const hit = hitAABB(monster.position.x, monster.position.z, s.position.x, s.position.z, hx, hz, 0.62);
+        if(hit){
+          // stun window
+          if(s.userData.stunArmed && (nowMs - (s.userData.fellAt||0)) <= 1500){
+            s.userData.stunArmed = false;
+            monster.userData.stunT = 1.0;
+            if(monster.userData.stunRing){ monster.userData.stunRing.visible = true; }
+            beep(90,0.10,'square',0.22);
+            addChat("[싱글] 괴물이 쓰러진 책장에 부딪혀 잠깐 기절했다!");
+            return; // stunned immediately, skip catch this frame
+          }
+          // clear if not in stun window
+          if(monster.userData.stunCd<=0 && (nowMs - (s.userData.fellAt||0)) > 400){
+            // replace with a red ball at similar location
+            s.userData.cleared = true;
+            // remove shelf from scene + collision list
+            try{
+              const pi = props.indexOf(s);
+              if(pi>=0) props.splice(pi,1);
+            }catch(e){}
+            scene.remove(s);
+            const si = shelves.indexOf(s);
+            if(si>=0) shelves.splice(si,1);
+            spawnBall(s.position.x, s.position.z, 0.85);
+            monster.userData.stunCd = 0.6;
+            addChat("[싱글] 괴물이 넘어진 책장을 빨간 공으로 치웠다!");
+            break;
+          }
+        }
+      }
+
+      if(!rabbitGhost && !rabbitInCage && d < (mSprint.active?1.8:1.25)){
+        rabbitCaughtCount++;
+        updateCaughtCloud();
+        addChat("⚠️ 괴물에게 잡힘! ("+rabbitCaughtCount+"/2)");
+        if(keyCount>=1){
+          keyCount=0; $("pKey").textContent="🔑 "+keyCount; updateKeyIndicator();
+          updateKeyIndicator();
+          try{ placeKey(); }catch(e){}
+          addChat('[싱글] 열쇠가 맵 어딘가로 다시 이동했다!');
+        }
+        if(rabbitCaughtCount>=2){
+          makeRabbitGhost();
+        }else{
+          trapRabbitInCage(6);
+        }
+        if(huntActive){ huntLeft = 90; }
+      }
+    }else{
+      // AI off: just fade proximity FX smoothly
+      vignette*=0.92;
+      vign.style.opacity=String(vignette*0.9);
+    }
+  }
+
+  // Camera temp vectors (avoid per-frame allocations -> reduces micro-stutter/GC)
+  const _camBack = new THREE.Vector3();
+  const _camPos  = new THREE.Vector3();
+  const _camUp   = new THREE.Vector3();
+
+  function updateCamera(dt){
+    // Apply role-based camera profile (rabbit: narrower, monster: wider)
+    const prof = (playerRole==='monster') ? CAM_MONSTER : CAM_RABBIT;
+    camDist = prof.dist;
+    camHeight = prof.height;
+    // Smooth FOV changes toward the target profile (rabbit/monster).
+    // Using a small lerp avoids sudden zoom pop when role changes.
+    const tf = prof.fov;
+    _camFov = _camFov + (tf - _camFov) * 0.12;
+    if(Math.abs(camera.fov - _camFov) > 0.05){
+      camera.fov = _camFov;
+      camera.updateProjectionMatrix();
+    }
+    _camBack.set(Math.sin(yaw), 0, Math.cos(yaw));
+    _camUp.set(0, camHeight, 0);
+    _camPos.copy(player.position).add(_camUp).addScaledVector(_camBack, -camDist);
+    // dt-independent smoothing (kept stable)
+    // Exponential smoothing (frame-rate independent) to reduce jitter.
+    const a = 1 - Math.exp(-dt*12.0);
+    camera.position.lerp(_camPos, a);
+    camera.lookAt(player.position.x, player.position.y+1.0, player.position.z);
+  }
+
+  // minimap
+  const mm=$("minimap");
+  const mmCtx=mm.getContext("2d");
+  function resizeMinimap(){
+    const rect=mm.getBoundingClientRect();
+    const dpr=Math.min(devicePixelRatio||1,2);
+    mm.width=Math.floor(rect.width*dpr);
+    mm.height=Math.floor(rect.height*dpr);
+    mmCtx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  resizeMinimap();
+
+  function drawMinimap(){
+    const w=mm.getBoundingClientRect().width, h=mm.getBoundingClientRect().height;
+    mmCtx.clearRect(0,0,w,h);
+    const pad=10;
+    const sc=Math.min((w-2*pad)/(GW*CELL),(h-2*pad)/(GH*CELL));
+    mmCtx.fillStyle="rgba(10,12,18,0.55)"; mmCtx.fillRect(0,0,w,h);
+
+    const step=2;
+    mmCtx.fillStyle="rgba(233,238,252,0.12)";
+    for(let gy=0; gy<GH; gy+=step){
+      for(let gx=0; gx<GW; gx+=step){
+        if(grid[gy][gx]!==1) continue;
+        const x=pad+(gx*CELL)*sc, y=pad+(gy*CELL)*sc;
+        mmCtx.fillRect(x,y, step*CELL*sc, step*CELL*sc);
+      }
+    }
+    function worldToMM(wx,wz){
+      const gx=(wx/CELL + GW/2);
+      const gy=(wz/CELL + GH/2);
+      return {x: pad+(gx*CELL)*sc, y: pad+(gy*CELL)*sc};
+    }
+    const c=worldToMM(cage.position.x,cage.position.z);
+    mmCtx.fillStyle="rgba(120,200,255,0.95)"; mmCtx.beginPath(); mmCtx.arc(c.x,c.y,4.2,0,Math.PI*2); mmCtx.fill();
+    const d=worldToMM(doorG.position.x,doorG.position.z);
+    mmCtx.fillStyle="rgba(80,255,120,0.95)"; mmCtx.beginPath(); mmCtx.arc(d.x,d.y,4.2,0,Math.PI*2); mmCtx.fill();
+    const p=worldToMM(player.position.x,player.position.z);
+    mmCtx.fillStyle="rgba(255,255,255,0.95)"; mmCtx.beginPath(); mmCtx.arc(p.x,p.y,3.8,0,Math.PI*2); mmCtx.fill();
+    if(monster){ const mpos=worldToMM(monster.position.x,monster.position.z);
+      mmCtx.fillStyle="rgba(255,80,80,0.95)"; mmCtx.beginPath(); mmCtx.arc(mpos.x,mpos.y,3.6,0,Math.PI*2); mmCtx.fill(); }
+    if(revealPingT>0){ mmCtx.strokeStyle="rgba(255,220,90,0.95)"; mmCtx.lineWidth=2;
+      mmCtx.beginPath(); mmCtx.arc(p.x,p.y,10 + (2-revealPingT)*6,0,Math.PI*2); mmCtx.stroke(); }
+    mmCtx.strokeStyle="rgba(140,210,255,0.95)"; mmCtx.lineWidth=2;
+    mmCtx.beginPath(); mmCtx.moveTo(p.x,p.y); mmCtx.lineTo(p.x+Math.sin(yaw)*10,p.y+Math.cos(yaw)*10); mmCtx.stroke();
+    mmCtx.strokeStyle="rgba(255,255,255,0.12)"; mmCtx.lineWidth=1; mmCtx.strokeRect(0.5,0.5,w-1,h-1);
+  }
+
+  function onResize(){
+    camera.aspect=innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+    updateChatH();
+    resizeMinimap();
+  }
+  addEventListener("resize", onResize);
+
+  hideLoading(); setSub("");
+
+  
+  function isInPool(x,z){
+    for(const p of poolZones){
+      const rx = Math.max(0.01, Number(p.rx || p.hx || 0));
+      const rz = Math.max(0.01, Number(p.rz || p.hz || 0));
+      const dx = (x - p.cx) / rx;
+      const dz = (z - p.cz) / rz;
+      if((dx*dx + dz*dz) <= 1) return true;
+    }
+    return false;
+  }
+
+let last=performance.now();
+  function animate(now){
+    const dt=Math.min(0.033,(now-last)/1000); last=now;
+    try{
+// Global countdown for monster release (visible to both)
+if(monsterReleaseLeft>0){
+  monsterReleaseLeft = Math.max(0, monsterReleaseLeft - dt);
+  countdownEl.style.display = "block";
+  countdownEl.textContent = "괴물 해방까지 " + Math.ceil(monsterReleaseLeft);
+  // Keep monster locked in its room until release
+  if(monster) monster.userData.locked = true;
+  /* keep monsterAI flag as-is; only lock movement */
+}else{
+  if(countdownEl.style.display!=="none") countdownEl.style.display="none";
+  if(monsterGate){
+    // Remove gate collider/mesh once
+    const i = props.indexOf(monsterGate);
+    if(i>=0) props.splice(i,1);
+    monsterGate.parent && monsterGate.parent.remove(monsterGate);
+    monsterGate = null;
+  }
+  if(monster) monster.userData.locked = false;
+  if(!huntActive){ huntActive=true; huntLeft=90; }
+}
+
+
+    // Animate exit door (double swing) + lock unlock animation
+    {
+      const locks = (doorG.userData && doorG.userData.locks) ? doorG.userData.locks : [];
+      for(const lk of locks){
+        if(lk && lk.userData && lk.userData.t>0){
+          // unlock animation: rotate and lift, then fade out
+          lk.userData.t = Math.max(0, lk.userData.t - dt*1.25);
+          const a = (1 - lk.userData.t);
+          lk.rotation.y = a * Math.PI*1.25;
+          lk.position.y = 0.20 + a*0.55;
+          lk.scale.setScalar(1 - a*0.55);
+          if(lk.userData.t<=0.001) lk.visible = false;
+        }
+      }
+      if(doorState.open){
+        doorState.openT = Math.min(1, doorState.openT + dt*1.1);
+        const t = doorState.openT;
+        // swing outward
+        const ang = t * (Math.PI*0.46);
+        if(doorG.userData.leftPivot) doorG.userData.leftPivot.rotation.y = -ang;
+        if(doorG.userData.rightPivot) doorG.userData.rightPivot.rotation.y = ang;
+      }else{
+        // keep closed
+        if(doorG.userData.leftPivot) doorG.userData.leftPivot.rotation.y = 0;
+        if(doorG.userData.rightPivot) doorG.userData.rightPivot.rotation.y = 0;
+      }
+    }
+    tickTimer(now);
+
+    // Sprint charge update + UI
+    if(sprint.active){
+      // carrot buff: rabbit can sprint without draining for 5s
+      const _noDrain = (now < rabbitNoDrainUntil) || (now < rabbitFreeSprintUntil);
+      sprint.charge = _noDrain ? Math.max(sprint.charge, 1) : Math.max(0, sprint.charge - sprint.drain*dt);
+      if(sprint.charge<=0.0001) sprint.active=false;
+    }else{
+      sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt);
+    }
+    // meter: show used portion by clipping the overlay from top-down
+        const used = Math.min(1, Math.max(0, 1 - sprint.charge));
+    sprintMeter.style.transform = `scaleY(${used.toFixed(3)})`;
+    if(sprintMeterEdge){ sprintMeterEdge.style.top = `${(used*100).toFixed(1)}%`; }
+
+
+    for(const k of keys){
+      // Key visibility rule: if in seeker-view and no rabbit is holding a key, hide ground keys
+      k.visible = !(seekerView && keyCount<=0);
+      k.rotation.y += dt*1.8;
+      k.rotation.x = Math.sin(now/420 + k.userData.phase)*0.10;
+      k.position.y = k.userData.baseY + Math.sin(now/450 + k.userData.phase)*0.22;
+    }
+    tubeAnimAcc += dt;
+    if (tubeAnimAcc >= 1/18){
+      tubeAnimAcc = 0;
+      for(const t of tubes){
+        t.flicker += dt * 1.2;
+        const f = 0.94 + 0.08*Math.sin(t.flicker*2.0) + (Math.random()<0.002 ? -0.18 : 0);
+        t.mesh.material.emissiveIntensity = 1.22*Math.max(0.55, f);
+        if(t.light) t.light.intensity = 0.42*Math.max(0.35, f);
+      }
+    }
+
+    const turn=(keysDown.a?1:0)-(keysDown.d?1:0)+(-joyX);
+    yaw += turn*2.35*dt;
+
+    const fb=(keysDown.w?1:0)-(keysDown.s?1:0)+(-joyY);
+    // sprint / water slow
+    const inWater = isInPool(player.position.x, player.position.z);
+    const wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
+    const rabbitFreeSprint = (performance.now() < rabbitFreeSprintUntil);
+    sprint.active = wantSprint && (rabbitFreeSprint || sprint.charge>0.001);
+    const speedMul = (inWater?0.5:1) * (sprint.active ? sprint.mult : 1);
+    const rabbitSpeed = 7.4 * speedMul;
+    // If the rabbit is trapped, hard-anchor them to the cage center so they cannot drift outside the bars.
+    let trappedInCage = false;
+    try{ trappedInCage = !!player.userData.trapped && cage.userData.locked && !cage.userData.doorOpen; }catch(e){}
+    if(trappedInCage){
+      sprint.active = false;
+      const slot = getCageSlot(6);
+      player.position.x = slot.x;
+      player.position.z = slot.z;
+    }
+
+    // Movement sub-steps to reduce tunneling/bounce at high speed (especially during sprint)
+    const mvScale = (typeof trappedInCage!=="undefined" && trappedInCage) ? 0 : 1;
+    const mvx=Math.sin(yaw)*fb*rabbitSpeed*mvScale;
+    const mvz=Math.cos(yaw)*fb*rabbitSpeed*mvScale;
+    const dist = Math.hypot(mvx, mvz) * dt;
+    const steps = Math.max(1, Math.ceil(dist / 0.22)); // <= 22cm per step
+    const stepDt = dt / steps;
+
+    const prevPx = player.position.x;
+    const prevPz = player.position.z;
+    for(let s=0; s<steps; s++){
+      const vx = mvx * stepDt;
+      const vz = mvz * stepDt;
+      const nx = player.position.x + vx;
+      const nz = player.position.z + vz;
+      const pos = resolveMove(nx, nz);
+      player.position.x = pos.x; 
+      player.position.z = pos.z;
+    }
+    player.userData.vx = (player.position.x - prevPx) / Math.max(dt, 1e-4);
+    player.userData.vz = (player.position.z - prevPz) / Math.max(dt, 1e-4);
+    if (Math.abs(fb) <= 0.01 || mvScale === 0){ player.userData.vx = 0; player.userData.vz = 0; }
+    player.rotation.y=yaw;
+    animateCaughtCloud(dt);
+    // footsteps
+    if(Math.abs(fb)>0.05){
+      stepAcc += dt * (sprint.active?1.6:1.0) * (isInPool(player.position.x,player.position.z)?0.55:1.0);
+      if(stepAcc>0.38){
+        stepAcc=0;
+        const f = isInPool(player.position.x,player.position.z)? 220 : 320;
+        beep(f+Math.random()*30, 0.035, "square", 0.12);
+      }
+    }else{
+      stepAcc = Math.max(0, stepAcc - dt*2.0);
+    }
+    handlePush(dt);
+    updatePushables(dt);
+    updateShelves(dt);
+
+    // Carrot pickups
+    try{ tryPickupCarrots(); }catch(e){}
+// Cage auto-relock countdown
+    try{
+      if(cage.userData.doorOpen && cage.userData.autoCloseT>0){
+        cage.userData.autoCloseT -= dt;
+        setCageCountdown(cage.userData.autoCloseT);
+        cageCdSprite.visible = true;
+        if(cage.userData.autoCloseT <= 0){
+          cage.userData.doorOpen = 0;
+          cage.userData.locked = true;
+          const lock = cage.getObjectByName("cageLock");
+          if(lock) lock.visible = true;
+          cageCdSprite.visible = false;
+          addChat("철창이 다시 잠겼다.");
+        }
+      }
+    }catch(e){}
+    // Cage door animation
+    try{
+      const hinge=cage.getObjectByName("cageHinge");
+      if(hinge){
+        const target = cage.userData.doorOpen? -Math.PI*0.75 : 0;
+        hinge.rotation.y += (target - hinge.rotation.y) * Math.min(1, dt*8);
+      }
+    }catch(e){}
+
+    updatePrompt();
+    updateCamera(dt);
+    updateMonster(dt);
+
+    const mmGap = (bridge && bridge.start && (bridge.start.playerCount||0) >= 2) ? 320 : 220;
+    if (!window.__brLastMiniMapDraw || (now - window.__brLastMiniMapDraw) > mmGap){ window.__brLastMiniMapDraw = now; drawMinimap(); }
+
+    renderer.render(scene,camera);
+    }catch(e){ console.error(e); }
+
+    try{ window.__BR3D_RAF_ID__ = requestAnimationFrame(animate); }catch(_){ requestAnimationFrame(animate); }
+  }
+
+  // Backrooms multiplayer bridge lives inside run3D so it can use the real runtime state.
+  const q=(id)=>document.getElementById(id);
+  const qs=new URLSearchParams(location.search);
+  const roomId=window.__BR_ROOM_ID__ || qs.get('roomId') || '';
+  let bridge={ sid:String(window.__BR_BOOT_ID__||'')||null, nick:String(window.__BR_BOOT_NICK__||'Player'), isHost:!!window.__BR_BOOT_HOST__, selfSeat:Number(window.__BR_BOOT_SEAT__ ?? -1), roomId, start:(window.__BR_START__||null), active:false, remotes:new Map(), lastStateAt:0, lastWorldAt:0, lastCatchAt:0, stateSeq:0, hostSid:null, forceSpawnUntil:0, ignoreCaughtUntil:0, startId:null, spawn:null, spawnApplied:false, prevAnimateNow:0 };
+  let pendingStartPayload = null;
+  let helperMonster = null, helperRemote = null, helperState = null;
+  const bridgeStateCache = { x:null, y:null, z:null, yaw:null, hasKey:null, caught:null, ghost:null, trapped:null, sentAt:0 };
+  function post(msg){ try{ parent.postMessage(Object.assign({ gameId:'backrooms3d' }, msg||{}),'*'); }catch(_){ } }
+  const brExitBtn = document.getElementById('brExitBtn');
+  if (brExitBtn) brExitBtn.addEventListener('click', ()=>{ post({ type:'br_exit_to_lobby' }); });
+  function relay(kind, data){ post({ type:'br_msg', msg:Object.assign({ kind }, data||{}) }); }
+  function sanitizeStoredStart(sp){
+    try{
+      if (!sp || typeof sp !== 'object') return null;
+      const clean = Object.assign({}, sp);
+      delete clean.mySid;
+      delete clean.mySeat;
+      delete clean.myHost;
+      return clean;
+    }catch(_){ return null; }
+  }
+  function storageStart(){ return null; }
+  function clearStoredStart(){}
+  function startHasCurrentPlayer(sp){
+    try{
+      if (!sp || typeof sp !== 'object') return false;
+      const sid = String(sp.mySid || bridge?.sid || '');
+      const seat = Number.isFinite(Number(sp.mySeat)) ? Number(sp.mySeat) : Number(bridge?.selfSeat ?? -1);
+      const roles = (sp.roles && typeof sp.roles === 'object') ? sp.roles : null;
+      if (sid && roles && Object.prototype.hasOwnProperty.call(roles, sid)) return true;
+      const roster = Array.isArray(sp.roster) ? sp.roster : [];
+      if (!roster.length || !sid) return false;
+      return roster.some(r => String(r?.sid||'') === sid);
+    }catch(_){ return false; }
+  }
+  function storeStart(sp){ return; }
+  function findRosterSid(){
+    try{
+      const ord = parent && parent.room && parent.room.state && parent.room.state.order;
+      return null;
+    }catch(_){ return null; }
+  }
+  function findHostSid(start){
+    const roster = Array.isArray(start?.roster) ? start.roster.slice() : [];
+    roster.sort((a,b)=> (a.seat??99)-(b.seat??99) || String(a.sid).localeCompare(String(b.sid)));
+    const h = roster.find(r=>r && r.isHost) || roster[0];
+    return h ? String(h.sid) : null;
+  }
+
+  function resolveRoleForSid(start, sid, seat, fallbackRole){
+    const id = String(sid || '');
+    if (!start || typeof start !== 'object') return String(fallbackRole || 'rabbit');
+    if (id && String(start?.mySid || '') === id && start?.myRole) return String(start.myRole);
+    if (start.roles && id && start.roles[id] && start.roles[id].role) return String(start.roles[id].role);
+    const roster = Array.isArray(start.roster) ? start.roster : [];
+    const match = id ? roster.find(r => String(r?.sid||'') === id) : null;
+    if (match && start.roles && start.roles[String(match.sid)]?.role) return String(start.roles[String(match.sid)].role);
+    return String(fallbackRole || 'rabbit');
+  }
+
+  function authoritativeMonsterSid(start){
+    const roster = Array.isArray(start?.roster) ? start.roster.slice() : [];
+    if (Number(start?.playerCount||roster.length||0) < 2 || !roster.length) return null;
+    if (start && start.monsterSid != null && String(start.monsterSid||'')) return String(start.monsterSid);
+    const seed = Number(start?.seed||0) >>> 0;
+    roster.sort((a,b)=> (Number(a?.seat??99)-Number(b?.seat??99)) || String(a?.sid||'').localeCompare(String(b?.sid||'')));
+    return String(roster[seed % roster.length]?.sid || roster[0]?.sid || '');
+  }
+  function authoritativeMonsterSeat(start){
+    const roster = Array.isArray(start?.roster) ? start.roster.slice() : [];
+    if (Number(start?.playerCount||roster.length||0) < 2 || !roster.length) return -1;
+    const monsterSid = authoritativeMonsterSid(start);
+    const match = roster.find(r => String(r?.sid||'') === String(monsterSid||''));
+    if (match && Number.isFinite(Number(match?.seat))) return Number(match.seat);
+    const seed = Number(start?.seed||0) >>> 0;
+    roster.sort((a,b)=> (Number(a?.seat??99)-Number(b?.seat??99)) || String(a?.sid||'').localeCompare(String(b?.sid||'')));
+    return Number(roster[seed % roster.length]?.seat ?? -1);
+  }
+
+  function rabbitSpawnSlots(){
+    const baseZ = cage.userData.D/2 + 2.2;
+    return [
+      {x:-4.8,z:baseZ+0.45},{x:-3.2,z:baseZ+0.18},{x:-1.6,z:baseZ-0.05},
+      {x:0.0,z:baseZ-0.16},{x:1.6,z:baseZ-0.05},{x:3.2,z:baseZ+0.18},{x:4.8,z:baseZ+0.45}
+    ];
+  }
+  function rabbitSeatIndex(start, sid){
+    const roster = Array.isArray(start?.roster) ? start.roster.slice() : [];
+    const monsterSid = authoritativeMonsterSid(start) || '';
+    const rabbits = roster.filter(r=>String(r?.sid||'') !== monsterSid);
+    rabbits.sort((a,b)=> (Number(a?.seat??99)-Number(b?.seat??99)) || String(a?.sid||'').localeCompare(String(b?.sid||'')));
+    const idx = rabbits.findIndex(r=>String(r?.sid||'')===String(sid||''));
+    return idx >= 0 ? idx : 0;
+  }
+  function rabbitSpawnFor(start, sid){
+    const slots = rabbitSpawnSlots();
+    const idx = Math.max(0, Math.min(slots.length-1, rabbitSeatIndex(start, sid)));
+    return slots[idx];
+  }
+  function defaultSpawnYawForRole(role){
+    // y=0 faces toward +Z. That points rabbits away from the cage and points the monster toward the room doorway.
+    return 0;
+  }
+
+  function isSpawnPointFree(x, z, rad=0.60){
+    try{ return !collidesWalls(x, z, rad) && !collidesProps(x, z, rad); }catch(_){ return true; }
+  }
+  function findNearestFreeSpawn(spawn, fallback){
+    const base = {
+      x: Number(spawn?.x)||0,
+      y: Number(spawn?.y)||0.05,
+      z: Number(spawn?.z)||0,
+      yaw: Number.isFinite(Number(spawn?.yaw)) ? Number(spawn.yaw) : Math.PI
+    };
+    if (isSpawnPointFree(base.x, base.z)) return base;
+    const fall = {
+      x: Number(fallback?.x)||0,
+      y: Number(fallback?.y)||0.05,
+      z: Number(fallback?.z)||0,
+      yaw: Number.isFinite(Number(fallback?.yaw)) ? Number(fallback.yaw) : base.yaw
+    };
+    if (isSpawnPointFree(fall.x, fall.z)) return fall;
+    const step = 0.45;
+    for(let ring=1; ring<=12; ring++){
+      const r = ring * step;
+      const samples = Math.max(8, ring * 10);
+      for(let i=0; i<samples; i++){
+        const a = (Math.PI*2 * i) / samples;
+        const cand = { x: base.x + Math.cos(a) * r, y: base.y, z: base.z + Math.sin(a) * r, yaw: base.yaw };
+        if (isSpawnPointFree(cand.x, cand.z)) return cand;
+      }
+    }
+    return fall;
+  }
+  function sameBridgeStart(a, b){
+    try{
+      if (!a || !b) return false;
+      const aid = String(a.startId || a.startedAt || '');
+      const bid = String(b.startId || b.startedAt || '');
+      if (aid && bid) return aid === bid;
+      return JSON.stringify(a.roles || {}) === JSON.stringify(b.roles || {}) && JSON.stringify(a.roster || []) === JSON.stringify(b.roster || []);
+    }catch(_){ return false; }
+  }
+  function getBridgeStart(){
+    return (bridge && bridge.start && String(bridge.start.mode || '') === 'backrooms3d') ? bridge.start : null;
+  }
+  function setBridgeIdentity(partial){
+    if (!partial || typeof partial !== 'object') return;
+    if (partial.sid !== undefined && partial.sid !== null && String(partial.sid) !== '') bridge.sid = String(partial.sid);
+    if (partial.nick !== undefined && partial.nick !== null && String(partial.nick) !== '') bridge.nick = String(partial.nick);
+    if (partial.roomId !== undefined && partial.roomId !== null && String(partial.roomId) !== '') bridge.roomId = String(partial.roomId);
+    if (Number.isFinite(Number(partial.selfSeat))) bridge.selfSeat = Number(partial.selfSeat);
+    if (typeof partial.isHost === 'boolean') bridge.isHost = !!partial.isHost;
+  }
+  function applyBridgeStartPayload(startPayload, identity){
+    if (!startPayload || String(startPayload.mode || '') !== 'backrooms3d') return false;
+    const prevSid = String(bridge.sid || '');
+    const prevSeat = Number.isFinite(Number(bridge.selfSeat)) ? Number(bridge.selfSeat) : -1;
+    const prevHost = !!bridge.isHost;
+    setBridgeIdentity(identity || {});
+    const merged = Object.assign({}, startPayload, {
+      mySid: String(startPayload.mySid || bridge.sid || ''),
+      mySeat: Number.isFinite(Number(startPayload.mySeat)) ? Number(startPayload.mySeat) : Number(bridge.selfSeat ?? -1),
+      myHost: (typeof startPayload.myHost === 'boolean') ? !!startPayload.myHost : !!bridge.isHost,
+    });
+    if (merged.mySid && !bridge.sid) bridge.sid = String(merged.mySid);
+    if (Number.isFinite(Number(merged.mySeat)) && Number(prevSeat) < 0) bridge.selfSeat = Number(merged.mySeat);
+    if (typeof merged.myHost === 'boolean' && !prevHost) bridge.isHost = !!merged.myHost;
+    if (!startHasCurrentPlayer(merged)) return false;
+    const sameStart = sameBridgeStart(bridge.start, merged);
+    const identityChanged = (String(bridge.sid||'') !== prevSid) || (Number(bridge.selfSeat ?? -1) !== prevSeat) || (!!bridge.isHost !== prevHost);
+    bridge.start = merged;
+    storeStart(bridge.start);
+    bridge.active = Number(bridge.start.playerCount || 0) >= 2;
+    // sameStart여도 playerRole이 아직 올바르게 설정되지 않았으면 강제 재적용
+    const expectedRole = (() => {
+      const mSid = authoritativeMonsterSid(merged);
+      return (mSid && bridge.sid && String(mSid) === String(bridge.sid)) ? 'monster' : 'rabbit';
+    })();
+    const roleNotApplied = (playerRole !== expectedRole);
+    if (!sameStart || identityChanged || roleNotApplied) applyRoleAndSpawn();
+    return true;
+  }
+
+  function applyRoleAndSpawn(){
+    if (!bridge.start) return;
+    const start = getBridgeStart();
+    if (!start) return;
+    bridge.hostSid = findHostSid(start);
+    if (typeof start.myHost === 'boolean') bridge.isHost = !!start.myHost;
+    else bridge.isHost = !!((bridge.sid && bridge.hostSid && bridge.sid === bridge.hostSid) || (!bridge.hostSid && window.__BR_BOOT_HOST__));
+    const monsterSid = authoritativeMonsterSid(start);
+    const monsterSeat = Number.isFinite(Number(start?.monsterSeat)) ? Number(start.monsterSeat) : authoritativeMonsterSeat(start);
+    const selfSeat = Number.isFinite(Number(start.mySeat)) ? Number(start.mySeat) : Number(bridge.selfSeat ?? -1);
+    bridge.selfSeat = selfSeat;
+    bridge.active = Number(start.playerCount || 0) >= 2;
+    const roleEntry = bridge.sid && start && start.roles ? start.roles[String(bridge.sid)] : null;
+    let directMyRole = String(start?.myRole || (roleEntry && roleEntry.role) || '');
+    // myRole/roleEntry가 없으면 authoritativeMonsterSid로 직접 판별
+    if (directMyRole !== 'monster' && directMyRole !== 'rabbit') {
+      const mSid = authoritativeMonsterSid(start);
+      directMyRole = (mSid && bridge.sid && String(mSid) === String(bridge.sid)) ? 'monster' : 'rabbit';
+    }
+    if (directMyRole !== 'monster' && directMyRole !== 'rabbit') return;
+    playerRole = directMyRole;
+    syncUiState();
+    renderHelp();
+    monsterAI = false;
+    ensureMonster();
+    try{ for (const [,r] of bridge.remotes.entries()){ try{ if(r && r.obj) scene.remove(r.obj); }catch(_){} } bridge.remotes.clear(); }catch(_){ }
+    seedRemotesFromStart(start);
+    const nowMs = performance.now();
+    bridge.startId = String(start.startId || start.startedAt || '');
+    const spawnLockMs = Math.max(700, Number(start.spawnLockMs || 900));
+    const ignoreCaughtMs = Math.max(2500, Number(start.ignoreCaughtMs || 10000));
+    const startedAtMs = Number(start.startedAt || Date.now());
+    bridge.forceSpawnUntil = nowMs + Math.max(250, spawnLockMs - Math.max(0, Date.now() - startedAtMs));
+    bridge.ignoreCaughtUntil = nowMs + Math.max(400, ignoreCaughtMs - Math.max(0, Date.now() - startedAtMs));
+    monsterReleaseLeft = Math.max(0, (spawnLockMs - Math.max(0, Date.now() - startedAtMs)) / 1000);
+    bridge.spawnApplied = false;
+    let spawn = null;
+    if (start && start.mySpawn) spawn = start.mySpawn;
+    else if (roleEntry && roleEntry.spawn) spawn = roleEntry.spawn;
+    else if (playerRole === 'monster') spawn = { x:monsterRoom.cx, y:0.05, z:monsterRoom.cz - monsterRoom.d*0.15, yaw:0 };
+    else spawn = Object.assign({ y:0.05, yaw:defaultSpawnYawForRole('rabbit') }, rabbitSpawnFor(start, bridge.sid));
+    const fallbackSpawn = (playerRole === 'monster')
+      ? { x:monsterRoom.cx, y:0.05, z:monsterRoom.cz - monsterRoom.d*0.15, yaw:0 }
+      : { x:0, y:0.05, z:cage.userData.D/2 + 2.8, yaw:defaultSpawnYawForRole('rabbit') };
+    bridge.spawn = findNearestFreeSpawn(spawn, fallbackSpawn);
+    try{ monster.userData.locked = true; }catch(_){ }
+    try{ rabbitCaughtCount = 0; resetRabbitStateVisual(); }catch(_){ }
+    try{ cage.userData.locked = true; cage.userData.doorOpen = 0; cage.userData.autoCloseT = 0; }catch(_){ }
+    if (playerRole === 'monster'){
+      player.visible = false;
+      monster.visible = true;
+      player.position.set(bridge.spawn.x, bridge.spawn.y, bridge.spawn.z);
+      monster.position.set(bridge.spawn.x, bridge.spawn.y, bridge.spawn.z);
+      yaw = bridge.spawn.yaw;
+      player.rotation.y = yaw;
+      monster.rotation.y = yaw;
+      bridge.spawnApplied = true;
+      try{ updatePanicMusic(999); }catch(_){ }
+    } else {
+      player.visible = !rabbitGhost;
+      monster.visible = false;
+      player.position.set(bridge.spawn.x, bridge.spawn.y, bridge.spawn.z);
+      yaw = bridge.spawn.yaw;
+      player.rotation.y = yaw;
+      bridge.spawnApplied = true;
+    }
+  }
+  function makeRemoteAvatar(role){
+    const g = new THREE.Group();
+    if (role === 'monster'){
+      const mat = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.92});
+      const glow = new THREE.MeshStandardMaterial({color:0xff3b3b, emissive:0xff2b2b, emissiveIntensity:1.0});
+      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.56,1.20,3,6), mat);
+      body.position.y = 1.45; g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 6, 6), mat);
+      head.position.y = 2.45; g.add(head);
+      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), glow);
+      const eyeR = eyeL.clone();
+      eyeL.position.set(-0.13,2.48,0.32); eyeR.position.set(0.13,2.48,0.32);
+      g.add(eyeL, eyeR);
+    } else {
+      const mat = new THREE.MeshStandardMaterial({color:0xe9eefc, roughness:0.96});
+      const pink = new THREE.MeshStandardMaterial({color:0xffc8d6, roughness:0.92});
+      const eyeM = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.5});
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 10), mat);
+      body.scale.set(1.0,0.92,1.08); g.add(body);
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 10), mat);
+      head.position.set(0,0.30,0.32); g.add(head);
+      const earGeo = new THREE.CapsuleGeometry(0.09,0.34,3,6);
+      const earL = new THREE.Mesh(earGeo, mat); earL.position.set(-0.14,0.68,0.38); earL.rotation.x = 0.12; g.add(earL);
+      const earR = earL.clone(); earR.position.x = 0.14; g.add(earR);
+      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), pink);
+      nose.position.set(0,0.25,0.64); g.add(nose);
+      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6,6), eyeM);
+      const eyeR = eyeL.clone();
+      eyeL.position.set(-0.10,0.34,0.58); eyeR.position.set(0.10,0.34,0.58);
+      g.add(eyeL,eyeR);
+      g.scale.setScalar(0.72);
+      const ki = makeKey(); ki.name='remoteKey'; ki.scale.setScalar(0.75); ki.position.set(0,2.15,0); ki.visible=false; g.add(ki);
+      const cc = makeCaughtCloud(); cc.name='remoteCaught'; cc.visible=false; g.add(cc);
+    }
+    g.visible = false;
+    scene.add(g);
+    return g;
+  }
+
+  function setMonsterTransparency(root, alpha=1){
+    if(!root) return;
+    root.traverse?.((obj)=>{
+      const mat = obj && obj.material;
+      if(!mat) return;
+      const mats = Array.isArray(mat) ? mat : [mat];
+      mats.forEach((m)=>{
+        if(!m) return;
+        m.transparent = alpha < 0.999;
+        m.opacity = alpha;
+        m.depthWrite = alpha >= 0.999;
+      });
+    });
+  }
+  function ensureHelperMonster(){ return null; }
+  function ensureHelperRemote(){ return null; }
+  function snapshotHelper(){ return null; }
+  function sendHelperState(force){ return; }
+  function applyHelperState(m){ return; }
+  function updateHelperMonster(dt){ return; }
+
+  function ensureRemote(sid, role, initialState){
+    sid=String(sid||''); if(!sid || sid===bridge.sid) return null;
+    let r = bridge.remotes.get(sid);
+    if(!r || r.role!==role){
+      const prev = r && r.obj ? r.obj : null;
+      const px = (initialState && Number.isFinite(Number(initialState.x))) ? Number(initialState.x) : (prev ? prev.position.x : 0);
+      const py = (initialState && Number.isFinite(Number(initialState.y))) ? Number(initialState.y) : (prev ? prev.position.y : 0);
+      const pz = (initialState && Number.isFinite(Number(initialState.z))) ? Number(initialState.z) : (prev ? prev.position.z : 0);
+      const pry = (initialState && Number.isFinite(Number(initialState.yaw))) ? Number(initialState.yaw) : (prev ? prev.rotation.y : 0);
+      if(prev){ try{ scene.remove(prev); }catch(_){ } }
+      const obj = makeRemoteAvatar(role);
+      obj.position.set(px, py, pz);
+      obj.rotation.y = pry;
+      obj.visible = !!initialState;
+      r = { sid, role, obj, state:(initialState ? Object.assign({}, initialState, { role }) : null), lastSeq:-1, targetX:px, targetY:py, targetZ:pz, targetYaw:pry, lastAt:performance.now() };
+      bridge.remotes.set(sid, r);
+    } else if (initialState){
+      r.obj.position.set(Number(initialState.x)||0, Number(initialState.y)||0, Number(initialState.z)||0);
+      r.obj.rotation.y = Number(initialState.yaw)||0;
+      r.obj.visible = true;
+      r.state = Object.assign({}, initialState, { role });
+      r.targetX = Number(initialState.x)||0;
+      r.targetY = Number(initialState.y)||0;
+      r.targetZ = Number(initialState.z)||0;
+      r.targetYaw = Number(initialState.yaw)||0;
+      r.lastAt = performance.now();
+    }
+    return r;
+  }
+
+  function seedRemotesFromStart(start){
+    try{
+      if(!start || !Array.isArray(start.roster)) return;
+      const roles = (start.roles && typeof start.roles === 'object') ? start.roles : {};
+      for(const entry of start.roster){
+        const sid = String(entry?.sid || '');
+        if(!sid || sid === String(bridge.sid||'')) continue;
+        const roleInfo = roles[sid] || {};
+        const role = String(roleInfo.role || resolveRoleForSid(start, sid, Number(entry?.seat ?? -1), 'rabbit'));
+        if (role !== 'monster' && role !== 'rabbit') continue;
+        let sp = roleInfo.spawn || null;
+        if(!sp){
+          if(role === 'monster') sp = { x:monsterRoom.cx, y:0.05, z:monsterRoom.cz - monsterRoom.d*0.15, yaw:0 };
+          else sp = Object.assign({ y:0.05, yaw:defaultSpawnYawForRole('rabbit') }, rabbitSpawnFor(start, sid));
+        }
+        ensureRemote(sid, role, Object.assign({ x:0, y:0.05, z:0, yaw:0, hasKey:false, caught:0, ghost:false, trapped:false }, sp, { sid, from:sid, seat:Number(entry?.seat ?? -1), role }));
+      }
+    }catch(_){ }
+  }
+
+  // carts and balls stay local-only to reduce sync cost; shared world keeps only meaningful blocking/interactable props
+  function snapshotDynamicProps(){
+    const out = [];
+    for(const o of (props||[])){
+      const kind = String(o?.userData?.kind||'');
+      if(!['crate','pillar','block'].includes(kind)) continue;
+      const item = { kind, netKey:String(o?.userData?.netKey || `${kind}:${out.length}`), x:+o.position.x.toFixed(3), y:+o.position.y.toFixed(3), z:+o.position.z.toFixed(3), ry:+(o.rotation?.y||0).toFixed(3) };
+      if(kind==='crate' || kind==='pillar' || kind==='block'){
+        item.hx=+((o.userData?.halfX)||0.6).toFixed(3);
+        item.hz=+((o.userData?.halfZ)||0.6).toFixed(3);
+        item.h=+(o.position.y*2).toFixed(3);
+        item.color=(o.material?.color?.getHex?.()||0xb7a86a);
+      }
+      out.push(item);
+    }
+    return out;
+  }
+  function clearDynamicProps(){
+    for(let i=props.length-1;i>=0;i--){
+      const o = props[i];
+      const kind = String(o?.userData?.kind||'');
+      if(!['crate','pillar','block'].includes(kind)) continue;
+      props.splice(i,1);
+      try{ scene.remove(o); }catch(_){ }
+    }
+    if(Array.isArray(shelves)) shelves.length = 0;
+  }
+  function restoreDynamicProps(items){
+    const syncedKinds = new Set(['crate','pillar','block']);
+    const existing = new Map();
+    for(const o of (props||[])){
+      const kind = String(o?.userData?.kind||'');
+      if(!syncedKinds.has(kind)) continue;
+      const key = String(o?.userData?.netKey || '');
+      if(key) existing.set(key, o);
+    }
+    const keep = new Set();
+    let idx = 0;
+    for(const it of (items||[])){
+      const kind = String(it?.kind||'');
+      if(!syncedKinds.has(kind)) { idx++; continue; }
+      const x = Number(it?.x)||0, z = Number(it?.z)||0;
+      const ry = Number(it?.ry)||0;
+      const hh = Number(it.h)||1.2;
+      const hx = (Number(it.hx)||0.6);
+      const hz = (Number(it.hz)||0.6);
+      const netKey = String(it?.netKey || `${kind}:${idx++}`);
+      let o = existing.get(netKey) || null;
+      if(!o){
+        if(kind==='crate'){ spawnCrate(x, z, hx*2, hz*2, hh); o = props[props.length-1]; }
+        else if(kind==='pillar'){ spawnPillar(x, z, hx, hh||4.0); o = props[props.length-1]; }
+        else if(kind==='block'){
+          const m = new THREE.MeshStandardMaterial({color:Number(it.color)||0xb7a86a, roughness:0.8});
+          const box = new THREE.Mesh(new THREE.BoxGeometry(hx*2,hh,hz*2), m);
+          box.position.set(x, hh/2, z); box.rotation.y = ry; box.castShadow=true; box.receiveShadow=true;
+          scene.add(box); addAABB(box, hx, hz, 'block'); o = props[props.length-1];
+        }
+        if(o) o.userData.netKey = netKey;
+      }
+      if(!o) continue;
+      keep.add(o);
+      o.userData.netKey = netKey;
+      o.position.set(x, kind==='pillar' ? hh/2 : hh/2, z);
+      o.rotation.y = ry;
+      o.userData.halfX = hx;
+      o.userData.halfZ = hz;
+      if(o.material?.color && Number.isFinite(Number(it.color))) o.material.color.setHex(Number(it.color));
+      if(o.geometry && kind==='block'){
+        const sx=hx*2, sz=hz*2;
+        if(Math.abs((o.geometry.parameters?.width||0)-sx) > 0.01 || Math.abs((o.geometry.parameters?.height||0)-hh) > 0.01 || Math.abs((o.geometry.parameters?.depth||0)-sz) > 0.01){
+          try{ o.geometry.dispose(); }catch(_){ }
+          o.geometry = new THREE.BoxGeometry(sx, hh, sz);
+        }
+      }
+    }
+    for(let i=props.length-1;i>=0;i--){
+      const o = props[i];
+      const kind = String(o?.userData?.kind||'');
+      if(!syncedKinds.has(kind)) continue;
+      if(keep.has(o)) continue;
+      props.splice(i,1);
+      try{ scene.remove(o); }catch(_){ }
+    }
+  }
+  function snapshotWorld(){
+    return {
+      kind:'world',
+      keys: (keys||[]).map(k=>({x:+k.position.x.toFixed(3), z:+k.position.z.toFixed(3)})),
+      doorProg: Number(doorProg||0),
+      cageLocked: !!cage?.userData?.locked,
+      cageDoorOpen: !!cage?.userData?.doorOpen,
+      cageAutoCloseT: +(cage?.userData?.autoCloseT || 0),
+      releaseLeft: +(monsterReleaseLeft||0),
+      sealUsed: !!doorState?.sealUsed,
+      sealLeft: +(sealLeft||0),
+      ts: Date.now()
+    };
+  }
+  let lastAppliedWorldTs = 0;
+  function applyWorld(w){
+    if(!w || typeof w!=='object') return;
+    const ts = Number(w.ts || 0);
+    if(ts && ts < lastAppliedWorldTs) return;
+    if(ts) lastAppliedWorldTs = ts;
+    try{
+      while(keys.length){ const k=keys.pop(); scene.remove(k); }
+      (w.keys||[]).forEach(it=>spawnKeyAt(Number(it.x)||0, Number(it.z)||0));
+      doorProg = Number(w.doorProg||0); q('pDoor').textContent = '문: '+doorProg+'/3';
+      cage.userData.locked = !!w.cageLocked; cage.userData.doorOpen = !!w.cageDoorOpen; cage.userData.autoCloseT = Number(w.cageAutoCloseT||0);
+      const lock = cage.getObjectByName('cageLock'); if(lock) lock.visible = !!cage.userData.locked;
+      monsterReleaseLeft = Number(w.releaseLeft||0); if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01;
+      doorState.sealUsed = !!w.sealUsed; sealLeft = Number(w.sealLeft||0);
+    }catch(_){ }
+  }
+  function appendChatLine(nick, text){
+    try{ const line = (nick ? (nick+': ') : '') + String(text||''); addChat(line); }catch(_){ }
+  }
+  function sendState(force=false){
+    if(!bridge.active || !bridge.sid) return;
+    const snap = {
+      x:+player.position.x.toFixed(3), y:+player.position.y.toFixed(3), z:+player.position.z.toFixed(3),
+      yaw:+yaw.toFixed(4), hasKey:(keyCount>0), caught:Number(rabbitCaughtCount||0), ghost:!!rabbitGhost, trapped:!!player.userData.trapped,
+      vx:+((player.userData&&player.userData.vx)||0).toFixed(3), vz:+((player.userData&&player.userData.vz)||0).toFixed(3)
+    };
+    const now = performance.now();
+    const moving = Math.hypot(snap.vx||0, snap.vz||0) > 0.02;
+    const changed = (
+      bridgeStateCache.x === null ||
+      Math.abs((bridgeStateCache.x||0) - snap.x) > (moving ? 0.025 : 0.05) ||
+      Math.abs((bridgeStateCache.y||0) - snap.y) > 0.03 ||
+      Math.abs((bridgeStateCache.z||0) - snap.z) > (moving ? 0.025 : 0.05) ||
+      Math.abs((bridgeStateCache.yaw||0) - snap.yaw) > (moving ? 0.022 : 0.05) ||
+      Math.abs((bridgeStateCache.vx||0) - snap.vx) > 0.04 ||
+      Math.abs((bridgeStateCache.vz||0) - snap.vz) > 0.04 ||
+      bridgeStateCache.hasKey !== snap.hasKey ||
+      bridgeStateCache.caught !== snap.caught ||
+      bridgeStateCache.ghost !== snap.ghost ||
+      bridgeStateCache.trapped !== snap.trapped
+    );
+    const minGap = moving ? 25 : 140;
+    if(!force && !changed && (now - (bridgeStateCache.sentAt||0) < minGap)) return;
+    Object.assign(bridgeStateCache, snap, { sentAt: now });
+    relay('state', { seq:(++bridge.stateSeq), role:playerRole, seat:Number(bridge.selfSeat ?? -1), sentAt: Date.now(), ...snap });
+  }
+
+  function maybeSendWorld(force){
+    if(!bridge.active || !bridge.sid) return;
+    const now=performance.now();
+    if(!force && now-bridge.lastWorldAt < 3200) return;
+    bridge.lastWorldAt = now;
+    const snap = snapshotWorld();
+    if(bridge.isHost) relay('world', snap);
+    else relay('world_req', {});
+  }
+  const _sendChat = sendChat;
+  sendChat = function(){
+    const msgText = String(chatIn.value||'').trim();
+    if(!msgText) return false;
+    const ok = _sendChat.apply(this, arguments);
+    try{
+      if(ok && bridge.active){
+        relay('chat', { text:msgText });
+      }
+    }catch(_){ }
+    return ok;
+  };
+  const _updatePanicMusic = (typeof window.updatePanicMusic === 'function' ? window.updatePanicMusic : (typeof updatePanicMusic === 'function' ? updatePanicMusic : null));
+  if(_updatePanicMusic){ window.updatePanicMusic = function(dist){ if(playerRole==='monster') return; return _updatePanicMusic(dist); }; try{ updatePanicMusic = window.updatePanicMusic; }catch(_){ } }
+  const _doInteract = (typeof window.doInteract === 'function' ? window.doInteract : (typeof doInteract === 'function' ? doInteract : null));
+  if(_doInteract){ window.doInteract = function(){ const before = JSON.stringify(snapshotWorld()); const r = _doInteract.apply(this, arguments); setTimeout(()=>{ try{ if(JSON.stringify(snapshotWorld()) !== before) maybeSendWorld(true); }catch(_){ } }, 0); return r; }; try{ doInteract = window.doInteract; }catch(_){ } }
+  if(!window.__BR3D_MESSAGE_HANDLER__){ window.__BR3D_MESSAGE_HANDLER__ = (e)=>{
+    const d=e.data||{};
+    if(!d || typeof d!=='object') return;
+    if(d.type==='bridge_init'){
+      setBridgeIdentity({
+        sid: d.sessionId || d.mySid || window.__BR_BOOT_ID__ || bridge.sid || '',
+        nick: d.nick || d.myNick || window.__BR_BOOT_NICK__ || bridge.nick || 'Player',
+        roomId: d.roomCode || roomId || bridge.roomId,
+        selfSeat: Number.isFinite(Number(d.selfSeat)) ? Number(d.selfSeat) : Number(d.seat),
+        isHost: (typeof d.isHost === 'boolean') ? !!d.isHost : ((typeof d.host === 'boolean') ? !!d.host : bridge.isHost),
+      });
+      if (d.startPayload) applyBridgeStartPayload(d.startPayload);
+      else if (pendingStartPayload) applyBridgeStartPayload(pendingStartPayload);
+      post({ type:'bridge_ready', gameId:'backrooms3d' });
+      if (bridge.start) { maybeSendWorld(true); sendState(true); }
+      return;
+    }
+    if(d.type==='game_start'){
+      const sp = d.payload || null;
+      pendingStartPayload = sp || pendingStartPayload;
+      if (applyBridgeStartPayload(sp)){
+        pendingStartPayload = null;
+        post({ type:'br_game_start_ack' });
+        maybeSendWorld(true);
+        sendState(true);
+      }
+      return;
+    }
+    if(d.type==='br_batch'){
+      const list = Array.isArray(d.states) ? d.states : [];
+      for (const item of list){
+        try{ window.__BR3D_MESSAGE_HANDLER__({ data:{ type:'br_msg', msg:item } }); }catch(_){ }
+      }
+      return;
+    }
+    if(d.type==='br_msg'){
+      const m=d.msg||{}; const kind=String(m.kind||m.t||''); const sid=String(m.from||m.sid||'');
+      if(kind==='chat'){ if(sid!==bridge.sid) appendChatLine(m.nick||'Player', m.text||''); return; }
+      if(kind==='state'){
+        if(sid===bridge.sid) return;
+        if(!sid) return;
+        const msgSeat=Number(m.seat ?? -1);
+        // bridge.start가 없어도 sid만으로 처리 (초기 연결 지연 해소)
+        const roster = Array.isArray(bridge.start?.roster) ? bridge.start.roster : [];
+        const rosterOk = !roster.length || roster.some(entry => String(entry?.sid||'') === sid);
+        if (!rosterOk) return;
+        const remoteKey = sid;
+        const role = bridge.start ? resolveRoleForSid(bridge.start, sid, msgSeat, 'rabbit') : 'rabbit';
+        if (role !== 'monster' && role !== 'rabbit') return;
+        const r = ensureRemote(remoteKey, role);
+        if(!r) return;
+        const seq = Number(m.seq || 0);
+        if(seq && seq <= Number(r.lastSeq || -1)) return;
+        r.lastSeq = seq || (Number(r.lastSeq || 0) + 1);
+        r.obj.visible = true;
+        r.state = Object.assign({}, m, { role });
+        r.targetX = Number(m.x)||0;
+        r.targetY = Number(m.y)||0;
+        r.targetZ = Number(m.z)||0;
+        r.targetYaw = Number(m.yaw)||0;
+        r.vx = Number(m.vx)||0;
+        r.vz = Number(m.vz)||0;
+        r.lastAt = performance.now();
+        return;
+      }
+      if(kind==='world'){ if(!bridge.isHost && sid!==bridge.sid) applyWorld(m); return; }
+      if(kind==='world_req'){ if(bridge.isHost && sid!==bridge.sid){ relay('world', snapshotWorld()); } return; }
+      if(kind==='helper_state'){ if(!bridge.isHost && sid!==bridge.sid) applyHelperState(m); return; }
+      if(kind==='caught'){ if(String(m.target||'')===bridge.sid){
+          if (performance.now() < Number(bridge.ignoreCaughtUntil||0)) return;
+          if(playerRole==='monster') return;
+          rabbitCaughtCount = Number(rabbitCaughtCount||0) + 1;
+          updateCaughtCloud();
+          syncUiState();
+          if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); placeKey(); }
+          if(rabbitCaughtCount>=2){ makeRabbitGhost(); }
+          else { trapRabbitInCage(6); }
+          maybeSendWorld(true); sendState(true);
+      } return; }
+    }
+  }; window.addEventListener('message', window.__BR3D_MESSAGE_HANDLER__); }
+  const _animate = animate;
+  animate = function(now){
+    const bridgeNow = Number.isFinite(Number(now)) ? Number(now) : performance.now();
+    const bridgeDt = Math.min(0.05, Math.max(0, (bridge.prevAnimateNow ? (bridgeNow - bridge.prevAnimateNow) / 1000 : 1/60)));
+    bridge.prevAnimateNow = bridgeNow;
+    if(bridge.start && (bridge.start.playerCount||0) >= 2){
+      if (!bridge.spawnApplied && bridge.spawn){
+        try{ player.userData.trapped = false; }catch(_){ }
+        try{ rabbitGhost = false; rabbitCaughtCount = 0; updateCaughtCloud(); syncUiState(); }catch(_){ }
+        player.position.set(Number(bridge.spawn.x)||0, Number(bridge.spawn.y)||0.05, Number(bridge.spawn.z)||0);
+        yaw = Number.isFinite(Number(bridge.spawn.yaw)) ? Number(bridge.spawn.yaw) : yaw;
+        player.rotation.y = yaw;
+        if(monster) monster.rotation.y = yaw;
+        bridge.spawnApplied = true;
+      } else if (performance.now() < Number(bridge.forceSpawnUntil||0)) {
+        try{ player.userData.trapped = false; }catch(_){ }
+      }
+      if(playerRole==='monster'){
+        player.visible = false; ensureMonster(); monster.visible = true; monster.position.copy(player.position); monster.rotation.y = yaw;
+      } else {
+        player.visible = true;
+        setAvatarGhostVisual(player, !!rabbitGhost, 0.38);
+        if(monster) monster.visible = false;
+      }
+      for (const [sid,r] of bridge.remotes.entries()){
+        const st=r.state;
+        if(!st){ if(r.obj) r.obj.visible=false; continue; }
+        if(playerRole==='monster' && !!st.ghost){ r.obj.visible=false; continue; }
+        r.obj.visible=true;
+        setAvatarGhostVisual(r.obj, !!st.ghost, 0.38);
+        const age = Math.min(0.030, Math.max(0.006, ((performance.now() - Number(r.lastAt||performance.now()))/1000) + 0.006));
+        const lerpA = 1 - Math.exp(-bridgeDt*72.0);
+        const tx = (Number(r.targetX ?? st.x) || 0) + (Number(r.vx)||0) * age;
+        const ty = Number(r.targetY ?? st.y) || 0;
+        const tz = (Number(r.targetZ ?? st.z) || 0) + (Number(r.vz)||0) * age;
+        r.obj.position.x += (tx - r.obj.position.x) * lerpA;
+        r.obj.position.y += (ty - r.obj.position.y) * lerpA;
+        r.obj.position.z += (tz - r.obj.position.z) * lerpA;
+        const targetYaw = Number(r.targetYaw ?? st.yaw) || 0;
+        let yawDiff = targetYaw - r.obj.rotation.y;
+        while(yawDiff > Math.PI) yawDiff -= Math.PI*2;
+        while(yawDiff < -Math.PI) yawDiff += Math.PI*2;
+        r.obj.rotation.y += yawDiff * Math.min(1, lerpA*1.3);
+        if(r.role!=='monster'){ const ki=r.obj.getObjectByName('remoteKey'); if(ki) ki.visible=(!st.ghost && !!st.hasKey); const cc=r.obj.getObjectByName('remoteCaught'); if(cc) cc.visible = (!st.ghost && Number(st.caught||0)===1); }
+      }
+      const nowp=performance.now();
+      if(nowp - bridge.lastStateAt > 25){ bridge.lastStateAt = nowp; sendState(false); }
+      if(bridge.isHost){
+        if(nowp - bridge.lastCatchAt > 170){
+          bridge.lastCatchAt = nowp;
+          const hunters = [];
+          if(playerRole==='monster') hunters.push({ sid:bridge.sid, x:player.position.x, z:player.position.z });
+          else for(const [sid,r] of bridge.remotes.entries()){ if(r.role==='monster' && r.state){ hunters.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0 }); break; } }
+          if(hunters.length){
+            if (Number(monsterReleaseLeft||0) > 0.01) return _animate(now);
+            if (performance.now() < Number(bridge.ignoreCaughtUntil||0)) return _animate(now);
+            const rabbits=[];
+            if(playerRole!=='monster' && !rabbitGhost && !player.userData.trapped) rabbits.push({ sid:bridge.sid, x:player.position.x, z:player.position.z, caught:rabbitCaughtCount, trapped:!!player.userData.trapped });
+            for(const [sid,r] of bridge.remotes.entries()){ if(r.role!=='monster' && r.state && !r.state.ghost && !r.state.trapped) rabbits.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0, caught:Number(r.state.caught||0), trapped:!!r.state.trapped }); }
+            outer: for(const hunter of hunters){
+              for(const rb of rabbits){
+                if(rb.sid===hunter.sid || rb.trapped) continue;
+                const dx=rb.x-hunter.x, dz=rb.z-hunter.z;
+                if(dx*dx+dz*dz < 2.1*2.1){ relay('caught', { target: rb.sid }); break outer; }
+              }
+            }
+          }
+        }
+      }
+    }
+    return _animate(now);
+  };
+  setTimeout(()=>{
+    post({ type:'bridge_ready', gameId:'backrooms3d' });
+  }, 0);
+
+  // Kick the render/update loop exactly once after all wrappers are installed.
+  try{ if(!window.__BR3D_RAF_ID__) window.__BR3D_RAF_ID__ = requestAnimationFrame(animate); }catch(_){ requestAnimationFrame(animate); }
+
+}
+
+(function boot(){
+  const deadline=Date.now()+2500;
+  function step(){
+    if(typeof THREE!=="undefined"){
+      try{ run3D(); $("pMode").textContent="🎮 3D"; return; }
+      catch(e){ console.error(e); cleanup3D(); showFallback("3D 초기화 오류: "+(e.message||e)); return; }
+    }
+    if(Date.now()>deadline){ showFallback("three.js 로드가 지연/차단되었습니다. 2D로 테스트하세요."); return; }
+    setSub("three.js 로드 중…");
+    setTimeout(step,80);
+  }
+  step();
+})();
+</script>
+
+<script>
+// bridge moved into run3D
+</script>
+
+</body>
+</html>

@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>그림맞추기</title>
+  <style>
+    :root{
+      --bg:#f4ece1;
+      --paper:#ffffff;
+      --accent:#8d6e63;
+      --text:#4e342e;
+      --muted:rgba(78,52,46,.65);
+      --danger:#d32f2f;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      padding:14px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, 'Pretendard', sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      -webkit-user-select:none;
+      user-select:none;
+    }
+    header{
+      width:100%;
+      /* PC에서 캔버스/좌우 패널이 조금 더 커지도록 */
+      max-width:1560px;
+      margin:0 auto 10px auto;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .title h1{
+      margin:0;
+      font-size:18px;
+      letter-spacing:-0.2px;
+    }
+    .meta{
+      font-size:12px;
+      color:var(--muted);
+    }
+    .timer{
+      font-size: 22px;
+      font-weight:800;
+      color:var(--danger);
+      min-width:76px;
+      text-align:right;
+    }
+    .game{
+      width:100%;
+      max-width:1560px;
+      margin:0 auto;
+      display:flex;
+      gap:12px;
+      align-items:stretch;
+    }
+    .toolbar{
+      width:96px;
+      background:rgba(255,255,255,.55);
+      border:2px solid var(--accent);
+      border-radius:14px;
+      padding:10px;
+      display:flex;
+      flex-direction:column;
+      gap:12px;
+      align-items:center;
+    }
+    .toolbarBtns{
+      width:100%;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:stretch;
+    }
+    .palette{
+      width:100%;
+      display:flex;
+      flex-wrap:wrap;
+      gap:8px;
+      justify-content:center;
+      padding-top:4px;
+    }
+    .color{
+      width:28px;
+      height:28px;
+      border-radius:14px;
+      border:2px solid #fff;
+      box-shadow:0 2px 6px rgba(0,0,0,.12);
+      cursor:pointer;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:13px;
+      font-weight:900;
+      color:rgba(0,0,0,.70);
+      user-select:none;
+    }
+    .color.eraser{
+      background:repeating-linear-gradient(45deg,#ffffff,#ffffff 6px,#f0f0f0 6px,#f0f0f0 12px);
+      border:2px solid rgba(0,0,0,.10);
+    }
+    .color.active{ outline:3px solid rgba(141,110,99,.55); }
+    .btn{
+      width:100%;
+      padding:9px 10px;
+      border-radius:12px;
+      border:1px solid rgba(0,0,0,.08);
+      background:rgba(141,110,99,.14);
+      color:var(--text);
+      font-weight:700;
+      font-size:14px;
+      letter-spacing:-0.2px;
+      line-height:1.2;
+      white-space:nowrap;
+      cursor:pointer;
+    }
+    .btn:disabled{ opacity:.4; cursor:not-allowed; }
+    .canvasWrap{
+      flex: 1.35;
+      background:var(--paper);
+      border:1px solid rgba(0,0,0,.12);
+      border-radius:10px;
+      box-shadow: 4px 4px 14px rgba(0,0,0,.08);
+      position:relative;
+      min-height:720px;
+      height: min(900px, calc(100vh - 140px));
+      overflow:hidden;
+    }
+    canvas{
+      width:100%;
+      height:100%;
+      display:block;
+      touch-action:none;
+      cursor:crosshair;
+    }
+    .side{
+      flex: .75;
+      min-width:280px;
+      max-width:460px;
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      height: min(900px, calc(100vh - 140px));
+      min-height:0;
+    }
+    .chat{
+      flex:1;
+      background:#fff;
+      border:2px solid var(--accent);
+      border-radius:12px;
+      padding:10px;
+      overflow-y:auto;
+      overflow-x:hidden;
+      min-height:0;
+      -webkit-overflow-scrolling:touch;
+      overscroll-behavior:contain;
+      font-size:13px;
+      line-height:1.35;
+    }
+    .row{
+      display:flex;
+      gap:6px;
+    }
+    input{
+      flex:1;
+      padding:10px;
+      border-radius:10px;
+      border:2px solid var(--accent);
+      font-size:14px;
+      outline:none;
+    }
+    .send{
+      padding:10px 12px;
+      border-radius:10px;
+      border:none;
+      background:var(--accent);
+      color:#fff;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .pill{
+      display:inline-block;
+      padding:3px 8px;
+      border-radius:999px;
+      background:rgba(141,110,99,.12);
+      border:1px solid rgba(141,110,99,.2);
+      font-size:12px;
+      color:var(--text);
+    }
+    .sys{ color:#2b5; font-weight:800; }
+    .warn{ color:var(--danger); font-weight:800; }
+    .hint{ color:var(--muted); }
+    .mobileWordBar{
+      display:none;
+      width:100%;
+      max-width:1020px;
+      margin:0 auto 10px auto;
+      padding:10px 12px;
+      border-radius:14px;
+      border:2px solid var(--accent);
+      background:rgba(255,255,255,.72);
+      font-weight:900;
+      letter-spacing:-0.3px;
+      color:var(--text);
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .mobileTimer{
+      font-size:18px;
+      font-weight:900;
+      color:var(--danger);
+      flex:0 0 auto;
+    }
+    .centerInfo{
+      flex:1;
+      min-width:240px;
+      text-align:center;
+      padding:8px 12px;
+      border-radius:14px;
+      border:2px solid var(--accent);
+      background:rgba(255,255,255,.72);
+      font-weight:900;
+      letter-spacing:-0.3px;
+      color:var(--text);
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+    }
+    @media (max-width: 860px){
+      html, body{ height:100%; }
+      body{
+        padding:10px;
+        display:flex;
+        flex-direction:column;
+        overflow:hidden;
+      }
+      header{ flex:0 0 auto; margin-bottom:6px; }
+      .centerInfo{ display:none; }
+      .timer{ display:none; }
+
+      .mobileWordBar{ display:flex; flex:0 0 auto; }
+
+      .game{ flex:1 1 auto; min-height:0; flex-direction:column; overflow:hidden; }
+
+      /* Mobile: buttons on top, palette below (horizontal) */
+      .toolbar{ flex:0 0 auto; flex-direction:column; width:100%; align-items:stretch; }
+      .toolbarBtns{ flex-direction:row; gap:10px; }
+      .btn{ width:50%; }
+      .palette{ padding-top:10px; }
+
+      .canvasWrap{ flex:0 0 auto; width:100%; aspect-ratio:1/1; height:auto; min-height:unset; }
+      .side{ flex:1 1 auto; max-width:none; min-width:unset; height:auto; min-height:0; }
+    }
+  </style>
+</head>
+<body>
+    <header>
+    <div class="title">
+      <h1>🖌️ 그림맞추기</h1>
+      <div class="meta">
+        <span class="pill" id="roundPill">라운드 -/-</span>
+        <span class="pill" id="turnPill">차례: -</span>
+        <span class="pill" id="wordPill">제시어: ???</span>
+      </div>
+    </div>
+
+    <!-- PC: 상단 중앙에 "지금 그릴 것/차례" 표시 -->
+    <div class="centerInfo" id="centerInfo">차례: -</div>
+
+    <!-- PC: 우측에 제한시간 (모바일에서는 아래 bar 우측으로 이동) -->
+    <div class="timer" id="timer">02:00</div>
+  </header>
+
+    <div class="mobileWordBar" id="mobileWordBar">
+    <span id="mobileWordText">차례: -</span>
+    <span class="mobileTimer" id="mobileTimer">02:00</span>
+  </div>
+
+  <div class="game">
+    <div class="toolbar">
+      <div class="toolbarBtns">
+        <button class="btn" id="clearBtn" disabled>지우기</button>
+        <button class="btn" id="quitBtn">나가기</button>
+      </div>
+      <div class="palette" aria-label="색상 선택">
+        <div class="color" data-c="#000000" style="background:#000000;"></div>
+        <div class="color" data-c="#e74c3c" style="background:#e74c3c;"></div>
+        <div class="color" data-c="#3498db" style="background:#3498db;"></div>
+        <div class="color" data-c="#2ecc71" style="background:#2ecc71;"></div>
+        <div class="color" data-c="#f1c40f" style="background:#f1c40f;"></div>
+        <div class="color eraser" data-tool="eraser" title="지우개">🧽</div>
+      </div>
+    </div>
+
+    <div class="canvasWrap">
+      <canvas id="c"></canvas>
+    </div>
+
+    <div class="side">
+      <div class="chat" id="chat"></div>
+      <div class="row">
+        <input id="input" type="text" placeholder="정답을 입력하세요 (한글)" maxlength="30" />
+        <button class="send" id="send">전송</button>
+      </div>
+      <div class="hint" id="hint">그리는 사람만 그림을 그릴 수 있어요.</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const chatEl = document.getElementById('chat');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    const clearBtn = document.getElementById('clearBtn');
+    const quitBtn = document.getElementById('quitBtn');
+
+    const roundPill = document.getElementById('roundPill');
+    const turnPill  = document.getElementById('turnPill');
+    const wordPill  = document.getElementById('wordPill');
+    const timerEl   = document.getElementById('timer');
+    const hintEl    = document.getElementById('hint');
+    const mobileWordBar = document.getElementById('mobileWordBar');
+    const centerInfoEl = document.getElementById('centerInfo');
+    const mobileWordTextEl = document.getElementById('mobileWordText');
+    const mobileTimerEl = document.getElementById('mobileTimer');
+
+    const BASE_W = 900;
+    const BASE_H = 650;
+
+    let mySid = '';
+    let myNick = 'Player';
+    let isDrawer = false;
+    let drawerNick = '-';
+    let currentWord = '';
+    let endAt = 0;
+    let round = 0;
+    let lastRoundSeen = null;
+    let maxRounds = 5;
+
+    // draw state
+    let strokeColor = '#000000';
+    // 요청: 선 두께를 기존의 2/3 정도로
+    let strokeWidth = 5 * (2/3);
+    let painting = false;
+    let lastX = 0, lastY = 0;
+    let sendBuf = [];
+    let lastSendAt = 0;
+
+    // ===== Helpers (누락되면 바로 먹통이 됨) =====
+    function clamp01(v){ return Math.max(0, Math.min(1, v)); }
+
+    // ===== UI (상단/모바일 bar) =====
+    function updateTopInfo(){
+      const txt = (isDrawer && currentWord) ? `지금 그릴 것: ${currentWord}` : `차례: ${drawerNick || '-'}`;
+      if (centerInfoEl) centerInfoEl.textContent = txt;
+      if (mobileWordTextEl) mobileWordTextEl.textContent = txt;
+    }
+
+    // ===== SFX (코드로 생성: WebAudio) =====
+    let __sfxCtx = null;
+    function __ensureSfxCtx(){
+      if (__sfxCtx) return __sfxCtx;
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try{ __sfxCtx = new AC(); }catch(_){ __sfxCtx = null; }
+      return __sfxCtx;
+    }
+    function __resumeSfx(){
+      const ctx = __ensureSfxCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') { try{ ctx.resume(); }catch(_){ } }
+    }
+    function __tone(freq, t0, dur, type='sine', gain=0.12){
+      const ctx = __ensureSfxCtx();
+      if (!ctx) return;
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start(t0);
+      o.stop(t0 + dur + 0.03);
+    }
+    function playSfx(kind){
+      __resumeSfx();
+      const ctx = __ensureSfxCtx();
+      if (!ctx) return;
+      const t = ctx.currentTime + 0.02;
+      if (kind === 'correct'){
+        // 통통 튀는 상승 아르페지오
+        __tone(523.25, t, 0.12, 'triangle', 0.14);
+        __tone(659.25, t + 0.12, 0.12, 'triangle', 0.14);
+        __tone(783.99, t + 0.24, 0.14, 'triangle', 0.15);
+      } else if (kind === 'timeup'){
+        // 귀여운 삑삑-띵 (시간 종료)
+        __tone(880, t, 0.10, 'sine', 0.12);
+        __tone(660, t + 0.10, 0.10, 'sine', 0.12);
+        __tone(990, t + 0.20, 0.14, 'sine', 0.11);
+      }
+    }
+
+    let __timeupPlayedFor = 0;
+
+    function resizeCanvas(){
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      let w = Math.max(280, Math.floor(rect.width));
+      let h = Math.max(240, Math.floor(rect.height));
+
+      // Mobile: 항상 정사각형 캔버스(그려지는 영역도 동일)
+      const isMobile = window.matchMedia('(max-width: 860px)').matches;
+      if (isMobile) {
+        const s = Math.min(w, h);
+        w = s; h = s;
+        const wrap = canvas.closest('.canvasWrap');
+        if (wrap) {
+          wrap.style.height = `${s}px`;
+        }
+      }
+
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      // user space = CSS pixels
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    }
+
+    function clearLocal(){
+      // transform 여부와 상관없이 전체 제거
+      ctx.save();
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    function drawSeg(x1,y1,x2,y2,color,w){
+      const rect = canvas.getBoundingClientRect();
+      const px1 = x1 * rect.width;
+      const py1 = y1 * rect.height;
+      const px2 = x2 * rect.width;
+      const py2 = y2 * rect.height;
+
+      ctx.save();
+      if (color === '__erase__') {
+        // Eraser: punch holes in the canvas (transparent)
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.strokeStyle = 'rgba(0,0,0,1)';
+        ctx.lineWidth = Math.max(10, (w || 4) * 2.2);
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, w);
+      }
+      ctx.beginPath();
+      ctx.moveTo(px1, py1);
+      ctx.lineTo(px2, py2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function addChatLine(html){
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    function sendToParent(obj){
+      try{ window.parent.postMessage(obj, '*'); }catch(_){ }
+    }
+
+    // BGM (mobile autoplay: starts after first user gesture)
+    const __BGM_URL__ = "assets/catchpicture.mp3";
+    let __bgm = null;
+    let __bgmMuted = false;
+
+    function __ensureBgm(){
+      if (__bgm || !__BGM_URL__) return;
+      try{
+        __bgm = new Audio(__BGM_URL__);
+        __bgm.loop = true;
+        __bgm.preload = "auto";
+        __bgm.volume = 0.35;
+      }catch(_){ __bgm = null; }
+    }
+
+    function __startBgm(){
+      if (__bgmMuted) return;
+      __ensureBgm();
+      if (!__bgm) return;
+      try{
+        if (__bgm.paused){
+          const p = __bgm.play();
+          if (p && typeof p.catch === "function") p.catch(()=>{});
+        }
+      }catch(_){ }
+    }
+
+    function __pauseBgm(){
+      try{ if(__bgm) __bgm.pause(); }catch(_){ }
+    }
+
+    function __hookBgmGesture(){
+      const once = ()=>{ __startBgm(); __resumeSfx(); };
+      window.addEventListener("pointerdown", once, { once:true, passive:true });
+      window.addEventListener("touchstart", once, { once:true, passive:true });
+      window.addEventListener("mousedown", once, { once:true, passive:true });
+      window.addEventListener("keydown", once, { once:true });
+    }
+
+    document.addEventListener("visibilitychange", ()=>{ if(document.hidden) __pauseBgm(); else __startBgm(); });
+    window.addEventListener("pagehide", __pauseBgm);
+
+    // colors (+ eraser)
+    const colorBtns = Array.from(document.querySelectorAll('.color'));
+    function setColorOrTool(btn){
+      if (!btn) return;
+      if (btn.dataset.tool === 'eraser') strokeColor = '__erase__';
+      else strokeColor = btn.dataset.c || '#000000';
+
+      for(const b of colorBtns){
+        const isE = b.dataset.tool === 'eraser';
+        const active = isE ? (strokeColor === '__erase__') : (b.dataset.c === strokeColor);
+        b.classList.toggle('active', !!active);
+      }
+    }
+    for(const b of colorBtns){
+      b.addEventListener('click', ()=> setColorOrTool(b));
+    }
+    // initial
+    setColorOrTool(colorBtns.find(b => (b.dataset.c === strokeColor)) || colorBtns[0]);
+
+    function setDrawer(v){
+      isDrawer = !!v;
+      clearBtn.disabled = !isDrawer;
+      hintEl.textContent = isDrawer ? '당신 차례! (그리기 가능)' : '그리는 사람만 그림을 그릴 수 있어요.';
+      if (!isDrawer) currentWord = '';
+
+      wordPill.textContent = (isDrawer && currentWord) ? `제시어: ${currentWord}` : '제시어: ???';
+      updateTopInfo();
+    }
+
+    // input/send
+    function sendChat(){
+      const t = String(inputEl.value||'').trim();
+      if(!t) return;
+      inputEl.value = '';
+      sendToParent({ type:'da_chat', text: t });
+    }
+    sendBtn.addEventListener('click', sendChat);
+    inputEl.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') sendChat(); });
+
+    clearBtn.addEventListener('click', ()=>{
+      if(!isDrawer) return;
+      clearLocal();
+      sendToParent({ type:'da_clear' });
+    });
+
+    quitBtn.addEventListener('click', ()=>{
+      // 방은 유지하고 게임 화면만 나갈 수 있으므로 서버에도 "게임에서 나감"을 알려
+      // 남은 사람 혼자일 때 즉시 종료되도록 한다.
+      sendToParent({ type:'da_exit' });
+      sendToParent({ type:'da_quit' });
+    });
+
+    // pointer events
+    function getNormPos(ev){
+      const rect = canvas.getBoundingClientRect();
+      const x = (ev.clientX - rect.left) / rect.width;
+      const y = (ev.clientY - rect.top) / rect.height;
+      return { x: clamp01(x), y: clamp01(y) };
+    }
+
+    canvas.addEventListener('pointerdown', (ev)=>{
+      if(!isDrawer) return;
+      painting = true;
+      canvas.setPointerCapture(ev.pointerId);
+      const p = getNormPos(ev);
+      lastX = p.x; lastY = p.y;
+    });
+
+    canvas.addEventListener('pointermove', (ev)=>{
+      if(!painting || !isDrawer) return;
+      const p = getNormPos(ev);
+      sendBuf.push([lastX, lastY, p.x, p.y]);
+      drawSeg(lastX, lastY, p.x, p.y, strokeColor, strokeWidth);
+      lastX = p.x; lastY = p.y;
+    });
+
+    function endPaint(){
+      painting = false;
+    }
+    canvas.addEventListener('pointerup', endPaint);
+    canvas.addEventListener('pointercancel', endPaint);
+    canvas.addEventListener('pointerleave', endPaint);
+
+    // batch send strokes (min server load)
+    setInterval(()=>{
+      if(!isDrawer) { sendBuf = []; return; }
+      if(!sendBuf.length) return;
+      const now = Date.now();
+      if (now - lastSendAt < 45) return;
+      lastSendAt = now;
+      const segs = sendBuf;
+      sendBuf = [];
+      sendToParent({ type:'da_draw', segs, c: strokeColor, w: strokeWidth });
+    }, 50);
+
+    // timer
+    function fmt(ms){
+      const s = Math.max(0, Math.floor(ms/1000));
+      const m = String(Math.floor(s/60)).padStart(2,'0');
+      const r = String(s%60).padStart(2,'0');
+      return `${m}:${r}`;
+    }
+    setInterval(()=>{
+      const left = endAt ? (endAt - Date.now()) : 120000;
+      const t = fmt(left);
+      timerEl.textContent = t;
+      if (mobileTimerEl) mobileTimerEl.textContent = t;
+
+      // 시간 종료 시 한 번만 효과음
+      if (endAt && left <= 0 && __timeupPlayedFor !== endAt){
+        __timeupPlayedFor = endAt;
+        playSfx('timeup');
+      }
+    }, 250);
+
+    // bridge messages
+    window.addEventListener('message', (ev)=>{
+      const d = ev.data || {};
+      if(!d || typeof d !== 'object') return;
+      if (d.type === 'bridge_init'){
+        mySid = String(d.sessionId || d.mySid || '');
+        myNick = String(d.nick || d.myNick || 'Player');
+        addChatLine(`<span class="sys">시스템:</span> 연결됨 (${myNick})`);
+        updateTopInfo();
+        // 게임 참여 시작 신호 (방에는 남아있을 수 있으므로 별도)
+        sendToParent({ type:'da_enter' });
+        sendToParent({ type:'da_sync' });
+        return;
+      }
+
+      if (d.type === 'da_state'){
+        const newRound = Number(d.round||0);
+        if (lastRoundSeen !== null && newRound && newRound !== lastRoundSeen){
+          // Fallback: if a client somehow misses the server's da_clear, clear when round advances.
+          clearLocal();
+        }
+        lastRoundSeen = newRound || lastRoundSeen;
+        round = newRound;
+        maxRounds = Number(d.maxRounds||5);
+        drawerNick = String(d.drawerNick||'-');
+        endAt = Number(d.endAt||0);
+        const youAreDrawer = !!d.youAreDrawer;
+        setDrawer(youAreDrawer);
+        roundPill.textContent = `라운드 ${round}/${maxRounds}`;
+        turnPill.textContent = `차례: ${drawerNick}`;
+        updateTopInfo();
+        // scores (optional)
+        if (d.announce){
+          addChatLine(`<span class="sys">시스템:</span> ${escapeHtml(String(d.announce))}`);
+        }
+        return;
+      }
+
+      if (d.type === 'da_word'){
+        currentWord = String(d.word || '');
+        if (isDrawer){
+          wordPill.textContent = currentWord ? `제시어: ${currentWord}` : '제시어: ???';
+        }
+        updateTopInfo();
+        return;
+      }
+
+      if (d.type === 'da_draw'){
+        const segs = Array.isArray(d.segs) ? d.segs : [];
+        const c = String(d.c || '#000000');
+        const w = Number(d.w || 5);
+        for(const s of segs){
+          if(!Array.isArray(s) || s.length < 4) continue;
+          drawSeg(Number(s[0])||0, Number(s[1])||0, Number(s[2])||0, Number(s[3])||0, c, w);
+        }
+        return;
+      }
+
+      if (d.type === 'da_clear'){
+        clearLocal();
+        return;
+      }
+
+      if (d.type === 'da_replay'){
+        clearLocal();
+        const ops = Array.isArray(d.ops) ? d.ops : [];
+        for(const op of ops){
+          if(!op || typeof op !== 'object') continue;
+          if(op.t === 'clear'){
+            clearLocal();
+            continue;
+          }
+          if(op.t === 'draw'){
+            const segs = Array.isArray(op.segs) ? op.segs : [];
+            const c = String(op.c || '#000000');
+            const w = Number(op.w || 5);
+            for(const s of segs){
+              if(!Array.isArray(s) || s.length < 4) continue;
+              drawSeg(Number(s[0])||0, Number(s[1])||0, Number(s[2])||0, Number(s[3])||0, c, w);
+            }
+          }
+        }
+        return;
+      }
+
+      if (d.type === 'da_chat'){
+        const nick = escapeHtml(String(d.nick||'Player'));
+        const text = escapeHtml(String(d.text||''));
+        if (d.system){
+          addChatLine(`<span class="sys">시스템:</span> ${text}`);
+        } else if (d.correct){
+          addChatLine(`<span class="sys">정답!</span> <b>${nick}</b> : ${text}`);
+          playSfx('correct');
+        } else {
+          addChatLine(`<b>${nick}</b>: ${text}`);
+        }
+        return;
+      }
+
+      if (d.type === 'da_over'){
+        const winner = escapeHtml(String(d.winnerNick||'승자'));
+        addChatLine(`<span class="warn">게임 종료</span> : ${winner}`);
+        setDrawer(false);
+        endAt = 0;
+        return;
+      }
+    });
+
+    // iframe이 닫히거나 숨겨질 때도 "게임에서 나감"을 best-effort로 전송
+    function notifyExit(){
+      try{ __pauseBgm(); }catch(_){ }
+      try{ sendToParent({ type:'da_exit' }); }catch(_){ }
+    }
+    window.addEventListener('pagehide', notifyExit);
+    window.addEventListener('beforeunload', notifyExit);
+
+    function escapeHtml(s){
+      return s.replace(/[&<>"']/g, (c)=>({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+    }
+
+    // boot
+    addChatLine(`<span class="sys">시스템:</span> 로딩...`);
+    window.addEventListener('resize', ()=>{ try{ resizeCanvas(); }catch(_){ } });
+    resizeCanvas();
+    __hookBgmGesture();
+
+    // standalone fallback (dev)
+    if (window.parent === window){
+      mySid = 'local';
+      myNick = '로컬';
+      setDrawer(true);
+      roundPill.textContent = '라운드 1/5';
+      turnPill.textContent = '차례: 로컬';
+      currentWord = '사과';
+      wordPill.textContent = '제시어: 사과';
+      endAt = Date.now() + 120000;
+      addChatLine(`<span class="sys">시스템:</span> 로컬 미리보기 모드`);
+      updateTopInfo();
+    }
+  </script>
+</body>
+</html>
