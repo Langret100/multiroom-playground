@@ -2098,7 +2098,12 @@ function sendCoopBridgeInit(){
       if (mine){
         gsPayload.myRole = String(mine.role || 'rabbit');
         gsPayload.mySpawn = mine.spawn || null;
+      } else if (gsPayload.monsterSid) {
+        // [FIX] roles 없어도 monsterSid로 역할 결정
+        gsPayload.myRole = (String(gsPayload.monsterSid) === String(mySessionId)) ? 'monster' : 'rabbit';
       }
+      // [FIX] mySid 명시 (embed.html에서 bridge.sid와 비교하는 데 사용)
+      gsPayload.mySid = String(mySessionId);
       return gsPayload;
     }catch(_){ return null; }
   })();

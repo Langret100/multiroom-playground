@@ -1031,7 +1031,13 @@ export class RoomDO{
             const monsterSid = (roster.length >= 2) ? String(roster[seed % roster.length].sid) : null;
             const startedAt = now();
             const releaseAt = startedAt + 10000;
-            const payload = { mode:'backrooms3d', startedAt, releaseAt, seed, playerCount: roster.length, roster, monsterSid };
+            // [FIX] roles 맵 생성: 각 플레이어의 role 명시적으로 포함
+            const roles = {};
+            roster.forEach((r, i) => {
+              const role = (monsterSid && String(r.sid) === monsterSid) ? 'monster' : 'rabbit';
+              roles[String(r.sid)] = { role, seat: r.seat };
+            });
+            const payload = { mode:'backrooms3d', startedAt, releaseAt, seed, playerCount: roster.length, roster, monsterSid, roles };
             this.br.startPayload = payload;
             this.br.latestStates = {};
             this.br.latestWorld = null;

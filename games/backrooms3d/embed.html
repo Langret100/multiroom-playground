@@ -2982,7 +2982,7 @@ if(monsterReleaseLeft>0){
     updateCamera(dt);
     updateMonster(dt);
 
-    const mmGap = (bridge && bridge.start && (bridge.start.playerCount||0) >= 2) ? 320 : 220;
+    const mmGap = (bridge && bridge.start && (bridge.start.playerCount||0) >= 2) ? 200 : 150; // [FIX] 미니맵 더 자주 업데이트
     if (!window.__brLastMiniMapDraw || (now - window.__brLastMiniMapDraw) > mmGap){ window.__brLastMiniMapDraw = now; drawMinimap(); }
 
     renderer.render(scene,camera);
@@ -3200,6 +3200,8 @@ if(monsterReleaseLeft>0){
     syncUiState();
     renderHelp();
     monsterAI = false;
+    // [FIX] 역할 확정 후 로그
+    addChat('[시스템] 역할 배정: ' + (playerRole === 'monster' ? '👾 괴물' : '🐰 토끼'));
     ensureMonster();
     try{ for (const [,r] of bridge.remotes.entries()){ try{ if(r && r.obj) scene.remove(r.obj); }catch(_){} } bridge.remotes.clear(); }catch(_){ }
     seedRemotesFromStart(start);
@@ -3227,6 +3229,7 @@ if(monsterReleaseLeft>0){
     if (playerRole === 'monster'){
       player.visible = false;
       monster.visible = true;
+      monster.userData.locked = true; // [FIX] 스폰 직후 10초 잠금은 monsterReleaseLeft로 관리
       player.position.set(bridge.spawn.x, bridge.spawn.y, bridge.spawn.z);
       monster.position.set(bridge.spawn.x, bridge.spawn.y, bridge.spawn.z);
       yaw = bridge.spawn.yaw;
@@ -3475,7 +3478,8 @@ if(monsterReleaseLeft>0){
     const snap = {
       x:+player.position.x.toFixed(3), y:+player.position.y.toFixed(3), z:+player.position.z.toFixed(3),
       yaw:+yaw.toFixed(4), hasKey:(keyCount>0), caught:Number(rabbitCaughtCount||0), ghost:!!rabbitGhost, trapped:!!player.userData.trapped,
-      vx:+((player.userData&&player.userData.vx)||0).toFixed(3), vz:+((player.userData&&player.userData.vz)||0).toFixed(3)
+      vx:+((player.userData&&player.userData.vx)||0).toFixed(3), vz:+((player.userData&&player.userData.vz)||0).toFixed(3),
+      role: playerRole || 'rabbit' // [FIX] 역할 필드 추가 → 수신 측에서 아바타 올바르게 표시
     };
     const now = performance.now();
     const moving = Math.hypot(snap.vx||0, snap.vz||0) > 0.02;
@@ -3492,7 +3496,7 @@ if(monsterReleaseLeft>0){
       bridgeStateCache.ghost !== snap.ghost ||
       bridgeStateCache.trapped !== snap.trapped
     );
-    const minGap = moving ? 25 : 140;
+    const minGap = moving ? 16 : 80; // [FIX] 이동 중 전송 빈도 증가로 끊김 감소
     if(!force && !changed && (now - (bridgeStateCache.sentAt||0) < minGap)) return;
     Object.assign(bridgeStateCache, snap, { sentAt: now });
     relay('state', { seq:(++bridge.stateSeq), role:playerRole, seat:Number(bridge.selfSeat ?? -1), sentAt: Date.now(), ...snap });
@@ -3570,7 +3574,10 @@ if(monsterReleaseLeft>0){
         const rosterOk = !roster.length || roster.some(entry => String(entry?.sid||'') === sid);
         if (!rosterOk) return;
         const remoteKey = sid;
-        const role = bridge.start ? resolveRoleForSid(bridge.start, sid, msgSeat, 'rabbit') : 'rabbit';
+        // [FIX] state 메시지의 role 필드 우선 사용 (bridge.start 없어도 역할 처리)
+        const msgRole = String(m.role || '');
+        const role = (msgRole === 'monster' || msgRole === 'rabbit') ? msgRole :
+                     (bridge.start ? resolveRoleForSid(bridge.start, sid, msgSeat, 'rabbit') : 'rabbit');
         if (role !== 'monster' && role !== 'rabbit') return;
         const r = ensureRemote(remoteKey, role);
         if(!r) return;
@@ -3634,19 +3641,23 @@ if(monsterReleaseLeft>0){
         if(playerRole==='monster' && !!st.ghost){ r.obj.visible=false; continue; }
         r.obj.visible=true;
         setAvatarGhostVisual(r.obj, !!st.ghost, 0.38);
-        const age = Math.min(0.030, Math.max(0.006, ((performance.now() - Number(r.lastAt||performance.now()))/1000) + 0.006));
-        const lerpA = 1 - Math.exp(-bridgeDt*72.0);
-        const tx = (Number(r.targetX ?? st.x) || 0) + (Number(r.vx)||0) * age;
-        const ty = Number(r.targetY ?? st.y) || 0;
-        const tz = (Number(r.targetZ ?? st.z) || 0) + (Number(r.vz)||0) * age;
-        r.obj.position.x += (tx - r.obj.position.x) * lerpA;
-        r.obj.position.y += (ty - r.obj.position.y) * lerpA;
-        r.obj.position.z += (tz - r.obj.position.z) * lerpA;
+        // [FIX] 부드러운 위치 보간: 패킷 간격 기반 예측 + 완만한 lerp
+        const packetAge = Math.min(0.120, Math.max(0.016, (performance.now() - Number(r.lastAt||performance.now()))/1000));
+        const predX = (Number(r.targetX ?? st.x) || 0) + (Number(r.vx)||0) * packetAge;
+        const predY = Number(r.targetY ?? st.y) || 0;
+        const predZ = (Number(r.targetZ ?? st.z) || 0) + (Number(r.vz)||0) * packetAge;
+        // 거리가 너무 멀면(3m+) 빠르게 따라가고, 가까우면 부드럽게 보간
+        const snapDist = Math.hypot(predX - r.obj.position.x, predZ - r.obj.position.z);
+        const lerpSpeed = snapDist > 3.0 ? 22.0 : (snapDist > 1.2 ? 12.0 : 8.0);
+        const lerpA = 1 - Math.exp(-bridgeDt * lerpSpeed);
+        r.obj.position.x += (predX - r.obj.position.x) * lerpA;
+        r.obj.position.y += (predY - r.obj.position.y) * lerpA;
+        r.obj.position.z += (predZ - r.obj.position.z) * lerpA;
         const targetYaw = Number(r.targetYaw ?? st.yaw) || 0;
         let yawDiff = targetYaw - r.obj.rotation.y;
         while(yawDiff > Math.PI) yawDiff -= Math.PI*2;
         while(yawDiff < -Math.PI) yawDiff += Math.PI*2;
-        r.obj.rotation.y += yawDiff * Math.min(1, lerpA*1.3);
+        r.obj.rotation.y += yawDiff * Math.min(1, lerpA * 1.4);
         if(r.role!=='monster'){ const ki=r.obj.getObjectByName('remoteKey'); if(ki) ki.visible=(!st.ghost && !!st.hasKey); const cc=r.obj.getObjectByName('remoteCaught'); if(cc) cc.visible = (!st.ghost && Number(st.caught||0)===1); }
       }
       const nowp=performance.now();
