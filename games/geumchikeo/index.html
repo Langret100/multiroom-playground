@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,maximum-scale=1">
 <title>🚫 금칙어 게임</title>
-<script src="assets/svg_assets.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Gmarket+Sans:wght@300;500;700&family=Noto+Sans+KR:wght@400;700;900&display=swap');
 :root{
@@ -410,43 +409,54 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
 
 const IMG = {};
 
-async function loadAllAssets() {
-  const fill = document.getElementById('loadFill');
-  const txt  = document.getElementById('loadTxt');
-  const keys = Object.keys(SVG_ASSETS);
-  let done = 0;
-  await Promise.all(keys.map(key => new Promise(ok => {
-    const img = new Image();
-    img.onload  = () => { IMG[key] = img; done++; fill.style.width = (done/keys.length*100)+'%'; ok(); };
-    img.onerror = () => { done++; fill.style.width = (done/keys.length*100)+'%'; ok(); };
-    img.src = SVG_ASSETS[key];
-  })));
-  txt.textContent = '완료!';
-  setTimeout(() => document.getElementById('loadScreen').classList.add('done'), 400);
+// ── roundRect polyfill for older browsers ──
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    if (typeof r === 'number') r = [r];
+    const [tl = 0, tr = tl, br = tr, bl = br] = r;
+    this.beginPath();
+    this.moveTo(x + tl, y);
+    this.lineTo(x + w - tr, y);
+    this.quadraticCurveTo(x + w, y, x + w, y + tr);
+    this.lineTo(x + w, y + h - br);
+    this.quadraticCurveTo(x + w, y + h, x + w - br, y + h);
+    this.lineTo(x + bl, y + h);
+    this.quadraticCurveTo(x, y + h, x, y + h - bl);
+    this.lineTo(x, y + tl);
+    this.quadraticCurveTo(x, y, x + tl, y);
+    this.closePath();
+    return this;
+  };
 }
 
-// ── CHARACTER PRESETS ──
+// ── CHARACTER PRESETS (pure canvas, no external assets) ──
+const CHAR_COLORS = {
+  blue:   { body: '#7BAAEB', bodyDark: '#6C75E9', shine: '#95C2F0' },
+  green:  { body: '#71CF93', bodyDark: '#59B15C', shine: '#85DFAF' },
+  pink:   { body: '#FF99E7', bodyDark: '#FF72A9', shine: '#FFB6EA' },
+  purple: { body: '#A875E9', bodyDark: '#6548B9', shine: '#C28DEF' },
+};
 const CHAR_PRESETS = [
-  {color:'blue',   body:'squircle', face:'face_b'},
-  {color:'green',  body:'squircle', face:'face_d'},
-  {color:'pink',   body:'squircle', face:'face_f'},
-  {color:'purple', body:'squircle', face:'face_h'},
-  {color:'blue',   body:'squircle', face:'face_b'},
-  {color:'green',  body:'squircle', face:'face_d'},
-  {color:'pink',   body:'squircle', face:'face_f'},
-  {color:'purple', body:'squircle', face:'face_h'},
+  {color:'blue'},
+  {color:'green'},
+  {color:'pink'},
+  {color:'purple'},
+  {color:'blue'},
+  {color:'green'},
+  {color:'pink'},
+  {color:'purple'},
 ];
 const COLORS_HEX = ['#4ecdc4','#0fba5a','#fd79a8','#a29bfe','#74b9ff','#55efc4','#ff7675','#c39bd3'];
 
 // ── EMOTIONS ──
 const EMOTIONS = {
-  happy:   {eye:'facial_part_eye_open',       mouth:'facial_part_mouth_happy', eyebrow:'facial_part_eyebrow_a', hand:'peace'},
-  sad:     {eye:'facial_part_eye_closed_down', mouth:'facial_part_mouth_sad',   eyebrow:'facial_part_eyebrow_d', hand:'open'},
-  neutral: {eye:'facial_part_eye_open',        mouth:'facial_part_mouth_sad',   eyebrow:'facial_part_eyebrow_a', hand:'open'},
-  cry:     {eye:'facial_part_eye_closed_down', mouth:'facial_part_mouth_sad',   eyebrow:'facial_part_eyebrow_d', hand:'open'},
-  angry:   {eye:'facial_part_eye_open',        mouth:'facial_part_mouth_sad',   eyebrow:'facial_part_eyebrow_d', hand:'open'},
-  sleepy:  {eye:'facial_part_eye_closed_down', mouth:'facial_part_mouth_sad',   eyebrow:'facial_part_eyebrow_a', hand:'open'},
-  shocked: {eye:'facial_part_eye_open',        mouth:'facial_part_mouth_happy', eyebrow:'facial_part_eyebrow_d', hand:'peace'},
+  happy:   { eyeType: 'open',   mouthType: 'happy',  eyebrowType: 'neutral', hand: 'peace' },
+  sad:     { eyeType: 'closed', mouthType: 'sad',    eyebrowType: 'sad',     hand: 'open'  },
+  neutral: { eyeType: 'open',   mouthType: 'neutral', eyebrowType: 'neutral', hand: 'open'  },
+  cry:     { eyeType: 'closed', mouthType: 'sad',    eyebrowType: 'sad',     hand: 'open'  },
+  angry:   { eyeType: 'open',   mouthType: 'sad',    eyebrowType: 'angry',   hand: 'open'  },
+  sleepy:  { eyeType: 'half',   mouthType: 'neutral', eyebrowType: 'neutral', hand: 'open'  },
+  shocked: { eyeType: 'wide',   mouthType: 'open',   eyebrowType: 'raised',  hand: 'peace' },
 };
 
 function detectEmotion(t) {
@@ -459,68 +469,212 @@ function detectEmotion(t) {
   return 'neutral';
 }
 
-// ── DRAW CHARACTER ──
-// 핵심: 모든 레이어를 동일한 크기/위치로 그림 (SVG들이 동일 viewport 기준)
-// hand는 별도 오프셋 (몸체 옆쪽에)
+// ── DRAW CHARACTER (pure Canvas API) ──
 function drawChar(ctx, cx, cy, size, preset, emotion, facingRight, walkPhase, jumpSquash) {
   emotion = emotion || 'neutral';
   const em = EMOTIONS[emotion] || EMOTIONS.neutral;
-  const col = preset.color;
-  const handKey = `${col}_hand_${em.hand || 'open'}`;
+  const col = CHAR_COLORS[preset.color] || CHAR_COLORS.blue;
 
-  // 걷기 애니메이션: 상하 bob + 좌우 기울기
   const isWalking = Math.abs(walkPhase) > 0.01;
-  const bob = isWalking ? Math.sin(walkPhase * 8) * 2.5 : 0;
-  const tilt = isWalking ? Math.sin(walkPhase * 8) * 0.06 : 0;
-
-  // 점프/착지 스쿼시-스트레치
+  const bob   = isWalking ? Math.sin(walkPhase * 8) * 2.5 : 0;
+  const tilt  = isWalking ? Math.sin(walkPhase * 8) * 0.06 : 0;
   const scaleX = jumpSquash || 1;
   const scaleY = jumpSquash ? (2 - jumpSquash) : 1;
 
   ctx.save();
   ctx.translate(cx, cy + bob);
-  if (!facingRight) ctx.scale(-1, 1);
   ctx.rotate(tilt);
-  ctx.scale(scaleX, scaleY);
+  ctx.scale(scaleX * (facingRight ? 1 : -1), scaleY);
 
-  // 그림자
+  const r = size * 0.42;
+
+  // Shadow
   ctx.save();
-  ctx.scale(1, 1/scaleY); // 그림자는 스쿼시 무시
+  ctx.scale(1, 1 / scaleY);
   ctx.fillStyle = 'rgba(0,0,0,0.18)';
   ctx.beginPath();
-  ctx.ellipse(0, size*0.52, size*0.34, size*0.08, 0, 0, Math.PI*2);
+  ctx.ellipse(0, r + size * 0.1, r * 0.8, r * 0.18, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 
-  const half = size / 2;
+  // Body (squircle via rounded rect)
+  ctx.beginPath();
+  const br = r * 0.45; // border-radius
+  ctx.roundRect(-r, -r, r * 2, r * 2, br);
+  const bodyGrad = ctx.createLinearGradient(0, -r, 0, r);
+  bodyGrad.addColorStop(0, col.shine);
+  bodyGrad.addColorStop(0.5, col.body);
+  bodyGrad.addColorStop(1, col.bodyDark);
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
 
-  // body + face (동일 크기, 동일 중앙 좌표)
-  const bodyLayers = [
-    `${col}_body_${preset.body}`,
-    preset.face,
-    em.eyebrow, em.eye, em.mouth,
-  ];
-  for (const key of bodyLayers) {
-    const img = IMG[key];
-    if (!img) continue;
-    ctx.drawImage(img, -half, -half, size, size);
-  }
+  // Subtle inner highlight
+  ctx.beginPath();
+  ctx.roundRect(-r * 0.85, -r * 0.85, r * 1.4, r * 0.9, br * 0.7);
+  ctx.fillStyle = 'rgba(255,255,255,0.15)';
+  ctx.fill();
 
-  // hand: 몸체 옆에 붙이되 걸을 때 흔들림
-  const handImg = IMG[handKey];
-  if (handImg) {
-    const handSize = size * 0.52;
-    const handX = (facingRight ? 1 : -1) * (half * 0.62);
-    const handY = isWalking ? Math.sin(walkPhase * 8 + Math.PI) * 4 : 0;
-    ctx.drawImage(handImg,
-      handX - handSize/2,
-      half * 0.1 + handY - handSize/2,
-      handSize, handSize
-    );
-  }
+  // ── FACE ──
+  const faceY = -r * 0.05; // face center slightly above body center
+
+  // Eyes
+  _drawEyes(ctx, r, faceY, em.eyeType);
+
+  // Eyebrows
+  _drawEyebrows(ctx, r, faceY, em.eyebrowType);
+
+  // Mouth
+  _drawMouth(ctx, r, faceY, em.mouthType);
+
+  // ── HAND ──
+  _drawHand(ctx, r, em.hand, isWalking, walkPhase, facingRight);
 
   ctx.restore();
 }
+
+function _drawEyes(ctx, r, fy, eyeType) {
+  const ex = r * 0.38, ey = fy - r * 0.08;
+  const er = r * 0.16;
+  for (const sx of [-ex, ex]) {
+    if (eyeType === 'closed') {
+      // Closed (curved down arc)
+      ctx.beginPath();
+      ctx.arc(sx, ey, er, 0, Math.PI, false);
+      ctx.strokeStyle = '#3D465D'; ctx.lineWidth = r * 0.09;
+      ctx.lineCap = 'round'; ctx.stroke();
+    } else if (eyeType === 'half') {
+      // Half-open
+      ctx.beginPath();
+      ctx.ellipse(sx, ey + er * 0.3, er, er * 0.6, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(sx, ey + er * 0.4, er * 0.55, er * 0.4, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#3D465D'; ctx.fill();
+    } else if (eyeType === 'wide') {
+      // Wide (shocked)
+      ctx.beginPath();
+      ctx.ellipse(sx, ey, er * 1.2, er * 1.2, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(sx, ey, er * 0.7, er * 0.7, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#3D465D'; ctx.fill();
+    } else {
+      // Normal open
+      ctx.beginPath();
+      ctx.ellipse(sx, ey, er, er, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(sx, ey, er * 0.58, er * 0.58, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#3D465D'; ctx.fill();
+    }
+  }
+}
+
+function _drawEyebrows(ctx, r, fy, type) {
+  const ex = r * 0.38, eby = fy - r * 0.32;
+  const bw = r * 0.32, bh = r * 0.065;
+  ctx.fillStyle = '#3D465D';
+  ctx.lineCap = 'round';
+  for (const sx of [-ex, ex]) {
+    ctx.save();
+    ctx.translate(sx, eby);
+    if (type === 'sad') {
+      // Sad: inner corners down
+      const side = sx < 0 ? 1 : -1;
+      ctx.rotate(side * 0.25);
+    } else if (type === 'angry') {
+      // Angry: inner corners up / V shape
+      const side = sx < 0 ? -1 : 1;
+      ctx.rotate(side * 0.3);
+    } else if (type === 'raised') {
+      ctx.translate(0, -r * 0.06);
+    }
+    ctx.beginPath();
+    ctx.roundRect(-bw, -bh, bw * 2, bh * 2, bh);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
+function _drawMouth(ctx, r, fy, mouthType) {
+  const mx = 0, my = fy + r * 0.3;
+  const mw = r * 0.38;
+  ctx.strokeStyle = '#3D465D';
+  ctx.lineWidth = r * 0.08;
+  ctx.lineCap = 'round';
+  if (mouthType === 'happy') {
+    ctx.beginPath();
+    ctx.arc(mx, my - mw * 0.4, mw * 0.72, 0.25, Math.PI - 0.25, false);
+    ctx.stroke();
+  } else if (mouthType === 'sad') {
+    ctx.beginPath();
+    ctx.arc(mx, my + mw * 0.4, mw * 0.72, Math.PI + 0.25, -0.25, false);
+    ctx.stroke();
+  } else if (mouthType === 'open') {
+    ctx.beginPath();
+    ctx.ellipse(mx, my, mw * 0.5, mw * 0.35, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#3D465D'; ctx.fill();
+  } else {
+    // neutral: flat
+    ctx.beginPath();
+    ctx.moveTo(mx - mw * 0.5, my);
+    ctx.lineTo(mx + mw * 0.5, my);
+    ctx.stroke();
+  }
+}
+
+function _drawHand(ctx, r, handType, isWalking, walkPhase, facingRight) {
+  // ctx is already scaled by facingRight, so hand is always at positive X side
+  const hx = r * 1.05;
+  const hy = r * 0.1 + (isWalking ? Math.sin(walkPhase * 8 + Math.PI) * 4 : 0);
+  const hr = r * 0.26;
+  ctx.save();
+  ctx.translate(hx, hy);
+  // Hand body
+  const hGrad = ctx.createRadialGradient(0, -hr * 0.3, hr * 0.1, 0, 0, hr);
+  hGrad.addColorStop(0, 'rgba(255,255,255,0.3)');
+  hGrad.addColorStop(1, 'rgba(0,0,0,0.1)');
+  ctx.fillStyle = hGrad;
+  if (handType === 'peace') {
+    // Peace sign: two fingers up
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath(); ctx.ellipse(0, 0, hr, hr * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+    // Two fingers
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.save(); ctx.translate(-hr * 0.28, -hr * 0.7);
+    ctx.beginPath(); ctx.ellipse(0, 0, hr * 0.22, hr * 0.55, -0.15, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.translate(hr * 0.28, -hr * 0.7);
+    ctx.beginPath(); ctx.ellipse(0, 0, hr * 0.22, hr * 0.55, 0.15, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.restore();
+  } else {
+    // Open hand
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath(); ctx.ellipse(0, 0, hr, hr * 0.85, 0, 0, Math.PI * 2); ctx.fill();
+    // Fingers suggestion
+    for (let i = -1; i <= 1; i++) {
+      ctx.save(); ctx.translate(i * hr * 0.3, -hr * 0.65);
+      ctx.fillStyle = 'rgba(255,255,255,0.15)';
+      ctx.beginPath(); ctx.ellipse(0, 0, hr * 0.18, hr * 0.42, i * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+// ── Asset loading (no-op since we use canvas drawing) ──
+async function loadAllAssets() {
+  const fill = document.getElementById('loadFill');
+  const txt  = document.getElementById('loadTxt');
+  fill.style.width = '100%';
+  txt.textContent = '완료!';
+  setTimeout(() => document.getElementById('loadScreen').classList.add('done'), 300);
+}
+
 
 // ── AUDIO ──
 let audioCtx = null, bgmGain = null, bgmLoopId = null;

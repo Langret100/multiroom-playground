@@ -227,6 +227,27 @@
             background: rgba(0,255,255,0.2);
             box-shadow: 0 0 10px #0ff;
         }
+        #levelUpFlash {
+            position: fixed; inset: 0; pointer-events: none; z-index: 200;
+            background: radial-gradient(ellipse at center, rgba(255,215,0,0.55) 0%, transparent 70%);
+            opacity: 0; transition: opacity 0.05s;
+        }
+        #levelUpFlash.show { opacity: 1; animation: lvFlash 0.5s ease-out forwards; }
+        @keyframes lvFlash {
+            0%   { opacity: 1; transform: scale(1); }
+            60%  { opacity: 0.6; transform: scale(1.03); }
+            100% { opacity: 0; transform: scale(1); }
+        }
+        .activeIcon {
+            display:inline-flex;align-items:center;justify-content:center;
+            width:28px;height:28px;font-size:16px;border-radius:5px;
+            background:rgba(0,0,0,0.75);border:1.5px solid rgba(255,215,0,0.5);
+            position:relative;cursor:default;
+        }
+        .activeIcon .lvBadge {
+            position:absolute;bottom:-3px;right:-3px;background:#ffd700;color:#000;
+            font-size:8px;font-weight:bold;border-radius:3px;padding:0 2px;line-height:12px;
+        }
         .sound-btn {
             position: absolute;
             top: 10px;
@@ -256,7 +277,28 @@
                 height: 32px;
                 font-size: 16px;
             }
-            .sound-btn {
+            #levelUpFlash {
+            position: fixed; inset: 0; pointer-events: none; z-index: 200;
+            background: radial-gradient(ellipse at center, rgba(255,215,0,0.55) 0%, transparent 70%);
+            opacity: 0; transition: opacity 0.05s;
+        }
+        #levelUpFlash.show { opacity: 1; animation: lvFlash 0.5s ease-out forwards; }
+        @keyframes lvFlash {
+            0%   { opacity: 1; transform: scale(1); }
+            60%  { opacity: 0.6; transform: scale(1.03); }
+            100% { opacity: 0; transform: scale(1); }
+        }
+        .activeIcon {
+            display:inline-flex;align-items:center;justify-content:center;
+            width:28px;height:28px;font-size:16px;border-radius:5px;
+            background:rgba(0,0,0,0.75);border:1.5px solid rgba(255,215,0,0.5);
+            position:relative;cursor:default;
+        }
+        .activeIcon .lvBadge {
+            position:absolute;bottom:-3px;right:-3px;background:#ffd700;color:#000;
+            font-size:8px;font-weight:bold;border-radius:3px;padding:0 2px;line-height:12px;
+        }
+        .sound-btn {
                 right: 140px;
                 width: 32px;
                 height: 32px;
@@ -277,9 +319,11 @@
         <div style="margin-top:5px;font-size:0.9em;background:rgba(0,0,0,0.7);padding:3px">
             라운드: <span id="stage">1</span> | <span id="time">0</span>초
         </div>
+        <div id="activeIconsRow" style="margin-top:4px;display:flex;flex-wrap:wrap;gap:3px;max-width:220px"></div>
     </div>
     
     <canvas id="minimap" class="minimap hidden"></canvas>
+    <div id="levelUpFlash"></div>
     <span id="hardModeIndicator" class="hidden" style="position:absolute;top:140px;right:10px;color:#f44;font-weight:bold;font-size:14px;z-index:1000;text-shadow:0 0 5px #f00;">🔥 하드모드</span>
     <button id="fullscreenBtn" class="fullscreen-btn hidden" onclick="G.toggleFullscreen()">⛶</button>
     <button id="soundBtn" class="sound-btn hidden" onclick="G.toggleSound()">🔊</button>
@@ -1949,8 +1993,9 @@ const G = {
                 this.textParticle(fx_x, fx_y, '✨', '#ffd700', 1);
                 // 아이템 획득 이펙트
                 if (Array.isArray(this.effects)) {
-                    this.effects.push({ type: 'itemGet', x: this.player.x, y: this.player.y, life: 20, maxLife: 20 });
+                    this.effects.push({ type: 'itemGet', x: this.player.x, y: this.player.y, life: 30, maxLife: 30 });
                 }
+                G.textParticle(this.player.x, this.player.y - 60, '✨ 아이템 획득!', '#ffd700', 1.0);
                 SoundManager.item && SoundManager.item();
                 
                 document.getElementById('itemScreen').classList.add('hidden');
@@ -2157,6 +2202,55 @@ const G = {
         // 경험치 바 너비를 100%로 제한 (오버플로우 방지)
         const expPercent = Math.min(100, (this.player.exp / this.player.expNext * 100));
         document.getElementById('exp').style.width = expPercent + '%';
+        
+        // ── 활성 스킬/아이템 아이콘 갱신 ──
+        this._updateActiveIconsRow();
+    },
+    
+    _updateActiveIconsRow() {
+        const row = document.getElementById('activeIconsRow');
+        if (!row) return;
+        
+        const p = this.player;
+        if (!p) return;
+        
+        const icons = [];
+        // 스킬 업그레이드 (체력/공격력은 숫자로 표시, 특수 스킬은 아이콘)
+        const skillMap = {
+            '체력 증가': { icon: '❤️', val: () => p.maxHp },
+            '공격력 증가': { icon: '⚔️', val: () => p.damage },
+            '공격속도 증가': { icon: '⏱️', val: () => null },
+            '이동속도 증가': { icon: '👟', val: () => null },
+            '관통': { icon: '🎯', val: () => p.pierce > 0 ? p.pierce : null },
+            '체력 회복': { icon: '💊', val: () => p.regen > 0 ? `+${p.regen.toFixed(1)}` : null },
+            '보호막': { icon: '🛡️', val: () => p.shield ? Math.max(0, Math.round(p.shieldHp)) : null },
+        };
+        if (p.skillLevels) {
+            for (const [name, cfg] of Object.entries(skillMap)) {
+                const lv = p.skillLevels[name] || 0;
+                if (lv > 0) icons.push({ icon: cfg.icon, lv, special: cfg.val() });
+            }
+        }
+        // 아이템
+        const itemIconMap = {
+            poison: '☠️', freeze: '❄️', explode: '💥', lightning: '⚡',
+            spin: '🌀', crit: '🎯', multi: '🔫', meteor: '☄️', angel: '👼', demon: '😈'
+        };
+        if (p.itemLevels) {
+            for (const [id, icon] of Object.entries(itemIconMap)) {
+                const lv = p.itemLevels[id] || 0;
+                if (lv > 0) icons.push({ icon, lv });
+            }
+        }
+        
+        // 변화 없으면 DOM 건드리지 않음
+        const sig = icons.map(i => i.icon + i.lv).join(',');
+        if (row._lastSig === sig) return;
+        row._lastSig = sig;
+        
+        row.innerHTML = icons.map(i =>
+            `<div class="activeIcon" title="${i.icon} Lv.${i.lv}">${i.icon}<span class="lvBadge">${i.lv}</span></div>`
+        ).join('');
     },
     
     drawMinimap() {
@@ -2380,7 +2474,13 @@ const G = {
             });
             
             this.particles = this.particles.filter(p => {
-                p.y -= 2;
+                if (p.vx !== undefined) {
+                    p.x += p.vx;
+                    p.y += p.vy;
+                    p.vy += 0.15; // gravity
+                } else {
+                    p.y -= 2;
+                }
                 p.life--;
                 return p.life > 0;
             });
@@ -2939,6 +3039,31 @@ const G = {
                     }
                 }
                 
+                } else if (effect.type === 'itemGet') {
+                    // 아이템 획득 빛 퍼짐
+                    const t = 1 - effect.life / effect.maxLife;
+                    const r2 = t * 60;
+                    const alpha2 = (1 - t) * 0.85;
+                    ctx.globalAlpha = alpha2;
+                    const grad = ctx.createRadialGradient(effect.x, effect.y, 0, effect.x, effect.y, r2);
+                    grad.addColorStop(0, 'rgba(255,215,0,0.9)');
+                    grad.addColorStop(0.5, 'rgba(255,180,0,0.5)');
+                    grad.addColorStop(1, 'transparent');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath();
+                    ctx.arc(effect.x, effect.y, r2, 0, Math.PI * 2);
+                    ctx.fill();
+                    // 작은 별 파티클
+                    for (let si = 0; si < 6; si++) {
+                        const sa = (si/6)*Math.PI*2 + t*3;
+                        const sd = r2 * 0.7;
+                        ctx.fillStyle = 'rgba(255,255,200,0.9)';
+                        ctx.beginPath();
+                        ctx.arc(effect.x + Math.cos(sa)*sd, effect.y + Math.sin(sa)*sd, 3, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                }
+                
                 ctx.restore();
             });
             
@@ -3096,15 +3221,28 @@ const G = {
             });
             
             this.particles.forEach(p => {
-                if (this.isInView(p.x, p.y, 50)) {
-                    ctx.save();
-                    ctx.globalAlpha = p.life / 40;
+                ctx.save();
+                if (p.text !== undefined) {
+                    // ── 텍스트 파티클 (데미지, 이모지 등) - 월드 좌표 ──
+                    if (this.isInView(p.x, p.y, 50)) {
+                        ctx.globalAlpha = p.life / 40;
+                        ctx.fillStyle = p.color;
+                        ctx.font = `${24 * (p.scale||1)}px Arial`;
+                        ctx.textAlign = 'center';
+                        ctx.fillText(p.text, p.x, p.y);
+                    }
+                } else if (p.size !== undefined) {
+                    // ── 스파클 파티클 (레벨업 등) - 화면 좌표 (카메라 translate 밖에서 그려야 함) ──
+                    // ctx는 현재 camera translate 상태이므로 역변환 필요
+                    ctx.setTransform(1, 0, 0, 1, 0, 0);
+                    const fadeRatio = p.life / (p.maxLife || 28);
+                    ctx.globalAlpha = fadeRatio;
                     ctx.fillStyle = p.color;
-                    ctx.font = `${24 * p.scale}px Arial`;
-                    ctx.textAlign = 'center';
-                    ctx.fillText(p.text, p.x, p.y);
-                    ctx.restore();
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.size * fadeRatio + 1, 0, Math.PI * 2);
+                    ctx.fill();
                 }
+                ctx.restore();
             });
             
             this.player.draw();
@@ -4031,6 +4169,20 @@ class Player {
             // 첫 번째 레벨업에만 업그레이드 화면 표시
             if (levelUpCount === 1) {
                 G.showLevelUp();
+                // ── 레벨업 시각 효과 ──
+                const flash = document.getElementById('levelUpFlash');
+                if (flash) { flash.classList.remove('show'); void flash.offsetWidth; flash.classList.add('show'); }
+                // 레벨업 파티클 (캔버스 기준 플레이어 위치)
+                const psx = this.x - G.camera.x, psy = this.y - G.camera.y;
+                for (let i = 0; i < 22; i++) {
+                    const ang = (i / 22) * Math.PI * 2;
+                    const spd = 3 + Math.random() * 4;
+                    G.particles.push({ x: psx, y: psy, vx: Math.cos(ang)*spd, vy: Math.sin(ang)*spd - 2,
+                        color: i%3===0?'#ffd700':i%3===1?'#fff':'#ffe066',
+                        size: 4+Math.random()*4, life: 32, maxLife: 32 });
+                }
+                // 추가 레벨업 텍스트 파티클 (월드 좌표로)
+                G.textParticle(this.x, this.y - 60, '🆙 LEVEL UP!', '#ffd700', 1.2);
             }
         }
         

@@ -348,62 +348,25 @@
     for(const [label,key] of pairs){ if(t.includes(label)) return key; }
     return '';
   }
-  // 게스트의 누적 선택 스탯 (worldSnap 덮어쓰기 방지용)
-  const mxGuestChoiceStats = {
-    damageBonus: 0, atkSpeedBonus: 0, speedBonus: 0,
-    pierceBonus: 0, regenBonus: 0, maxHpBonus: 0,
-    shield: false, shieldHp: 0,
-    itemLevels: {},
-    baseDamage: null, baseAtkSpeed: null, baseSpeed: null,
-    basePierce: null, baseRegen: null, baseMaxHp: null
-  };
-
   function applyLevelChoiceLocal(p, key){
     if(!p) return false;
     switch(String(key||'')){
-      case 'hp_up':
-        p.maxHp = safeNum(p.maxHp,0) + 50;
-        p.hp = Math.min(safeNum(p.hp,0)+50, safeNum(p.maxHp,0));
-        mxGuestChoiceStats.maxHpBonus += 50;
-        return true;
-      case 'damage_up':
-        p.damage = safeNum(p.damage,0) + 10;
-        mxGuestChoiceStats.damageBonus += 10;
-        return true;
-      case 'atk_speed_up':
-        p.atkSpeed = Math.max(100, safeNum(p.atkSpeed,0) - 50);
-        mxGuestChoiceStats.atkSpeedBonus += 50;
-        return true;
-      case 'speed_up':
-        p.speed = safeNum(p.speed,0) + 0.5;
-        mxGuestChoiceStats.speedBonus += 0.5;
-        return true;
-      case 'pierce':
-        p.pierce = Math.max(0, Math.round(safeNum(p.pierce,0))) + 1;
-        mxGuestChoiceStats.pierceBonus += 1;
-        return true;
-      case 'regen':
-        p.regen = safeNum(p.regen,0) + 0.5;
-        mxGuestChoiceStats.regenBonus += 0.5;
-        return true;
-      case 'shield':
-        p.shield = true; p.shieldHp = 100;
-        mxGuestChoiceStats.shield = true;
-        mxGuestChoiceStats.shieldHp = Math.max(mxGuestChoiceStats.shieldHp, 100);
-        return true;
+      case 'hp_up': p.maxHp = safeNum(p.maxHp,0) + 50; p.hp = Math.min(safeNum(p.hp,0)+50, safeNum(p.maxHp,0)); return true;
+      case 'damage_up': p.damage = safeNum(p.damage,0) + 10; return true;
+      case 'atk_speed_up': p.atkSpeed = Math.max(100, safeNum(p.atkSpeed,0) - 50); return true;
+      case 'speed_up': p.speed = safeNum(p.speed,0) + 0.5; return true;
+      case 'pierce': p.pierce = Math.max(0, Math.round(safeNum(p.pierce,0))) + 1; return true;
+      case 'regen': p.regen = safeNum(p.regen,0) + 0.5; return true;
+      case 'shield': p.shield = true; p.shieldHp = 100; return true;
     }
     return false;
   }
   function applyItemChoiceLocal(p, key){
     if(!p) return false;
     p.itemLevels = Object.assign({}, p.itemLevels||{});
-    mxGuestChoiceStats.itemLevels = Object.assign({}, mxGuestChoiceStats.itemLevels||{});
     const g = G();
     switch(String(key||'')){
-      case 'poison':
-        p.itemLevels.poison = (p.itemLevels.poison||0)+1;
-        mxGuestChoiceStats.itemLevels.poison = p.itemLevels.poison;
-        p.poison=true; p.poisonDmg = 3 + 2*p.itemLevels.poison; return true;
+      case 'poison': p.itemLevels.poison = (p.itemLevels.poison||0)+1; p.poison=true; p.poisonDmg = 3 + 2*p.itemLevels.poison; return true;
       case 'freeze': p.itemLevels.freeze = (p.itemLevels.freeze||0)+1; p.freeze=true; return true;
       case 'explode': p.itemLevels.explode = (p.itemLevels.explode||0)+1; p.explode=true; return true;
       case 'lightning': p.itemLevels.lightning = (p.itemLevels.lightning||0)+1; p.lightning = 0.02 * p.itemLevels.lightning; return true;
@@ -818,76 +781,6 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   function teamXpEstimate(){ const g=G(); const p=g&&g.player; return Math.max(0, safeNum(p?.exp,0)); }
   function getHostTeamProgress(){ const g=G(); const p=g&&g.player; if(!g||!p) return null; return { level:Math.round(safeNum(p.level,1)), exp:Math.round(safeNum(p.exp,0)), expNext:Math.round(safeNum(p.expNext,1)) }; }
   function mirrorTeamProgressToRemotes(){ if(!iAmHost()) return; const tp=getHostTeamProgress(); if(!tp) return; for(const rs of Object.values(state.remoteStates||{})){ if(!rs) continue; rs.lvl=tp.level; rs.exp=tp.exp; rs.expNext=tp.expNext; } }
-  // 게스트가 선택한 스탯을 player에 항상 재적용 (worldSnap 덮어쓰기 방지)
-  function resetGuestChoiceStats(){
-    mxGuestChoiceStats.damageBonus   = 0;
-    mxGuestChoiceStats.atkSpeedBonus = 0;
-    mxGuestChoiceStats.speedBonus    = 0;
-    mxGuestChoiceStats.pierceBonus   = 0;
-    mxGuestChoiceStats.regenBonus    = 0;
-    mxGuestChoiceStats.maxHpBonus    = 0;
-    mxGuestChoiceStats.shield        = false;
-    mxGuestChoiceStats.shieldHp      = 0;
-    mxGuestChoiceStats.itemLevels    = {};
-    mxGuestChoiceStats.baseDamage    = null;
-    mxGuestChoiceStats.baseAtkSpeed  = null;
-    mxGuestChoiceStats.baseSpeed     = null;
-    mxGuestChoiceStats.basePierce    = null;
-    mxGuestChoiceStats.baseRegen     = null;
-    mxGuestChoiceStats.baseMaxHp     = null;
-  }
-
-  function reapplyGuestChoiceStats(p){
-    if(!p) return;
-    const cs = mxGuestChoiceStats;
-    if(!cs) return;
-    // 레벨업 스탯 보너스 재적용
-    if(cs.baseDamage === null && safeNum(p.damage,0) > 0) cs.baseDamage = safeNum(p.damage,0);
-    if(cs.baseAtkSpeed === null && safeNum(p.atkSpeed,0) > 0) cs.baseAtkSpeed = safeNum(p.atkSpeed,0);
-    if(cs.baseSpeed === null && safeNum(p.speed,0) > 0) cs.baseSpeed = safeNum(p.speed,0);
-    if(cs.basePierce === null) cs.basePierce = 0;
-    if(cs.baseRegen === null) cs.baseRegen = 0;
-    if(cs.baseMaxHp === null && safeNum(p.maxHp,0) > 0) cs.baseMaxHp = safeNum(p.maxHp,0);
-    if(cs.damageBonus > 0){
-      const expected = safeNum(cs.baseDamage,10) + cs.damageBonus;
-      if(safeNum(p.damage,0) < expected - 0.5) p.damage = expected;
-    }
-    if(cs.atkSpeedBonus > 0){
-      const expected = Math.max(100, safeNum(cs.baseAtkSpeed,400) - cs.atkSpeedBonus);
-      if(safeNum(p.atkSpeed,0) > expected + 1) p.atkSpeed = expected;
-    }
-    if(cs.speedBonus > 0){
-      const expected = safeNum(cs.baseSpeed,2.4) + cs.speedBonus;
-      if(safeNum(p.speed,0) < expected - 0.01) p.speed = expected;
-    }
-    if(cs.pierceBonus > 0){
-      const expected = cs.pierceBonus;
-      if(Math.round(safeNum(p.pierce,0)) < expected) p.pierce = expected;
-    }
-    if(cs.regenBonus > 0){
-      const expected = cs.regenBonus;
-      if(safeNum(p.regen,0) < expected - 0.01) p.regen = expected;
-    }
-    if(cs.maxHpBonus > 0){
-      const expected = safeNum(cs.baseMaxHp,100) + cs.maxHpBonus;
-      if(safeNum(p.maxHp,0) < expected - 0.5) p.maxHp = expected;
-    }
-    if(cs.shield){ p.shield = true; if(safeNum(p.shieldHp,0) <= 0) p.shieldHp = 100; }
-    // 아이템 레벨 보너스 재적용
-    if(cs.itemLevels && Object.keys(cs.itemLevels).length > 0){
-      p.itemLevels = p.itemLevels || {};
-      const il = cs.itemLevels;
-      if(safeNum(il.poison,0) > 0){ p.itemLevels.poison = Math.max(safeNum(p.itemLevels.poison,0), il.poison); p.poison=true; p.poisonDmg = 3 + 2*p.itemLevels.poison; }
-      if(safeNum(il.freeze,0) > 0){ p.itemLevels.freeze = Math.max(safeNum(p.itemLevels.freeze,0), il.freeze); p.freeze=true; }
-      if(safeNum(il.explode,0) > 0){ p.itemLevels.explode = Math.max(safeNum(p.itemLevels.explode,0), il.explode); p.explode=true; }
-      if(safeNum(il.lightning,0) > 0){ p.itemLevels.lightning = Math.max(safeNum(p.itemLevels.lightning,0), il.lightning); p.lightning = 0.02 * p.itemLevels.lightning; }
-      if(safeNum(il.spin,0) > 0){ p.itemLevels.spin = Math.max(safeNum(p.itemLevels.spin,0), il.spin); p.spinBlade=true; p.spinDmgMultiplier = 0.15 + 0.1*p.itemLevels.spin; }
-      if(safeNum(il.crit,0) > 0){ p.itemLevels.crit = Math.max(safeNum(p.itemLevels.crit,0), il.crit); p.crit = 0.08 * p.itemLevels.crit; }
-      if(safeNum(il.multi,0) > 0){ p.itemLevels.multi = Math.max(safeNum(p.itemLevels.multi,0), il.multi); p.multishot = p.itemLevels.multi; }
-      if(safeNum(il.meteor,0) > 0){ p.itemLevels.meteor = Math.max(safeNum(p.itemLevels.meteor,0), il.meteor); p.meteorChance = 0.05 * p.itemLevels.meteor; p.meteorDmg = 0.75 * p.itemLevels.meteor; }
-    }
-  }
-
   function applyHostPlayerProgressToGuest(s){ const g=G(); if(!g||!g.player||!s) return; try{ const hp=s.player||{}; const lp=g.player;
       // 개별 플레이어 HP/MaxHP는 호스트 값으로 덮어쓰지 않는다.
       // 이 경로가 살아 있으면 피격 대상이 꼬였을 때 엉뚱한 유저가 맞은 것처럼 보인다.
@@ -937,10 +830,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
           }
         }
       }catch(_){}
-      if(typeof s.score==='number') g.score = s.score; if(typeof s.stage==='number') g.stage = s.stage; if(typeof s.nextBossScore==='number') g.nextBossScore = s.nextBossScore; if(typeof s.bossCount==='number') g.bossCount = s.bossCount;
-      // ── 게스트 선택 스탯 보호: worldSnap이 덮어써도 누적 보너스 재적용 ──
-      try{ reapplyGuestChoiceStats(lp); }catch(_){}
-      }catch(_){} }
+      if(typeof s.score==='number') g.score = s.score; if(typeof s.stage==='number') g.stage = s.stage; if(typeof s.nextBossScore==='number') g.nextBossScore = s.nextBossScore; if(typeof s.bossCount==='number') g.bossCount = s.bossCount; }catch(_){} }
   function syncRemoteStatesFromWorldPlayers(s){
     const players=(s&&s.players&&typeof s.players==='object')?s.players:null; if(!players) return;
     const tNow = now();
@@ -1253,7 +1143,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   const origSelect=g.selectChar?.bind(g); const origStart=g.start?.bind(g); const origUpdate=g.update?.bind(g); const origLoop=g.loop?.bind(g); const origShowLevel=g.showLevelUp?.bind(g); const origShowMath=g.showMathScreen?.bind(g); const origShowItem=g.showItemScreen?.bind(g); const origCloseMath=g.closeMath?.bind(g); const origSpawnBoss=g.spawnBoss?.bind(g); const origCheckBossSpawn=g.checkBossSpawn?.bind(g);
     if(origStart){ g.start=function(){ const r=origStart(); if(state.phase!==PHASES.PLAYING) pauseGame(true); try{ applyCoopScaling(); }catch(_){ } return r; }; }
     const origShowCharSelect=g.showCharSelect?.bind(g); if(origShowCharSelect && !g.__mxShowCharSelectWrapped){ g.__mxShowCharSelectWrapped=true; g.showCharSelect=function(){ const r=origShowCharSelect(); try{ const grid=document.getElementById('charSelectGrid'); const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; Array.from(grid?.children||[]).forEach((el,idx)=>{ if(el&&el.dataset) el.dataset.charType=String(arr[idx]?.type||''); }); refreshCharSelectLocks(); }catch(_){ } return r; }; }
-    if(origSelect){ g.selectChar=function(type){ const t=String(type||''); if(isCharTakenByOther(t)){ setOverlay('이미 다른 플레이어가 선택한 캐릭터입니다'); refreshCharSelectLocks(); return; } const sid=mySid()||'self'; state.localCharChosen=true; state.localCharType=t; state.selectedBySid[sid]=state.localCharType; refreshCharSelectLocks(); try{ resetGuestChoiceStats(); }catch(_){} const r=origSelect(type); pauseGame(true); send('char_selected',{ character: state.localCharType }); if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); return r; }; }
+    if(origSelect){ g.selectChar=function(type){ const t=String(type||''); if(isCharTakenByOther(t)){ setOverlay('이미 다른 플레이어가 선택한 캐릭터입니다'); refreshCharSelectLocks(); return; } const sid=mySid()||'self'; state.localCharChosen=true; state.localCharType=t; state.selectedBySid[sid]=state.localCharType; refreshCharSelectLocks(); const r=origSelect(type); pauseGame(true); send('char_selected',{ character: state.localCharType }); if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); return r; }; }
     if(origUpdate){ g.update=function(){ const pl=g&&g.player; const lock=isLocalChoiceLock(); const sx=lock&&pl?safeNum(pl.x):0, sy=lock&&pl?safeNum(pl.y):0; const savedPaused=g.paused; if(lock) g.paused=true; if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(!iAmHost() && state.phase!==PHASES.PLAYING) g.paused=true; const r=origUpdate(); if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(lock&&pl){ try{ pl.x=sx; pl.y=sy; if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; }catch(_){} } if(lock){ g.paused=savedPaused||true; }  return r; }; }
     if(!g.__mxAuthoritativeWrapped){
       g.__mxAuthoritativeWrapped = true;
@@ -1510,14 +1400,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       // 호스트/게스트 모두 경험치·레벨업 정상 처리
       return oGE.call(this,v);
     }; } PlayerCtor.prototype.__mxBridgeGuardPatched=true; } }catch(_){} }
-  function raf(){ try{ updateRemoteRenderTracks(); forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks();
-    // ── 선택 스탯 주기적 재적용 (host + guest 모두) ──
-    try{
-      const _g = G(); const _p = _g && _g.player;
-      if(_p && (state.phase===PHASES.PLAYING||inChoicePhase())){
-        reapplyGuestChoiceStats(_p);
-      }
-    }catch(_){} const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectTauntShieldCard(); }catch(_){} } if(choiceId && state.phase!==PHASES.CHAR_SELECT){ if(!state.selecting || (state.choiceType!==choiceLabelById(choiceId))){ setSelecting(true, choiceLabelById(choiceId)); } } else if(state.selecting && state.phase!==PHASES.CHAR_SELECT && !choiceId){ try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); pauseGame(true); } else { setSelecting(false,''); } } const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); try{ const g=G(); if(g){ g.paused=false; } }catch(_){} } try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); if(localChoiceFinished() && (now()-safeNum(state.lastChoiceAckSentAt,0))>700){ try{ markChoiceDoneLocal(!!((state.choiceDoneBySid||{})[(mySid()||'')])); }catch(_){} } if(localPickedCardInVisibleChoice() && !localChoiceFinished()){ try{ markChoiceDoneLocal(true); setOverlay('다른 플레이어 선택 대기'); }catch(_){} } pauseGame(true); const blockChestReopen = (state.phase===PHASES.CHEST_CHOICE && state.__mxChestAbortedLocal); if(!isChoiceVisible() && !localChoiceFinished() && !blockChestReopen) { try{ forceOpenChoiceUiForPhase(); }catch(_){} } } if(state.selecting){ try{ const g=G(); const pl=g&&g.player; const lp=state.selectLockPos; if(pl&&lp){ pl.x=safeNum(lp.x); pl.y=safeNum(lp.y); if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; } }catch(_){} } try{ if(iAmHost() && state.phase===PHASES.PLAYING){ hostChestTouchFallback(); } }catch(_){} try{ if(iAmHost() && inChoicePhase() && safeNum(state.phaseDeadline,0)>0 && now()>=safeNum(state.phaseDeadline,0)+500){ const parts=getExpectedChoiceParticipants(); for(const sid of parts){ if(!Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid)) state.choiceDoneBySid[sid]=false; } maybeFinishSharedChoice(); if(inChoicePhase() && now()>=safeNum(state.phaseDeadline,0)+2000){ endChoicePhase(); } } }catch(_){} drawRemoteLabels(); drawRemoteFx(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
+  function raf(){ try{ updateRemoteRenderTracks(); forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks(); const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectTauntShieldCard(); }catch(_){} } if(choiceId && state.phase!==PHASES.CHAR_SELECT){ if(!state.selecting || (state.choiceType!==choiceLabelById(choiceId))){ setSelecting(true, choiceLabelById(choiceId)); } } else if(state.selecting && state.phase!==PHASES.CHAR_SELECT && !choiceId){ try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); pauseGame(true); } else { setSelecting(false,''); } } const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); try{ const g=G(); if(g){ g.paused=false; } }catch(_){} } try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); if(localChoiceFinished() && (now()-safeNum(state.lastChoiceAckSentAt,0))>700){ try{ markChoiceDoneLocal(!!((state.choiceDoneBySid||{})[(mySid()||'')])); }catch(_){} } if(localPickedCardInVisibleChoice() && !localChoiceFinished()){ try{ markChoiceDoneLocal(true); setOverlay('다른 플레이어 선택 대기'); }catch(_){} } pauseGame(true); const blockChestReopen = (state.phase===PHASES.CHEST_CHOICE && state.__mxChestAbortedLocal); if(!isChoiceVisible() && !localChoiceFinished() && !blockChestReopen) { try{ forceOpenChoiceUiForPhase(); }catch(_){} } } if(state.selecting){ try{ const g=G(); const pl=g&&g.player; const lp=state.selectLockPos; if(pl&&lp){ pl.x=safeNum(lp.x); pl.y=safeNum(lp.y); if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; } }catch(_){} } try{ if(iAmHost() && state.phase===PHASES.PLAYING){ hostChestTouchFallback(); } }catch(_){} try{ if(iAmHost() && inChoicePhase() && safeNum(state.phaseDeadline,0)>0 && now()>=safeNum(state.phaseDeadline,0)+500){ const parts=getExpectedChoiceParticipants(); for(const sid of parts){ if(!Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid)) state.choiceDoneBySid[sid]=false; } maybeFinishSharedChoice(); if(inChoicePhase() && now()>=safeNum(state.phaseDeadline,0)+2000){ endChoicePhase(); } } }catch(_){} drawRemoteLabels(); drawRemoteFx(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
   setInterval(()=>{ try{ if(mySid()) send('hello',{}); }catch(_){ } },4000);
   setInterval(()=>{ try{ postLocalState(); }catch(_){ } },33);
   setInterval(()=>{ try{ postWorldIfHost(); }catch(_){ } },50);
