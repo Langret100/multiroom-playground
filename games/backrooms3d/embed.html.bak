@@ -215,23 +215,10 @@ with(window){
     window.__BR_BOOT_HOST__ = (host === '1');
     window.__BR_BOOT_SEAT__ = Number(qs.get('seat') || -1);
     window.__BR_START__ = null;
-    // mapSeed: URL 파라미터 우선, 없으면 __BR_START__.seed, 없으면 roomId 해시
-    let mapSeedVal = Number(qs.get('mapSeed') || 0) >>> 0;
-    if (!mapSeedVal && window.__BR_START__ && Number(window.__BR_START__.seed)) {
-      mapSeedVal = Number(window.__BR_START__.seed) >>> 0;
-    }
-    if (!mapSeedVal && roomId) {
-      // roomId 문자열 → 결정론적 해시로 seed 생성
-      let h = 0x811c9dc5;
-      for (let i = 0; i < roomId.length; i++) { h ^= roomId.charCodeAt(i); h = (h * 0x01000193) >>> 0; }
-      mapSeedVal = h || 0xdeadbeef;
-    }
-    if (!mapSeedVal) mapSeedVal = 0xdeadbeef;
-    window.__BR_MAP_SEED__ = mapSeedVal;
-    // 항상 seeded LCG 사용 → 모든 클라이언트가 동일한 맵 생성
-    {
-      let s = mapSeedVal >>> 0;
-      Math.random = function(){ s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+    const seed = 0;
+    if (seed > 0){
+      let s = seed >>> 0;
+      Math.random = function(){ s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
     }
   }catch(_){ }
 })();
@@ -2580,7 +2567,7 @@ function pushOutWalls(px,pz,rad){
       const wantStart = canStartSprint && (d<sprintStartRange || (rabbitHasKey && sprint.active));
       if(wantStart){
         mSprint.active = true;
-        revealPingT = 1.5; // show rabbit ping on minimap briefly
+        revealPingT = 2.0; // show rabbit ping on minimap briefly
       }
       if(mSprint.active){
         mSprint.charge = Math.max(0, mSprint.charge - mSprint.drain*dt);
@@ -2588,8 +2575,6 @@ function pushOutWalls(px,pz,rad){
       }else{
         mSprint.charge = Math.min(1, mSprint.charge + mSprint.regen*dt);
       }
-      if(mSprint.active && !mSprint._wasActive) revealPingT = 1.5;
-      mSprint._wasActive = mSprint.active;
       monsterSprintSfx(mSprint.active);
       const speedBuff = (nowMs < monsterSpeedBuffUntil) ? 1.5 : 1.0;
       const sp=7.9*(mSprint.active?mSprint.mult:1)*speedBuff;
@@ -2788,28 +2773,8 @@ const v=Math.max(0, Math.min(1,(12-d)/10));
     mmCtx.fillStyle="rgba(255,255,255,0.95)"; mmCtx.beginPath(); mmCtx.arc(p.x,p.y,3.8,0,Math.PI*2); mmCtx.fill();
     if(monster){ const mpos=worldToMM(monster.position.x,monster.position.z);
       mmCtx.fillStyle="rgba(255,80,80,0.95)"; mmCtx.beginPath(); mmCtx.arc(mpos.x,mpos.y,3.6,0,Math.PI*2); mmCtx.fill(); }
-    if(revealPingT>0){
-      // 토끼들 위치를 미니맵에 1.5초간 표시 (괴물 빠른이동 시)
-      const _rabbitPositions = [];
-      if(playerRole!=='monster' && !rabbitGhost) _rabbitPositions.push({x:player.position.x, z:player.position.z});
-      for(const [,_r] of bridge.remotes.entries()){
-        if(_r.role!=='monster' && _r.state && !_r.state.ghost){
-          _rabbitPositions.push({x:Number(_r.state.x)||0, z:Number(_r.state.z)||0});
-        }
-      }
-      // solo/AI mode: use player position as fallback
-      if(_rabbitPositions.length===0 && playerRole==='monster') _rabbitPositions.push({x:player.position.x, z:player.position.z});
-      const _pingAlpha = Math.min(1, revealPingT / 0.4);
-      mmCtx.strokeStyle=`rgba(255,220,90,${(0.95*_pingAlpha).toFixed(2)})`; mmCtx.lineWidth=2.5;
-      for(const _rp of _rabbitPositions){
-        const _mm = worldToMM(_rp.x, _rp.z);
-        const _rad = 8 + (1.5 - revealPingT) * 8;
-        mmCtx.beginPath(); mmCtx.arc(_mm.x, _mm.y, _rad, 0, Math.PI*2); mmCtx.stroke();
-        // 작은 채워진 원으로 토끼 위치 강조
-        mmCtx.fillStyle=`rgba(255,220,90,${(0.7*_pingAlpha).toFixed(2)})`;
-        mmCtx.beginPath(); mmCtx.arc(_mm.x, _mm.y, 4, 0, Math.PI*2); mmCtx.fill();
-      }
-    }
+    if(revealPingT>0){ mmCtx.strokeStyle="rgba(255,220,90,0.95)"; mmCtx.lineWidth=2;
+      mmCtx.beginPath(); mmCtx.arc(p.x,p.y,10 + (2-revealPingT)*6,0,Math.PI*2); mmCtx.stroke(); }
     mmCtx.strokeStyle="rgba(140,210,255,0.95)"; mmCtx.lineWidth=2;
     mmCtx.beginPath(); mmCtx.moveTo(p.x,p.y); mmCtx.lineTo(p.x+Math.sin(yaw)*10,p.y+Math.cos(yaw)*10); mmCtx.stroke();
     mmCtx.strokeStyle="rgba(255,255,255,0.12)"; mmCtx.lineWidth=1; mmCtx.strokeRect(0.5,0.5,w-1,h-1);
@@ -2841,7 +2806,6 @@ const v=Math.max(0, Math.min(1,(12-d)/10));
 let last=performance.now();
   function animate(now){
     const dt=Math.min(0.033,(now-last)/1000); last=now;
-    if(revealPingT > 0) revealPingT = Math.max(0, revealPingT - dt);
     try{
 // Global countdown for monster release (visible to both)
 if(monsterReleaseLeft>0){
@@ -2935,10 +2899,7 @@ if(monsterReleaseLeft>0){
     const inWater = isInPool(player.position.x, player.position.z);
     const wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
     const rabbitFreeSprint = (performance.now() < rabbitFreeSprintUntil);
-    const _prevSprintActive = sprint.active;
     sprint.active = wantSprint && (rabbitFreeSprint || sprint.charge>0.001);
-    // 괴물 역할 플레이어가 빠른이동(스프린트) 시작 시 → 토끼 위치 미니맵에 1.5초 표시
-    if(playerRole==='monster' && sprint.active && !_prevSprintActive) revealPingT = 1.5;
     const speedMul = (inWater?0.5:1) * (sprint.active ? sprint.mult : 1);
     const rabbitSpeed = 7.4 * speedMul;
     // If the rabbit is trapped, hard-anchor them to the cage center so they cannot drift outside the bars.
@@ -3246,7 +3207,7 @@ if(monsterReleaseLeft>0){
     seedRemotesFromStart(start);
     const nowMs = performance.now();
     bridge.startId = String(start.startId || start.startedAt || '');
-    const spawnLockMs = Math.max(9500, Number(start.spawnLockMs || 10000));
+    const spawnLockMs = Math.max(700, Number(start.spawnLockMs || 900));
     const ignoreCaughtMs = Math.max(2500, Number(start.ignoreCaughtMs || 10000));
     const startedAtMs = Number(start.startedAt || Date.now());
     bridge.forceSpawnUntil = nowMs + Math.max(250, spawnLockMs - Math.max(0, Date.now() - startedAtMs));
