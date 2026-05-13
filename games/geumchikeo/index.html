@@ -367,7 +367,7 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
     <h2>🚫 금칙어 게임 규칙</h2>
     <div class="hrule"><span class="hi">🎯</span><div class="ht">상대방이 <b>내 금칙어를 말하도록</b> 대화 유도</div></div>
     <div class="hrule"><span class="hi">🚫</span><div class="ht">금칙어 발설 → <b>-30점</b></div></div>
-    <div class="hrule"><span class="hi">🔇</span><div class="ht">10초 침묵 → <b>-30점</b></div></div>
+    <div class="hrule"><span class="hi">🔇</span><div class="ht">30초 침묵 → <b>-30점</b></div></div>
     <div class="hrule"><span class="hi">💬</span><div class="ht">채팅은 <b>2초</b>에 1번 가능</div></div>
     <hr class="hsep">
     <div class="hrule"><span class="hi">🕹</span><div class="ht">왼쪽 조이스틱으로 이동, ↑ 버튼으로 점프</div></div>
@@ -488,14 +488,7 @@ function drawChar(ctx, cx, cy, size, preset, emotion, facingRight, walkPhase, ju
 
   const r = size * 0.42;
 
-  // Shadow
-  ctx.save();
-  ctx.scale(1, 1 / scaleY);
-  ctx.fillStyle = 'rgba(0,0,0,0.18)';
-  ctx.beginPath();
-  ctx.ellipse(0, r + size * 0.1, r * 0.8, r * 0.18, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
+  // Shadow: 바닥에 고정 (renderFrame에서 별도 렌더 — 공중에 떠도 그림자는 바닥)
 
   // Body (squircle via rounded rect)
   ctx.beginPath();
@@ -750,7 +743,7 @@ let mySessionId = new URLSearchParams(location.search).get('sid') || '';
 let bridgeInitDone = false;
 const WS_URL   = 'wss://multiroom-playground.tmdrb445-f03.workers.dev';
 const HTTP_URL = 'https://multiroom-playground.tmdrb445-f03.workers.dev';
-const GAME_SEC=200, SIL_SEC=10, PENALTY=30, RECOVER=25, SIGN_THR=40, KW_SEC=20, CHAT_CD=2000, MAX_PLAYERS=4;
+const GAME_SEC=200, SIL_SEC=30, PENALTY=30, RECOVER=25, SIGN_THR=40, KW_SEC=20, CHAT_CD=2000, MAX_PLAYERS=4;
 
 let ws=null, myUid='', myNick='', roomId='', isHost=false;
 let roomPls={}, players={}, myKw='';
@@ -852,6 +845,14 @@ function onGMsg(m){
     if(t==='end'&&from!==myUid)endGame(m.reason);
     if(t==='pos'&&from!==myUid){
       if(entities[from]){entities[from].targetX=m.x;entities[from].targetY=m.y;}
+    }
+    if(t==='stomped'&&from!==myUid){
+      // 내가 밟혔다는 이벤트 수신
+      const stomped=m.uid===myUid?entities[myUid]:entities[m.uid];
+      if(stomped&&stomped.bounceTimer<=0){
+        stomped.squash=0.65; stomped.emotion='cry'; stomped.bounceTimer=800;
+        sfx('bounce');
+      }
     }
   }
 }
@@ -1181,7 +1182,12 @@ function physicsUpdate(dt){
       if(dy<-CHAR_SIZE*0.3&&me.vy>0){
         if(me.bounceTimer<=0){
           me.vy=JUMP_VY*0.5;
-          if(e.bounceTimer<=0){e.squash=0.65;e.emotion='cry';e.bounceTimer=800;}
+          me.bounceTimer=400;
+          if(e.bounceTimer<=0){
+            e.squash=0.65; e.emotion='cry'; e.bounceTimer=800;
+            // 상대방에게 밟힘 이벤트 전송
+            gSend('stomped',{uid});
+          }
           sfx('bounce');
         }
       }
@@ -1220,6 +1226,18 @@ function renderFrame(dt){
     const cy=e.y+CHAR_SIZE/2;
     const emotion=p.elim?'cry':e.emotion;
 
+    // 그림자: 항상 바닥에 고정 (공중에 있어도 바닥에만 표시)
+    const shadowY = groundY; // 바닥 y좌표
+    const shadowAlpha = Math.max(0.04, 0.18 - (shadowY - (e.y+CHAR_SIZE)) * 0.003);
+    const shadowScaleX = Math.max(0.4, 1 - (shadowY - (e.y+CHAR_SIZE)) * 0.008);
+    ctx.save();
+    ctx.globalAlpha = shadowAlpha;
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.beginPath();
+    ctx.ellipse(cx, shadowY, CHAR_SIZE*0.38*shadowScaleX, CHAR_SIZE*0.085, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+
     drawChar(ctx, cx, cy, CHAR_SIZE, e.preset, emotion, e.facing, e.walkPhase, e.squash);
 
     ctx.globalAlpha=1;
@@ -1253,21 +1271,53 @@ function renderFrame(dt){
     // 말풍선
     if(e.bubText&&e.bubTimer>0){
       ctx.save();
-      const alpha=Math.min(1,e.bubTimer/300);
-      ctx.globalAlpha=alpha;
-      ctx.font='bold 12px "Noto Sans KR",sans-serif';
-      const bt=e.bubText.length>22?e.bubText.slice(0,22)+'…':e.bubText;
-      const bw=Math.min(ctx.measureText(bt).width+18,190);
-      const bx=cx,by=e.y-36;
-      ctx.fillStyle=e.bubPenalty?'#ffe0e6':'rgba(255,255,255,.96)';
-      ctx.strokeStyle=e.bubPenalty?'#e94560':'rgba(0,0,0,.12)';ctx.lineWidth=1.5;
-      ctx.beginPath();ctx.roundRect(bx-bw/2,by-20,bw,24,9);ctx.fill();ctx.stroke();
-      // 말풍선 꼬리
-      ctx.fillStyle=e.bubPenalty?'#ffe0e6':'rgba(255,255,255,.96)';
-      ctx.beginPath();ctx.moveTo(bx-5,by+4);ctx.lineTo(bx,by+14);ctx.lineTo(bx+5,by+4);ctx.closePath();ctx.fill();
-      ctx.fillStyle=e.bubPenalty?'#c0392b':'#333';
-      ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText(bt,bx,by-8);
+      const fadeAlpha = Math.min(1, e.bubTimer/400);
+      ctx.globalAlpha = fadeAlpha;
+      const isPenalty = e.bubPenalty;
+      const FONT_SIZE = 13;
+      const MAX_W = 200;
+      ctx.font = `bold ${FONT_SIZE}px "Noto Sans KR",sans-serif`;
+      // 텍스트 줄바꿈 처리 (최대 2줄)
+      const words = e.bubText;
+      const bt = words.length > 28 ? words.slice(0,28)+'…' : words;
+      const textW = Math.min(ctx.measureText(bt).width, MAX_W - 20);
+      const bw = textW + 24;
+      const bh = 28;
+      const bx = cx;
+      const by = e.y - 20; // 캐릭터 바로 위
+      const boxX = bx - bw/2;
+      const boxY = by - bh - 8;
+      // 말풍선 배경
+      const bgColor = isPenalty ? '#fff0f3' : '#ffffff';
+      const borderColor = isPenalty ? '#e94560' : '#c8d0e0';
+      ctx.fillStyle = bgColor;
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.roundRect(boxX, boxY, bw, bh, 10);
+      ctx.fill();
+      ctx.stroke();
+      // 꼬리 삼각형
+      ctx.fillStyle = bgColor;
+      ctx.beginPath();
+      ctx.moveTo(bx-6, boxY+bh);
+      ctx.lineTo(bx, boxY+bh+9);
+      ctx.lineTo(bx+6, boxY+bh);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(bx-6, boxY+bh+1);
+      ctx.lineTo(bx, boxY+bh+9);
+      ctx.lineTo(bx+6, boxY+bh+1);
+      ctx.stroke();
+      // 텍스트
+      ctx.fillStyle = isPenalty ? '#c0392b' : '#222';
+      ctx.font = `bold ${FONT_SIZE}px "Noto Sans KR",sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(bt, bx, boxY + bh/2);
       ctx.restore();
     }
   }
@@ -1420,7 +1470,7 @@ function markElim(uid,reason){
   }
   $('elimName').textContent=p.nick+(uid===myUid?' (나)':'');
   $('elimName').style.color=COLORS_HEX[p.ci%8];
-  const rmap={sil:'⏰ 10초 침묵 패널티',kw:'🚫 금칙어를 말해버림',score:'📉 점수 0점',exit:'🚪 나감'};
+  const rmap={sil:'⏰ 30초 침묵 패널티',kw:'🚫 금칙어를 말해버림',score:'📉 점수 0점',exit:'🚪 나감'};
   $('elimReason').textContent=rmap[reason]||'💀 점수 0점';
   $('elimScore').textContent='최종 점수: '+p.score+'점';
   ov.classList.add('show');
@@ -1466,7 +1516,7 @@ function sendChat(){
   chkKws(txt);
   addLog(myUid,txt,'chat');
   if(entities[myUid]){
-    entities[myUid].bubText=txt;entities[myUid].bubTimer=2800;entities[myUid].bubPenalty=false;
+    entities[myUid].bubText=txt;entities[myUid].bubTimer=3500;entities[myUid].bubPenalty=false;
     entities[myUid].emotion=detectEmotion(txt);
     setTimeout(()=>{if(entities[myUid])entities[myUid].emotion='neutral';},3000);
   }
@@ -1477,7 +1527,7 @@ function onRchat(uid,txt){
   p.lastSpk=Date.now();
   addLog(uid,txt,'chat');
   if(entities[uid]){
-    entities[uid].bubText=txt;entities[uid].bubTimer=2800;entities[uid].bubPenalty=false;
+    entities[uid].bubText=txt;entities[uid].bubTimer=3500;entities[uid].bubPenalty=false;
     entities[uid].emotion=detectEmotion(txt);
     setTimeout(()=>{if(entities[uid])entities[uid].emotion='neutral';},3000);
   }
@@ -1491,7 +1541,7 @@ function selfPenalty(type,kw){
   const p=players[myUid];if(!p||p.elim)return;
   if(type==='sil')p.lastSpk=Date.now();
   const ns=Math.max(0,p.score-PENALTY);p.score=ns;
-  addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${type==='sil'?'10초 침묵':'금칙어'})`,'pen');
+  addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${type==='sil'?'30초 침묵':'금칙어'})`,'pen');
   redFlash();sfx('penalty');
   if(entities[myUid]){
     entities[myUid].bubText=type==='sil'?'😴 침묵!':'🚫 실수!';
@@ -1507,7 +1557,7 @@ function applyScore(uid,score,why){
   const p=players[uid];if(!p)return;
   p.score=score;
   if(why){
-    addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${why==='sil'?'10초 침묵':'금칙어'})`,'pen');
+    addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${why==='sil'?'30초 침묵':'금칙어'})`,'pen');
     redFlash();
     if(entities[uid]){entities[uid].bubText=why==='sil'?'😴 침묵!':'🚫 금칙어!';entities[uid].bubTimer=2000;entities[uid].bubPenalty=true;entities[uid].emotion='sad';}
   }
