@@ -1075,105 +1075,127 @@ function initEntity(uid){
 function physicsUpdate(dt){
   const stumps=getStumps();
   const floor=groundY;
+  const dtR=dt/16; // dt 정규화 (16ms = 60fps 기준)
 
+  // ── 로컬 플레이어 물리 ──
+  const me=entities[myUid];
+  if(me&&players[myUid]&&!players[myUid].elim){
+    // 입력 → vx
+    if(joyDx!==0){
+      me.vx=Math.sign(joyDx)*WALK_SPD*(Math.abs(joyDx)/45);
+      if(joyDx>3)me.facing=true;
+      if(joyDx<-3)me.facing=false;
+    }else{
+      me.vx*=0.75;
+      if(Math.abs(me.vx)<0.1)me.vx=0;
+    }
+    // 중력
+    me.vy=Math.min(18, me.vy+GRAVITY*dtR);
+    // 이동
+    me.x+=me.vx*dtR;
+    me.y+=me.vy*dtR;
+    // 바닥/stump 충돌
+    const wasOnGround=me.onGround;
+    me.onGround=false;
+    if(me.y+CHAR_SIZE>=floor){me.y=floor-CHAR_SIZE;me.vy=0;me.onGround=true;}
+    for(const s of stumps){
+      const prevBottom=me.y+CHAR_SIZE-me.vy*dtR;
+      if(me.x+CHAR_SIZE*0.6>s.x&&me.x+CHAR_SIZE*0.4<s.x+s.w){
+        if(prevBottom<=s.y+4&&me.y+CHAR_SIZE>=s.y){me.y=s.y-CHAR_SIZE;me.vy=0;me.onGround=true;}
+      }
+    }
+    // 경계
+    if(me.x<0){me.x=0;me.vx=Math.abs(me.vx)*0.6;}
+    if(me.x>worldW-CHAR_SIZE){me.x=worldW-CHAR_SIZE;me.vx=-Math.abs(me.vx)*0.6;}
+    // 스쿼시
+    if(!wasOnGround&&me.onGround)me.squash=0.72;
+    if(me.squash<1)me.squash=Math.min(1,me.squash+dt*0.006);
+    if(!me.onGround&&me.vy<0)me.squash=Math.min(1.18,me.squash+dt*0.003);
+    // 걷기 애니
+    if(Math.abs(me.vx)>0.3&&me.onGround)me.walkPhase+=dt*0.005;
+    else if(me.onGround){me.walkPhase*=0.85;if(Math.abs(me.walkPhase)<0.01)me.walkPhase=0;}
+    // 타이머
+    if(me.bounceTimer>0)me.bounceTimer-=dt;
+    if(me.bubTimer>0)me.bubTimer-=dt;
+  }
+
+  // ── 원격 플레이어: lerp 전용, 물리 없음 ──
   for(const uid in entities){
+    if(uid===myUid)continue;
     const e=entities[uid];
     const p=players[uid];
     if(!p||p.elim)continue;
 
-    e.vy+=GRAVITY*(dt/16);
-    if(e.vy>18)e.vy=18;
-
-    if(uid===myUid){
-      if(joyDx!==0){
-        const ratio=Math.abs(joyDx)/45;
-        e.vx=Math.sign(joyDx)*WALK_SPD*ratio;
-        if(joyDx>3)e.facing=true;
-        if(joyDx<-3)e.facing=false;
+    if(e.targetX!==null&&e.targetY!==null){
+      const dx=e.targetX-e.x, dy=e.targetY-e.y;
+      const dist=Math.sqrt(dx*dx+dy*dy);
+      if(dist>180){
+        // 너무 멀면 순간이동
+        e.x=e.targetX; e.y=e.targetY;
       }else{
-        e.vx*=0.75;
-        if(Math.abs(e.vx)<0.1)e.vx=0;
+        // 지수 감쇠 lerp (항상 0<ratio<1 보장)
+        const lr=1-Math.pow(0.82,dtR);
+        e.x+=dx*lr;
+        e.y+=dy*lr;
+        if(Math.abs(dx)>2)e.facing=dx>0;
+        e.vx=dx*0.12; // walkPhase용 힌트만
       }
     }else{
-      if(e.targetX!==null&&e.targetY!==null){
-        const lerpF=Math.min(1,dt/60);
-        const dx=e.targetX-e.x,dy=e.targetY-e.y;
-        const dist=Math.sqrt(dx*dx+dy*dy);
-        if(dist>200){e.x=e.targetX;e.y=e.targetY;e.vx=0;e.vy=0;}
-        else{e.x+=dx*lerpF*8;e.y+=dy*lerpF*8;if(Math.abs(dx)>2)e.facing=dx>0;e.vx=dx*0.2;}
-      }else{
-        e.vx*=0.88;
-        if(Math.random()<0.008){e.vx=(Math.random()-0.5)*WALK_SPD*2;e.facing=e.vx>0;}
-      }
+      // targetX/Y 없으면 idle (vx 서서히 감소)
+      e.vx*=0.88;
     }
 
-    // 걷기 애니메이션 위상 업데이트
-    if(Math.abs(e.vx)>0.3&&e.onGround){
-      e.walkPhase+=dt*0.005;
-    }else if(e.onGround){
-      // 감속
-      e.walkPhase*=0.85;
-      if(Math.abs(e.walkPhase)<0.01)e.walkPhase=0;
-    }
+    // 걷기 애니
+    if(Math.abs(e.vx)>0.3)e.walkPhase+=dt*0.005;
+    else{e.walkPhase*=0.85;if(Math.abs(e.walkPhase)<0.01)e.walkPhase=0;}
 
-    e.x+=e.vx*(dt/16);
-    e.y+=e.vy*(dt/16);
-
+    // 스쿼시 복원만 (착지 효과: targetY 도달 시 자연히 발동)
     const wasOnGround=e.onGround;
-    e.onGround=false;
-    if(e.y+CHAR_SIZE>=floor){e.y=floor-CHAR_SIZE;e.vy=0;e.onGround=true;}
+    e.onGround=(e.y+CHAR_SIZE>=floor);
+    if(e.onGround)e.y=Math.min(e.y,floor-CHAR_SIZE);
+    if(!wasOnGround&&e.onGround)e.squash=0.72;
+    if(e.squash<1)e.squash=Math.min(1,e.squash+dt*0.006);
 
-    for(const s of stumps){
-      const prevBottom=e.y+CHAR_SIZE-e.vy*(dt/16);
-      if(e.x+CHAR_SIZE*0.6>s.x&&e.x+CHAR_SIZE*0.4<s.x+s.w){
-        if(prevBottom<=s.y+4&&e.y+CHAR_SIZE>=s.y){e.y=s.y-CHAR_SIZE;e.vy=0;e.onGround=true;}
-      }
-    }
+    // 경계 클램프
+    e.x=Math.max(0,Math.min(worldW-CHAR_SIZE,e.x));
 
-    // 착지 스쿼시
-    if(!wasOnGround&&e.onGround){e.squash=0.72;}
-    if(e.squash<1){e.squash=Math.min(1,e.squash+dt*0.006);}
-    if(!e.onGround&&e.vy<0){e.squash=Math.min(1.18,e.squash+dt*0.003);} // 상승 시 늘어남
-
-    if(e.x<0){e.x=0;e.vx=Math.abs(e.vx)*0.6;}
-    if(e.x>worldW-CHAR_SIZE){e.x=worldW-CHAR_SIZE;e.vx=-Math.abs(e.vx)*0.6;}
+    // 타이머
     if(e.bounceTimer>0)e.bounceTimer-=dt;
     if(e.bubTimer>0)e.bubTimer-=dt;
   }
 
-  // 엔티티 간 충돌
-  const uids=Object.keys(entities).filter(u=>players[u]&&!players[u].elim);
-  for(let i=0;i<uids.length;i++){
-    for(let j=i+1;j<uids.length;j++){
-      const ea=entities[uids[i]],eb=entities[uids[j]];
-      const dx=(ea.x+CHAR_SIZE/2)-(eb.x+CHAR_SIZE/2);
-      const dy=(ea.y+CHAR_SIZE/2)-(eb.y+CHAR_SIZE/2);
-      const dist=Math.sqrt(dx*dx+dy*dy);
-      const minDist=CHAR_SIZE*0.85;
-      if(dist<minDist&&dist>1){
-        const stomp=dy<-CHAR_SIZE*0.3&&ea.vy>0;
-        const stompB=dy>CHAR_SIZE*0.3&&eb.vy>0;
-        const nx=dx/dist,ny=dy/dist;
-        const overlap=(minDist-dist)/2;
-        if(stomp){
-          if(ea.bounceTimer<=0){
-            ea.vy=JUMP_VY*0.5;
-            if(eb.bounceTimer<=0){eb.vx=-nx*9+(Math.random()-0.5)*4;eb.vy=-9;eb.bounceTimer=800;eb.squash=0.65;eb.emotion='cry';}
-            sfx('bounce');
-          }
-        }else if(stompB){
-          if(eb.bounceTimer<=0){
-            eb.vy=JUMP_VY*0.5;
-            if(ea.bounceTimer<=0){ea.vx=nx*9+(Math.random()-0.5)*4;ea.vy=-9;ea.bounceTimer=800;ea.squash=0.65;ea.emotion='cry';}
-            sfx('bounce');
-          }
-        }else{
-          ea.x+=nx*overlap;ea.y+=ny*overlap;
-          eb.x-=nx*overlap;eb.y-=ny*overlap;
-          const relVx=ea.vx-eb.vx,relVy=ea.vy-eb.vy;
-          const dot=relVx*nx+relVy*ny;
-          if(dot<0){ea.vx-=dot*nx*0.7;ea.vy-=dot*ny*0.7;eb.vx+=dot*nx*0.7;eb.vy+=dot*ny*0.7;}
+  // ── 충돌: 로컬 ↔ 원격만 처리 (원격-원격 없음) ──
+  if(!me||!players[myUid]||players[myUid].elim)return;
+  for(const uid in entities){
+    if(uid===myUid)continue;
+    const e=entities[uid];
+    if(!players[uid]||players[uid].elim)continue;
+    const dx=(me.x+CHAR_SIZE/2)-(e.x+CHAR_SIZE/2);
+    const dy=(me.y+CHAR_SIZE/2)-(e.y+CHAR_SIZE/2);
+    const dist=Math.sqrt(dx*dx+dy*dy);
+    const minDist=CHAR_SIZE*0.85;
+    if(dist<minDist&&dist>1){
+      const nx=dx/dist, ny=dy/dist;
+      const overlap=(minDist-dist);
+      // stomp: 로컬(me)이 원격(e) 위에서 밟기
+      if(dy<-CHAR_SIZE*0.3&&me.vy>0){
+        if(me.bounceTimer<=0){
+          me.vy=JUMP_VY*0.5;
+          if(e.bounceTimer<=0){e.squash=0.65;e.emotion='cry';e.bounceTimer=800;}
+          sfx('bounce');
         }
+      }
+      // 옆 충돌: 로컬만 밀기
+      else{
+        me.x+=nx*overlap;
+        me.y+=ny*overlap;
+        // 속도 반사
+        const dot=me.vx*nx+me.vy*ny;
+        if(dot<0){me.vx-=dot*nx*0.6;me.vy-=dot*ny*0.6;}
+        // 바닥 재체크
+        if(me.y+CHAR_SIZE>=floor){me.y=floor-CHAR_SIZE;me.vy=0;me.onGround=true;}
+        if(me.x<0){me.x=0;me.vx=Math.abs(me.vx)*0.6;}
+        if(me.x>worldW-CHAR_SIZE){me.x=worldW-CHAR_SIZE;me.vx=-Math.abs(me.vx)*0.6;}
       }
     }
   }
