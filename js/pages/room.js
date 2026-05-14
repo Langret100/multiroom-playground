@@ -1109,7 +1109,7 @@ function updatePreview(modeId){
         const kind = String(msg.kind || msg.t || '');
         if (kind === 'state'){
           const now = performance.now();
-          if ((now - lastBrStateSent) < 25) return;
+          if ((now - lastBrStateSent) < 16) return;
           lastBrStateSent = now;
         }
         room.send("br_msg", { msg });

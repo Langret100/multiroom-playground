@@ -1905,7 +1905,7 @@ function spawnShelfPillar(wx,wz, idx=0){
 
   // Monster
   let monster = null;
-  let monsterAI = true; // default ON for solo speed test
+  let monsterAI = false; // 기본 OFF — 멀티플레이어 모드에서 불필요한 AI 연산 방지 (솔로 테스트: G키로 ON)
   function makeMonster(){
     const g = new THREE.Group();
     const black = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.9});
@@ -1958,7 +1958,19 @@ function spawnShelfPillar(wx,wz, idx=0){
   const keysDown={w:0,s:0,a:0,d:0};
   // Sprint (E button on empty ground / Shift key). Charge drains while sprinting and regenerates.
   const sprint = { charge: 1, active: false, hold: false, drain: 1/3, regen: 1/20, mult: 1.4 }; // 3s full, 20s regen
-  const mSprint = { charge: 1, active: false, hold: false, drain: 1/4, regen: 1/14, mult: 1.4 }; // 4s full, 14s regen
+  // 괴물 스프린트: 3초 지속, 7초 쿨타임, 토끼 위치 1.5초 표시
+  const mSprint = {
+    active: false,       // 현재 스프린트 중
+    activeLeft: 0,       // 스프린트 남은 시간 (초)
+    cooldown: 0,         // 쿨타임 남은 시간 (초)
+    DURATION: 3.0,       // 스프린트 지속 시간
+    COOLDOWN: 7.0,       // 쿨타임
+    REVEAL: 1.5,         // 토끼 위치 표시 시간
+    mult: 1.65,          // 속도 배율
+    hold: false,         // E키/버튼 누름 상태
+    _wasHold: false,     // 이전 프레임 hold
+    charge: 1,           // UI 호환용 (쿨타임 역산)
+  };
   let revealPingT = 0; // monster sprint reveal ping (seconds)
   let huntLeft = 90; let huntActive = false; // hunter must catch within 90s
   let gameOver = false;
@@ -2574,22 +2586,22 @@ function pushOutWalls(px,pz,rad){
         return;
       }
 
-      // monster sprint (no toggle-cancel; once started runs full then must recharge)
-      // Start only when fully charged; once active, cannot be canceled early.
-      const canStartSprint = (!mSprint.active) && (mSprint.charge>=sprintChargeNeed);
-      const wantStart = canStartSprint && (d<sprintStartRange || (rabbitHasKey && sprint.active));
+      // monster sprint: 3초 지속, 7초 쿨타임, 토끼 위치 1.5초 표시
+      const canStartSprint = (!mSprint.active) && (mSprint.cooldown <= 0);
+      const wantStart = canStartSprint && (d < sprintStartRange || (rabbitHasKey && sprint.active));
       if(wantStart){
         mSprint.active = true;
-        revealPingT = 1.5; // show rabbit ping on minimap briefly
+        mSprint.activeLeft = mSprint.DURATION;
+        mSprint.cooldown = mSprint.COOLDOWN;
+        revealPingT = mSprint.REVEAL;
       }
       if(mSprint.active){
-        mSprint.charge = Math.max(0, mSprint.charge - mSprint.drain*dt);
-        if(mSprint.charge<=0){ mSprint.active=false; }
-      }else{
-        mSprint.charge = Math.min(1, mSprint.charge + mSprint.regen*dt);
+        mSprint.activeLeft = Math.max(0, mSprint.activeLeft - dt);
+        if(mSprint.activeLeft <= 0) mSprint.active = false;
       }
-      if(mSprint.active && !mSprint._wasActive) revealPingT = 1.5;
-      mSprint._wasActive = mSprint.active;
+      if(mSprint.cooldown > 0) mSprint.cooldown = Math.max(0, mSprint.cooldown - dt);
+      // UI용 charge 역산 (쿨타임 없으면 1, 쿨타임 중이면 0→1)
+      mSprint.charge = mSprint.active ? 1 : (mSprint.cooldown <= 0 ? 1 : 1 - mSprint.cooldown / mSprint.COOLDOWN);
       monsterSprintSfx(mSprint.active);
       const speedBuff = (nowMs < monsterSpeedBuffUntil) ? 1.5 : 1.0;
       const sp=7.9*(mSprint.active?mSprint.mult:1)*speedBuff;
@@ -2894,19 +2906,26 @@ if(monsterReleaseLeft>0){
     }
     tickTimer(now);
 
-    // Sprint charge update + UI
-    if(sprint.active){
-      // carrot buff: rabbit can sprint without draining for 5s
-      const _noDrain = (now < rabbitNoDrainUntil) || (now < rabbitFreeSprintUntil);
-      sprint.charge = _noDrain ? Math.max(sprint.charge, 1) : Math.max(0, sprint.charge - sprint.drain*dt);
-      if(sprint.charge<=0.0001) sprint.active=false;
-    }else{
-      sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt);
+    // Sprint charge update + UI (토끼 전용: 괴물은 위 분기에서 처리)
+    if(playerRole !== 'monster'){
+      if(sprint.active){
+        const _noDrain = (now < rabbitNoDrainUntil) || (now < rabbitFreeSprintUntil);
+        sprint.charge = _noDrain ? Math.max(sprint.charge, 1) : Math.max(0, sprint.charge - sprint.drain*dt);
+        if(sprint.charge<=0.0001) sprint.active=false;
+      }else{
+        sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt);
+      }
     }
-    // meter: show used portion by clipping the overlay from top-down
-        const used = Math.min(1, Math.max(0, 1 - sprint.charge));
+    // meter: 괴물=쿨타임 표시, 토끼=charge 표시
+    const _meterCharge = (playerRole === 'monster') ? mSprint.charge : sprint.charge;
+    const used = Math.min(1, Math.max(0, 1 - _meterCharge));
     sprintMeter.style.transform = `scaleY(${used.toFixed(3)})`;
     if(sprintMeterEdge){ sprintMeterEdge.style.top = `${(used*100).toFixed(1)}%`; }
+    // 괴물 스프린트: 쿨타임 중 btnE 비활성화 표시
+    const btnE = document.getElementById('btnE');
+    if(btnE && playerRole === 'monster'){
+      btnE.style.opacity = (mSprint.cooldown > 0 && !mSprint.active) ? '0.45' : '1';
+    }
 
 
     for(const k of keys){
@@ -2933,14 +2952,37 @@ if(monsterReleaseLeft>0){
     const fb=(keysDown.w?1:0)-(keysDown.s?1:0)+(-joyY);
     // sprint / water slow
     const inWater = isInPool(player.position.x, player.position.z);
-    const wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
+    let wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
     const rabbitFreeSprint = (performance.now() < rabbitFreeSprintUntil);
-    const _prevSprintActive = sprint.active;
-    sprint.active = wantSprint && (rabbitFreeSprint || sprint.charge>0.001);
-    // 괴물 역할 플레이어가 빠른이동(스프린트) 시작 시 → 토끼 위치 미니맵에 1.5초 표시
-    if(playerRole==='monster' && sprint.active && !_prevSprintActive) revealPingT = 1.5;
-    const speedMul = (inWater?0.5:1) * (sprint.active ? sprint.mult : 1);
-    const rabbitSpeed = 7.4 * speedMul;
+
+    if(playerRole === 'monster'){
+      // ── 괴물 전용 스프린트: E키/버튼 한 번 누르면 3초 지속, 7초 쿨타임 ──
+      const mSprintTrigger = (sprint.hold || shiftHeld) && !mSprint._wasHold;
+      mSprint._wasHold = (sprint.hold || shiftHeld);
+      if(mSprintTrigger && !mSprint.active && mSprint.cooldown <= 0){
+        mSprint.active = true;
+        mSprint.activeLeft = mSprint.DURATION;
+        mSprint.cooldown = mSprint.COOLDOWN;
+        revealPingT = mSprint.REVEAL;
+      }
+      if(mSprint.active){
+        mSprint.activeLeft = Math.max(0, mSprint.activeLeft - dt);
+        if(mSprint.activeLeft <= 0) mSprint.active = false;
+      }
+      if(mSprint.cooldown > 0) mSprint.cooldown = Math.max(0, mSprint.cooldown - dt);
+      mSprint.charge = mSprint.active ? 1 : (mSprint.cooldown <= 0 ? 1 : 1 - mSprint.cooldown / mSprint.COOLDOWN);
+      monsterSprintSfx(mSprint.active);
+      // 괴물 이동속도: mSprint 활성 시 mult 적용
+      const speedMul = (inWater?0.5:1) * (mSprint.active ? mSprint.mult : 1);
+      var rabbitSpeed = 7.9 * speedMul; // 괴물 기본속도 7.9 (var로 공통 이동코드에서 사용)
+      sprint.active = false; // 토끼 sprint는 사용 안 함 (charge 낭비 방지)
+      sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt); // UI 유지용
+    } else {
+      // ── 토끼 스프린트: 기존 로직 유지 ──
+      sprint.active = wantSprint && (rabbitFreeSprint || sprint.charge>0.001);
+      const speedMul = (inWater?0.5:1) * (sprint.active ? sprint.mult : 1);
+      var rabbitSpeed = 7.4 * speedMul; // var로 공통 이동코드에서 사용
+    } // end rabbit/monster sprint branch
     // If the rabbit is trapped, hard-anchor them to the cage center so they cannot drift outside the bars.
     let trappedInCage = false;
     try{ trappedInCage = !!player.userData.trapped && cage.userData.locked && !cage.userData.doorOpen; }catch(e){}
@@ -3685,13 +3727,14 @@ if(monsterReleaseLeft>0){
         r.obj.visible=true;
         setAvatarGhostVisual(r.obj, !!st.ghost, 0.38);
         // [FIX] 부드러운 위치 보간: 패킷 간격 기반 예측 + 완만한 lerp
-        const packetAge = Math.min(0.120, Math.max(0.016, (performance.now() - Number(r.lastAt||performance.now()))/1000));
+        const packetAge = Math.min(0.050, Math.max(0.016, (performance.now() - Number(r.lastAt||performance.now()))/1000));
         const predX = (Number(r.targetX ?? st.x) || 0) + (Number(r.vx)||0) * packetAge;
         const predY = Number(r.targetY ?? st.y) || 0;
         const predZ = (Number(r.targetZ ?? st.z) || 0) + (Number(r.vz)||0) * packetAge;
         // 거리가 너무 멀면(3m+) 빠르게 따라가고, 가까우면 부드럽게 보간
         const snapDist = Math.hypot(predX - r.obj.position.x, predZ - r.obj.position.z);
-        const lerpSpeed = snapDist > 3.0 ? 22.0 : (snapDist > 1.2 ? 12.0 : 8.0);
+        // lerpSpeed 상향: 뒤처짐 줄여서 끊김 감소
+        const lerpSpeed = snapDist > 3.0 ? 40.0 : (snapDist > 1.2 ? 28.0 : 20.0);
         const lerpA = 1 - Math.exp(-bridgeDt * lerpSpeed);
         r.obj.position.x += (predX - r.obj.position.x) * lerpA;
         r.obj.position.y += (predY - r.obj.position.y) * lerpA;
@@ -3704,7 +3747,7 @@ if(monsterReleaseLeft>0){
         if(r.role!=='monster'){ const ki=r.obj.getObjectByName('remoteKey'); if(ki) ki.visible=(!st.ghost && !!st.hasKey); const cc=r.obj.getObjectByName('remoteCaught'); if(cc) cc.visible = (!st.ghost && Number(st.caught||0)===1); }
       }
       const nowp=performance.now();
-      if(nowp - bridge.lastStateAt > 25){ bridge.lastStateAt = nowp; sendState(false); }
+      if(nowp - bridge.lastStateAt > 16){ bridge.lastStateAt = nowp; sendState(false); }
       if(bridge.isHost){
         if(nowp - bridge.lastCatchAt > 170){
           bridge.lastCatchAt = nowp;
