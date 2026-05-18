@@ -9,7 +9,7 @@
 :root{
   --g:#0fba5a;--y:#f5a623;--r:#e94560;--b:#4ecdc4;--p:#a29bfe;
   --m:rgba(255,255,255,.55);
-  --chat-h:130px;
+  --chat-h:210px;
 }
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation;}
 html,body{height:100%;overflow:hidden;background:#1a1a2e;}
@@ -288,8 +288,8 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
     <div id="kwTimer">20</div>
   </div>
   <div class="kwc">
-    <label>🚫 나의 금칙어 <span style="color:rgba(255,255,255,.35);font-size:.66rem">(단어로 입력)</span></label>
-    <input id="kw1" type="text" placeholder="예: 공부, 숙제, 게임..." maxlength="12" autocomplete="off">
+    <label>🚫 나의 금칙어 <span style="color:rgba(255,255,255,.35);font-size:.66rem">(완성된 단어만 가능 · 초성 불가)</span></label>
+    <input id="kw1" type="text" placeholder="예: 공부, 숙제, 게임... (초성만 입력 불가)" maxlength="12" autocomplete="off">
     <button class="btn bp" onclick="submitKw()">✅ 금칙어 확정</button>
   </div>
   <div class="kww">
@@ -835,7 +835,7 @@ function onGMsg(m){
     }
   }
   if(phase==='playing'){
-    if(t==='chat')onRchat(from,m.text);
+    if(t==='chat'&&from!==myUid)onRchat(from,m.text);
     if(t==='score'&&from!==myUid)applyScore(from,m.score,m.why);
     if(t==='elim'&&from!==myUid){
       if(players[from]){players[from].elim=true;markElim(from,m.reason||'score');}
@@ -928,7 +928,7 @@ function startKwTimer(){
 function forceAutoSubmit(){
   if(players[myUid]&&!players[myUid].kwDone){
     const k=($('kw1')?.value.trim()||'').replace(/\s/g,'');
-    myKw=k.length>=1?k:'??';
+    myKw=(k.length>=1&&!isChosungOnly(k))?k:'??';
     players[myUid].kws=[myKw];players[myUid].kwDone=true;
     gSend('kw_done',{});renderKwStatus();
   }
@@ -944,9 +944,15 @@ function renderKwStatus(){
     el.appendChild(r);
   });
 }
+function isChosungOnly(str){
+  // 한글 자음(초성)만으로 이루어진 문자열 감지
+  const chosungRe=/^[ㄱ-ㅎ]+$/;
+  return chosungRe.test(str.replace(/\s/g,''));
+}
 function submitKw(){
   const k=$('kw1').value.trim();
   if(!k){showSt('금칙어를 입력하세요');return;}
+  if(isChosungOnly(k)){showSt('⚠️ 초성만으로는 금칙어를 설정할 수 없어요! 완성된 단어로 입력해주세요 (예: 공부, 게임)',2500);return;}
   myKw=k;players[myUid].kws=[myKw];players[myUid].kwDone=true;
   gSend('kw_done',{});renderKwStatus();tryLaunch();
 }

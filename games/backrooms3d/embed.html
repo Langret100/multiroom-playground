@@ -3552,6 +3552,9 @@ if(monsterReleaseLeft>0){
       releaseLeft: +(monsterReleaseLeft||0),
       sealUsed: !!doorState?.sealUsed,
       sealLeft: +(sealLeft||0),
+      remaining: +(remaining||0),
+      huntLeft: +(huntLeft||0),
+      huntActive: !!huntActive,
       ts: Date.now()
     };
   }
@@ -3569,6 +3572,10 @@ if(monsterReleaseLeft>0){
       const lock = cage.getObjectByName('cageLock'); if(lock) lock.visible = !!cage.userData.locked;
       monsterReleaseLeft = Number(w.releaseLeft||0); if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01;
       doorState.sealUsed = !!w.sealUsed; sealLeft = Number(w.sealLeft||0);
+      // [FIX] 타이머 동기화: 호스트 기준으로 보정 (네트워크 딜레이 고려 0.1초 보정)
+      if(w.remaining !== undefined){ const nr = Number(w.remaining||0); if(Math.abs(nr - remaining) > 0.5) remaining = nr - 0.1; }
+      if(w.huntActive !== undefined){ huntActive = !!w.huntActive; }
+      if(w.huntLeft !== undefined){ const nh = Number(w.huntLeft||0); if(Math.abs(nh - huntLeft) > 0.5) huntLeft = nh - 0.1; }
     }catch(_){ }
   }
   function appendChatLine(nick, text){
@@ -3607,7 +3614,7 @@ if(monsterReleaseLeft>0){
   function maybeSendWorld(force){
     if(!bridge.sid) return;
     const now=performance.now();
-    if(!force && now-bridge.lastWorldAt < 3200) return;
+    if(!force && now-bridge.lastWorldAt < 500) return;
     bridge.lastWorldAt = now;
     const snap = snapshotWorld();
     if(bridge.isHost) relay('world', snap);
@@ -3768,6 +3775,12 @@ if(monsterReleaseLeft>0){
       }
       const nowp=performance.now();
       if(nowp - bridge.lastStateAt > 16){ bridge.lastStateAt = nowp; sendState(false); }
+      // [FIX] 호스트: 500ms마다 world 상태 전송, 비호스트: 2초마다 world 요청
+      if(bridge.isHost){
+        if(nowp - (bridge.lastWorldAt||0) > 500){ maybeSendWorld(true); }
+      } else {
+        if(nowp - (bridge.lastWorldReqAt||0) > 2000){ bridge.lastWorldReqAt = nowp; relay('world_req', {}); }
+      }
       if(bridge.isHost){
         if(nowp - bridge.lastCatchAt > 170){
           bridge.lastCatchAt = nowp;
