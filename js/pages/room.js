@@ -868,7 +868,6 @@ function updatePreview(modeId){
     const fromMxCoopFallback = !!(isMxPacket && mxGameTagOk && !fromCpu && (fromMain || (mxModeLikely && srcWin)));
     const fromMainForMx = fromMain || fromStoredMxWin || fromMxCoopFallback;
     const brModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='backrooms3d') || (duel?.iframeEl && /embedGame=backrooms3d/.test(String(duel.iframeEl.src || ''))));
-    const fromMainForBr = fromMain || !!(isBrPacket && brModeLikely && srcWin);
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
     }
@@ -921,7 +920,8 @@ function updatePreview(modeId){
     }
 
     if (d.type === "bridge_ready"){
-      if (fromMain || fromMxCoopFallback || fromMainForBr){
+      // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
+      if (fromMain || fromMxCoopFallback){
         duel.iframeReady = true;
         coop.iframeReady = true;
       }
@@ -937,12 +937,12 @@ function updatePreview(modeId){
         sendCpuBridgeInit();
       }
       const isGkFrame = !!(coop.active && coop.meta && coop.meta.id === "geumchikeo" && fromMain);
-      if ((fromMainForMx || fromMainForBr || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
+      if ((fromMainForMx || fromMain || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
-        if (fromMainForBr) { try{ coop._brGameStartAck = false; }catch(_){ } }
+        if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
         sendCoopBridgeInit();
-        if (fromMainForBr){
+        if (fromMain){
           try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
         } else {
           try{ setTimeout(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 80); }catch(_){ }
@@ -958,7 +958,7 @@ function updatePreview(modeId){
       return;
     }
     if (d.type === "br_game_start_ack"){
-      if (!fromMainForBr) return;
+      if (!fromMain) return;
       try{ coop._brGameStartAck = true; coop.sentGameStart = true; }catch(_){ }
       return;
     }
@@ -1087,7 +1087,7 @@ function updatePreview(modeId){
     }
 
     if (d.type === "br_exit_to_lobby"){
-      if (!fromMainForBr) return;
+      if (!fromMain) return;
       try{ exitGameFullscreen(); }catch(_){ }
       try{ stopGameBgm(); }catch(_){ }
       hideResultOverlay();
@@ -1103,7 +1103,7 @@ function updatePreview(modeId){
 
     // Backrooms3d iframe -> server relay
     if (d.type === "br_msg"){
-      if (!fromMainForBr) return;
+      if (!fromMain) return;  // 투게스터와 동일하게 fromMain 단순 체크
       try{
         const msg = d.msg || {};
         const kind = String(msg.kind || msg.t || '');

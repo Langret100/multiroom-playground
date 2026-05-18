@@ -844,7 +844,13 @@ function onGMsg(m){
     }
     if(t==='end'&&from!==myUid)endGame(m.reason);
     if(t==='pos'&&from!==myUid){
-      if(entities[from]){entities[from].targetX=m.x;entities[from].targetY=m.y;}
+      if(entities[from]){
+        entities[from].targetX = m.x;
+        // relY가 있으면 수신자 groundY 기준으로 복원, 없으면 기존 절대값
+        entities[from].targetY = (m.relY !== undefined)
+          ? (m.relY + groundY)
+          : m.y;
+      }
     }
     if(t==='stomped'&&from!==myUid){
       // 내가 밟혔다는 이벤트 수신
@@ -1337,7 +1343,8 @@ function startGameLoop(){
     if(entities[myUid]&&ts-lastPosSent>50){
       lastPosSent=ts;
       const e=entities[myUid];
-      gSend('pos',{x:Math.round(e.x),y:Math.round(e.y)});
+      // y를 groundY 기준 상대값으로 전송 (화면 크기 무관)
+      gSend('pos',{x:Math.round(e.x), relY:Math.round(e.y - groundY)});
     }
     gameLoopId=requestAnimationFrame(loop);
   }

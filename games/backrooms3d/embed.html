@@ -2859,7 +2859,12 @@ let last=performance.now();
 if(monsterReleaseLeft>0){
   monsterReleaseLeft = Math.max(0, monsterReleaseLeft - dt);
   countdownEl.style.display = "block";
-  countdownEl.textContent = "괴물 해방까지 " + Math.ceil(monsterReleaseLeft);
+  const _sec = Math.ceil(monsterReleaseLeft);
+  countdownEl.textContent = playerRole==='monster'
+    ? "🔒 " + _sec + "초 후 해방!"
+    : "⚠️ 괴물 해방까지 " + _sec + "초";
+  countdownEl.style.fontSize = playerRole==='monster' ? "1.5em" : "";
+  countdownEl.style.color = playerRole==='monster' ? "#ff4444" : "";
   // Keep monster locked in its room until release
   if(monster) monster.userData.locked = true;
   /* keep monsterAI flag as-is; only lock movement */
@@ -2916,8 +2921,19 @@ if(monsterReleaseLeft>0){
         sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt);
       }
     }
-    // meter: 괴물=쿨타임 표시, 토끼=charge 표시
-    const _meterCharge = (playerRole === 'monster') ? mSprint.charge : sprint.charge;
+    // meter: 괴물=쿨타임/스프린트 표시, 토끼=charge 표시
+    let _meterCharge;
+    if(playerRole === 'monster'){
+      if(mSprint.active){
+        // 스프린트 중: 남은 시간 비율 표시
+        _meterCharge = mSprint.activeLeft / mSprint.DURATION;
+      } else {
+        // 쿨타임: 0→1로 충전되는 표시
+        _meterCharge = mSprint.cooldown <= 0 ? 1 : 1 - mSprint.cooldown / mSprint.COOLDOWN;
+      }
+    } else {
+      _meterCharge = sprint.charge;
+    }
     const used = Math.min(1, Math.max(0, 1 - _meterCharge));
     sprintMeter.style.transform = `scaleY(${used.toFixed(3)})`;
     if(sprintMeterEdge){ sprintMeterEdge.style.top = `${(used*100).toFixed(1)}%`; }
@@ -2946,10 +2962,14 @@ if(monsterReleaseLeft>0){
       }
     }
 
-    const turn=(keysDown.a?1:0)-(keysDown.d?1:0)+(-joyX);
+    let turn=(keysDown.a?1:0)-(keysDown.d?1:0)+(-joyX);
+    // 괴물 카운트다운 중 회전/이동 잠금
+    const monsterLocked = (playerRole==='monster') && (monsterReleaseLeft > 0);
+    if(monsterLocked) turn = 0;
     yaw += turn*2.35*dt;
 
-    const fb=(keysDown.w?1:0)-(keysDown.s?1:0)+(-joyY);
+    let fb=(keysDown.w?1:0)-(keysDown.s?1:0)+(-joyY);
+    if(monsterLocked) fb = 0; // 카운트다운 중 이동 불가
     // sprint / water slow
     const inWater = isInPool(player.position.x, player.position.z);
     let wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
