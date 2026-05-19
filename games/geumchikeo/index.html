@@ -230,6 +230,20 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
 .mfb{height:19px;font-size:.78rem;margin-top:5px;}
 .mfb.ok{color:var(--g);}.mfb.no{color:var(--r);}
 
+/* ── 금칙어 배너 ── */
+#kwBanner{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(.6);
+  background:linear-gradient(135deg,rgba(233,69,96,.96),rgba(180,20,60,.96));
+  border:2px solid rgba(255,100,120,.5);border-radius:20px;padding:18px 28px;
+  text-align:center;z-index:200;pointer-events:none;opacity:0;
+  box-shadow:0 0 40px rgba(233,69,96,.6);transition:none;min-width:200px;}
+#kwBanner.show{animation:kwPop .25s cubic-bezier(.17,.67,.35,1.4) forwards;}
+#kwBanner.hide{animation:kwFade .35s ease forwards;}
+@keyframes kwPop{0%{opacity:0;transform:translate(-50%,-50%) scale(.55);}100%{opacity:1;transform:translate(-50%,-50%) scale(1);}}
+@keyframes kwFade{0%{opacity:1;transform:translate(-50%,-50%) scale(1);}100%{opacity:0;transform:translate(-50%,-50%) scale(.8);}}
+#kwBanner .kwb-who{font-size:.75rem;color:rgba(255,255,255,.8);margin-bottom:4px;letter-spacing:.5px;}
+#kwBanner .kwb-word{font-family:'Gmarket Sans',sans-serif;font-size:1.55rem;font-weight:700;color:#fff;letter-spacing:1px;}
+#kwBanner .kwb-label{font-size:.68rem;color:rgba(255,255,255,.65);margin-top:4px;}
+
 /* ── LOADING ── */
 #loadScreen{position:fixed;inset:0;background:#1a1a2e;display:flex;flex-direction:column;
   align-items:center;justify-content:center;z-index:999;gap:18px;}
@@ -252,7 +266,7 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
 <div id="lobbyScreen" class="screen">
   <div style="font-size:2rem;letter-spacing:4px;margin-bottom:4px">🚫📚🔇</div>
   <div class="lt">금칙어 게임</div>
-  <div class="ls">상대가 금칙어를 말하게 만들어라! 최대 4인</div>
+  <div class="ls">상대가 금칙어를 말하게 만들어라! 금칙어 1~5개 설정 · 최대 4인</div>
   <div class="lf">
     <label>내 닉네임</label>
     <input id="nickInput" type="text" placeholder="닉네임 (최대 8자)" maxlength="8" autocomplete="off">
@@ -288,8 +302,9 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
     <div id="kwTimer">20</div>
   </div>
   <div class="kwc">
-    <label>🚫 나의 금칙어 <span style="color:rgba(255,255,255,.35);font-size:.66rem">(완성된 단어만 가능 · 초성 불가)</span></label>
-    <input id="kw1" type="text" placeholder="예: 공부, 숙제, 게임... (초성만 입력 불가)" maxlength="12" autocomplete="off">
+    <label>🚫 나의 금칙어 <span style="color:rgba(255,255,255,.35);font-size:.66rem">최소 1개 · 최대 5개 · 쉼표나 띄어쓰기로 구분</span></label>
+    <input id="kw1" type="text" placeholder="예: 밥, 지렁이, 꿈틀이, 엉덩이, 좀비" maxlength="60" autocomplete="off">
+    <div style="font-size:.65rem;color:rgba(255,255,255,.35);margin-top:3px">💡 초성만 입력 불가 · 앞의 5개만 인정</div>
     <button class="btn bp" onclick="submitKw()">✅ 금칙어 확정</button>
   </div>
   <div class="kww">
@@ -311,7 +326,7 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
       <span class="tl">초</span>
     </div>
     <div id="tb-right">
-      <span id="kwHint" style="font-size:.67rem;color:rgba(255,255,255,.6);max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      <span id="kwHint" style="font-size:.67rem;color:rgba(255,255,255,.6);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
       <button class="tb-btn exit" onclick="confirmExit()">나가기</button>
     </div>
   </div>
@@ -332,10 +347,17 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
     </div>
     <div id="cLog"></div>
     <div id="chatInRow">
-      <input type="text" id="chatIn" placeholder="채팅 · 2초 쿨다운" maxlength="100" autocomplete="off">
+      <input type="text" id="chatIn" placeholder="채팅 · 0.5초 쿨다운" maxlength="100" autocomplete="off">
       <button id="chatSend" onclick="sendChat()">전송</button>
     </div>
   </div>
+</div>
+
+<!-- 금칙어 발설 배너 -->
+<div id="kwBanner">
+  <div class="kwb-who" id="kwBannerWho"></div>
+  <div class="kwb-word" id="kwBannerWord"></div>
+  <div class="kwb-label">금칙어 발설! -30점</div>
 </div>
 
 <!-- 탈락 오버레이 -->
@@ -366,9 +388,10 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
   <div class="hbox">
     <h2>🚫 금칙어 게임 규칙</h2>
     <div class="hrule"><span class="hi">🎯</span><div class="ht">상대방이 <b>내 금칙어를 말하도록</b> 대화 유도</div></div>
-    <div class="hrule"><span class="hi">🚫</span><div class="ht">금칙어 발설 → <b>-30점</b></div></div>
+    <div class="hrule"><span class="hi">🚫</span><div class="ht">금칙어 발설 → <b>-30점</b> · 전체에 금칙어 알림 표시</div></div>
+    <div class="hrule"><span class="hi">📝</span><div class="ht">금칙어는 <b>1~5개</b>까지 설정 가능 (쉼표·띄어쓰기로 구분)</div></div>
     <div class="hrule"><span class="hi">🔇</span><div class="ht">30초 침묵 → <b>-30점</b></div></div>
-    <div class="hrule"><span class="hi">💬</span><div class="ht">채팅은 <b>2초</b>에 1번 가능</div></div>
+    <div class="hrule"><span class="hi">💬</span><div class="ht">채팅은 <b>0.5초</b>에 1번 가능</div></div>
     <hr class="hsep">
     <div class="hrule"><span class="hi">🕹</span><div class="ht">왼쪽 조이스틱으로 이동, ↑ 버튼으로 점프</div></div>
     <div class="hrule"><span class="hi">💥</span><div class="ht">다른 캐릭터를 밟으면 튕겨나감!</div></div>
@@ -743,10 +766,10 @@ let mySessionId = new URLSearchParams(location.search).get('sid') || '';
 let bridgeInitDone = false;
 const WS_URL   = 'wss://multiroom-playground.tmdrb445-f03.workers.dev';
 const HTTP_URL = 'https://multiroom-playground.tmdrb445-f03.workers.dev';
-const GAME_SEC=200, SIL_SEC=30, PENALTY=30, RECOVER=25, SIGN_THR=40, KW_SEC=20, CHAT_CD=2000, MAX_PLAYERS=4;
+const GAME_SEC=200, SIL_SEC=30, PENALTY=30, RECOVER=25, SIGN_THR=40, KW_SEC=20, CHAT_CD=500, MAX_PLAYERS=4;
 
 let ws=null, myUid='', myNick='', roomId='', isHost=false;
-let roomPls={}, players={}, myKw='';
+let roomPls={}, players={}, myKws=[];
 let phase='idle', myReady=false;
 let gStartTs=0, timerI=null, silI={}, kwTimerI=null;
 let mathCd=false, mathAns=0, startLock=false, lastChatTs=0;
@@ -836,7 +859,7 @@ function onGMsg(m){
   }
   if(phase==='playing'){
     if(t==='chat'&&from!==myUid)onRchat(from,m.text);
-    if(t==='score'&&from!==myUid)applyScore(from,m.score,m.why);
+    if(t==='score'&&from!==myUid)applyScore(from,m.score,m.why,m.kw||'');
     if(t==='elim'&&from!==myUid){
       if(players[from]){players[from].elim=true;markElim(from,m.reason||'score');}
       addLog(null,`💀 ${esc(players[from]?.nick)} 탈락!`,'pen');
@@ -909,7 +932,7 @@ function hostStart(){if(!isHost)return;if(Object.keys(roomPls).length<2){showSt(
 // ── KEYWORD ──
 function initKeyword(){
   if(phase==='keyword')return;
-  phase='keyword';startLock=false;players={};myKw='';
+  phase='keyword';startLock=false;players={};myKws=[];
   const list=Object.entries(roomPls).sort((a,b)=>(a[1].seat||0)-(b[1].seat||0));
   list.forEach(([uid,p],i)=>{players[uid]={nick:p.nick,seat:p.seat??i,ci:i%8,score:100,kws:null,kwDone:false,elim:false,lastSpk:0};});
   if(!players[myUid]){const seat=Object.keys(players).length;players[myUid]={nick:myNick,seat,ci:seat%8,score:100,kws:null,kwDone:false,elim:false,lastSpk:0};}
@@ -925,11 +948,16 @@ function startKwTimer(){
     if(rem<=0){clearInterval(kwTimerI);kwTimerI=null;forceAutoSubmit();}
   },250);
 }
+function parseKws(raw){
+  // 쉼표 또는 공백으로 분리, 각 단어 초성만인 것 제거, 최대 5개
+  return (raw||'').split(/[,\s]+/).map(w=>w.trim()).filter(w=>w.length>=1&&!isChosungOnly(w)).slice(0,5);
+}
 function forceAutoSubmit(){
   if(players[myUid]&&!players[myUid].kwDone){
-    const k=($('kw1')?.value.trim()||'').replace(/\s/g,'');
-    myKw=(k.length>=1&&!isChosungOnly(k))?k:'??';
-    players[myUid].kws=[myKw];players[myUid].kwDone=true;
+    const raw=($('kw1')?.value.trim()||'');
+    const parsed=parseKws(raw);
+    myKws=parsed.length>=1?parsed:['??'];
+    players[myUid].kws=myKws;players[myUid].kwDone=true;
     gSend('kw_done',{});renderKwStatus();
   }
   Object.values(players).forEach(p=>{if(!p.kwDone){p.kwDone=true;p.kws=p.kws||['??'];}});
@@ -950,10 +978,12 @@ function isChosungOnly(str){
   return chosungRe.test(str.replace(/\s/g,''));
 }
 function submitKw(){
-  const k=$('kw1').value.trim();
-  if(!k){showSt('금칙어를 입력하세요');return;}
-  if(isChosungOnly(k)){showSt('⚠️ 초성만으로는 금칙어를 설정할 수 없어요! 완성된 단어로 입력해주세요 (예: 공부, 게임)',2500);return;}
-  myKw=k;players[myUid].kws=[myKw];players[myUid].kwDone=true;
+  const raw=$('kw1').value.trim();
+  if(!raw){showSt('금칙어를 입력하세요');return;}
+  const parsed=parseKws(raw);
+  if(parsed.length===0){showSt('⚠️ 초성만으로는 금칙어를 설정할 수 없어요! 완성된 단어로 입력해주세요',2500);return;}
+  myKws=parsed;
+  players[myUid].kws=myKws;players[myUid].kwDone=true;
   gSend('kw_done',{});renderKwStatus();tryLaunch();
 }
 function tryLaunch(force=false){
@@ -1076,7 +1106,7 @@ function initEntity(uid){
     emotion:'neutral',
     facing:true,
     bounceTimer:0,
-    bubText:'',bubTimer:0,bubPenalty:false,
+    bubText:'',bubTimer:0,bubPenalty:false,zoomTimer:0,
     preset,
     walkPhase:0,    // 걷기 애니메이션 위상
     squash:1.0,     // 점프/착지 스쿼시
@@ -1130,6 +1160,7 @@ function physicsUpdate(dt){
     // 타이머
     if(me.bounceTimer>0)me.bounceTimer-=dt;
     if(me.bubTimer>0)me.bubTimer-=dt;
+    if(me.zoomTimer>0)me.zoomTimer-=dt;
   }
 
   // ── 원격 플레이어: lerp 전용, 물리 없음 ──
@@ -1175,6 +1206,7 @@ function physicsUpdate(dt){
     // 타이머
     if(e.bounceTimer>0)e.bounceTimer-=dt;
     if(e.bubTimer>0)e.bubTimer-=dt;
+    if(e.zoomTimer>0)e.zoomTimer-=dt;
   }
 
   // ── 충돌: 로컬 ↔ 원격만 처리 (원격-원격 없음) ──
@@ -1250,7 +1282,24 @@ function renderFrame(dt){
     ctx.fill();
     ctx.restore();
 
-    drawChar(ctx, cx, cy, CHAR_SIZE, e.preset, emotion, e.facing, e.walkPhase, e.squash);
+    // 금칙어 발설 확대 효과
+    if(e.zoomTimer>0){
+      const zProg = Math.min(1, e.zoomTimer / 2000);
+      // 0→1→0 로 부드럽게: 등장(0.15s) 유지 하강(0.4s)
+      let zScale;
+      const zIn = 2000 - e.zoomTimer;
+      if(zIn < 150) zScale = 1 + 0.45 * (zIn/150);
+      else if(e.zoomTimer > 400) zScale = 1.45;
+      else zScale = 1 + 0.45 * (e.zoomTimer/400);
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(zScale, zScale);
+      ctx.translate(-cx, -cy);
+      drawChar(ctx, cx, cy, CHAR_SIZE, e.preset, emotion, e.facing, e.walkPhase, e.squash);
+      ctx.restore();
+    } else {
+      drawChar(ctx, cx, cy, CHAR_SIZE, e.preset, emotion, e.facing, e.walkPhase, e.squash);
+    }
 
     ctx.globalAlpha=1;
 
@@ -1445,13 +1494,13 @@ function _startPlayInner(){
   Object.entries(players).sort((a,b)=>a[1].seat-b[1].seat).forEach(([uid])=>initEntity(uid));
   const p=players[myUid];
   if($('myScoreVal'))$('myScoreVal').textContent=p?p.score:100;
-  if($('kwHint'))$('kwHint').innerHTML='🚫 <b style="color:#ff8097">'+(myKw&&myKw!=='??'?myKw:'❓')+'</b>';
+  if($('kwHint'))$('kwHint').innerHTML='🚫 <b style="color:#ff8097">'+(myKws.filter(k=>k!=='??').join(', ')||'❓')+'</b>';
   if(timerI){clearInterval(timerI);timerI=null;}
   gStartTs=Date.now();lastChatTs=0;
   timerI=setInterval(tickTimer,500);
   Object.keys(players).forEach(uid=>{players[uid].lastSpk=Date.now();startSilTimer(uid);});
   addLog(null,'🚫 게임 시작! 금칙어를 말하게 유도하세요!','sys');
-  addLog(null,`📝 내 금칙어: ${myKw&&myKw!=='??'?myKw:'❓'} | 조이스틱/방향키로 이동, ↑점프`,'sys');
+  addLog(null,`📝 내 금칙어: ${myKws.filter(k=>k!=='??').join(', ')||'❓'} | 조이스틱/방향키로 이동, ↑점프`,'sys');
   startGameLoop();
   setTimeout(()=>{if(phase==='playing')endGame('time');},GAME_SEC*1000);
   setTimeout(focusChat,400);
@@ -1546,7 +1595,9 @@ function onRchat(uid,txt){
   }
 }
 function chkKws(txt){
-  if(myKw&&myKw!=='??'&&txt.includes(myKw))selfPenalty('kw',myKw);
+  for(const kw of myKws){
+    if(kw&&kw!=='??'&&txt.includes(kw)){selfPenalty('kw',kw);return;}
+  }
 }
 
 // ── PENALTY ──
@@ -1556,6 +1607,7 @@ function selfPenalty(type,kw){
   const ns=Math.max(0,p.score-PENALTY);p.score=ns;
   addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${type==='sil'?'30초 침묵':'금칙어'})`,'pen');
   redFlash();sfx('penalty');
+  if(type==='kw'&&kw){showKwBanner(p.nick,kw);zoomEntity(myUid);}
   if(entities[myUid]){
     entities[myUid].bubText=type==='sil'?'😴 침묵!':'🚫 실수!';
     entities[myUid].bubTimer=2200;entities[myUid].bubPenalty=true;
@@ -1566,18 +1618,43 @@ function selfPenalty(type,kw){
   updateScoreUI();
   if(ns<=0){p.elim=true;markElim(myUid,type);gSend('elim',{reason:type});checkElim();}
 }
-function applyScore(uid,score,why){
+function applyScore(uid,score,why,kw){
   const p=players[uid];if(!p)return;
   p.score=score;
   if(why){
     addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${why==='sil'?'30초 침묵':'금칙어'})`,'pen');
     redFlash();
+    if(why==='kw'&&kw){showKwBanner(p.nick,kw);zoomEntity(uid);}
     if(entities[uid]){entities[uid].bubText=why==='sil'?'😴 침묵!':'🚫 금칙어!';entities[uid].bubTimer=2000;entities[uid].bubPenalty=true;entities[uid].emotion='sad';}
   }
   if(score<=0){p.elim=true;markElim(uid,why||'score');}
   checkElim();
 }
 function redFlash(){const f=document.createElement('div');f.className='rf';document.body.appendChild(f);setTimeout(()=>f.remove(),500);}
+let _kwBannerTimer=null;
+function showKwBanner(nick,kw){
+  const banner=$('kwBanner');if(!banner)return;
+  const whoEl=$('kwBannerWho');const wordEl=$('kwBannerWord');
+  if(whoEl)whoEl.textContent=nick+' 님이 말했어요!';
+  if(wordEl)wordEl.textContent='금지어: '+kw;
+  if(_kwBannerTimer){clearTimeout(_kwBannerTimer);banner.className='kwBanner';}
+  // 짧은 딜레이로 애니메이션 리셋 보장
+  requestAnimationFrame(()=>{
+    banner.className='';
+    requestAnimationFrame(()=>{
+      banner.id='kwBanner';banner.className='show';
+      _kwBannerTimer=setTimeout(()=>{
+        banner.className='hide';
+        _kwBannerTimer=setTimeout(()=>{banner.className='';},360);
+      },2200);
+    });
+  });
+}
+function zoomEntity(uid){
+  // 해당 uid 엔티티에 잠깐 확대 효과 (2초)
+  if(!entities[uid])return;
+  entities[uid].zoomTimer=2000;entities[uid].zoomScale=1.0;
+}
 function checkElim(){const alive=Object.values(players).filter(p=>!p.elim);if(alive.length<=1)setTimeout(()=>{if(phase==='playing')endGame('elim');},900);}
 
 // ── MATH ──
@@ -1664,8 +1741,8 @@ function goBack(){
   ws?.close();ws=null;
   if(gameLoopId){cancelAnimationFrame(gameLoopId);gameLoopId=null;}
   if(bgmLoopId){clearTimeout(bgmLoopId);bgmLoopId=null;}
-  players={};entities={};roomPls={};myKw='';
-  phase='idle';myReady=false;startLock=false;mathCd=false;lastChatTs=0;chatCollapsed=false;
+  players={};entities={};roomPls={};myKws=[];
+  phase='idle';myReady=false;startLock=false;mathCd=false;lastChatTs=0;chatCollapsed=false;myKws=[];
   if(kwTimerI){clearInterval(kwTimerI);kwTimerI=null;}
   if(timerI){clearInterval(timerI);timerI=null;}
   Object.values(silI).forEach(i=>clearInterval(i));silI={};
