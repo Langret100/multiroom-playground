@@ -340,7 +340,7 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
     <div id="joystick"><div id="jBase"></div><div id="jKnob"></div></div>
     <button id="jumpBtn" ontouchstart="doJump()" onclick="doJump()">↑</button>
     <div id="silWarn">⚠️ 침묵 금지! 곧 -30점</div>
-    <button id="recoverBtn" onclick="openMath()">💊 회복 (+25)</button>
+    <button id="recoverBtn" onclick="openMath()" style="display:none!important">💊 회복 (+25)</button>
   </div>
 
   <div id="chatPanel">
@@ -400,7 +400,7 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
     <div class="hrule"><span class="hi">💥</span><div class="ht">다른 캐릭터를 밟으면 튕겨나감!</div></div>
     <hr class="hsep">
     <div class="hrule"><span class="hi">💯</span><div class="ht">100점 시작 · 0점 탈락 · 200초 후 최고점 승리</div></div>
-    <div class="hrule"><span class="hi">📋</span><div class="ht">40점 미만 → 수학 문제로 <b>+25점</b> 회복 가능</div></div>
+
     <button class="btn bp" style="width:100%;margin-top:10px" onclick="closeHelp()">확인!</button>
   </div>
 </div>
@@ -748,36 +748,56 @@ async function loadAllAssets() {
 // ── AUDIO ──
 let audioCtx = null, bgmGain = null, bgmLoopId = null;
 
+// ── 배경음악 (mp3) ──
+const _bgmAudio = new Audio('./gumchickmusic.mp3');
+_bgmAudio.loop = true;
+_bgmAudio.preload = 'auto';
+_bgmAudio.volume = 0.35;
+// 룸의 audio_enabled 키 기준으로 초기 상태 설정
+let _bgmEnabled = true;
+try{
+  const saved = localStorage.getItem('audio_enabled');
+  if(saved === '0') _bgmEnabled = false;
+}catch(_){}
+
+function _bgmSync(){
+  if(_bgmEnabled){ _bgmAudio.play().catch(()=>{}); }
+  else { _bgmAudio.pause(); }
+}
+function _bgmSetEnabled(val){
+  _bgmEnabled = !!val;
+  _bgmSync();
+}
+
+// 룸에서 오는 audio_pref postMessage 수신
+window.addEventListener('message', ev => {
+  const d = ev.data;
+  if(!d || typeof d !== 'object') return;
+  if(d.type === 'audio_pref' && typeof d.enabled === 'boolean'){
+    _bgmSetEnabled(d.enabled);
+  }
+  if(d.type === 'stop_audio'){
+    _bgmAudio.pause();
+  }
+});
+// localStorage 변경 감지 (같은 탭 내 다른 창에서 토글 시)
+window.addEventListener('storage', ev => {
+  if(ev.key === 'audio_enabled'){
+    _bgmSetEnabled(ev.newValue !== '0');
+  }
+});
+
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   bgmGain = audioCtx.createGain();
   bgmGain.gain.value = 0.15;
   bgmGain.connect(audioCtx.destination);
-  playBGM();
+  // mp3 BGM 시작 (유저 제스처 후 호출되므로 autoplay 허용됨)
+  _bgmSync();
 }
 
-function playBGM() {
-  if (!audioCtx) return;
-  const notes = [262,294,330,349,392,440,494,523,494,440,392,349,330,294,262,294];
-  const dur = 0.18;
-  let t = audioCtx.currentTime;
-  function scheduleLoop() {
-    notes.forEach((freq, i) => {
-      const osc = audioCtx.createOscillator();
-      const g = audioCtx.createGain();
-      osc.type = 'square'; osc.frequency.value = freq;
-      g.gain.setValueAtTime(0, t+i*dur);
-      g.gain.linearRampToValueAtTime(0.25, t+i*dur+0.01);
-      g.gain.linearRampToValueAtTime(0, t+i*dur+dur*0.85);
-      osc.connect(g); g.connect(bgmGain);
-      osc.start(t+i*dur); osc.stop(t+i*dur+dur);
-    });
-    t += notes.length * dur;
-    bgmLoopId = setTimeout(scheduleLoop, (notes.length * dur - 0.5) * 1000);
-  }
-  scheduleLoop();
-}
+// playBGM: mp3로 대체됨 (_bgmAudio)
 
 function sfx(type) {
   if (!audioCtx) return;
@@ -1428,18 +1448,20 @@ function renderFrame(dt){
         ctx.beginPath(); ctx.roundRect(barLeft, barTop, BAR_W, BAR_H, RAD); ctx.clip();
         // 채움 색
         const c = hpColor(pct);
-        const grad = ctx.createLinearGradient(barLeft, 0, barLeft + fillW, 0);
+        const grad = ctx.createLinearGradient(barLeft + (BAR_W - fillW), 0, barLeft + BAR_W, 0);
         grad.addColorStop(0, c);
         grad.addColorStop(1, c);
+        // 오른쪽 고정, 왼쪽이 닳는 방향
+        const fillLeft = barLeft + (BAR_W - fillW);
         ctx.fillStyle = grad;
-        ctx.fillRect(barLeft, barTop, fillW, BAR_H);
-        // 채움 끝부분 살짝 어둡게 (깔끔한 경계)
+        ctx.fillRect(fillLeft, barTop, fillW, BAR_H);
+        // 채움 시작 부분 살짝 어둡게 (왼쪽 경계)
         if(fillW < BAR_W){
-          const edge = ctx.createLinearGradient(barLeft + fillW - 6, 0, barLeft + fillW, 0);
-          edge.addColorStop(0, 'rgba(0,0,0,0)');
-          edge.addColorStop(1, 'rgba(0,0,0,.25)');
+          const edge = ctx.createLinearGradient(fillLeft, 0, fillLeft + 6, 0);
+          edge.addColorStop(0, 'rgba(0,0,0,.25)');
+          edge.addColorStop(1, 'rgba(0,0,0,0)');
           ctx.fillStyle = edge;
-          ctx.fillRect(barLeft, barTop, fillW, BAR_H);
+          ctx.fillRect(fillLeft, barTop, fillW, BAR_H);
         }
         ctx.restore();
       }
@@ -1656,8 +1678,7 @@ function updateScoreUI(){
   if(bar){bar.style.width=(pct*100)+'%';bar.style.background=hpColor(pct);}
   const nick=$('myHpNick');
   if(nick)nick.textContent=p.nick||'나';
-  const btn=$('recoverBtn');
-  if(btn)btn.style.display=(p.score<SIGN_THR&&!p.elim)?'block':'none';
+  // 회복 기능 비활성화
 }
 
 // ── ELIM ──
@@ -1740,7 +1761,7 @@ function onRchat(uid,txt){
   // 상대 채팅에 내 금칙어(myKws) 포함 → 상대에게 패널티 알림 전송
   if(!p.elim){
     for(const kw of myKws){
-      if(kw&&kw!=='??'&&txt.includes(kw)){
+      if(kw&&kw!=='??'&&kwMatchesWord(txt,kw)){
         remotePenalty(uid,kw);
         return;
       }
@@ -1763,9 +1784,30 @@ function remotePenalty(uid,kw){
   if(ns<=0){p.elim=true;markElim(uid,'kw');}
   checkElim();
 }
+// 금칙어가 독립적 단어로 쓰였는지 확인
+// 앞에 한글 음절이 붙어있으면 합성어 요소로 간주 → 금칙어 불인정
+// (예: 금칙어='어' → '인어공주' 불인정, '그거 어때'·'어떻게' 인정)
+function kwMatchesWord(txt, kw){
+  if(!txt.includes(kw)) return false;
+  if([...kw].length >= 2) return true; // 2자 이상은 그대로 인정
+  const isHangul = c => !!(c && /[가-힣]/.test(c));
+  // 공백·구두점으로 토큰 분리 후 각 토큰에서 체크
+  const tokens = txt.split(/[\s!?.,~^*\[\](){}]+/);
+  for(const token of tokens){
+    if(!token) continue;
+    let idx = 0;
+    while((idx = token.indexOf(kw, idx)) !== -1){
+      const before = token[idx - 1];
+      // 앞에 한글 음절이 붙어있으면 합성어 → 스킵
+      if(!isHangul(before)) return true;
+      idx++;
+    }
+  }
+  return false;
+}
 function chkKws(txt){
   for(const kw of myKws){
-    if(kw&&kw!=='??'&&txt.includes(kw)){selfPenalty('kw',kw);return;}
+    if(kw&&kw!=='??'&&kwMatchesWord(txt,kw)){selfPenalty('kw',kw);return;}
   }
 }
 
@@ -1912,6 +1954,7 @@ function goBack(){
   if(bgmLoopId){clearTimeout(bgmLoopId);bgmLoopId=null;}
   players={};entities={};roomPls={};myKws=[];
   phase='idle';myReady=false;startLock=false;mathCd=false;lastChatTs=0;chatCollapsed=false;myKws=[];
+  _bgmAudio.pause(); _bgmAudio.currentTime=0;
   if(kwTimerI){clearInterval(kwTimerI);kwTimerI=null;}
   if(timerI){clearInterval(timerI);timerI=null;}
   Object.values(silI).forEach(i=>clearInterval(i));silI={};
