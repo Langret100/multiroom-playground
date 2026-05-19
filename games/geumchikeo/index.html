@@ -860,6 +860,21 @@ function onGMsg(m){
   if(phase==='playing'){
     if(t==='chat'&&from!==myUid)onRchat(from,m.text);
     if(t==='score'&&from!==myUid)applyScore(from,m.score,m.why,m.kw||'');
+    if(t==='remote_penalty'&&m.target===myUid){
+      // 내가 상대 금칙어를 말해서 패널티 받음
+      const p=players[myUid];if(p&&!p.elim){
+        p.score=m.score;updateScoreUI();
+        addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (금칙어: ${esc(m.kw||'??')})`,'pen');
+        redFlash();sfx('penalty');
+        showKwBanner(p.nick,m.kw||'??');zoomEntity(myUid);
+        if(entities[myUid]){entities[myUid].bubText='🚫 실수!';entities[myUid].bubTimer=2200;entities[myUid].bubPenalty=true;entities[myUid].emotion='sad';setTimeout(()=>{if(entities[myUid])entities[myUid].emotion='neutral';},2500);}
+        if(m.score<=0){p.elim=true;markElim(myUid,'kw');gSend('elim',{reason:'kw'});checkElim();}
+      }
+    }
+    if(t==='remote_penalty'&&m.target!==myUid&&m.target!==from){
+      // 제3자 브로드캐스트: 점수 반영만
+      applyScore(m.target,m.score,'kw',m.kw||'');
+    }
     if(t==='elim'&&from!==myUid){
       if(players[from]){players[from].elim=true;markElim(from,m.reason||'score');}
       addLog(null,`💀 ${esc(players[from]?.nick)} 탈락!`,'pen');
@@ -1107,6 +1122,7 @@ function initEntity(uid){
     facing:true,
     bounceTimer:0,
     bubText:'',bubTimer:0,bubPenalty:false,zoomTimer:0,
+    idleTimer:Math.random()*3000+1500, idleDx:0,
     preset,
     walkPhase:0,    // 걷기 애니메이션 위상
     squash:1.0,     // 점프/착지 스쿼시
@@ -1123,11 +1139,34 @@ function physicsUpdate(dt){
   // ── 로컬 플레이어 물리 ──
   const me=entities[myUid];
   if(me&&players[myUid]&&!players[myUid].elim){
-    // 입력 → vx
+    // idle AI: 조작 없을 때 자동 이동/점프
+    if(me.idleTimer!==undefined){
+      me.idleTimer-=dt;
+      if(me.idleTimer<=0){
+        // 다음 행동 결정
+        const roll=Math.random();
+        if(roll<0.35){          // 점프
+          if(me.onGround){me.vy=JUMP_VY*(0.7+Math.random()*0.5);me.onGround=false;me.squash=1.18;sfx('jump');}
+          me.idleTimer=800+Math.random()*1200;
+        }else if(roll<0.75){    // 방향 이동
+          me.idleDx=(Math.random()<0.5?1:-1)*(WALK_SPD*0.55+Math.random()*WALK_SPD*0.45);
+          me.idleTimer=600+Math.random()*1400;
+        }else{                  // 잠깐 멈춤
+          me.idleDx=0;
+          me.idleTimer=500+Math.random()*1000;
+        }
+      }
+    }
+    // 입력 → vx (조작 우선, 없으면 idle)
     if(joyDx!==0){
       me.vx=Math.sign(joyDx)*WALK_SPD*(Math.abs(joyDx)/45);
+      me.idleDx=0; // 조작 시 idle 방향 리셋
       if(joyDx>3)me.facing=true;
       if(joyDx<-3)me.facing=false;
+    }else if(me.idleDx&&me.idleDx!==0){
+      me.vx=me.idleDx;
+      if(me.idleDx>0)me.facing=true;
+      if(me.idleDx<0)me.facing=false;
     }else{
       me.vx*=0.75;
       if(Math.abs(me.vx)<0.1)me.vx=0;
@@ -1593,6 +1632,31 @@ function onRchat(uid,txt){
     entities[uid].emotion=detectEmotion(txt);
     setTimeout(()=>{if(entities[uid])entities[uid].emotion='neutral';},3000);
   }
+  // 상대 채팅에 내 금칙어(myKws) 포함 → 상대에게 패널티 알림 전송
+  if(!p.elim){
+    for(const kw of myKws){
+      if(kw&&kw!=='??'&&txt.includes(kw)){
+        remotePenalty(uid,kw);
+        return;
+      }
+    }
+  }
+}
+// 상대가 내 금칙어를 말했을 때: 상대 점수 차감 + 전체 브로드캐스트
+function remotePenalty(uid,kw){
+  const p=players[uid];if(!p||p.elim)return;
+  const ns=Math.max(0,p.score-PENALTY);p.score=ns;
+  addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (금칙어: ${esc(kw)})`,'pen');
+  redFlash();sfx('penalty');
+  showKwBanner(p.nick,kw);zoomEntity(uid);
+  if(entities[uid]){
+    entities[uid].bubText='🚫 금칙어!';entities[uid].bubTimer=2200;entities[uid].bubPenalty=true;entities[uid].emotion='sad';
+    setTimeout(()=>{if(entities[uid])entities[uid].emotion='neutral';},2500);
+  }
+  // 점수 브로드캐스트 (uid 대상)
+  gSend('remote_penalty',{target:uid,score:ns,kw});
+  if(ns<=0){p.elim=true;markElim(uid,'kw');}
+  checkElim();
 }
 function chkKws(txt){
   for(const kw of myKws){
