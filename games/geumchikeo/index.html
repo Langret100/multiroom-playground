@@ -91,11 +91,11 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
 .tb-btn{background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.15);color:#fff;
   border-radius:8px;padding:5px 10px;font-size:.69rem;cursor:pointer;font-family:'Gmarket Sans',sans-serif;}
 .tb-btn.exit{background:rgba(233,69,96,.12);border-color:rgba(233,69,96,.35);color:#ff8097;}
-.score-badge{background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.15);border-radius:8px;
-  padding:3px 9px;font-family:'Gmarket Sans',sans-serif;font-size:.78rem;color:#fff;
-  display:flex;gap:3px;align-items:center;}
-.score-badge .sv{color:var(--y);font-weight:700;}
-.score-badge.lo .sv{color:var(--r);animation:scalePulse 1s ease infinite;}
+/* HP바 HUD */
+.hp-hud{display:flex;flex-direction:column;gap:1px;min-width:0;}
+.hp-hud-nick{font-size:.65rem;color:rgba(255,255,255,.75);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;}
+.hp-hud-bar-wrap{width:110px;height:9px;background:rgba(0,0,0,.45);border-radius:5px;overflow:hidden;border:1px solid rgba(255,255,255,.12);}
+.hp-hud-bar{height:100%;border-radius:5px;transition:width .4s ease,background .4s ease;}
 @keyframes scalePulse{0%,100%{transform:scale(1)}50%{transform:scale(1.2)}}
 
 /* ── WORLD ── */
@@ -318,7 +318,10 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
   <div id="tb">
     <div id="tb-left">
       <button class="tb-btn" onclick="openHelp()">❓</button>
-      <div id="myScoreBadge" class="score-badge">나:<span class="sv" id="myScoreVal">100</span></div>
+      <div class="hp-hud" id="myHpHud">
+        <div class="hp-hud-nick" id="myHpNick">나</div>
+        <div class="hp-hud-bar-wrap"><div class="hp-hud-bar" id="myHpBar" style="width:100%;background:#4ecdc4"></div></div>
+      </div>
     </div>
     <div id="tb-center">
       <span class="tl">⏱</span>
@@ -544,6 +547,56 @@ function drawChar(ctx, cx, cy, size, preset, emotion, facingRight, walkPhase, ju
 
   // ── HAND ──
   _drawHand(ctx, r, em.hand, isWalking, walkPhase, facingRight);
+
+  ctx.restore();
+}
+
+// HP 상태 오버레이: 땀방울(50%↓), 힘든 글리터(30%↓)
+function drawHpOverlay(ctx, cx, cy, size, score, now){
+  const pct = score / 100;
+  if(pct > 0.5) return; // 50%보다 많으면 아무것도 안그림
+  const r = size * 0.42;
+  ctx.save();
+
+  if(pct <= 0.3){
+    // 30% 이하: 힘든 떨림 효과 (빨간 기운 + 땀)
+    // 빨간 비네트 후광
+    const grd = ctx.createRadialGradient(cx, cy, r*0.3, cx, cy, r*1.5);
+    grd.addColorStop(0, 'rgba(255,60,60,0)');
+    grd.addColorStop(1, 'rgba(255,60,60,0.18)');
+    ctx.fillStyle = grd;
+    ctx.beginPath(); ctx.arc(cx, cy, r*1.5, 0, Math.PI*2); ctx.fill();
+  }
+
+  // 땀방울 (50% 이하 공통)
+  // 주기적으로 2~3방울, 깜박이는 페이즈
+  const phase = (now * 0.0015) % 1;
+  const drops = pct <= 0.3 ? 3 : 2;
+  const offsets = [
+    { ox: r*0.52, oy: -r*0.1 },
+    { ox: -r*0.48, oy: -r*0.25 },
+    { ox: r*0.38, oy: r*0.3 }
+  ];
+  for(let i=0;i<drops;i++){
+    const dropPhase = (phase + i/drops) % 1;
+    if(dropPhase > 0.55) continue; // 일부만 보임
+    const alpha = dropPhase < 0.1 ? dropPhase/0.1 : dropPhase > 0.4 ? 1-(dropPhase-0.4)/0.15 : 1;
+    const fallY = dropPhase * r * 0.6;
+    const off = offsets[i];
+    ctx.save();
+    ctx.globalAlpha = alpha * (pct<=0.3 ? 0.92 : 0.72);
+    ctx.translate(cx + off.ox, cy + off.oy + fallY);
+    // 물방울 모양
+    ctx.beginPath();
+    ctx.moveTo(0, -r*0.13);
+    ctx.bezierCurveTo(r*0.065,-r*0.13, r*0.09, r*0.02, r*0.09, r*0.09);
+    ctx.arc(0, r*0.09, r*0.09, 0, Math.PI);
+    ctx.bezierCurveTo(-r*0.09, r*0.02, -r*0.065,-r*0.13, 0, -r*0.13);
+    ctx.closePath();
+    ctx.fillStyle = pct<=0.3 ? 'rgba(120,200,255,0.88)' : 'rgba(160,220,255,0.78)';
+    ctx.fill();
+    ctx.restore();
+  }
 
   ctx.restore();
 }
@@ -1307,7 +1360,13 @@ function renderFrame(dt){
 
     const cx=e.x+CHAR_SIZE/2;
     const cy=e.y+CHAR_SIZE/2;
-    const emotion=p.elim?'cry':e.emotion;
+    // HP에 따른 표정 오버라이드
+    const hpPct = p.score / 100;
+    let emotion = p.elim ? 'cry' : e.emotion;
+    if(!p.elim && e.emotion === 'neutral'){
+      if(hpPct <= 0.3) emotion = 'sad';      // 30% 이하: 힘든 표정
+      else if(hpPct <= 0.5) emotion = 'sleepy'; // 50% 이하: 지친 표정
+    }
 
     // 그림자: 항상 바닥에 고정 (공중에 있어도 바닥에만 표시)
     const shadowY = groundY; // 바닥 y좌표
@@ -1335,38 +1394,74 @@ function renderFrame(dt){
       ctx.scale(zScale, zScale);
       ctx.translate(-cx, -cy);
       drawChar(ctx, cx, cy, CHAR_SIZE, e.preset, emotion, e.facing, e.walkPhase, e.squash);
+      if(!p.elim) drawHpOverlay(ctx, cx, cy, CHAR_SIZE*zScale, p.score, performance.now());
       ctx.restore();
     } else {
       drawChar(ctx, cx, cy, CHAR_SIZE, e.preset, emotion, e.facing, e.walkPhase, e.squash);
+      if(!p.elim) drawHpOverlay(ctx, cx, cy, CHAR_SIZE, p.score, performance.now());
     }
 
     ctx.globalAlpha=1;
 
-    // 이름표
-    const nick=p.nick;
-    ctx.save();
-    ctx.font='bold 11px "Noto Sans KR",sans-serif';
-    const tw=ctx.measureText(nick).width;
-    const ntx=cx,nty=e.y-4;
-    const pad=5,ntH=16;
-    ctx.fillStyle=uid===myUid?'rgba(225,112,16,.88)':'rgba(0,0,0,.58)';
-    ctx.beginPath();
-    ctx.roundRect(ntx-tw/2-pad,nty-ntH,tw+pad*2,ntH,6);
-    ctx.fill();
-    ctx.fillStyle='#fff';ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.fillText(nick,ntx,nty-ntH/2);
+    // ── 이름표 + HP바 (닉네임 내장형) ──
+    {
+      const BAR_W  = 72;   // 고정 너비
+      const BAR_H  = 18;   // 닉네임 포함 높이
+      const RAD    = 5;
+      const barTop = e.y - BAR_H - 6;
+      const barLeft = cx - BAR_W / 2;
+      const pct    = Math.max(0, Math.min(1, p.score / 100));
+      const fillW  = BAR_W * pct;   // 왼쪽부터 채워짐, 오른쪽이 닳음
 
-    // 점수 (내 캐릭터)
-    if(uid===myUid&&!p.elim){
-      const sc=String(p.score);
-      ctx.font='bold 10px "Gmarket Sans",sans-serif';
-      const sw=ctx.measureText(sc).width;
-      ctx.fillStyle=p.score<SIGN_THR?'rgba(233,69,96,.9)':'rgba(0,0,0,.55)';
-      ctx.beginPath();ctx.roundRect(ntx+tw/2+pad+4,nty-ntH,sw+10,ntH,5);ctx.fill();
-      ctx.fillStyle='#fff';ctx.textAlign='center';ctx.textBaseline='middle';
-      ctx.fillText(sc,ntx+tw/2+pad+4+(sw+10)/2,nty-ntH/2);
+      ctx.save();
+
+      // 1) 바 배경 (어두운 트랙 전체)
+      ctx.beginPath();
+      ctx.roundRect(barLeft, barTop, BAR_W, BAR_H, RAD);
+      ctx.fillStyle = 'rgba(0,0,0,.58)';
+      ctx.fill();
+
+      // 2) HP 채움 — 왼쪽 정렬, 오른쪽이 줄어드는 방향
+      if(fillW > 0){
+        ctx.save();
+        // 클립: 바 외형 그대로 유지
+        ctx.beginPath(); ctx.roundRect(barLeft, barTop, BAR_W, BAR_H, RAD); ctx.clip();
+        // 채움 색
+        const c = hpColor(pct);
+        const grad = ctx.createLinearGradient(barLeft, 0, barLeft + fillW, 0);
+        grad.addColorStop(0, c);
+        grad.addColorStop(1, c);
+        ctx.fillStyle = grad;
+        ctx.fillRect(barLeft, barTop, fillW, BAR_H);
+        // 채움 끝부분 살짝 어둡게 (깔끔한 경계)
+        if(fillW < BAR_W){
+          const edge = ctx.createLinearGradient(barLeft + fillW - 6, 0, barLeft + fillW, 0);
+          edge.addColorStop(0, 'rgba(0,0,0,0)');
+          edge.addColorStop(1, 'rgba(0,0,0,.25)');
+          ctx.fillStyle = edge;
+          ctx.fillRect(barLeft, barTop, fillW, BAR_H);
+        }
+        ctx.restore();
+      }
+
+      // 3) 바 테두리
+      ctx.beginPath();
+      ctx.roundRect(barLeft, barTop, BAR_W, BAR_H, RAD);
+      ctx.strokeStyle = uid === myUid ? 'rgba(255,190,80,.5)' : 'rgba(255,255,255,.22)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+
+      // 4) 닉네임 텍스트 — 바 안 중앙, HP 상관없이 항상 전체 표시
+      ctx.font = 'bold 10px "Noto Sans KR",sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      // 텍스트 그림자로 배경색 무관하게 가독성 확보
+      ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 3;
+      ctx.fillStyle = uid === myUid ? 'rgba(255,225,120,1)' : '#fff';
+      ctx.fillText(p.nick, cx, barTop + BAR_H / 2);
+      ctx.shadowBlur = 0;
+
+      ctx.restore();
     }
-    ctx.restore();
 
     // 말풍선
     if(e.bubText&&e.bubTimer>0){
@@ -1534,6 +1629,8 @@ function _startPlayInner(){
   const p=players[myUid];
   if($('myScoreVal'))$('myScoreVal').textContent=p?p.score:100;
   if($('kwHint'))$('kwHint').innerHTML='🚫 <b style="color:#ff8097">'+(myKws.filter(k=>k!=='??').join(', ')||'❓')+'</b>';
+  if($('myHpNick'))$('myHpNick').textContent=players[myUid]?.nick||'나';
+  updateScoreUI();
   if(timerI){clearInterval(timerI);timerI=null;}
   gStartTs=Date.now();lastChatTs=0;
   timerI=setInterval(tickTimer,500);
@@ -1546,11 +1643,19 @@ function _startPlayInner(){
   initAudio();
 }
 
+function hpColor(pct){
+  // 100%→초록, 50%→노랑, 30%→빨강
+  if(pct>0.5) return `hsl(${Math.round(160+(-40)*(1-pct)*2)},70%,52%)`;
+  if(pct>0.3) return `hsl(${Math.round(50+(-30)*(0.5-pct)*5)},90%,52%)`;
+  return `hsl(${Math.round(0)},85%,52%)`;
+}
 function updateScoreUI(){
   const p=players[myUid];if(!p)return;
-  if($('myScoreVal'))$('myScoreVal').textContent=p.score;
-  const badge=$('myScoreBadge');
-  if(badge)badge.className='score-badge'+(p.score<SIGN_THR?' lo':'');
+  const pct=Math.max(0,Math.min(1,p.score/100));
+  const bar=$('myHpBar');
+  if(bar){bar.style.width=(pct*100)+'%';bar.style.background=hpColor(pct);}
+  const nick=$('myHpNick');
+  if(nick)nick.textContent=p.nick||'나';
   const btn=$('recoverBtn');
   if(btn)btn.style.display=(p.score<SIGN_THR&&!p.elim)?'block':'none';
 }
