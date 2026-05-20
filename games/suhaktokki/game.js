@@ -2783,14 +2783,18 @@
       return;
     }
 
-    // If we drop below 2 humans in real game, go back to practice.
+    // If we drop below 2 humans in real game, end the match (not just switch to practice).
     try{
       const humansNow = Object.values(st.players || {}).filter(pp => pp && pp.alive && !pp.isBot).length;
       if (!st.practice && humansNow < 2) {
-        st.practice = true;
-        st.teacherId = null;
-        for (const pp of Object.values(st.players || {})) pp.role = 'crew';
-        broadcast({ t: 'toast', text: '인원이 줄어서 연습 모드로 전환됐어!' });
+        // 선생토끼가 이미 퇴장해서 winner가 설정된 경우는 이미 처리됨
+        if (!st.winner) {
+          st.winner = 'crew';
+          G.phase = 'end';
+          broadcast({ t: 'toast', text: '인원 부족으로 학생토끼 승리! 잠시 후 방으로 돌아갑니다.' });
+          broadcastState(true);
+          try { scheduleMatchEndReturn(); } catch (_) {}
+        }
       }
     }catch(_){ }
 

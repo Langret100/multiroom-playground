@@ -122,8 +122,8 @@
     #meetingGrid{display:flex;gap:12px;align-items:stretch;}
     #meetingLeftPane{flex:1;min-width:280px;display:flex;flex-direction:column;gap:10px;}
     #meetingRightPane{width:220px;max-width:35vw;}
-    #voteList{display:flex;flex-direction:column;gap:8px;max-height:min(320px,40vh);overflow-y:auto;overflow-x:hidden;padding-right:4px;}
-    #voteList .item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);}
+    #voteList{display:flex;flex-direction:column;gap:8px;max-height:min(320px,40vh);overflow-y:auto;overflow-x:hidden;padding-right:4px;touch-action:pan-y;overscroll-behavior:contain;}
+    #voteList .item{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border-radius:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);touch-action:pan-y;}
     #meetingRoster{display:flex;flex-wrap:wrap;gap:8px;align-items:center;min-height:34px;}
     .mAvatar{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.12);background:rgba(18,26,46,.55);font-weight:1000;font-size:12px;}
     .mTokki{width:22px;height:24px;image-rendering:pixelated;border-radius:8px;flex:0 0 auto;}
@@ -146,7 +146,7 @@
       #meetingRightPane{width:100%;max-width:100%;}
       #meetingRoster{max-height:54px;overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;}
       #meetingChatLog{height:180px;}
-      #voteList{max-height:min(200px,28vh);overflow-y:scroll;-webkit-overflow-scrolling:touch;}
+      #voteList{max-height:min(200px,28vh);overflow-y:scroll;-webkit-overflow-scrolling:touch;touch-action:pan-y;overscroll-behavior:contain;}
     }
 
     /* Scene */

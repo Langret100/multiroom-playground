@@ -269,6 +269,7 @@
       <h1>🖌️ 그림맞추기</h1>
       <div class="meta">
         <span class="pill" id="roundPill">라운드 -/-</span>
+        <span class="pill" id="scorePill" style="font-size:.75em;opacity:.8"></span>
         <span class="pill" id="turnPill">차례: -</span>
         <span class="pill" id="wordPill">제시어: ???</span>
       </div>
@@ -670,10 +671,17 @@
         endAt = Number(d.endAt||0);
         const youAreDrawer = !!d.youAreDrawer;
         setDrawer(youAreDrawer);
-        roundPill.textContent = `라운드 ${round}/${maxRounds}`;
+        roundPill.textContent = `라운드 ${round}`;
         turnPill.textContent = `차례: ${drawerNick}`;
         updateTopInfo();
-        // scores (optional)
+        // 점수판 업데이트
+        if (d.scores){
+          const sp = document.getElementById('scorePill');
+          if (sp){
+            const entries = Object.values(d.scores).filter(s=>s.correct>0).sort((a,b)=>b.correct-a.correct);
+            sp.textContent = entries.length ? entries.map(s=>`${s.nick} ${s.correct}점`).join(' | ') : '';
+          }
+        }
         if (d.announce){
           addChatLine(`<span class="sys">시스템:</span> ${escapeHtml(String(d.announce))}`);
         }
@@ -733,7 +741,7 @@
         if (d.system){
           addChatLine(`<span class="sys">시스템:</span> ${text}`);
         } else if (d.correct){
-          addChatLine(`<span class="sys">정답!</span> <b>${nick}</b> : ${text}`);
+          addChatLine(`<span class="sys">정답! 🎉</span> <b>${nick}</b> : ${text}`);
           playSfx('correct');
         } else {
           addChatLine(`<b>${nick}</b>: ${text}`);
@@ -743,9 +751,12 @@
 
       if (d.type === 'da_over'){
         const winner = escapeHtml(String(d.winnerNick||'승자'));
-        addChatLine(`<span class="warn">게임 종료</span> : ${winner}`);
+        addChatLine(`<span class="warn">🏆 게임 종료!</span> <b>${winner}</b> 님이 3문제를 맞혀 승리했습니다!`);
         setDrawer(false);
         endAt = 0;
+        playSfx('correct');
+        // 3초 후 룸으로 복귀
+        setTimeout(()=>{ try{ sendToParent({ type:'da_quit' }); }catch(_){} }, 3000);
         return;
       }
     });

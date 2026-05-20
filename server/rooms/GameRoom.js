@@ -775,6 +775,85 @@ this.st = {
       this.broadcast("backToRoom", { mode: "geumchikeo", reason: "match_end" });
     });
 
+
+    // ---- DrawAnswer (그림맞추기) ----
+    // 서버가 라운드 진행, 정답 채점, 승리 판정을 담당
+    if (!this.da) this.da = { round:0, drawerIdx:0, drawerOrder:[], word:'', endAt:0, scores:{}, ops:[], timer:null, over:false };
+
+    this.onMessage("da_enter", (client) => {
+      if (this.state.mode !== "drawanswer") return;
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      if (!this.da.scores[client.sessionId]) this.da.scores[client.sessionId] = { nick: p.nick, correct: 0 };
+      // 신규 참가자에게 현재 상태 전송
+      if (this.da.round > 0) {
+        const drawerSid = this.da.drawerOrder[this.da.drawerIdx % this.da.drawerOrder.length];
+        client.send("da_state", {
+          round: this.da.round, maxRounds: 99,
+          drawerSid, drawerNick: this.da.scores[drawerSid]?.nick || "?",
+          youAreDrawer: client.sessionId === drawerSid,
+          endAt: this.da.endAt,
+          scores: this.da.scores,
+        });
+        if (this.da.ops.length) client.send("da_replay", { ops: this.da.ops });
+      }
+    });
+
+    this.onMessage("da_exit", (client) => { /* 방엔 남음 */ });
+
+    this.onMessage("da_sync", (client) => {
+      if (this.state.mode !== "drawanswer") return;
+      // 아직 게임 안 시작이면 호스트 클라이언트에서 시작 트리거
+      if (this.da.round === 0) this._daStartIfReady();
+    });
+
+    this.onMessage("da_draw", (client, payload) => {
+      if (this.state.mode !== "drawanswer") return;
+      const drawerSid = this.da.drawerOrder[this.da.drawerIdx % this.da.drawerOrder.length];
+      if (client.sessionId !== drawerSid) return;
+      this.da.ops.push({ t: "draw", segs: payload.segs, c: payload.c, w: payload.w });
+      this.broadcast("da_draw", payload, { except: client });
+    });
+
+    this.onMessage("da_clear", (client) => {
+      if (this.state.mode !== "drawanswer") return;
+      const drawerSid = this.da.drawerOrder[this.da.drawerIdx % this.da.drawerOrder.length];
+      if (client.sessionId !== drawerSid) return;
+      this.da.ops.push({ t: "clear" });
+      this.broadcast("da_clear", {});
+    });
+
+    this.onMessage("da_chat", (client, { text }) => {
+      if (this.state.mode !== "drawanswer") return;
+      if (this.da.over) return;
+      const p = this.state.players.get(client.sessionId);
+      const nick = p?.nick || "Player";
+      const drawerSid = this.da.drawerOrder[this.da.drawerIdx % (this.da.drawerOrder.length||1)];
+      const isDrawer = client.sessionId === drawerSid;
+      const t = String(text || "").trim().slice(0, 100);
+      if (!t) return;
+      const sc = this.da.scores[client.sessionId] || { nick, correct: 0 };
+      const correctCount = sc.correct || 0;
+      const nickWithScore = correctCount > 0 ? `${nick} (정답 ${correctCount}회)` : nick;
+      // 출제자는 정답 못 맞춤
+      if (!isDrawer && this.da.word && t === this.da.word) {
+        // 정답!
+        this.da.scores[client.sessionId] = { ...(this.da.scores[client.sessionId]||{nick,correct:0}), correct: correctCount+1 };
+        const newCorrect = correctCount + 1;
+        const updatedNick = newCorrect > 0 ? `${nick} (정답 ${newCorrect}회)` : nick;
+        this.broadcast("da_chat", { nick: updatedNick, text: t, correct: true, scores: this.da.scores });
+        // 3정답 이상이면 승리
+        if (newCorrect >= 3) {
+          this._daOver(client.sessionId, nick);
+          return;
+        }
+        // 정답자 나오면 다음 라운드
+        setTimeout(() => { try { this._daNextRound(); } catch(_){} }, 2000);
+        return;
+      }
+      this.broadcast("da_chat", { nick: nickWithScore, text: t, correct: false });
+    });
+
     this.onMessage("tg_over", (client, payload) => {
       if (this.state.mode !== "togester") return;
       if (this.state.phase !== "playing") return;
@@ -1401,7 +1480,85 @@ try{
 
   }
 
-  finishDuelTournament(winnerSid){
+  _daStartIfReady(){
+    const da = this.da;
+    if (!da || da.round > 0 || da.over) return;
+    const sids = Array.from(this.state.players.keys());
+    if (sids.length < 2) return;
+    da.scores = {};
+    for (const sid of sids) {
+      const p = this.state.players.get(sid);
+      da.scores[sid] = { nick: p?.nick || "Player", correct: 0 };
+    }
+    da.drawerOrder = sids.slice();
+    da.drawerIdx = 0;
+    da.ops = [];
+    da.over = false;
+    this._daNextRound();
+  }
+
+  _daNextRound(){
+    const da = this.da;
+    if (!da || da.over) return;
+    da.ops = [];
+    this.broadcast("da_clear", {});
+    const WORDS = ["사과","바나나","고양이","강아지","자동차","비행기","피자","햄버거","사자","코끼리","기린","펭귄","로봇","우주선","무지개","눈사람","수박","딸기","포도","당근","토끼","거북이","악어","상어","독수리","호랑이","곰","여우","늑대","돌고래","문어","게","새우","잠수함","기차","배","헬리콥터","성","탑","다리","섬","화산","폭포","소","말","닭","오리","돼지","양","원숭이"];
+    da.word = WORDS[Math.floor(Math.random() * WORDS.length)];
+    da.round++;
+    da.endAt = Date.now() + 90000;
+    const drawerSid = da.drawerOrder[da.drawerIdx % da.drawerOrder.length];
+    da.drawerIdx++;
+    // 각 클라이언트에 상태 전송 (드로어는 제시어 포함)
+    for (const [sid, p] of this.state.players.entries()) {
+      const isDrawer = sid === drawerSid;
+      try{
+        p; // just to use p
+        this.clients.find(c=>c.sessionId===sid)?.send("da_state", {
+          round: da.round, maxRounds: 99,
+          drawerSid, drawerNick: da.scores[drawerSid]?.nick || "?",
+          youAreDrawer: isDrawer,
+          endAt: da.endAt,
+          scores: da.scores,
+          announce: `라운드 ${da.round} 시작! 출제자: ${da.scores[drawerSid]?.nick || "?"}`,
+        });
+        if (isDrawer) {
+          this.clients.find(c=>c.sessionId===sid)?.send("da_word", { word: da.word });
+        }
+      }catch(_){}
+    }
+    // 90초 후 타임아웃 → 다음 라운드
+    if (da.timer) clearTimeout(da.timer);
+    da.timer = setTimeout(() => {
+      try {
+        if (!da.over) {
+          this.broadcast("da_chat", { nick: "시스템", text: `시간 초과! 정답은 [${da.word}] 이었습니다.`, system: true });
+          this._daNextRound();
+        }
+      } catch(_) {}
+    }, 91000);
+  }
+
+  _daOver(winnerSid, winnerNick){
+    const da = this.da;
+    if (!da || da.over) return;
+    da.over = true;
+    if (da.timer) clearTimeout(da.timer);
+    this.broadcast("da_over", { winnerSid, winnerNick, scores: da.scores });
+    // 3초 후 방으로 복귀
+    setTimeout(() => {
+      try {
+        this.state.phase = "lobby";
+        this.setMetadata({ ...this.metadata, status: "waiting" });
+        this.broadcast("backToRoom", { mode: "drawanswer", reason: "match_end" });
+        this.recomputeReady();
+        this.syncMetadata();
+        // da 초기화
+        this.da = { round:0, drawerIdx:0, drawerOrder:[], word:'', endAt:0, scores:{}, ops:[], timer:null, over:false };
+      } catch(_) {}
+    }, 4000);
+  }
+
+    finishDuelTournament(winnerSid){
     const p = this.state.players.get(winnerSid);
     this.broadcast("result", { done: true, winnerSid, winnerNick: p?.nick || "?" });
 
