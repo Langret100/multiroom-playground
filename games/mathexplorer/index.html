@@ -1,4 +1,60 @@
 <!DOCTYPE html>
+<!--
+═══════════════════════════════════════════════════════════════════
+수학 탐험대 (Math Explorer) — 게임 본체 (index.html)
+═══════════════════════════════════════════════════════════════════
+
+【이 파일의 역할】
+  싱글플레이 완결형 게임 본체.
+  멀티플레이어 동기화는 math-explorer-bridge.js가 이 파일의
+  G 객체 메서드를 래핑하는 방식으로 주입함.
+  embed=1 파라미터로 iframe 실행 시 브릿지 파일이 활성화됨.
+
+【전체 게임 진행 흐름】
+  캐릭터 선택 → 전투 → (레벨업 시) 레벨업 보상 선택
+                       → (보물상자 획득 시) 수학 문제 → 아이템 선택
+                       → (보스 처치 시) 다음 스테이지
+                       → 전원 사망 시 게임 오버 → 룸 복귀
+
+【캐릭터 종류】 warrior / valkyrie / mage / archer
+  - warrior/valkyrie: 근거리 물리 공격
+  - mage: 원거리 마법 공격
+  - archer: 원거리 화살 공격
+
+【아이템 종류 (보물상자 보상)】
+  poison       - 독 (공격 시 50% 확률로 지속 피해)
+  freeze       - 얼음 (공격 시 40% 확률로 둔화)
+  lightning    - 벼락 (공격 시 체인 데미지)
+  crit         - 치명타 (공격 시 추가 대미지 확률)
+  multishot    - 다중 발사 (화살 추가 발사)
+  meteorChance - 운석 (1.5초마다 랜덤 운석)
+  explode      - 폭발 (처치 시 폭발)
+  spinBlade    - 회전검 (플레이어 주변 지속 피해)
+  angel        - 천사 (HP 회복)
+  devil        - 악마 (피해 증폭)
+  ※ 아이템 선택 결과는 게임 종료까지 누적됨 — 초기화 안 됨
+
+【레벨업 업그레이드 종류】
+  damage, atkSpeed, speed, pierce, regen, maxHp, shield
+  ※ 레벨업 결과도 게임 종료까지 누적됨 — 초기화 안 됨
+
+【G 객체 주요 메서드】(브릿지가 래핑하는 훅 포인트)
+  G.selectChar(type)       - 캐릭터 선택 → 게임 시작
+  G.showMathScreen(x, y)   - 보물상자 수학 문제 화면 표시
+  G.checkMathAnswer()      - 수학 답 확인
+  G.closeMath()            - 수학 화면 닫기 (취소/완료)
+  G.showItemScreen()       - 아이템 선택 화면 표시
+  G.showLevelUpScreen()    - 레벨업 선택 화면 표시
+  G.gameOver()             - 게임 오버 처리
+  window.__mxOnItemPick    - 아이템 선택 완료 훅 (브릿지가 주입)
+  window.__mxOnLevelPick   - 레벨업 선택 완료 훅 (브릿지가 주입)
+
+【수정 시 주의사항】
+  - Player 클래스의 itemLevels, skillLevels는 게임 중 절대 {} 초기화 금지
+  - showItemScreen / showLevelUpScreen 호출 시 this 컨텍스트 = G 객체
+  - 새 아이템 추가 시 ITEMS 배열 + Player 생성자 기본값 + 게임루프 체크 3곳 모두 수정 필요
+═══════════════════════════════════════════════════════════════════
+-->
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
@@ -21,9 +77,11 @@
             cursor: crosshair;
             width: 100%;
             height: 100%;
+            position: relative;
+            z-index: 1;
         }
         .screen {
-            position: absolute;
+            position: fixed;
             top: 0; left: 0;
             width: 100%; height: 100%;
             background: linear-gradient(135deg, rgba(0,0,0,0.98), rgba(10,20,30,0.95));
@@ -33,7 +91,7 @@
             align-items: center;
             color: white;
             font-family: 'Segoe UI', Arial, sans-serif;
-            z-index: 10;
+            z-index: 100;
             padding: 20px;
             overflow-y: auto;
         }
@@ -119,7 +177,7 @@
             color: white;
             font-size: clamp(14px, 3vw, 18px);
             text-shadow: 2px 2px 4px #000;
-            z-index: 5;
+            z-index: 50;
             pointer-events: none;
         }
         .bar {
@@ -141,7 +199,7 @@
             height: 120px;
             background: rgba(0,0,0,0.8);
             border: 2px solid #0ff;
-            z-index: 5;
+            z-index: 50;
         }
         .controls {
             background: rgba(0,0,0,0.7);
@@ -359,6 +417,7 @@
     <div id="mathScreen" class="screen hidden">
         <div class="mathQuestion">
             <h3>🎁 보물상자 문제!</h3>
+            <div id="mathTimer" style="font-size:14px;color:#f80;margin-bottom:8px;font-weight:bold"></div>
             <p id="mathProblem" style="font-size:clamp(24px,5vw,32px);margin:20px 0;color:#0ff"></p>
             <input type="number" id="mathAnswer" placeholder="답을 입력하세요">
             <div class="mathButtons">
@@ -1518,6 +1577,8 @@ const G = {
         });
     },
     
+    // 캐릭터 선택 및 게임 시작
+    // embed 모드에서는 브릿지가 이 메서드를 래핑하여 중복 방지 및 멀티 동기화
     selectChar(type) {
         document.getElementById('charScreen').classList.add('hidden');
         const design = CHAR_DESIGNS.find(d => d.type === type);
@@ -1935,8 +1996,25 @@ const G = {
         document.getElementById('mathProblem').textContent = problem.question + ' = ?';
         document.getElementById('mathAnswer').value = '';
         document.getElementById('mathAnswer').focus();
+        // 제한시간 타이머 (20초)
+        this._mathTimerLeft = 20;
+        const timerEl = document.getElementById('mathTimer');
+        if(timerEl) timerEl.textContent = '⏱ 제한시간 20초';
+        if(this._mathTimerInterval) clearInterval(this._mathTimerInterval);
+        this._mathTimerInterval = setInterval(()=>{
+            this._mathTimerLeft--;
+            if(timerEl) timerEl.textContent = `⏱ 제한시간 ${this._mathTimerLeft}초`;
+            if(this._mathTimerLeft <= 0){
+                clearInterval(this._mathTimerInterval);
+                this._mathTimerInterval = null;
+                // 시간 초과: 자동 취소
+                this.closeMath();
+            }
+        }, 1000);
     },
     
+    // 수학 답 확인: 정답이면 showItemScreen, 오답이면 재도전
+    // 취소(closeMath)는 문제 안 풀고 보상 없이 완료
     checkMathAnswer() {
         // ===== 수학 문제 정답 확인 =====
         const userAnswer = parseInt(document.getElementById('mathAnswer').value);
@@ -1961,11 +2039,14 @@ const G = {
     
     closeMath() {
         // ===== 수학 문제 화면 닫기 =====
+        if(this._mathTimerInterval){ clearInterval(this._mathTimerInterval); this._mathTimerInterval = null; }
         document.getElementById('mathScreen').classList.add('hidden');
         this.paused = false;  // 게임 재개
         this.currentChest = null;
     },
     
+    // 보물상자 아이템 선택 화면 (수학 정답 후 호출)
+    // 선택 결과는 player에 직접 적용되고 게임 종료까지 누적됨
     showItemScreen() {
         // ===== 아이템 선택 화면 표시 =====
         this.paused = true;  // 게임 일시정지
@@ -2277,6 +2358,7 @@ const G = {
         });
     },
     
+    // 게임 오버 처리: embed 모드에서는 브릿지가 룸 복귀까지 처리
     gameOver() {
         this.running = false;
         document.getElementById('gameOverScreen').classList.remove('hidden');
@@ -3667,6 +3749,7 @@ class Player {
         this.spinAngle = 0;
         this.spinDmgMultiplier = 0;
         
+        // ※ itemLevels, skillLevels는 게임 종료까지 누적됨 — 여기서 절대 초기화만 (중간 reset 금지)
         this.itemLevels = {};
         this.skillLevels = {};
         this.poison = false;
