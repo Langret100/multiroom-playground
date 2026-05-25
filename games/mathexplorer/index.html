@@ -1373,29 +1373,30 @@ const G = {
     
     // ===== 레벨업 시 선택 가능한 업그레이드 =====
     UPGRADES: [
-        {name: "체력 증가", icon: "❤️", apply: p => { 
+        {name: "체력 증가", id: "hp_up", icon: "❤️", apply: p => { 
             p.maxHp += 50;         // 최대 체력 +50
             p.hp = Math.min(p.hp + 50, p.maxHp);  // 현재 체력도 +50
         }},
-        {name: "공격력 증가", icon: "⚔️", apply: p => { 
+        {name: "공격력 증가", id: "damage_up", icon: "⚔️", apply: p => { 
             p.damage += 10;        // 공격력 +10
         }},
-        {name: "공격속도 증가", icon: "⏱️", apply: p => { 
+        {name: "공격속도 증가", id: "atk_speed_up", icon: "⏱️", apply: p => { 
             p.atkSpeed = Math.max(100, p.atkSpeed - 50);  // 공격 속도 +50ms (최소 100ms)
         }},
-        {name: "이동속도 증가", icon: "👟", apply: p => { 
+        {name: "이동속도 증가", id: "speed_up", icon: "👟", apply: p => { 
             p.speed += 0.5;        // 이동속도 +0.5
         }},
-        {name: "관통", icon: "🎯", apply: p => { 
+        {name: "관통", id: "pierce_up", icon: "🎯", apply: p => { 
             p.pierce++;            // 투사체 관통 +1
         }},
-        {name: "체력 회복", icon: "💊", apply: p => { 
+        {name: "체력 회복", id: "regen_up", icon: "💊", apply: p => { 
             if (!p.regen) p.regen = 0;
             p.regen += 0.5;        // 초당 체력 회복 +0.5
         }},
-        {name: "보호막", icon: "🛡️", apply: p => { 
+        {name: "보호막", id: "shield_up", icon: "🛡️", apply: p => { 
             p.shield = true;       // 보호막 활성화
-            p.shieldHp = 100;      // 보호막 체력 100
+            // [FIX] 누적: 기존 shieldHp가 있으면 +50, 없으면 100으로 초기화
+            p.shieldHp = p.shieldHp > 0 ? p.shieldHp + 50 : 100;
         }}
     ],
     
@@ -1846,7 +1847,7 @@ const G = {
             const card = document.createElement('div');
             card.className = 'upgradeCard';
             card.dataset.upgradeId = up.name;
-            const currentLevel = this.player.skillLevels[up.name] || 0;
+            const currentLevel = this.player.skillLevels[up.id || up.name] || 0;
             
             // 업그레이드 카드 HTML 생성 (레벨 표시 포함)
             card.innerHTML = `
@@ -1856,12 +1857,14 @@ const G = {
             
             // 클릭 시 업그레이드 적용
             card.onclick = () => {
-                this.player.skillLevels[up.name] = currentLevel + 1;
+                const upKey = up.id || up.name;
+                this.player.skillLevels[upKey] = currentLevel + 1;
                 up.apply(this.player);
                 document.getElementById('levelUpScreen').classList.add('hidden');
                 this.paused = false;
                 // bridge에 선택 완료 알림 (embed 모드에서 multiplayer 동기화용)
-                try{ if(window.__mxOnLevelPick) window.__mxOnLevelPick(up.name); }catch(_){}
+                // up.id(영문)를 브릿지로 전달 — 브릿지의 applyLevelChoiceLocal과 키 일치
+                try{ if(window.__mxOnLevelPick) window.__mxOnLevelPick(up.id || up.name); }catch(_){}
             };
             container.appendChild(card);
         });
@@ -1986,6 +1989,9 @@ const G = {
     
     showMathScreen(chestX, chestY) {
         // ===== 수학 문제 화면 표시 =====
+        // 중복 호출 방지: 이미 열려있으면 무시
+        if (this._mathScreenOpen) return;
+        this._mathScreenOpen = true;
         this.paused = true;  // 게임 일시정지
         this.currentChest = { x: chestX, y: chestY };
         SoundManager.chest();
@@ -1995,20 +2001,23 @@ const G = {
         this.currentProblem = problem;
         document.getElementById('mathProblem').textContent = problem.question + ' = ?';
         document.getElementById('mathAnswer').value = '';
-        document.getElementById('mathAnswer').focus();
-        // 제한시간 타이머 (20초)
+        setTimeout(() => {
+            const el = document.getElementById('mathAnswer');
+            if (el) el.focus();
+        }, 100);
+        // 제한시간 타이머 (20초) - setInterval 대신 setTimeout 체인으로 안전하게 처리
         this._mathTimerLeft = 20;
         const timerEl = document.getElementById('mathTimer');
-        if(timerEl) timerEl.textContent = '⏱ 제한시간 20초';
-        if(this._mathTimerInterval) clearInterval(this._mathTimerInterval);
-        this._mathTimerInterval = setInterval(()=>{
+        if (timerEl) timerEl.textContent = '⏱ 제한시간 20초';
+        if (this._mathTimerInterval) { clearInterval(this._mathTimerInterval); this._mathTimerInterval = null; }
+        this._mathTimerInterval = setInterval(() => {
+            if (!this._mathScreenOpen) { clearInterval(this._mathTimerInterval); this._mathTimerInterval = null; return; }
             this._mathTimerLeft--;
-            if(timerEl) timerEl.textContent = `⏱ 제한시간 ${this._mathTimerLeft}초`;
-            if(this._mathTimerLeft <= 0){
+            if (timerEl) timerEl.textContent = `⏱ 제한시간 ${this._mathTimerLeft}초`;
+            if (this._mathTimerLeft <= 0) {
                 clearInterval(this._mathTimerInterval);
                 this._mathTimerInterval = null;
-                // 시간 초과: 자동 취소
-                this.closeMath();
+                this.closeMath(); // 시간 초과: 자동 취소
             }
         }, 1000);
     },
@@ -2039,7 +2048,8 @@ const G = {
     
     closeMath() {
         // ===== 수학 문제 화면 닫기 =====
-        if(this._mathTimerInterval){ clearInterval(this._mathTimerInterval); this._mathTimerInterval = null; }
+        if (this._mathTimerInterval) { clearInterval(this._mathTimerInterval); this._mathTimerInterval = null; }
+        this._mathScreenOpen = false; // 중복 방지 플래그 해제
         document.getElementById('mathScreen').classList.add('hidden');
         this.paused = false;  // 게임 재개
         this.currentChest = null;
@@ -2813,16 +2823,34 @@ const G = {
                     ctx.closePath();
                     ctx.fill();
                 } else if (effect.type === 'hammerImpact') {
-                    effect.radius += 3;
+                    effect.radius += 3.5;
                     const alpha = effect.life / 15;
+                    ctx.save();
                     ctx.globalAlpha = alpha;
-                    
-                    // 충격파 그리기
+                    // 외곽 금색 링
+                    ctx.shadowBlur = 14;
+                    ctx.shadowColor = '#ffd700';
                     ctx.strokeStyle = '#FFD700';
-                    ctx.lineWidth = 4;
+                    ctx.lineWidth = 5;
                     ctx.beginPath();
                     ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
                     ctx.stroke();
+                    // 내부 흰색 링
+                    ctx.shadowBlur = 0;
+                    ctx.strokeStyle = 'rgba(255,255,220,0.6)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.arc(effect.x, effect.y, effect.radius * 0.55, 0, Math.PI * 2);
+                    ctx.stroke();
+                    // 중심 플래시 (초반에만)
+                    if (effect.life > 11) {
+                        ctx.globalAlpha = ((effect.life - 11) / 4) * 0.7;
+                        ctx.fillStyle = '#fff8cc';
+                        ctx.beginPath();
+                        ctx.arc(effect.x, effect.y, 14, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                    ctx.restore();
                 } else if (effect.type === 'shockwave') {
                     // 보스 슬램 충격파
                     effect.radius += (effect.maxRadius - effect.radius) * 0.15;
@@ -3182,22 +3210,32 @@ const G = {
                     ctx.arc(0, 0, 40 * (1 - s.life / 20), 0, Math.PI * 2);
                     ctx.stroke();
                 } else {
-                    // 전사 베기 효과
-                    const gradient = ctx.createLinearGradient(-60, 0, 60, 0);
-                    gradient.addColorStop(0, 'transparent');
-                    gradient.addColorStop(0.5, s.color);
-                    gradient.addColorStop(1, 'transparent');
-                    
-                    ctx.strokeStyle = gradient;
-                    ctx.lineWidth = 8;
+                    // 전사/발키리 베기 효과 — 대각선 직선 베기
+                    const len = 55;
+                    const fade = s.opacity;
+                    // 메인 베기선
+                    const g1 = ctx.createLinearGradient(-len, -len*0.3, len, len*0.3);
+                    g1.addColorStop(0, 'transparent');
+                    g1.addColorStop(0.3, s.color);
+                    g1.addColorStop(0.7, s.color);
+                    g1.addColorStop(1, 'transparent');
+                    ctx.strokeStyle = g1;
+                    ctx.lineWidth = 7;
+                    ctx.lineCap = 'round';
                     ctx.beginPath();
-                    ctx.arc(0, 0, 60, -Math.PI/3, Math.PI/3);
+                    ctx.moveTo(-len, -len*0.3);
+                    ctx.lineTo(len, len*0.3);
                     ctx.stroke();
-                    
-                    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                    // 빛 하이라이트
+                    const g2 = ctx.createLinearGradient(-len*0.6, -len*0.2, len*0.6, len*0.2);
+                    g2.addColorStop(0, 'transparent');
+                    g2.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+                    g2.addColorStop(1, 'transparent');
+                    ctx.strokeStyle = g2;
                     ctx.lineWidth = 3;
                     ctx.beginPath();
-                    ctx.arc(0, 0, 60, -Math.PI/4, Math.PI/4);
+                    ctx.moveTo(-len*0.6, -len*0.2);
+                    ctx.lineTo(len*0.6, len*0.2);
                     ctx.stroke();
                 }
                 
@@ -3903,47 +3941,28 @@ class Player {
             SoundManager.attack('warrior');
             this.dealDamage(target, this.damage);
             
-            // 전사 베기 이펙트
+            // 전사 베기 이펙트: 타겟 위치에 X자 베기
             const angle = Math.atan2(target.y - this.y, target.x - this.x);
-            G.slashes.push({
-                x: this.x,
-                y: this.y,
-                angle: angle,
-                life: 15,
-                opacity: 1,
-                color: '#0ff'
-            });
+            G.slashes.push({ x: target.x, y: target.y, angle: angle, life: 15, opacity: 1, color: '#0ff' });
+            G.slashes.push({ x: target.x, y: target.y, angle: angle + Math.PI/3, life: 13, opacity: 0.7, color: '#88eeff' });
         } 
         // ===== 발키리: 망치 근접 공격 =====
         else if (this.design.type.includes('valkyrie')) {
             SoundManager.attack('valkyrie');
             this.dealDamage(target, this.damage);
             
-            // 망치 타격 이펙트
+            // 발키리 망치: 타겟 위치에 충격파 + 금색 링
             const angle = Math.atan2(target.y - this.y, target.x - this.x);
-            
-            // 망치 스윙 효과
             G.slashes.push({
-                x: this.x,
-                y: this.y,
-                angle: angle,
-                life: 20,
-                opacity: 1,
-                color: '#ffd700',  // 금색 망치 효과
-                isHammer: true     // 망치 효과 플래그
+                x: target.x, y: target.y,
+                angle: angle, life: 20, opacity: 1,
+                color: '#ffd700', isHammer: true
             });
-            
-            // 타격 지점에 충격파 효과
             G.effects.push({
                 type: 'hammerImpact',
-                x: target.x,
-                y: target.y,
-                radius: 0,
-                maxRadius: 40,
-                life: 15
+                x: target.x, y: target.y,
+                radius: 0, maxRadius: 50, life: 15
             });
-            
-            // 화면 흔들림 효과
             G.screenShake = 3;
         } 
         // ===== 궁수/법사: 원거리 투사체 공격 =====
@@ -5649,49 +5668,71 @@ class Projectile {
         ctx.save();
         
         if (this.isArrow) {
-            // 궁수 화살
+            // 궁수(ranger) 화살 — 날렵한 화살 모양
             ctx.translate(this.x, this.y);
             ctx.rotate(this.angle);
             
-            // 화살 몸통
-            ctx.fillStyle = '#8B4513';
-            ctx.fillRect(-12, -1, 20, 2);
+            // 화살 몸통 (나무)
+            ctx.fillStyle = '#8B5A2B';
+            ctx.fillRect(-16, -1.5, 24, 3);
             
-            // 화살촉
-            ctx.fillStyle = '#C0C0C0';
+            // 화살촉 (금속)
+            ctx.fillStyle = '#D0D0D0';
             ctx.beginPath();
             ctx.moveTo(8, 0);
-            ctx.lineTo(2, -3);
-            ctx.lineTo(2, 3);
+            ctx.lineTo(2, -4);
+            ctx.lineTo(2, 4);
+            ctx.closePath();
+            ctx.fill();
+            ctx.strokeStyle = '#aaa';
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
+            
+            // 깃털 (초록)
+            ctx.fillStyle = '#5dc75d';
+            ctx.beginPath();
+            ctx.moveTo(-14, 0);
+            ctx.lineTo(-18, -3.5);
+            ctx.lineTo(-14, -1.5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(-14, 0);
+            ctx.lineTo(-18, 3.5);
+            ctx.lineTo(-14, 1.5);
             ctx.closePath();
             ctx.fill();
             
-            // 깃털
-            ctx.fillStyle = '#90EE90';
+            // 화살 광택선
+            ctx.strokeStyle = 'rgba(255,240,200,0.6)';
+            ctx.lineWidth = 0.8;
             ctx.beginPath();
-            ctx.moveTo(-12, 0);
-            ctx.lineTo(-15, -2);
-            ctx.lineTo(-12, -1);
-            ctx.closePath();
-            ctx.fill();
-            
-            ctx.beginPath();
-            ctx.moveTo(-12, 0);
-            ctx.lineTo(-15, 2);
-            ctx.lineTo(-12, 1);
-            ctx.closePath();
-            ctx.fill();
+            ctx.moveTo(-12, -0.5);
+            ctx.lineTo(5, -0.5);
+            ctx.stroke();
         } else {
-            // 마법사 마법탄
-            ctx.fillStyle = '#0ff';
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = '#0ff';
+            // 마법사(mage) 마법탄 — 녹색 빛나는 구슬
+            ctx.shadowBlur = 18;
+            ctx.shadowColor = '#8eff66';
+            ctx.fillStyle = '#8eff66';
             ctx.beginPath();
-            ctx.arc(this.x, this.y, 6, 0, Math.PI * 2);
+            ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
             ctx.fill();
-            ctx.fillStyle = '#fff';
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = '#d4ffb8';
             ctx.beginPath();
-            ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+            ctx.arc(this.x - 2, this.y - 2, 3, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            // 꼬리 잔상
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = '#8eff66';
+            ctx.beginPath();
+            ctx.arc(this.x - Math.cos(this.angle) * 9, this.y - Math.sin(this.angle) * 9, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.12;
+            ctx.beginPath();
+            ctx.arc(this.x - Math.cos(this.angle) * 16, this.y - Math.sin(this.angle) * 16, 3.5, 0, Math.PI * 2);
             ctx.fill();
         }
         
@@ -5792,7 +5833,12 @@ class Projectile {
 
     return true;
   }
-  // Character art patch disabled (rolled back).
+  // 캐릭터 스프라이트 패치 활성화
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function() { setTimeout(applyCharacterArtPatch, 0); });
+  } else {
+    setTimeout(applyCharacterArtPatch, 0);
+  }
 })();
 
 window.G = G;

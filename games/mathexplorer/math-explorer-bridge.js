@@ -410,9 +410,18 @@
     basePierce: null, baseRegen: null, baseMaxHp: null
   };
 
+  // 한글 업그레이드 이름 → 영문 id 변환 (index.html이 up.name으로 보낼 경우 대비)
+  const UPGRADE_NAME_MAP = {
+    '체력 증가':'hp_up', '공격력 증가':'damage_up', '공격속도 증가':'atk_speed_up',
+    '이동속도 증가':'speed_up', '관통':'pierce_up', '체력 회복':'regen_up', '보호막':'shield_up',
+    // _up suffix alias (index.html이 up.id로 보내는 경우)
+    'pierce_up':'pierce_up', 'regen_up':'regen_up', 'shield_up':'shield_up'
+  };
   function applyLevelChoiceLocal(p, key){
     if(!p) return false;
-    switch(String(key||'')){
+    // 한글 이름이 들어오면 영문 id로 변환
+    const resolvedKey = UPGRADE_NAME_MAP[String(key||'')] || String(key||'');
+    switch(resolvedKey){
       case 'hp_up':
         p.maxHp = safeNum(p.maxHp,0) + 50;
         p.hp = Math.min(safeNum(p.hp,0)+50, safeNum(p.maxHp,0));
@@ -431,17 +440,22 @@
         mxGuestChoiceStats.speedBonus += 0.5;
         return true;
       case 'pierce':
+      case 'pierce_up':
         p.pierce = Math.max(0, Math.round(safeNum(p.pierce,0))) + 1;
         mxGuestChoiceStats.pierceBonus += 1;
         return true;
       case 'regen':
+      case 'regen_up':
         p.regen = safeNum(p.regen,0) + 0.5;
         mxGuestChoiceStats.regenBonus += 0.5;
         return true;
       case 'shield':
-        p.shield = true; p.shieldHp = 100;
+      case 'shield_up':
+        p.shield = true;
+        // [FIX] 누적: 기존 shieldHp가 있으면 +50, 없으면 100으로 초기화
+        p.shieldHp = safeNum(p.shieldHp,0) > 0 ? safeNum(p.shieldHp,0) + 50 : 100;
         mxGuestChoiceStats.shield = true;
-        mxGuestChoiceStats.shieldHp = Math.max(mxGuestChoiceStats.shieldHp, 100);
+        mxGuestChoiceStats.shieldHp = p.shieldHp;
         return true;
     }
     return false;
@@ -507,9 +521,9 @@
         case 'damage_up': return safeNum(p.damage,0) > safeNum(before?.damage,0);
         case 'atk_speed_up': return safeNum(p.atkSpeed,0) < safeNum(before?.atkSpeed,0);
         case 'speed_up': return safeNum(p.speed,0) > safeNum(before?.speed,0);
-        case 'pierce': return Math.round(safeNum(p.pierce,0)) > Math.round(safeNum(before?.pierce,0));
-        case 'regen': return safeNum(p.regen,0) > safeNum(before?.regen,0);
-        case 'shield': return !!p.shield || safeNum(p.shieldHp,0) > safeNum(before?.shieldHp,0);
+        case 'pierce': case 'pierce_up': return Math.round(safeNum(p.pierce,0)) > Math.round(safeNum(before?.pierce,0));
+        case 'regen': case 'regen_up': return safeNum(p.regen,0) > safeNum(before?.regen,0);
+        case 'shield': case 'shield_up': return !!p.shield || safeNum(p.shieldHp,0) > safeNum(before?.shieldHp,0);
       }
       return false;
     }
