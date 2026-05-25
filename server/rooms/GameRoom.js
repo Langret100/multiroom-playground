@@ -832,7 +832,11 @@ this.st = {
       const isDrawer = client.sessionId === drawerSid;
       const t = String(text || "").trim().slice(0, 100);
       if (!t) return;
-      const sc = this.da.scores[client.sessionId] || { nick, correct: 0 };
+      // scores에 없으면 즉시 등록 (da_enter 보다 먼저 채팅 오는 경우 대비)
+      if (!this.da.scores[client.sessionId]) {
+        this.da.scores[client.sessionId] = { nick, correct: 0 };
+      }
+      const sc = this.da.scores[client.sessionId];
       const correctCount = sc.correct || 0;
       const nickWithScore = correctCount > 0 ? `${nick} (정답 ${correctCount}회)` : nick;
       // 출제자는 정답 못 맞춤
@@ -1187,6 +1191,24 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
 
   }
 
+  onDispose(){
+    // 방이 완전히 제거될 때 모든 타이머/데이터 정리
+    try{ if (this.da?.timer) clearTimeout(this.da.timer); }catch(_){ }
+    try{ clearClockTimer(this._mainLoopTimer); }catch(_){ }
+    try{ clearClockTimer(this.st?.timer); }catch(_){ }
+    try{ clearClockTimer(this.st?.interval); }catch(_){ }
+    // 모든 게임 상태 null 처리 → GC 해제
+    this.da = null;
+    this.br = null;
+    try{ this.tg?.players?.clear(); this.tg?.floors?.clear(); this.tg?.floorUsed?.clear(); }catch(_){ }
+    this.tg = null;
+    try{ this.st?.players && (this.st.players = {}); this.st?.foods && (this.st.foods = []); }catch(_){ }
+    this.st = null;
+    this.tour = null;
+    try{ this.inputs?.clear(); }catch(_){ }
+    try{ this._lastClientPing?.clear(); }catch(_){ }
+  }
+
   onLeave(client){
     try{ this._lastClientPing.delete(client.sessionId); }catch(_){ }
 
@@ -1330,6 +1352,8 @@ try{
       if (this.tg){
         this.tg.players = new Map();
         this.tg.buttons = {};
+        this.tg.boxes = {};
+        this.tg.puzzle = null;
         this.tg.floors = new Map();
         this.tg.floorUsed = new Map();
         this.tg.level = 1;
@@ -1367,6 +1391,25 @@ try{
       p.ready = false;
       p.isHost = false;
     }
+
+    // Clear drawanswer state
+    try{
+      if (this.da) {
+        if (this.da.timer) { try{ clearTimeout(this.da.timer); }catch(_){} }
+        this.da = { round:0, drawerIdx:0, drawerOrder:[], word:'', endAt:0, scores:{}, ops:[], timer:null, over:false };
+      }
+    }catch(_){ }
+
+    // Clear backrooms3d state (positions, world snapshot, chat log)
+    try{
+      if (this.br) {
+        this.br.latestStates = {};
+        this.br.dirtyStates = {};
+        this.br.latestWorld = null;
+        this.br.latestChat = [];
+        this.br.startPayload = null;
+      }
+    }catch(_){ }
 
     // Update metadata
     try{
@@ -1599,9 +1642,13 @@ try{
       this.recomputeReady();
       this.setMetadata({ ...this.metadata, status: "waiting" });
 
-      // reset transient toggester state
+      // reset transient togester state (전체 정리)
       try{ this.tg.players.clear(); }catch(_){ }
+      try{ this.tg.floors.clear(); }catch(_){ }
+      try{ this.tg.floorUsed.clear(); }catch(_){ }
       this.tg.buttons = {};
+      this.tg.boxes = {};
+      this.tg.puzzle = null;
       this.tg.level = 1;
       this.tg.lastBroadcastAt = 0;
       this.tg.over = false;
@@ -1805,8 +1852,8 @@ try{
     // return to room lobby after a short delay
     setTimeout(()=>{
       // stop timers
-      try{ this.st.timer && this.st.timer.clear && this.st.timer.clear(); }catch(_){ }
-      try{ this.st.interval && this.st.interval.clear && this.st.interval.clear(); }catch(_){ }
+      try{ clearClockTimer(this.st.timer); }catch(_){ }
+      try{ clearClockTimer(this.st.interval); }catch(_){ }
 
       this.state.phase = "lobby";
       this.started = false;

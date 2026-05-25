@@ -91,7 +91,7 @@
             align-items: center;
             color: white;
             font-family: 'Segoe UI', Arial, sans-serif;
-            z-index: 100;
+            z-index: 100000;  /* 브릿지 DOM(z-index:99999)보다 위 */
             padding: 20px;
             overflow-y: auto;
         }
@@ -1831,6 +1831,8 @@ const G = {
     
     showLevelUp() {
         // ===== 레벨업 화면 표시 =====
+        if (this._levelScreenOpen) return;
+        this._levelScreenOpen = true;
         this.paused = true;
         SoundManager.levelUp();
         document.getElementById('levelUpScreen').classList.remove('hidden');
@@ -1861,9 +1863,9 @@ const G = {
                 this.player.skillLevels[upKey] = currentLevel + 1;
                 up.apply(this.player);
                 document.getElementById('levelUpScreen').classList.add('hidden');
+                this._levelScreenOpen = false;
                 this.paused = false;
                 // bridge에 선택 완료 알림 (embed 모드에서 multiplayer 동기화용)
-                // up.id(영문)를 브릿지로 전달 — 브릿지의 applyLevelChoiceLocal과 키 일치
                 try{ if(window.__mxOnLevelPick) window.__mxOnLevelPick(up.id || up.name); }catch(_){}
             };
             container.appendChild(card);
@@ -2059,11 +2061,14 @@ const G = {
     // 선택 결과는 player에 직접 적용되고 게임 종료까지 누적됨
     showItemScreen() {
         // ===== 아이템 선택 화면 표시 =====
+        // 중복 호출 방지: 이미 열려있으면 카드 재셔플 하지 않음
+        if (this._itemScreenOpen) return;
+        this._itemScreenOpen = true;
         this.paused = true;  // 게임 일시정지
         document.getElementById('itemScreen').classList.remove('hidden');
         
         const container = document.getElementById('items');
-        container.innerHTML = '';
+        container.innerHTML = '';  // 최초 1회만 실행됨
         
         const shuffled = [...this.ITEMS].sort(() => Math.random() - 0.5);
         shuffled.slice(0, 3).forEach(item => {
@@ -2090,6 +2095,7 @@ const G = {
                 SoundManager.item && SoundManager.item();
                 
                 document.getElementById('itemScreen').classList.add('hidden');
+                this._itemScreenOpen = false; // 중복 방지 플래그 해제
                 this.paused = false;  // 게임 재개
                 this.currentChest = null;
                 // bridge에 선택 완료 알림 (embed 모드에서 multiplayer 동기화용)
@@ -5673,7 +5679,7 @@ class Projectile {
             ctx.rotate(this.angle);
             
             // 화살 몸통 (나무)
-            ctx.fillStyle = '#8B5A2B';
+            ctx.fillStyle = '#8B4513';  // 원본 색상
             ctx.fillRect(-16, -1.5, 24, 3);
             
             // 화살촉 (금속)
@@ -5711,28 +5717,30 @@ class Projectile {
             ctx.lineTo(5, -0.5);
             ctx.stroke();
         } else {
-            // 마법사(mage) 마법탄 — 녹색 빛나는 구슬
+            // 마법사(mage) 마법탄 — 하늘색 빛나는 구슬 (원본 색상 유지 + 품질 개선)
+            // 꼬리 잔상
+            ctx.globalAlpha = 0.2;
+            ctx.fillStyle = '#0ff';
+            ctx.beginPath();
+            ctx.arc(this.x - Math.cos(this.angle) * 10, this.y - Math.sin(this.angle) * 10, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.1;
+            ctx.beginPath();
+            ctx.arc(this.x - Math.cos(this.angle) * 18, this.y - Math.sin(this.angle) * 18, 2.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
+            // 메인 구슬
             ctx.shadowBlur = 18;
-            ctx.shadowColor = '#8eff66';
-            ctx.fillStyle = '#8eff66';
+            ctx.shadowColor = '#0ff';
+            ctx.fillStyle = '#0ff';
             ctx.beginPath();
             ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
             ctx.fill();
-            ctx.shadowBlur = 8;
-            ctx.fillStyle = '#d4ffb8';
+            // 하이라이트
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#fff';
             ctx.beginPath();
             ctx.arc(this.x - 2, this.y - 2, 3, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
-            // 꼬리 잔상
-            ctx.globalAlpha = 0.25;
-            ctx.fillStyle = '#8eff66';
-            ctx.beginPath();
-            ctx.arc(this.x - Math.cos(this.angle) * 9, this.y - Math.sin(this.angle) * 9, 5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.globalAlpha = 0.12;
-            ctx.beginPath();
-            ctx.arc(this.x - Math.cos(this.angle) * 16, this.y - Math.sin(this.angle) * 16, 3.5, 0, Math.PI * 2);
             ctx.fill();
         }
         
@@ -5833,12 +5841,13 @@ class Projectile {
 
     return true;
   }
-  // 캐릭터 스프라이트 패치 활성화
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { setTimeout(applyCharacterArtPatch, 0); });
-  } else {
-    setTimeout(applyCharacterArtPatch, 0);
-  }
+  // 캐릭터 스프라이트 패치 비활성화 - 원본 디자인 유지
+  // (공격 이펙트만 개선, 캐릭터 모양은 원본 그대로)
+  // if (document.readyState === 'loading') {
+  //   document.addEventListener('DOMContentLoaded', function() { setTimeout(applyCharacterArtPatch, 0); });
+  // } else {
+  //   setTimeout(applyCharacterArtPatch, 0);
+  // }
 })();
 
 window.G = G;
