@@ -1099,6 +1099,7 @@ body::after{
 .gamePreview .gpThumb[data-game="mathexplorer"]{ background-image:url("../assets/images/game_thumbs/mathexplorer.webp"); background-size:cover; background-position:center; }
 .gamePreview .gpThumb[data-game="backrooms3d"]{ background-image:url("../assets/images/game_thumbs/backrooms3d.webp"); background-size:cover; background-position:center; }
 .gamePreview .gpThumb[data-game="snaketail"]{ background-image:url("../assets/images/game_thumbs/snaketail.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="geumchikeo"]{ background-image:url("../assets/images/game_thumbs/geumchikeo.webp"); background-size:cover; background-position:center; }
 /* In room lobby: hide the heavy game area, keep just preview */
 body:not(.in-game) #duelUI,
 body:not(.in-game) #stackgaUI,

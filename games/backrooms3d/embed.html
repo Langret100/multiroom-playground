@@ -2485,7 +2485,10 @@ function pushOutWalls(px,pz,rad){
   let remaining=300, lastTick=performance.now();
   function tickTimer(now){
     const dt=(now-lastTick)/1000; lastTick=now;
-    remaining=Math.max(0, remaining-dt);
+    // [FIX] 싱글/호스트만 타이머 감소, 비호스트는 world sync로 수신
+    if(bridge.isHost || !bridge.start || !(bridge.start.playerCount >= 2)){
+      remaining=Math.max(0, remaining-dt);
+    }
     const mm=String(Math.floor(remaining/60)).padStart(2,'0');
     const ss=String(Math.floor(remaining%60)).padStart(2,'0');
     $("pTime").textContent="⏱ "+mm+":"+ss;
@@ -2855,9 +2858,13 @@ let last=performance.now();
     const dt=Math.min(0.033,(now-last)/1000); last=now;
     if(revealPingT > 0) revealPingT = Math.max(0, revealPingT - dt);
     try{
-// Global countdown for monster release (visible to both)
+// Global countdown for monster release
+// [FIX] 호스트만 타이머를 감소시키고, world sync로 비호스트에 전달
 if(monsterReleaseLeft>0){
-  monsterReleaseLeft = Math.max(0, monsterReleaseLeft - dt);
+  // 싱글 또는 멀티 전 bridge 미설정 시 로컬 감소, 멀티에선 호스트만 감소
+  if(bridge.isHost || !bridge.start || !(bridge.start.playerCount >= 2)){
+    monsterReleaseLeft = Math.max(0, monsterReleaseLeft - dt);
+  }
   countdownEl.style.display = "block";
   const _sec = Math.ceil(monsterReleaseLeft);
   countdownEl.textContent = playerRole==='monster'
@@ -3572,10 +3579,12 @@ if(monsterReleaseLeft>0){
       const lock = cage.getObjectByName('cageLock'); if(lock) lock.visible = !!cage.userData.locked;
       monsterReleaseLeft = Number(w.releaseLeft||0); if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01;
       doorState.sealUsed = !!w.sealUsed; sealLeft = Number(w.sealLeft||0);
-      // [FIX] 타이머 동기화: 호스트 기준으로 보정 (네트워크 딜레이 고려 0.1초 보정)
-      if(w.remaining !== undefined){ const nr = Number(w.remaining||0); if(Math.abs(nr - remaining) > 0.5) remaining = nr - 0.1; }
+      // [FIX] 비호스트는 항상 호스트 기준 타이머 사용 (네트워크 딜레이 ~50ms 보정)
+      if(w.remaining !== undefined){ remaining = Math.max(0, Number(w.remaining||0) - 0.05); }
       if(w.huntActive !== undefined){ huntActive = !!w.huntActive; }
-      if(w.huntLeft !== undefined){ const nh = Number(w.huntLeft||0); if(Math.abs(nh - huntLeft) > 0.5) huntLeft = nh - 0.1; }
+      if(w.huntLeft !== undefined){ huntLeft = Math.max(0, Number(w.huntLeft||0) - 0.05); }
+      // [FIX] monsterReleaseLeft도 호스트 기준 동기화
+      if(w.releaseLeft !== undefined){ monsterReleaseLeft = Math.max(0, Number(w.releaseLeft||0) - 0.05); if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01; }
     }catch(_){ }
   }
   function appendChatLine(nick, text){
@@ -3710,17 +3719,30 @@ if(monsterReleaseLeft>0){
       if(kind==='world'){ if(!bridge.isHost && sid!==bridge.sid) applyWorld(m); return; }
       if(kind==='world_req'){ if(bridge.isHost && sid!==bridge.sid){ relay('world', snapshotWorld()); } return; }
       if(kind==='helper_state'){ if(!bridge.isHost && sid!==bridge.sid) applyHelperState(m); return; }
-      if(kind==='caught'){ if(String(m.target||'')===bridge.sid){
-          if (performance.now() < Number(bridge.ignoreCaughtUntil||0)) return;
+      if(kind==='caught'){
+        // relay는 발신자(호스트) 제외 전송 → 수신자는 항상 타겟 본인 또는 제3자
+        const catchTarget = String(m.target||'');
+        if(catchTarget===bridge.sid){
+          // 내가 타겟: 포획 처리
+          if(performance.now() < Number(bridge.ignoreCaughtUntil||0)) return;
           if(playerRole==='monster') return;
+          bridge.ignoreCaughtUntil = performance.now() + 3000;
           rabbitCaughtCount = Number(rabbitCaughtCount||0) + 1;
-          updateCaughtCloud();
-          syncUiState();
+          updateCaughtCloud(); syncUiState();
           if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); placeKey(); }
-          if(rabbitCaughtCount>=2){ makeRabbitGhost(); }
-          else { trapRabbitInCage(6); }
+          if(rabbitCaughtCount>=2){ makeRabbitGhost(); } else { trapRabbitInCage(6); }
           maybeSendWorld(true); sendState(true);
-      } return; }
+        } else {
+          // 제3자: 해당 플레이어 remote state 반영 (화면에서 cage 표시 등)
+          const rr = bridge.remotes.get(catchTarget);
+          if(rr && rr.state){
+            rr.state.caught = (Number(rr.state.caught||0)+1);
+            rr.state.trapped = rr.state.caught < 2;
+            rr.state.ghost = rr.state.caught >= 2;
+          }
+        }
+        return;
+      }
     }
   }; window.addEventListener('message', window.__BR3D_MESSAGE_HANDLER__); }
   const _animate = animate;
@@ -3761,7 +3783,7 @@ if(monsterReleaseLeft>0){
         // 거리가 너무 멀면(3m+) 빠르게 따라가고, 가까우면 부드럽게 보간
         const snapDist = Math.hypot(predX - r.obj.position.x, predZ - r.obj.position.z);
         // lerpSpeed 상향: 뒤처짐 줄여서 끊김 감소
-        const lerpSpeed = snapDist > 3.0 ? 40.0 : (snapDist > 1.2 ? 28.0 : 20.0);
+        const lerpSpeed = snapDist > 3.0 ? 60.0 : (snapDist > 1.2 ? 40.0 : 28.0);
         const lerpA = 1 - Math.exp(-bridgeDt * lerpSpeed);
         r.obj.position.x += (predX - r.obj.position.x) * lerpA;
         r.obj.position.y += (predY - r.obj.position.y) * lerpA;
@@ -3774,30 +3796,69 @@ if(monsterReleaseLeft>0){
         if(r.role!=='monster'){ const ki=r.obj.getObjectByName('remoteKey'); if(ki) ki.visible=(!st.ghost && !!st.hasKey); const cc=r.obj.getObjectByName('remoteCaught'); if(cc) cc.visible = (!st.ghost && Number(st.caught||0)===1); }
       }
       const nowp=performance.now();
-      if(nowp - bridge.lastStateAt > 16){ bridge.lastStateAt = nowp; sendState(false); }
+      if(nowp - bridge.lastStateAt > 12){ bridge.lastStateAt = nowp; sendState(false); }
       // [FIX] 호스트: 500ms마다 world 상태 전송, 비호스트: 2초마다 world 요청
       if(bridge.isHost){
         if(nowp - (bridge.lastWorldAt||0) > 500){ maybeSendWorld(true); }
       } else {
         if(nowp - (bridge.lastWorldReqAt||0) > 2000){ bridge.lastWorldReqAt = nowp; relay('world_req', {}); }
       }
-      if(bridge.isHost){
-        if(nowp - bridge.lastCatchAt > 170){
-          bridge.lastCatchAt = nowp;
+      // catch loop: 호스트만 판정 + relay (서버가 발신자 제외 브로드캐스트)
+      // 호스트가 relay한 caught는 타겟 클라이언트에게 전달됨
+      // 호스트 자신이 타겟이면 relay 대신 직접 처리
+      if(bridge.isHost && nowp - bridge.lastCatchAt > 120){
+        bridge.lastCatchAt = nowp;
+        if(Number(monsterReleaseLeft||0) <= 0.01){
+          // 괴물 위치 수집
           const hunters = [];
           if(playerRole==='monster') hunters.push({ sid:bridge.sid, x:player.position.x, z:player.position.z });
-          else for(const [sid,r] of bridge.remotes.entries()){ if(r.role==='monster' && r.state){ hunters.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0 }); break; } }
-          if(hunters.length){
-            if (Number(monsterReleaseLeft||0) > 0.01) return _animate(now);
-            if (performance.now() < Number(bridge.ignoreCaughtUntil||0)) return _animate(now);
-            const rabbits=[];
-            if(playerRole!=='monster' && !rabbitGhost && !player.userData.trapped) rabbits.push({ sid:bridge.sid, x:player.position.x, z:player.position.z, caught:rabbitCaughtCount, trapped:!!player.userData.trapped });
-            for(const [sid,r] of bridge.remotes.entries()){ if(r.role!=='monster' && r.state && !r.state.ghost && !r.state.trapped) rabbits.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0, caught:Number(r.state.caught||0), trapped:!!r.state.trapped }); }
-            outer: for(const hunter of hunters){
-              for(const rb of rabbits){
-                if(rb.sid===hunter.sid || rb.trapped) continue;
-                const dx=rb.x-hunter.x, dz=rb.z-hunter.z;
-                if(dx*dx+dz*dz < 2.1*2.1){ relay('caught', { target: rb.sid }); break outer; }
+          for(const [sid,r] of bridge.remotes.entries()){
+            if(r.role==='monster' && r.state) hunters.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0 });
+          }
+          if(!hunters.length) return _animate(now);
+          // 토끼 위치 수집
+          const rabbits=[];
+          if(playerRole!=='monster' && !rabbitGhost && !player.userData.trapped)
+            rabbits.push({ sid:bridge.sid, x:player.position.x, z:player.position.z });
+          for(const [sid,r] of bridge.remotes.entries()){
+            if(r.role!=='monster' && r.state && !r.state.ghost && !r.state.trapped)
+              rabbits.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0 });
+          }
+          let caught = false;
+          outer: for(const hunter of hunters){
+            for(const rb of rabbits){
+              if(rb.sid===hunter.sid) continue;
+              const dx=rb.x-hunter.x, dz=rb.z-hunter.z;
+              if(dx*dx+dz*dz < 2.1*2.1){
+                caught = true;
+                const target = rb.sid;
+                if(target===bridge.sid){
+                  // 호스트 자신이 잡힘: 직접 처리 (relay는 자신에게 안 돌아오므로)
+                  if(performance.now() >= Number(bridge.ignoreCaughtUntil||0)){
+                    bridge.ignoreCaughtUntil = performance.now() + 3000;
+                    rabbitCaughtCount = Number(rabbitCaughtCount||0) + 1;
+                    updateCaughtCloud(); syncUiState();
+                    if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); placeKey(); }
+                    if(rabbitCaughtCount>=2){ makeRabbitGhost(); } else { trapRabbitInCage(6); }
+                    maybeSendWorld(true); sendState(true);
+                  }
+                } else {
+                  // 다른 플레이어가 타겟: relay로 해당 클라이언트에게 전달
+                  // 쿨다운: 동일 타겟 연속 포획 방지
+                  const ck = '_caughtAt_'+target;
+                  if(!bridge[ck] || nowp - bridge[ck] > 3000){
+                    bridge[ck] = nowp;
+                    relay('caught', { target });
+                    // 호스트 화면에서도 원격 플레이어 state 즉시 반영
+                    const rr = bridge.remotes.get(target);
+                    if(rr && rr.state){
+                      rr.state.caught = (Number(rr.state.caught||0)+1);
+                      rr.state.trapped = rr.state.caught < 2;
+                      rr.state.ghost = rr.state.caught >= 2;
+                    }
+                  }
+                }
+                break outer;
               }
             }
           }

@@ -934,7 +934,10 @@ function onGMsg(m){
     if(t==='chat'&&from!==myUid)onRchat(from,m.text);
     if(t==='score'&&from!==myUid)applyScore(from,m.score,m.why,m.kw||'');
     if(t==='remote_penalty'&&m.target===myUid){
-      // 내가 상대 금칙어를 말해서 패널티 받음
+      // 내가 상대 금칙어를 말해서 패널티 받음 — 중복 수신 방지
+      const _rpNow=Date.now();
+      if(window._lastRpAt && _rpNow-window._lastRpAt < 600) return;
+      window._lastRpAt = _rpNow;
       const p=players[myUid];if(p&&!p.elim){
         p.score=m.score;updateScoreUI();
         addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (금칙어: ${esc(m.kw||'??')})`,'pen');
@@ -945,13 +948,26 @@ function onGMsg(m){
       }
     }
     if(t==='remote_penalty'&&m.target!==myUid&&m.target!==from){
-      // 제3자 브로드캐스트: 점수 반영만
-      applyScore(m.target,m.score,'kw',m.kw||'');
+      // 제3자 브로드캐스트: 점수+배너만 (elim은 별도 elim 메시지로 처리)
+      const _tp=players[m.target];
+      if(_tp&&!_tp.elim){
+        _tp.score=m.score;
+        showKwBanner(_tp.nick,m.kw||'??');
+        zoomEntity(m.target);
+        if(entities[m.target]){entities[m.target].bubText='🚫 금칙어!';entities[m.target].bubTimer=2200;entities[m.target].bubPenalty=true;}
+        addLog(null,`⚠️ ${esc(_tp.nick)} -${PENALTY}점 (금칙어: ${esc(m.kw||'??')})`,'pen');
+        // 탈락 처리는 elim 메시지 수신 시에만
+      }
     }
     if(t==='elim'&&from!==myUid){
-      if(players[from]){players[from].elim=true;markElim(from,m.reason||'score');}
-      addLog(null,`💀 ${esc(players[from]?.nick)} 탈락!`,'pen');
-      sfx('elim');checkElim();
+      // remotePenalty가 보낸 elim은 target 필드 사용
+      const elimUid = m.target || from;
+      if(players[elimUid]&&!players[elimUid].elim){
+        players[elimUid].elim=true;markElim(elimUid,m.reason||'score');
+        addLog(null,`💀 ${esc(players[elimUid]?.nick)} 탈락!`,'pen');
+        sfx('elim');
+      }
+      checkElim();
     }
     if(t==='end'&&from!==myUid)endGame(m.reason);
     if(t==='pos'&&from!==myUid){
@@ -1768,9 +1784,15 @@ function onRchat(uid,txt){
     }
   }
 }
+// remotePenalty 중복 방지: 동일 uid 500ms 내 재호출 무시
+const _rpLastAt = {};
 // 상대가 내 금칙어를 말했을 때: 상대 점수 차감 + 전체 브로드캐스트
 function remotePenalty(uid,kw){
   const p=players[uid];if(!p||p.elim)return;
+  const rpKey = uid+':'+kw;
+  const now = Date.now();
+  if(_rpLastAt[rpKey] && now-_rpLastAt[rpKey] < 600) return; // 중복 방지
+  _rpLastAt[rpKey] = now;
   const ns=Math.max(0,p.score-PENALTY);p.score=ns;
   addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (금칙어: ${esc(kw)})`,'pen');
   redFlash();sfx('penalty');
@@ -1781,26 +1803,42 @@ function remotePenalty(uid,kw){
   }
   // 점수 브로드캐스트 (uid 대상)
   gSend('remote_penalty',{target:uid,score:ns,kw});
-  if(ns<=0){p.elim=true;markElim(uid,'kw');}
-  checkElim();
+  if(ns<=0){
+    p.elim=true;markElim(uid,'kw');
+    // elim 별도 브로드캐스트 (제3자가 탈락 인지하도록)
+    gSend('elim',{from_uid:myUid,target:uid,reason:'kw'});
+    checkElim();
+  }
 }
 // 금칙어가 독립적 단어로 쓰였는지 확인
 // 앞에 한글 음절이 붙어있으면 합성어 요소로 간주 → 금칙어 불인정
 // (예: 금칙어='어' → '인어공주' 불인정, '그거 어때'·'어떻게' 인정)
+// 금칙어 단어 경계 체크
+// 규칙: 토큰 안에서 kw 앞에 한글이 붙으면 합성어 → 불인정
+//       앞이 토큰 시작이거나 비한글이고, 뒤도 비한글(또는 토큰 끝)이면 → 인정
+// 예) kw='어': '인어'(앞한글→불인정), '알겠어'(앞한글→불인정),
+//              '어때'(뒤한글→불인정), '어!'(뒤구두점→인정), '뭐 어'(독립→인정)
+// 예) kw='아니': '아니오'(뒤한글→불인정), '아니까'(뒤한글→불인정),
+//                '아니 진짜'(앞뒤비한글→인정)
+// 예) kw='공부': '공부하기'(뒤한글→불인정), '나 공부 해'(앞뒤비한글→인정)
 function kwMatchesWord(txt, kw){
   if(!txt.includes(kw)) return false;
-  if([...kw].length >= 2) return true; // 2자 이상은 그대로 인정
   const isHangul = c => !!(c && /[가-힣]/.test(c));
-  // 공백·구두점으로 토큰 분리 후 각 토큰에서 체크
+  const kwLen = [...kw].length;
+  // 공백·구두점으로 토큰 분리
   const tokens = txt.split(/[\s!?.,~^*\[\](){}]+/);
   for(const token of tokens){
     if(!token) continue;
     let idx = 0;
     while((idx = token.indexOf(kw, idx)) !== -1){
-      const before = token[idx - 1];
-      // 앞에 한글 음절이 붙어있으면 합성어 → 스킵
-      if(!isHangul(before)) return true;
-      idx++;
+      const before = idx > 0 ? token[idx - 1] : '';
+      const after  = idx + kw.length < token.length ? token[idx + kw.length] : '';
+      // 앞에 한글 붙으면 합성어 → 불인정
+      if(isHangul(before)){ idx++; continue; }
+      // 뒤에 한글 붙으면 합성어 → 불인정 (1자·2자 이상 동일 규칙)
+      if(isHangul(after)){ idx++; continue; }
+      // 앞뒤 모두 비한글(또는 경계) → 독립 단어로 인정
+      return true;
     }
   }
   return false;

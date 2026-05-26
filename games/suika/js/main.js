@@ -110,6 +110,11 @@ function hideNetOverlay(){
 
 if(ui.overlayRetry){
   ui.overlayRetry.addEventListener("click", ()=>{
+    if(EMBED){
+      // EMBED(룸) 모드: 재시도 = 룸으로 복귀
+      try{ window.parent?.postMessage({ type: "duel_over", payload: { won: _lastWon ?? false } }, "*"); }catch(_){}
+      return;
+    }
     // 결과 화면/매칭 실패 등에서 "다시 매칭"은 새로고침이 아니라
     // 현재 세션을 정리하고 같은 탭에서 곧바로 재매칭을 시작합니다.
     try{ cancelMatching("retry", { silent:true }); }catch{}
@@ -121,7 +126,14 @@ if(ui.overlayRetry){
   });
 }
 if(ui.overlayClose){
-  ui.overlayClose.addEventListener("click", ()=>{ if(_overlayKind==="matching" || mode==="matching"){ cancelMatching("user"); } else { hideNetOverlay(); } });
+  ui.overlayClose.addEventListener("click", ()=>{
+    if(_overlayKind==="matching" || mode==="matching"){ cancelMatching("user"); }
+    else if(EMBED){
+      // EMBED: 닫기 = 룸으로 복귀
+      try{ window.parent?.postMessage({ type: "duel_over", payload: { won: _lastWon ?? false } }, "*"); }catch(_){}
+    }
+    else { hideNetOverlay(); }
+  });
 }
 
 setStatus("오프라인");
@@ -138,6 +150,7 @@ let waitTimer = null;
 let waitRemain = 0;
 let joinedAt = 0;
 let resolved = false;
+let _lastWon = false; // 마지막 결과 기억 (룸 복귀 시 전달)
 let startArmed = false;
 let startTimeout = null;
 
@@ -198,6 +211,12 @@ function scheduleResultCleanup(){
     bestEffortExitCleanup({ force:true });
     try{ setStatus("오프라인"); }catch{}
     mode = "offline";
+    // EMBED 모드: 결과 오버레이 표시 후 3초 뒤 룸으로 복귀
+    if(EMBED){
+      setTimeout(()=>{
+        try{ window.parent?.postMessage({ type: "duel_over", payload: { won: _lastWon ?? false } }, "*"); }catch(_){}
+      }, 2800);
+    }
   }, 1200);
 }
 
@@ -559,6 +578,7 @@ async function enterRoom(joined){
     if(state?.over && !resolved){
       resolved = true;
       try{ if(game) game.canDrop = false; }catch{}
+      _lastWon = true;
       showNetOverlay({ title: "승리!", desc: "상대가 게임오버 되었습니다.", seconds: undefined, canClose: true, canRetry: true });
       scheduleResultCleanup();
     }
@@ -589,6 +609,7 @@ async function enterRoom(joined){
       if(mode === "offline" || !refs || !refs.eventsRef) return;
       if(!resolved){
         resolved = true;
+        _lastWon = false;
         showNetOverlay({ title: "패배", desc: "내 게임오버!", seconds: undefined, canClose: true, canRetry: true });
       }
       pushEvent({ api, eventsRef: refs.eventsRef, event: { from: pid, kind: "over", payload: { score: game?.score ?? 0 } } }).catch(()=>{});
@@ -752,6 +773,7 @@ function onEventRecv(payload){
     if(!resolved){
       resolved = true;
       try{ if(game) game.canDrop = false; }catch{}
+      _lastWon = true;
       showNetOverlay({ title: "승리!", desc: "상대가 게임오버 되었습니다.", seconds: undefined, canClose: true, canRetry: true });
        scheduleResultCleanup();
     }
@@ -810,6 +832,7 @@ async function bootEmbeddedBridge(){
     if(state?.over && !resolved){
       resolved = true;
       try{ if(game) game.canDrop = false; }catch{}
+      _lastWon = true;
       showNetOverlay({ title: "승리!", desc: "상대가 게임오버 되었습니다.", seconds: undefined, canClose: true, canRetry: true });
       scheduleResultCleanup();
     }
@@ -839,6 +862,7 @@ async function bootEmbeddedBridge(){
     game.onGameOver = ()=>{
       if(!resolved){
         resolved = true;
+        _lastWon = false;
         showNetOverlay({ title: "패배", desc: "내 게임오버!", seconds: undefined, canClose: true, canRetry: true });
       }
       pushEvent({ pid, event: { from: pid, kind: "over", payload: { score: game?.score ?? 0 } } }).catch(()=>{});
