@@ -348,6 +348,8 @@
     let round = 0;
     let lastRoundSeen = null;
     let maxRounds = 5;
+    // 정답 수 로컬 추적 (닉네임 → 정답 횟수)
+    const correctCounts = {};
 
     // draw state
     let strokeColor = '#000000';
@@ -736,20 +738,30 @@
       }
 
       if (d.type === 'da_chat'){
-        const nick = escapeHtml(String(d.nick||'Player'));
+        // nick 필드에서 순수 닉네임 추출 (서버가 '(정답 N회)' 붙여서 올 수도 있음)
+        const rawNick = String(d.nick||'Player');
+        const pureNick = rawNick.replace(/\s*\(정답\s*\d+회\)\s*$/, '').trim();
         const text = escapeHtml(String(d.text||''));
         if (d.system){
           addChatLine(`<span class="sys">시스템:</span> ${text}`);
         } else if (d.correct){
-          addChatLine(`<span class="sys">정답! 🎉</span> <b>${nick}</b> : ${text}`);
+          // 정답 횟수 클라이언트에서 직접 추적
+          correctCounts[pureNick] = (correctCounts[pureNick] || 0) + 1;
+          const cnt = correctCounts[pureNick];
+          addChatLine(`<span class="sys">🎉 정답!</span> <b>${escapeHtml(pureNick)}</b> · ${cnt}번째 정답 · <span style="opacity:.7">${text}</span>`);
           playSfx('correct');
         } else {
-          addChatLine(`<b>${nick}</b>: ${text}`);
+          // 일반 채팅: 정답 횟수 있으면 닉네임 옆에 표시
+          const cnt = correctCounts[pureNick] || 0;
+          const nickDisplay = escapeHtml(pureNick) + (cnt > 0 ? ` <span style="color:#7ef;font-size:.8em">(정답 ${cnt}회)</span>` : '');
+          addChatLine(`<b>${nickDisplay}</b>: ${text}`);
         }
         return;
       }
 
       if (d.type === 'da_over'){
+        // 게임 종료 시 정답 카운트 초기화
+        Object.keys(correctCounts).forEach(k => delete correctCounts[k]);
         const winner = escapeHtml(String(d.winnerNick||'승자'));
         addChatLine(`<span class="warn">🏆 게임 종료!</span> <b>${winner}</b> 님이 3문제를 맞혀 승리했습니다!`);
         setDrawer(false);
