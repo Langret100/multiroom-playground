@@ -1831,8 +1831,7 @@ const G = {
     
     showLevelUp() {
         // ===== 레벨업 화면 표시 =====
-        if (this._levelScreenOpen) return;
-        this._levelScreenOpen = true;
+        // [중복방지는 브릿지가 담당 - 여기서 return하면 브릿지 래핑 코드 실행 안 됨]
         this.paused = true;
         SoundManager.levelUp();
         document.getElementById('levelUpScreen').classList.remove('hidden');
@@ -1863,7 +1862,6 @@ const G = {
                 this.player.skillLevels[upKey] = currentLevel + 1;
                 up.apply(this.player);
                 document.getElementById('levelUpScreen').classList.add('hidden');
-                this._levelScreenOpen = false;
                 this.paused = false;
                 // bridge에 선택 완료 알림 (embed 모드에서 multiplayer 동기화용)
                 try{ if(window.__mxOnLevelPick) window.__mxOnLevelPick(up.id || up.name); }catch(_){}
@@ -2061,9 +2059,7 @@ const G = {
     // 선택 결과는 player에 직접 적용되고 게임 종료까지 누적됨
     showItemScreen() {
         // ===== 아이템 선택 화면 표시 =====
-        // 중복 호출 방지: 이미 열려있으면 카드 재셔플 하지 않음
-        if (this._itemScreenOpen) return;
-        this._itemScreenOpen = true;
+        // [중복방지는 브릿지가 담당 - 여기서 return하면 브릿지 래핑 코드 실행 안 됨]
         this.paused = true;  // 게임 일시정지
         document.getElementById('itemScreen').classList.remove('hidden');
         
@@ -2095,7 +2091,6 @@ const G = {
                 SoundManager.item && SoundManager.item();
                 
                 document.getElementById('itemScreen').classList.add('hidden');
-                this._itemScreenOpen = false; // 중복 방지 플래그 해제
                 this.paused = false;  // 게임 재개
                 this.currentChest = null;
                 // bridge에 선택 완료 알림 (embed 모드에서 multiplayer 동기화용)

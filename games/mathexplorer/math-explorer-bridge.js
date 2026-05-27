@@ -1106,25 +1106,39 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     }catch(_){}
   }
   function drawRemoteFx(){
+    // [FIX] main canvas ctx 대신 overlay canvas 사용 → strokeStyle 오염 방지
     try{
-      const c=window.ctx; if(!c) return;
+      ensureRemoteLabelCanvas();
+      const c=state.labelsCtx; if(!c) return;
       const arr=Array.isArray(state.remoteFx)?state.remoteFx:[]; if(!arr.length) return;
       const t=now();
+      // camera offset 계산 (게스트용)
+      const g=G(); const lp=g&&g.player;
+      const camX=lp?safeNum(lp.x)-state.labelsCanvas.width/2:0;
+      const camY=lp?safeNum(lp.y)-state.labelsCanvas.height/2:0;
       for(let i=arr.length-1;i>=0;i--){
         const fx=arr[i]; const age=t-safeNum(fx.t,0);
         if(age>420){ arr.splice(i,1); continue; }
         const a=Math.max(0,1-age/420);
-        const x=safeNum(fx.x), y=safeNum(fx.y), tx=safeNum(fx.tx,x), ty=safeNum(fx.ty,y);
+        const x=safeNum(fx.x)-camX, y=safeNum(fx.y)-camY;
+        const tx2=safeNum(fx.tx,fx.x)-camX, ty2=safeNum(fx.ty,fx.y)-camY;
         c.save(); c.globalAlpha = 0.25 + a*0.75;
         if(fx.kind==='archer'){
-          const ang=Math.atan2(ty-y, tx-x); const len=Math.max(12, Math.hypot(tx-x,ty-y)*Math.min(1,0.35+a*0.35));
-          c.translate(x,y); c.rotate(ang); c.strokeStyle='rgba(255,210,120,.95)'; c.lineWidth=2; c.beginPath(); c.moveTo(0,0); c.lineTo(len,0); c.stroke(); c.beginPath(); c.moveTo(len,0); c.lineTo(len-6,-3); c.lineTo(len-6,3); c.closePath(); c.fillStyle='rgba(255,220,140,.95)'; c.fill();
+          const ang=Math.atan2(ty2-y, tx2-x);
+          const len=Math.max(12, Math.hypot(tx2-x,ty2-y)*Math.min(1,0.35+a*0.35));
+          c.translate(x,y); c.rotate(ang);
+          c.strokeStyle='rgba(255,210,120,.95)'; c.lineWidth=2;
+          c.beginPath(); c.moveTo(0,0); c.lineTo(len,0); c.stroke();
+          c.beginPath(); c.moveTo(len,0); c.lineTo(len-6,-3); c.lineTo(len-6,3);
+          c.closePath(); c.fillStyle='rgba(255,220,140,.95)'; c.fill();
         }else if(fx.kind==='mage'){
-          const px=x+(tx-x)*(0.2+0.6*(1-a)), py=y+(ty-y)*(0.2+0.6*(1-a));
+          const px=x+(tx2-x)*(0.2+0.6*(1-a)), py=y+(ty2-y)*(0.2+0.6*(1-a));
           c.fillStyle='rgba(170,225,255,.95)'; c.beginPath(); c.arc(px,py,4+a*3,0,Math.PI*2); c.fill();
-          c.strokeStyle='rgba(120,200,255,.7)'; c.lineWidth=2; c.beginPath(); c.moveTo(x,y); c.lineTo(px,py); c.stroke();
+          c.strokeStyle='rgba(120,200,255,.7)'; c.lineWidth=2;
+          c.beginPath(); c.moveTo(x,y); c.lineTo(px,py); c.stroke();
         }else{
-          c.strokeStyle='rgba(255,255,255,.95)'; c.lineWidth=3; c.beginPath(); c.arc(x,y,10+a*8,-0.8,0.8); c.stroke();
+          c.strokeStyle='rgba(255,255,255,.95)'; c.lineWidth=3;
+          c.beginPath(); c.arc(x,y,10+a*8,-0.8,0.8); c.stroke();
         }
         c.restore();
       }
