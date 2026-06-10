@@ -548,36 +548,14 @@
     try{
       const g = G(); const p = g && g.player;
       if(!p || !key) return false;
-      // before 스냅샷: up.apply()가 이미 실행된 후이므로 delta를 역산해 "적용 전" 값으로 보정
-      const _afterSnap = snapshotChoiceStats(p);
-      const _fake = Object.assign({}, _afterSnap, { itemLevels: Object.assign({}, _afterSnap.itemLevels||{}) });
-      if(kind==='level') applyLevelChoiceLocal(_fake, key);
-      else applyItemChoiceLocal(_fake, key);
-      // _fake는 이중 적용 결과 → before를 "한 번 적용된" 상태(_afterSnap)로 설정하면
-      // hasChoiceApplied(_afterSnap, p) → p == _afterSnap → TRUE → 재적용 안 함 ✓
-      const before = _afterSnap;
-      // 150ms 후 1차 체크, 미적용이면 즉시 강제 적용
-      setTimeout(()=>{
-        try{
-          const g2 = G(); const p2 = g2 && g2.player;
-          if(!p2) return;
-          if(!hasChoiceApplied(before, p2, kind, key)){
-            if(kind==='level') applyLevelChoiceLocal(p2, key);
-            else applyItemChoiceLocal(p2, key);
-          }
-        }catch(_){}
-      }, 150);
-      // 600ms 후 2차 체크 (네트워크 지연 대비 재확인)
-      setTimeout(()=>{
-        try{
-          const g3 = G(); const p3 = g3 && g3.player;
-          if(!p3) return;
-          if(!hasChoiceApplied(before, p3, kind, key)){
-            if(kind==='level') applyLevelChoiceLocal(p3, key);
-            else applyItemChoiceLocal(p3, key);
-          }
-        }catch(_){}
-      }, 600);
+      // card.onclick 내부에서 up.apply()/item.apply()가 이미 실행된 후 호출됨.
+      // 여기서 할 일은 mxGuestChoiceStats(보너스 추적 객체) 업데이트뿐.
+      // _snap 기반의 더미 객체에 적용해 mxGuestChoiceStats의 카운터만 올린다.
+      // (더미 객체 자체는 버려지고, reapplyGuestChoiceStats가 실제 player에 50ms마다 재적용)
+      const _snap = snapshotChoiceStats(p);
+      const _dummy = Object.assign({}, _snap, { itemLevels: Object.assign({}, _snap.itemLevels||{}) });
+      if(kind==='level') applyLevelChoiceLocal(_dummy, key);
+      else applyItemChoiceLocal(_dummy, key);
       return true;
     }catch(_){ return false; }
   }
@@ -593,7 +571,16 @@
       poison:!!rs.poison, poisonDmg:safeNum(rs.poisonDmg,0), freeze:!!rs.freeze, explode:!!rs.explode, lightning:safeNum(rs.lightning,0), meteorChance:safeNum(rs.meteorChance,0), meteorDmg:safeNum(rs.meteorDmg,0),
       spinBlade:!!rs.spinBlade, spinDmgMultiplier:safeNum(rs.spinDmgMultiplier,1), crit:safeNum(rs.crit,0), multishot:Math.round(safeNum(rs.multishot,0))
     };
+    // [FIX v24] applyLevelChoiceLocal/applyItemChoiceLocal은 mxGuestChoiceStats를 global side-effect로 변경함.
+    // 이 함수는 다른 플레이어의 remoteState를 업데이트하기 위한 용도이므로
+    // 로컬 플레이어의 보너스 추적 객체(mxGuestChoiceStats)를 오염시키면 안 됨.
+    // 4인 게임에서 호스트가 choice_apply 3개를 받으면 damageBonus가 4배로 부풀어
+    // reapplyGuestChoiceStats가 호스트 damage를 비정상적으로 높게 강제 설정하는 버그 발생.
+    const _savedStats = Object.assign({}, mxGuestChoiceStats, { itemLevels: Object.assign({}, mxGuestChoiceStats.itemLevels||{}) });
     const ok = (kind==='level') ? applyLevelChoiceLocal(fake, key) : applyItemChoiceLocal(fake, key);
+    // 로컬 추적 객체 복원 (원격 선택이 내 보너스에 영향 주지 않도록)
+    Object.assign(mxGuestChoiceStats, _savedStats);
+    mxGuestChoiceStats.itemLevels = Object.assign({}, _savedStats.itemLevels||{});
     if(!ok) return false;
     Object.assign(rs, fake, { itemLevels: Object.assign({}, fake.itemLevels||{}), skillLevels: Object.assign({}, fake.skillLevels||{}) });
     return true;
@@ -1299,8 +1286,9 @@ function simulateRemoteAttackOnHost(rs, meta={}){
             const nonce = `${Math.floor(t0/20)}:${Math.round(safeNum(this.x,0))}:${Math.round(safeNum(this.y,0))}`;
             if(state.__mxLastAttackNonce !== nonce){
               state.__mxLastAttackNonce = nonce;
-              try{ state.__mxLastAttackAim={ x:safeNum(target&&target.x, safeNum(this.x,0)), y:safeNum(target&&target.y, safeNum(this.y,0)), t:now(), kind:(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee')) }; if(!iAmHost()) pushRemoteFx(state.__mxLastAttackAim.kind, safeNum(this.x,0), safeNum(this.y,0), state.__mxLastAttackAim.x, state.__mxLastAttackAim.y); }catch(_){} 
-              sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(this.x,0)), y:Math.round(safeNum(this.y,0)), tx:Math.round(safeNum(target&&target.x, NaN)), ty:Math.round(safeNum(target&&target.y, NaN)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), crit:safeNum(this.crit,0), charType:ctype, pulse:(getLocalAttackPulse(this)||t0) });
+              try{ state.__mxLastAttackAim={ x:safeNum(target&&target.x, safeNum(this.x,0)), y:safeNum(target&&target.y, safeNum(this.y,0)), t:now(), kind:(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee')) }; if(!iAmHost()) pushRemoteFx(state.__mxLastAttackAim.kind, safeNum(this.x,0), safeNum(this.y,0), state.__mxLastAttackAim.x, state.__mxLastAttackAim.y); }catch(_){}
+              // [FIX v24] remote_attack 전송은 wrapGameHooks의 prototype wrapper가 완전한 스탯(아이템 효과 포함)으로 처리.
+              // 이 인스턴스 wrapper에서 중복 전송하면 불완전 스탯 패킷이 먼저 도착 → dedup으로 완전 패킷 드롭 → 아이템/공격속도 효과 무시됨.
             }
           }
         }catch(_){}
@@ -1356,6 +1344,9 @@ function simulateRemoteAttackOnHost(rs, meta={}){
           if(state.worldSnap) applyWorldSnapshotToGuest(state.worldSnap);
           const se=g.spawnEnemies, sb=g.spawnBoss, cb=g.checkBossSpawn, pr=g.processRangedEffectQueue;
           const saved={ enemies:g.enemies, projectiles:g.projectiles, enemyProjectiles:g.enemyProjectiles, items:g.items, slashes:g.slashes, boss:g.boss };
+          // [FIX v24] ghost drop(exp 오브)이 게스트 루프에서 매 프레임 gainExp 호출하는 버그 방지.
+          // 게스트의 XP/레벨은 applyHostPlayerProgressToGuest(worldSnap)가 직접 동기화함.
+          let _savedGainExp = null;
           try{
             g.spawnEnemies=noSpawnEnemies; g.spawnBoss=noBossSpawn; g.checkBossSpawn=noCheckBossSpawn; g.processRangedEffectQueue=noRangedQueue;
             const gw=state.worldGhost||{};
@@ -1365,9 +1356,12 @@ function simulateRemoteAttackOnHost(rs, meta={}){
             g.items = Array.isArray(gw.drops)?gw.drops.slice():[];
             g.slashes = Array.isArray(gw.slashes)?gw.slashes.slice():[];
             g.boss = g.enemies.find(e=>e&&e.isBoss) || null;
+            // gainExp 임시 비활성화: ghost drop 충돌로 spurious 레벨업 방지
+            if(g.player && typeof g.player.gainExp === 'function'){ _savedGainExp = g.player.gainExp; g.player.gainExp = function(){}; }
             try{ return origLoop2(timestamp); }
             catch(err){ try{ console.warn('[mx] guest loop suppressed error', err); }catch(_){} return; }
           } finally {
+            if(g.player && _savedGainExp) g.player.gainExp = _savedGainExp;
             g.spawnEnemies=se; g.spawnBoss=sb; g.checkBossSpawn=cb; g.processRangedEffectQueue=pr;
             if(state.worldGhost){
               const gw=state.worldGhost||{};
@@ -1613,6 +1607,6 @@ const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectT
   setInterval(()=>{ try{ postWorldIfHost(); }catch(_){ } },50);
   setTimeout(()=>{ try{ maybeStartSequence(); }catch(_){ } },800);
   setTimeout(()=>post({ type:'bridge_ready' }),50);
-  try{ console.log('[MathExplorer bridge v23] loaded'); }catch(_){}
+  try{ console.log('[MathExplorer bridge v24-fix] loaded'); }catch(_){}
   try{ installEmbedStartLock(); forceEmbedScreens(); }catch(_){ }
 })();
