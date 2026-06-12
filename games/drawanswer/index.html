@@ -642,6 +642,11 @@
       if (endAt && left <= 0 && __timeupPlayedFor !== endAt){
         __timeupPlayedFor = endAt;
         playSfx('timeup');
+        // [FIX] DO 이벤트 루프를 깨워 setTimeout 콜백이 발화하도록 da_sync 전송.
+        // 아무도 그림/채팅을 안 하면 메시지 유입이 없어 이벤트 루프가 멈추고
+        // _daOnTimeout setTimeout이 큐에 있어도 실행이 안 됨.
+        // da_sync는 room.js가 이미 서버로 relay하므로 별도 수정 불필요.
+        setTimeout(()=>{ try{ sendToParent({ type:'da_sync' }); }catch(_){} }, 500);
       }
     }, 250);
 
