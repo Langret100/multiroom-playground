@@ -210,6 +210,17 @@ this.st = {
   interval: null,
 };
 
+// ---- Soccer transient state ----
+this.sc = {
+  players: {},   // sessionId -> { x, y, dir, vx, vy, nick, seat, team }
+  ball: null,    // { x, y, vx, vy } — last known ball from host
+  score: { A: 0, B: 0 },
+  startedAt: 0,
+  durationMs: 120000, // 2 minutes
+  timer: null,
+  over: false,
+};
+
     this.onMessage("ready", (client, { ready }) => {
       const p = this.state.players.get(client.sessionId);
       if (!p || this.state.phase !== "lobby") return;
@@ -358,6 +369,11 @@ this.st = {
       // SnakeTail init (3-minute round) for coop-competitive mode
       if (this.state.mode === "snaketail"){
         this.initSnakeTail();
+      }
+
+      // Soccer 2-minute match init
+      if (this.state.mode === "soccer"){
+        this.initSoccer();
       }
 
       if (this.state.modeType === "duel"){
@@ -992,7 +1008,75 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
   this.finishSnakeTail(String(reason || "client_over").slice(0, 64), String(winnerSid || ""));
 });
 
+// ── Soccer message handlers ──────────────────────────────────────────────
 
+// Player position relay
+this.onMessage("sc_pos", (client, payload) => {
+  if (this.state.mode !== "soccer") return;
+  if (this.state.phase !== "playing") return;
+  const sid = client.sessionId;
+  const p = this.sc?.players?.[sid];
+  if (p) {
+    p.x   = Number(payload.x   ?? p.x);
+    p.y   = Number(payload.y   ?? p.y);
+    p.dir = Number(payload.dir ?? p.dir);
+    p.vx  = Number(payload.vx  ?? 0);
+    p.vy  = Number(payload.vy  ?? 0);
+  }
+  // Relay to all OTHER clients
+  this.broadcast("sc_pos", { sid, x: payload.x, y: payload.y, dir: payload.dir, vx: payload.vx, vy: payload.vy }, { except: client });
+});
+
+// Ball position relay (host only)
+this.onMessage("sc_ball", (client, payload) => {
+  if (this.state.mode !== "soccer") return;
+  if (this.state.phase !== "playing") return;
+  // Only accept from the host (seat 0)
+  const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
+  if (seat !== 0) return;
+  if (this.sc) {
+    this.sc.ball = { x: Number(payload.x ?? 0), y: Number(payload.y ?? 0), vx: Number(payload.vx ?? 0), vy: Number(payload.vy ?? 0) };
+  }
+  this.broadcast("sc_ball", this.sc.ball, { except: client });
+});
+
+// Goal scored (host only — host is authoritative for ball physics)
+this.onMessage("sc_goal", (client, payload) => {
+  if (this.state.mode !== "soccer") return;
+  if (this.state.phase !== "playing") return;
+  if (this.sc?.over) return;
+  const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
+  if (seat !== 0) return;
+  const team   = String(payload.team || "");
+  if (team !== "A" && team !== "B") return;
+  const scoreA = Number(payload.scoreA ?? 0);
+  const scoreB = Number(payload.scoreB ?? 0);
+  if (this.sc) { this.sc.score.A = scoreA; this.sc.score.B = scoreB; }
+  // Broadcast to everyone (including host so all clients update score)
+  this.broadcast("sc_goal", { team, scoreA, scoreB });
+});
+
+// Game over (host sends when timer runs out)
+this.onMessage("sc_over", (client, payload) => {
+  if (this.state.mode !== "soccer") return;
+  if (this.state.phase !== "playing") return;
+  const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
+  if (seat !== 0) return;
+  const winner = String(payload.winner || "draw");
+  this.finishSoccer(winner);
+});
+
+// State sync request (late-join or reconnect)
+this.onMessage("sc_sync", (client) => {
+  if (this.state.mode !== "soccer") return;
+  if (!this.sc) return;
+  if (this.state.phase === "playing") {
+    client.send("sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
+    if (this.sc.ball) client.send("sc_ball", this.sc.ball);
+  }
+});
+
+// ── End Soccer message handlers ──────────────────────────────────────────
 
     
     // Duel relay: no persistence. Only active match players can send.
@@ -1204,6 +1288,9 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
     this.tg = null;
     try{ this.st?.players && (this.st.players = {}); this.st?.foods && (this.st.foods = []); }catch(_){ }
     this.st = null;
+    try{ clearClockTimer(this.sc?.timer); }catch(_){ }
+    try{ if (this.sc) { this.sc.players = {}; this.sc.ball = null; } }catch(_){ }
+    this.sc = null;
     this.tour = null;
     try{ this.inputs?.clear(); }catch(_){ }
     try{ this._lastClientPing?.clear(); }catch(_){ }
@@ -1868,6 +1955,96 @@ try{
 
       this.broadcast("backToRoom", { mode: "snaketail" });
     }, 2500);
+  }
+
+  // ── Soccer ──────────────────────────────────────────────────────────────
+
+  initSoccer() {
+    if (!this.sc) return;
+
+    // Reset state
+    this.sc.players = {};
+    this.sc.ball    = null;
+    this.sc.score   = { A: 0, B: 0 };
+    this.sc.over    = false;
+    this.sc.startedAt  = Date.now();
+    this.sc.durationMs = 120_000; // 2 minutes
+
+    // Build player entries from room roster (even seat = team A, odd = team B)
+    try {
+      for (const [sid, ps] of this.state.players.entries()) {
+        const seat = Number(this.state.order?.get(sid) ?? -1);
+        if (seat < 0) continue; // not seated
+        this.sc.players[sid] = {
+          x: 0, y: 0, dir: 0, vx: 0, vy: 0,
+          nick: String(ps?.nick || "Player"),
+          seat,
+          team: seat % 2 === 0 ? "A" : "B",
+        };
+      }
+    } catch (_) {}
+
+    // Send timer to all clients so they start their countdowns
+    this.broadcast("sc_timer", {
+      startTs:    this.sc.startedAt,
+      durationMs: this.sc.durationMs,
+    });
+
+    // Server-side safety timeout: force finish slightly after game should end
+    this.sc.timer = this.clock.setTimeout(() => {
+      if (this.state.mode !== "soccer" || this.state.phase !== "playing") return;
+      if (this.sc?.over) return;
+      const w = (this.sc.score.A > this.sc.score.B) ? "A"
+              : (this.sc.score.B > this.sc.score.A) ? "B" : "draw";
+      this.finishSoccer(w);
+    }, this.sc.durationMs + 5000); // 5 s buffer for network lag
+  }
+
+  finishSoccer(winner) {
+    if (!this.sc || this.sc.over) return;
+    if (this.state.mode !== "soccer") return;
+    this.sc.over = true;
+
+    try { clearClockTimer(this.sc.timer); } catch (_) {}
+
+    const sA = this.sc.score.A;
+    const sB = this.sc.score.B;
+    const winnerNick = winner === "A" ? "A팀" : winner === "B" ? "B팀" : "무승부";
+
+    // Find a representative winner SID for the standard result overlay
+    let winnerSid = "";
+    try {
+      for (const [sid, p] of Object.entries(this.sc.players)) {
+        if (!winnerSid) winnerSid = sid;
+        if (winner !== "draw" && p.team === winner) { winnerSid = sid; break; }
+      }
+    } catch (_) {}
+
+    // Notify all clients with soccer-specific end data
+    this.broadcast("sc_end", { scoreA: sA, scoreB: sB, winner, winnerNick });
+
+    // Standard result message (for room overlay / stats)
+    this.broadcast("result", {
+      mode:       "soccer",
+      done:       true,
+      winnerSid,
+      winnerNick,
+      reason:     "time",
+    });
+
+    // Return to lobby after a short delay
+    this.clock.setTimeout(() => {
+      this.state.phase = "lobby";
+      this.started = false;
+      for (const ps of this.state.players.values()) ps.ready = false;
+      this.recomputeReady();
+      try { this.setMetadata({ ...this.metadata, status: "waiting" }); } catch (_) {}
+
+      // Reset transient soccer state
+      try { this.sc.players = {}; this.sc.ball = null; this.sc.score = { A: 0, B: 0 }; this.sc.over = false; } catch (_) {}
+
+      this.broadcast("backToRoom", { mode: "soccer" });
+    }, 3500);
   }
 
 }

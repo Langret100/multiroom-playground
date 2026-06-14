@@ -461,7 +461,7 @@ function updatePreview(modeId){
       // Wider mobile threshold so long Korean game titles don't auto-wrap awkwardly
       const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
       const gameId = meta?.id || modeId || "";
-      const hasPreviewArt = ["stackga","suika","drawanswer","togester","suhaktokki","mathexplorer","backrooms3d","snaketail"].includes(gameId);
+      const hasPreviewArt = ["stackga","suika","drawanswer","togester","suhaktokki","mathexplorer","backrooms3d","snaketail","soccer"].includes(gameId);
       previewEls.thumb.classList.toggle("has-art", hasPreviewArt);
       if ((meta?.id || modeId) === "drawanswer" && isMobileNarrow && !hasPreviewArt){
         previewEls.thumb.classList.add("label-drawanswer-mobile");
@@ -1291,6 +1291,37 @@ function updatePreview(modeId){
       try{ room.send("st_over", { reason: d.reason, winnerSid: d.winnerSid }); }catch(_){ }
       return;
     }
+    // ── Soccer: iframe → server relays ─────────────────────────────
+    if (d.type === "sc_pos"){
+      if (!fromMain) return;
+      const _now = Date.now();
+      if (!window.__scPosTs) window.__scPosTs = 0;
+      if (_now - window.__scPosTs < 40) return; // max ~25 fps
+      window.__scPosTs = _now;
+      try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_ball"){
+      if (!fromMain) return;
+      try{ room.send("sc_ball", { x: d.x, y: d.y, vx: d.vx, vy: d.vy }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_goal"){
+      if (!fromMain) return;
+      try{ room.send("sc_goal", { team: d.team, scoreA: d.scoreA, scoreB: d.scoreB }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_over"){
+      if (!fromMain) return;
+      try{ room.send("sc_over", { scoreA: d.scoreA, scoreB: d.scoreB, winner: d.winner }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_sync"){
+      if (!fromMain) return;
+      try{ room.send("sc_sync", {}); }catch(_){ }
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────
     if (d.type === "duel_state"){
       if (!fromMain && !fromCpu) return;
       const senderSid = fromCpu ? CPU_SID : mySessionId;
@@ -1723,6 +1754,12 @@ else if (isCoop){
     canStart = true;
     startText = "혼자 시작";
     startAction = "start";
+  } else if (modeId === "soccer") {
+    // 축구: 짝수 인원(2·4·6·8명)만 시작 가능
+    if (humanCount < 2) reason = "2명 이상 필요합니다.";
+    else if (humanCount % 2 !== 0) reason = `짝수 인원이 필요합니다 (현재 ${humanCount}명)`;
+    else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
+    else canStart = true;
   } else {
     if (humanCount < 2) reason = "2명 이상 필요합니다.";
     else if (!nonHostHumanReady) reason = "모두 준비해야 시작됩니다.";
@@ -2164,6 +2201,12 @@ function sendCoopBridgeInit(){
   try{
     if (coop.meta && coop.meta.id === "snaketail"){
       room?.send?.("st_sync", {});
+    }
+  }catch(_){ }
+  // Soccer: request current game state (timer, scores, ball)
+  try{
+    if (coop.meta && coop.meta.id === "soccer"){
+      room?.send?.("sc_sync", {});
     }
   }catch(_){ }
 // Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
@@ -2910,6 +2953,24 @@ try{
       room.onMessage("st_event", (msg)=>{
         postToMain({ type:"st_event", event: msg.event || {} });
       });
+
+      // ── Soccer: server → iframe relays ──────────────────────────────
+      room.onMessage("sc_timer", (msg)=>{
+        postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
+      });
+      room.onMessage("sc_pos", (msg)=>{
+        postToMain({ type:"sc_pos", sid: msg.sid, x: msg.x, y: msg.y, dir: msg.dir, vx: msg.vx, vy: msg.vy });
+      });
+      room.onMessage("sc_ball", (msg)=>{
+        postToMain({ type:"sc_ball", x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy });
+      });
+      room.onMessage("sc_goal", (msg)=>{
+        postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB });
+      });
+      room.onMessage("sc_end", (msg)=>{
+        postToMain({ type:"sc_end", scoreA: msg.scoreA, scoreB: msg.scoreB, winner: msg.winner, winnerNick: msg.winnerNick });
+      });
+      // ────────────────────────────────────────────────────────────────
 
       room.onMessage("frame", (frame)=> {
         // lockstep: server gives inputs for each tick

@@ -126,6 +126,21 @@
     },
 
     {
+      id: "soccer",
+      name: "축구",
+      mobileHint: "모바일: 조이스틱으로 이동, 공 근처에서 자동 킥",
+      pcHint: "PC: WASD 또는 방향키 이동 · 공에 가까워지면 자동 킥",
+      descLines: [
+        "짝수 인원(2·4·6·8명)이 두 팀으로 나뉘어 축구를 합니다.",
+        "2분 안에 더 많은 골을 넣은 팀이 승리! (짝수 석 = A팀, 홀수 석 = B팀)",
+      ],
+      type: "coop",
+      badgeClass: "coop",
+      maxClients: 8,
+      embedPath: "games/soccer/index.html"
+    },
+
+    {
       id: "geumchikeo",
       name: "금칙어 게임",
       mobileHint: "모바일: 채팅으로 대화하며 상대의 금칙어를 유도하세요!",

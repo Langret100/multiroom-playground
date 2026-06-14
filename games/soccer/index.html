@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>⚽ 축구</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body {
+  width:100%; height:100%; background:#0a0f0a;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none;
+}
+canvas { display:block; }
+#overlay {
+  position:fixed; inset:0; z-index:30;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  background:rgba(0,0,0,.88); font-family:monospace;
+}
+#overlay.hidden { display:none; }
+#ovTitle { font-size:2.8rem; font-weight:bold; color:#fff; letter-spacing:3px; }
+#ovSub   { font-size:1.05rem; color:#aaa; margin-top:12px; text-align:center; padding:0 24px; line-height:1.8; }
+#ovCtrl  { margin-top:18px; padding:12px 22px; border:1px solid #333; border-radius:8px;
+           color:#777; font-size:.8rem; line-height:1.85; text-align:left; }
+#mobileUI { position:fixed; inset:0; pointer-events:none; z-index:20; display:none; }
+/* Joystick */
+#joy { position:absolute; bottom:20px; left:20px; width:118px; height:118px;
+       pointer-events:all; touch-action:none; }
+#joyBase { position:absolute; inset:0; border-radius:50%;
+           background:rgba(255,255,255,.07); border:2px solid rgba(255,255,255,.2); }
+#joyKnob { position:absolute; width:50px; height:50px; border-radius:50%;
+           background:rgba(255,255,255,.38); top:34px; left:34px; }
+/* Kick button — shows charge */
+#btnKick {
+  position:absolute; bottom:22px; right:22px;
+  width:76px; height:76px; border-radius:50%;
+  border:3px solid rgba(255,200,0,.85);
+  overflow:hidden; pointer-events:all; touch-action:none;
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+  font:bold 12px monospace; color:#fff; line-height:1.3;
+}
+#kickChargeFill {
+  position:absolute; bottom:0; left:0; right:0; height:0%;
+  background:rgba(255,180,0,.55); transition:height .04s linear;
+}
+#kickLabel { position:relative; z-index:1; text-align:center; font-size:22px; line-height:1; }
+#kickSub   { position:relative; z-index:1; font-size:11px; }
+/* Tackle button */
+#btnTackle {
+  position:absolute; bottom:112px; right:26px;
+  width:62px; height:62px; border-radius:50%;
+  background:rgba(60,140,255,.68); border:3px solid rgba(100,180,255,.85);
+  color:#fff; font:bold 11px monospace;
+  display:flex; align-items:center; justify-content:center; flex-direction:column;
+  pointer-events:all; touch-action:none; line-height:1.3;
+}
+#volBtn {
+  position:fixed; top:8px; right:10px; z-index:40;
+  background:rgba(0,0,0,.55); border:1px solid #444; border-radius:6px;
+  color:#aaa; font:14px monospace; padding:4px 8px; cursor:pointer;
+}
+</style>
+</head>
+<body>
+<canvas id="gc"></canvas>
+
+<div id="overlay">
+  <div id="ovTitle">⚽ 축구</div>
+  <div id="ovSub">게임 시작을 기다리는 중...</div>
+  <div id="ovCtrl">
+    🖥️ PC : WASD/방향키 이동 &nbsp;|&nbsp; <b>Space 누르고 떼기</b> 킥 (길게=강하게) &nbsp;|&nbsp; <b>Shift/Z</b> 태클<br>
+    📱 모바일 : 조이스틱 이동 &nbsp;|&nbsp; <b>⚽ KICK</b> 누르고 떼기 (길게=강하게) &nbsp;|&nbsp; <b>💨 TACKLE</b> 태클
+  </div>
+</div>
+
+<div id="mobileUI">
+  <div id="joy"><div id="joyBase"></div><div id="joyKnob"></div></div>
+  <div id="btnKick">
+    <div id="kickChargeFill"></div>
+    <div id="kickLabel">⚽</div>
+    <div id="kickSub">KICK</div>
+  </div>
+  <div id="btnTackle"><span style="font-size:18px">💨</span><span>TACKLE</span></div>
+</div>
+
+<button id="volBtn">🔊</button>
+
+<script>
+/*
+ * ═══════════════════════════════════════════════════════════════════════════
+ *  SOCCER  –  게임 사양서 (Game Specification)
+ *  이 주석은 새 대화방에서 수정 시 참고용입니다. 절대 삭제하지 마세요.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ *  [ 기본 규칙 ]
+ *  - 짝수 인원 전용: 2·4·6·8명 (홀수이면 로비에서 시작 불가)
+ *  - 짝수 석(seat 0,2,4,6) = A팀(빨강), 홀수 석(seat 1,3,5,7) = B팀(파랑)
+ *  - 제한 시간: 2분(120초), 종료 시 더 많은 골을 넣은 팀 승리. 동점이면 무승부.
+ *
+ *  [ 드리블 — 자동 (기본 이동) ]
+ *  - 공 근처(DRIBBLE_RANGE px)에서 이동하면 공이 진행 방향 앞으로 부드럽게 밀림
+ *  - 가장 가까운 플레이어가 ballOwner(드리블 소유자)로 지정됨 (host 결정)
+ *  - 소유자가 바뀔 때 히스테리시스 적용: 현재 소유자가 DRIBBLE_RANGE*1.4 이내면 유지
+ *  - ballOwner는 sc_ball 메시지에 owner 필드로 브로드캐스트됨
+ *
+ *  [ 속도 ]
+ *  - 공 없을 때  : PLR_SPD        (기준 속도)
+ *  - 드리블 중   : PLR_SPD / 1.08  (≈ 8% 느림)
+ *  - 태클 대시 중: TACKLE_SPD      (일시적 고속)
+ *
+ *  [ 킥 — 차징 시스템 ]
+ *  - PC: Space 누름 → 차징 시작, 떼면 킥 발사
+ *  - 모바일: ⚽ KICK 버튼 누름 → 차징, 떼면 킥 발사
+ *  - 차징 길이에 따라 킥 파워 선형 증가: MIN_KICK_F ~ MAX_KICK_F
+ *  - 최대 차징 시간: MAX_CHARGE_F 프레임 (~0.9초)
+ *  - 유효 조건: 킥 발사 시 공이 KICK_RANGE px 이내여야 함
+ *  - 모바일 버튼 내부 채워지는 애니메이션으로 차징 정도 시각화
+ *  - 킥 후 공은 드리블 소유에서 해제됨
+ *
+ *  [ 플레이어 충돌 물리 — 클라이언트 사이드 예측 ]
+ *  - 서버 코드 변경 없이 각 클라이언트가 자신의 위치에 대해서만 연산 (분산 물리)
+ *  - 다른 플레이어와 PLR_R*2 이내 겹치면 자신을 밀어냄 (pushStrength = 겹침량 * 0.55)
+ *  - 보정된 위치는 다음 sc_pos 전송(~40ms)에 자동 반영됨
+ *  - 공 소유자 앞으로 몸을 끼워 넣으면 내가 공에 가장 가까운 플레이어가 되어 ballOwner 교체
+ *    → 태클 버튼 없이도 달려들어 몸싸움으로 공 탈취 가능
+ *
+ *  [ 태클 — 고속 강제 탈취 ]
+ *  - PC: Shift 또는 Z
+ *  - 모바일: 💨 TACKLE 버튼 (쿨다운 중 버튼에 conic-gradient 시계방향 채움 시각화)
+ *  - 효과: 플레이어가 TACKLE_DUR 프레임간 고속 대시 (일반 충돌보다 강력한 돌파)
+ *  - 탈취 조건: 대시 중 상대 ballOwner에게 TACKLE_STEAL_R px 이내 접근
+ *    → 공이 임의 방향으로 튕겨 나감
+ *    → 상대 STUN_DUR 프레임 동안 스턴 (조작 불가)
+ *  - 쿨다운: TACKLE_CD_F 프레임 (~1.1초)
+ *  - 모바일 버튼: 쿨다운 중 어두운 conic-gradient 오버레이, 준비되면 원래 색 복귀
+ *
+ *  [ 골 ]
+ *  - 공이 골라인을 완전히 넘으면 득점 (host가 판정)
+ *  - 득점 후 2.5초간 화면 플래시 + 컨페티 → 전원 리스폰 → 재개
+ *
+ *  [ 효과음 — Web Audio API 합성 ]
+ *  - sfxKick: 가벼운 드리블 탭 사운드
+ *  - sfxPowerKick: 풀 차징 킥 사운드
+ *  - sfxTackle: 태클 충격음
+ *  - sfxGoal: 골 팡파레 (4음 상행)
+ *  - sfxWhistle: 킥오프 휘슬
+ *  - sfxEndWhistle: 경기 종료 3연타 휘슬
+ *  - sfxBeep: 마지막 10초 카운트다운 삐 소리
+ *
+ *  [ 이펙트 ]
+ *  - 드리블 탭(킥): 작은 흰색 확장 링
+ *  - 파워킥: 큰 금색 링 + 플레이어 주변 차징 링
+ *  - 태클: 충돌 지점에 별 파티클 6개
+ *  - 스턴: 스턴된 플레이어 머리 위 ★ 표시
+ *  - 골: 55개 색종이 컨페티 폭발 + 화면 플래시
+ *  - 볼 잔상: 최근 14프레임 궤적 트레일
+ *
+ *  [ 네트워크 아키텍처 ]
+ *  - Host (seat 0): 공 물리 계산·드리블·탈취 판정 → sc_ball 브로드캐스트 (30fps)
+ *  - 모든 클라이언트: 자기 위치+킥/태클 상태 sc_pos 전송 (25fps, 킥 발사 시 즉시)
+ *  - 골: host → sc_goal → 서버 브로드캐스트 → 전 클라이언트 점수 업데이트
+ *  - 게임 종료: host → sc_over → 서버 finishSoccer() → backToRoom
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+'use strict';
+
+const EMBED     = window.self !== window.top;
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window;
+
+/* ── 캔버스 레이아웃 ── */
+const CW = 900, CH = 570;
+const HUD_H = 56;
+const FX = 52, FY = HUD_H + 6, FW = 796, FH = 450;
+const FCX = FX + FW/2, FCY = FY + FH/2;
+const GOAL_H = 154, GOAL_D = 30;
+const GY1 = FCY - GOAL_H/2, GY2 = FCY + GOAL_H/2;
+const GL = FX, GR = FX + FW;
+
+/* ── 물리 상수 ── */
+const BALL_R = 11, PLR_R = 17;
+const PLR_SPD          = 3.8;               // 공 없을 때 기준 속도
+const PLR_SPD_DRIBBLE  = PLR_SPD / 1.08;   // 드리블 중 속도 (약 8% 느림)
+const TACKLE_SPD       = 9.0;              // 태클 대시 속도
+const BALL_FRIC        = 0.975;
+const MIN_KICK_F       = 6.5;              // 최소 킥 파워 (탭)
+const MAX_KICK_F       = 24;               // 최대 킥 파워 (풀 차징)
+const DRIBBLE_RANGE    = PLR_R + BALL_R + 10;  // 드리블 감지 범위 (38px)
+const DRIBBLE_DIST     = PLR_R + BALL_R + 5;   // 드리블 목표 위치 (앞으로)
+const DRIBBLE_HYST     = DRIBBLE_RANGE * 1.4;  // 소유권 히스테리시스 범위
+const KICK_RANGE       = PLR_R + BALL_R + 26;  // 킥 유효 범위
+const TACKLE_STEAL_R   = PLR_R * 2 + 8;        // 태클 탈취 판정 범위
+const MAX_BV           = 24;
+const GAME_MS          = 120_000;              // 2분
+
+/* ── 쿨다운·타이머 (프레임 기준 @60fps) ── */
+const MAX_CHARGE_F  = 55;   // 최대 차징 시간 (~0.9초)
+const TACKLE_CD_F   = 68;   // 태클 쿨다운 (~1.1초)
+const TACKLE_DUR    = 16;   // 태클 대시 지속
+const STUN_DUR      = 55;   // 스턴 지속 (~0.9초)
+
+/* ── 팔레트 ── */
+const CA='#f44336', CA2='#b71c1c', CB='#1e88e5', CB2='#0d47a1';
+const CFLD='#1b6b1b', CFLD2='#196019';
+
+/* ── 스폰 테이블 [rx, ry] — 하프필드 상대 좌표 ── */
+const SPAWNS=[[[.28,.50]],[[.28,.31],[.28,.69]],[[.20,.50],[.36,.27],[.36,.73]],
+              [[.20,.29],[.20,.71],[.38,.29],[.38,.71]]];
+function getSpawn(i,sz,tm){
+  const[rx,ry]=SPAWNS[Math.min(sz,4)-1][i%Math.min(sz,4)];
+  return{x:tm==='A'?FX+rx*FW*.47:FX+FW-rx*FW*.47,y:FY+ry*FH};
+}
+
+/* ══════════════════════════════════════════════════════
+   오디오
+══════════════════════════════════════════════════════ */
+let muted=false, audioReady=false, actx=null;
+const bgm=new Audio('./soccmusic.mp3');
+bgm.loop=true; bgm.volume=0.38;
+
+document.getElementById('volBtn').addEventListener('click',()=>{
+  muted=!muted; bgm.muted=muted;
+  document.getElementById('volBtn').textContent=muted?'🔇':'🔊';
+});
+function ensureAudio(){
+  if(audioReady)return; audioReady=true;
+  try{actx=new(window.AudioContext||window.webkitAudioContext)();}catch(_){}
+  bgm.play().catch(()=>{});
+}
+['keydown','touchstart','mousedown'].forEach(ev=>
+  window.addEventListener(ev,ensureAudio,{once:true,passive:true}));
+
+function sfx(fn){if(!actx||muted)return;try{fn(actx);}catch(_){}}
+
+function sfxKick(){sfx(ac=>{
+  const o=ac.createOscillator(),g=ac.createGain();
+  o.connect(g);g.connect(ac.destination);o.type='sine';
+  const t=ac.currentTime;
+  o.frequency.setValueAtTime(190,t);o.frequency.exponentialRampToValueAtTime(50,t+.12);
+  g.gain.setValueAtTime(.45,t);g.gain.exponentialRampToValueAtTime(.001,t+.13);
+  o.start(t);o.stop(t+.13);
+});}
+function sfxPowerKick(){sfx(ac=>{
+  ['sawtooth','square'].forEach((type,i)=>{
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.connect(g);g.connect(ac.destination);
+    const t=ac.currentTime;
+    o.type=type;o.frequency.setValueAtTime(300-i*90,t);
+    o.frequency.exponentialRampToValueAtTime(48,t+.22);
+    g.gain.setValueAtTime(.38-i*.08,t);g.gain.exponentialRampToValueAtTime(.001,t+.24);
+    o.start(t);o.stop(t+.24);
+  });
+});}
+function sfxTackle(){sfx(ac=>{
+  const buf=ac.createBuffer(1,ac.sampleRate*.18,ac.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length)*.7;
+  const src=ac.createBufferSource(),g=ac.createGain(),f=ac.createBiquadFilter();
+  f.type='lowpass';f.frequency.value=380;
+  src.buffer=buf;src.connect(f);f.connect(g);g.connect(ac.destination);
+  g.gain.setValueAtTime(.85,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+.18);
+  src.start();
+});}
+function sfxGoal(){sfx(ac=>{
+  [261,329,392,523].forEach((fr,i)=>{
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.connect(g);g.connect(ac.destination);
+    const t=ac.currentTime+i*.13;o.type='square';o.frequency.value=fr;
+    g.gain.setValueAtTime(.28,t);g.gain.exponentialRampToValueAtTime(.001,t+.34);
+    o.start(t);o.stop(t+.35);
+  });
+});}
+function sfxWhistle(){sfx(ac=>{
+  const o=ac.createOscillator(),g=ac.createGain();
+  o.connect(g);g.connect(ac.destination);
+  const t=ac.currentTime;o.type='sine';
+  o.frequency.setValueAtTime(2600,t);o.frequency.setValueAtTime(2100,t+.2);
+  g.gain.setValueAtTime(.38,t);g.gain.exponentialRampToValueAtTime(.001,t+.54);
+  o.start(t);o.stop(t+.55);
+});}
+function sfxEndWhistle(){sfx(ac=>{
+  for(let i=0;i<3;i++){
+    const o=ac.createOscillator(),g=ac.createGain();
+    o.connect(g);g.connect(ac.destination);
+    const t=ac.currentTime+i*.22;o.type='sine';o.frequency.value=2400;
+    g.gain.setValueAtTime(.33,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);
+    o.start(t);o.stop(t+.19);
+  }
+});}
+function sfxBeep(){sfx(ac=>{
+  const o=ac.createOscillator(),g=ac.createGain();
+  o.connect(g);g.connect(ac.destination);
+  const t=ac.currentTime;o.type='sine';o.frequency.value=880;
+  g.gain.setValueAtTime(.22,t);g.gain.exponentialRampToValueAtTime(.001,t+.09);
+  o.start(t);o.stop(t+.1);
+});}
+
+/* ══════════════════════════════════════════════════════
+   캔버스
+══════════════════════════════════════════════════════ */
+const canvas=document.getElementById('gc');
+const ctx=canvas.getContext('2d');
+let scale=1,dpr=1;
+function resize(){
+  dpr=Math.min(window.devicePixelRatio||1,2);scale=Math.min(innerWidth/CW,innerHeight/CH);
+  canvas.style.width=Math.floor(CW*scale)+'px';canvas.style.height=Math.floor(CH*scale)+'px';
+  canvas.width=Math.round(CW*scale*dpr);canvas.height=Math.round(CH*scale*dpr);
+  ctx.setTransform(scale*dpr,0,0,scale*dpr,0,0);
+}
+window.addEventListener('resize',resize);resize();
+
+/* ══════════════════════════════════════════════════════
+   오버레이
+══════════════════════════════════════════════════════ */
+const ovEl=document.getElementById('overlay');
+function showOverlay(t,s){
+  ovEl.querySelector('#ovTitle').textContent=t;
+  ovEl.querySelector('#ovSub').textContent=s;
+  ovEl.classList.remove('hidden');
+}
+function hideOverlay(){ovEl.classList.add('hidden');}
+
+/* ══════════════════════════════════════════════════════
+   모바일 UI
+══════════════════════════════════════════════════════ */
+const mobileUI=document.getElementById('mobileUI');
+const joyEl=document.getElementById('joy'),joyKnob=document.getElementById('joyKnob');
+const btnKick=document.getElementById('btnKick'),btnTackle=document.getElementById('btnTackle');
+const kickChargeFill=document.getElementById('kickChargeFill');
+const JOY_R=58,KNOB_R=25;
+let joyX=0,joyY=0,joyTid=null,joyOx=0,joyOy=0;
+
+function setupMobile(){
+  if(!IS_MOBILE)return;
+  mobileUI.style.display='block';
+  joyEl.addEventListener('touchstart',e=>{
+    ensureAudio();e.preventDefault();
+    const t=e.changedTouches[0],r=joyEl.getBoundingClientRect();
+    joyOx=r.left+r.width/2;joyOy=r.top+r.height/2;joyTid=t.identifier;
+  },{passive:false});
+  joyEl.addEventListener('touchmove',e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      if(t.identifier!==joyTid)continue;
+      const dx=t.clientX-joyOx,dy=t.clientY-joyOy,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx);
+      joyX=Math.cos(a)*Math.min(d,JOY_R)/JOY_R;joyY=Math.sin(a)*Math.min(d,JOY_R)/JOY_R;
+      const kd=Math.min(d,JOY_R-KNOB_R);
+      joyKnob.style.transform=`translate(${Math.cos(a)*kd}px,${Math.sin(a)*kd}px)`;
+    }
+  },{passive:false});
+  const jEnd=()=>{joyX=0;joyY=0;joyTid=null;joyKnob.style.transform='';};
+  joyEl.addEventListener('touchend',jEnd);joyEl.addEventListener('touchcancel',jEnd);
+
+  btnKick.addEventListener('touchstart',e=>{ensureAudio();e.preventDefault();startKickCharge();},{passive:false});
+  btnKick.addEventListener('touchend',  e=>{e.preventDefault();releaseKick();},{passive:false});
+  btnKick.addEventListener('touchcancel',e=>{e.preventDefault();cancelKick();},{passive:false});
+  btnTackle.addEventListener('touchstart',e=>{ensureAudio();e.preventDefault();triggerTackle();},{passive:false});
+}
+setupMobile();
+
+/* ══════════════════════════════════════════════════════
+   키보드
+══════════════════════════════════════════════════════ */
+const keys={};
+window.addEventListener('keydown',e=>{
+  ensureAudio();
+  if(!keys[e.code]){
+    if(e.code==='Space')startKickCharge();
+    if(e.code==='ShiftLeft'||e.code==='ShiftRight'||e.code==='KeyZ')triggerTackle();
+  }
+  keys[e.code]=true;
+  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
+});
+window.addEventListener('keyup',e=>{
+  if(e.code==='Space')releaseKick();
+  keys[e.code]=false;
+});
+
+/* ══════════════════════════════════════════════════════
+   게임 상태
+══════════════════════════════════════════════════════ */
+let mySid='',myNick='Player',mySeat=-1,isHost=false;
+let roster=[];
+let players={};
+/*  players[sid] = {
+ *    x, y, lx, ly,            위치 (lx/ly = lerp 목표)
+ *    vx, vy, dir,              속도·방향
+ *    nick, seat, team,         식별 정보
+ *    color, colorDk,           팀 색상
+ *    kickRelease, kickCharge,  킥 상태 (bool, 0..1)
+ *    tackleActive,             태클 대시 중
+ *    tackleCd,                 태클 쿨다운 (프레임)
+ *    tackleDur,                태클 대시 남은 프레임
+ *    stunned,                  스턴 남은 프레임
+ *  }
+ */
+let me=null;
+let ball={x:FCX,y:FCY,vx:0,vy:0};
+let netBall={x:FCX,y:FCY,vx:0,vy:0};
+let netBallOwner=null;  // sc_ball로 수신한 소유자 sid
+let ballOwner=null;     // host가 결정 (자신이 host일 때)
+let ballTrail=[];
+const TRAIL_LEN=14;
+
+let score={A:0,B:0};
+let startTs=0,gameActive=false,gameOver=false,goalPending=false;
+let goalFlash=0,goalMsg='';
+let lastPosSent=0,lastBallSent=0;
+let lastBeepSec=-1;
+
+/* 킥 차징 상태 */
+let kickCharging=false,kickChargeFrames=0;
+/* 태클 상태 */
+let myTackleCd=0,myTackleDur=0;
+
+/* ══════════════════════════════════════════════════════
+   이펙트 시스템
+══════════════════════════════════════════════════════ */
+const fx=[];
+function addFx(type,x,y,opts={}){fx.push({type,x,y,t:0,...opts});}
+
+function addGoalConfetti(){
+  const cols=['#f44336','#ff9800','#ffeb3b','#4caf50','#2196f3','#9c27b0','#ffffff','#e91e63'];
+  for(let i=0;i<55;i++){
+    const a=Math.random()*Math.PI*2,spd=4+Math.random()*6;
+    addFx('conf',FCX+(Math.random()-.5)*200,FCY-30,{
+      vx:Math.cos(a)*spd,vy:-6-Math.random()*7,col:cols[i%cols.length],
+      rot:Math.random()*360,rotV:(Math.random()-.5)*12,
+      w:6+Math.random()*7,h:4+Math.random()*5,maxT:95+Math.floor(Math.random()*60),
+    });
+  }
+}
+function addKickFx(x,y,big=false){addFx('ring',x,y,{big,maxT:big?22:14});}
+function addTackleFx(x,y){addFx('stars',x,y,{maxT:28});}
+
+function updateFx(){
+  for(let i=fx.length-1;i>=0;i--){
+    fx[i].t++;if(fx[i].t>=(fx[i].maxT||30))fx.splice(i,1);
+  }
+}
+function drawFx(){
+  for(const e of fx){
+    const p=e.t/(e.maxT||30);
+    if(e.type==='ring'){
+      ctx.beginPath();ctx.arc(e.x,e.y,BALL_R+(e.big?52:26)*p,0,Math.PI*2);
+      ctx.strokeStyle=e.big?`rgba(255,200,0,${1-p})`:`rgba(255,255,180,${1-p})`;
+      ctx.lineWidth=e.big?4:2.5;ctx.stroke();
+    } else if(e.type==='stars'){
+      for(let i=0;i<6;i++){
+        const a=(i/6)*Math.PI*2+e.t*.18,r=p*36;
+        const sx=e.x+Math.cos(a)*r,sy=e.y+Math.sin(a)*r,sz=7*(1-p);
+        ctx.save();ctx.translate(sx,sy);ctx.rotate(a);
+        ctx.fillStyle=`rgba(255,230,50,${1-p})`;
+        ctx.beginPath();
+        for(let k=0;k<5;k++){
+          const ka=(k/5)*Math.PI*2-Math.PI/2,ki=((k+.5)/5)*Math.PI*2-Math.PI/2;
+          k===0?ctx.moveTo(Math.cos(ka)*sz,Math.sin(ka)*sz):ctx.lineTo(Math.cos(ka)*sz,Math.sin(ka)*sz);
+          ctx.lineTo(Math.cos(ki)*sz*.38,Math.sin(ki)*sz*.38);
+        }
+        ctx.closePath();ctx.fill();ctx.restore();
+      }
+    } else if(e.type==='conf'){
+      const gy=0.32;
+      const px=e.x+e.vx*e.t,py=e.y+e.vy*e.t+gy*e.t*e.t;
+      const alpha=p<.75?1:(1-p)/.25;
+      ctx.save();ctx.translate(px,py);ctx.rotate((e.rot+e.rotV*e.t)*Math.PI/180);
+      ctx.fillStyle=e.col+(Math.round(alpha*255).toString(16).padStart(2,'0'));
+      ctx.fillRect(-e.w/2,-e.h/2,e.w,e.h);ctx.restore();
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   브리지
+══════════════════════════════════════════════════════ */
+function bridgeSend(type,payload={}){
+  if(!EMBED)return;
+  try{parent.postMessage({type,...payload},'*');}catch(_){}
+}
+
+window.addEventListener('message',e=>{
+  const d=e.data;if(!d||typeof d!=='object')return;
+
+  if(d.type==='bridge_init'){
+    mySid =String(d.sessionId||'');myNick=String(d.nick||'Player');
+    mySeat=Number(d.seat??-1);isHost=!!d.isHost;
+    roster=(d.players||[]).map(p=>({
+      sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
+    })).filter(p=>p.seat>=0);
+    initGame();return;
+  }
+  if(d.type==='sc_timer'){
+    startTs=Number(d.startTs||Date.now());gameActive=true;gameOver=false;
+    hideOverlay();sfxWhistle();ensureAudio();
+    bgm.currentTime=0;bgm.play().catch(()=>{});return;
+  }
+  if(d.type==='sc_pos'){
+    const p=players[d.sid];
+    if(p&&d.sid!==mySid){
+      p.lx=Number(d.x??p.lx);p.ly=Number(d.y??p.ly);
+      p.dir=Number(d.dir??0);p.vx=Number(d.vx??0);p.vy=Number(d.vy??0);
+      p.kickRelease=!!d.kickRelease;p.kickCharge=Number(d.kickCharge??0);
+      p.tackleActive=!!d.tackle;
+      // host가 킥 이벤트 처리
+      if(isHost&&p.kickRelease)applyKickFromPlayer(d.sid,d.dir,d.kickCharge,d.x,d.y);
+    }return;
+  }
+  if(d.type==='sc_ball'){
+    if(!isHost){
+      netBall.x=Number(d.x??FCX);netBall.y=Number(d.y??FCY);
+      netBall.vx=Number(d.vx??0);netBall.vy=Number(d.vy??0);
+      netBallOwner=d.owner??null;
+    }return;
+  }
+  if(d.type==='sc_goal'){
+    score.A=Number(d.scoreA??score.A);score.B=Number(d.scoreB??score.B);
+    goalFlash=185;goalMsg=d.team==='A'?'🔴 A팀 득점!':'🔵 B팀 득점!';
+    gameActive=false;sfxGoal();addGoalConfetti();
+    setTimeout(()=>{
+      if(gameOver)return;
+      goalPending=false;resetBall();
+      if(isHost)respawnPlayers();
+      gameActive=true;
+    },2500);return;
+  }
+  if(d.type==='sc_end'){
+    const sA=Number(d.scoreA??score.A),sB=Number(d.scoreB??score.B);
+    score.A=sA;score.B=sB;gameActive=false;gameOver=true;
+    bgm.pause();sfxEndWhistle();
+    setTimeout(()=>{
+      const w=d.winner;
+      showOverlay(w==='draw'?'🤝 무승부!':`${w==='A'?'🔴 A팀':'🔵 B팀'} 승리!`,
+        `최종 점수  A팀 ${sA} : ${sB} B팀`);
+    },700);return;
+  }
+});
+
+/* ══════════════════════════════════════════════════════
+   킥 차징 액션
+══════════════════════════════════════════════════════ */
+function startKickCharge(){
+  if(!gameActive||gameOver)return;
+  kickCharging=true;kickChargeFrames=0;
+}
+function releaseKick(){
+  if(!kickCharging)return;
+  const charge=Math.min(kickChargeFrames,MAX_CHARGE_F)/MAX_CHARGE_F;
+  kickCharging=false;kickChargeFrames=0;
+  kickChargeFill.style.height='0%';
+  doKickRelease(charge);
+}
+function cancelKick(){
+  kickCharging=false;kickChargeFrames=0;
+  kickChargeFill.style.height='0%';
+}
+function doKickRelease(charge){
+  if(!me||!gameActive||gameOver)return;
+  const isBig=charge>0.38;
+  me.kickRelease=true;me.kickCharge=charge;
+  // 호스트는 즉시 처리, 비호스트는 sc_pos로 즉시 전송
+  if(isHost)applyKickFromPlayer(mySid,me.dir,charge,me.x,me.y);
+  // 즉시 전송 (rate limit 무시)
+  bridgeSend('sc_pos',{x:me.x,y:me.y,dir:me.dir,vx:me.vx,vy:me.vy,
+    kickRelease:true,kickCharge:charge,tackle:me.tackleActive});
+  // 로컬 이펙트·사운드
+  addKickFx(me.x+Math.cos(me.dir)*PLR_R,me.y+Math.sin(me.dir)*PLR_R,isBig);
+  if(isBig)sfxPowerKick();else sfxKick();
+  // 다음 프레임에 플래그 리셋
+  requestAnimationFrame(()=>{if(me)me.kickRelease=false;});
+}
+
+/* ══════════════════════════════════════════════════════
+   태클 액션
+══════════════════════════════════════════════════════ */
+function triggerTackle(){
+  if(!me||!gameActive||gameOver)return;
+  if(myTackleCd>0)return;
+  myTackleCd=TACKLE_CD_F;myTackleDur=TACKLE_DUR;
+  addTackleFx(me.x,me.y);sfxTackle();
+}
+
+/* ══════════════════════════════════════════════════════
+   게임 초기화
+══════════════════════════════════════════════════════ */
+function initGame(){
+  if(!roster.length)return;
+  players={};score={A:0,B:0};goalFlash=0;goalPending=false;
+  gameOver=false;gameActive=false;ballTrail=[];fx.length=0;
+  kickCharging=false;kickChargeFrames=0;myTackleCd=0;myTackleDur=0;
+  ballOwner=null;netBallOwner=null;lastBeepSec=-1;
+
+  const tA=roster.filter(p=>p.seat%2===0).sort((a,b)=>a.seat-b.seat);
+  const tB=roster.filter(p=>p.seat%2!==0).sort((a,b)=>a.seat-b.seat);
+  const assign=(team,ch)=>team.forEach((p,i)=>{
+    const sp=getSpawn(i,team.length,ch);
+    players[p.sid]={
+      x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
+      dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
+      color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
+      kickRelease:false,kickCharge:0,tackleActive:false,
+      tackleCd:0,tackleDur:0,stunned:0,
+    };
+  });
+  assign(tA,'A');assign(tB,'B');
+  me=players[mySid];
+  resetBall();startLoop();
+  showOverlay('⚽ 축구','잠시 후 시작됩니다...');
+}
+function resetBall(){
+  ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};
+  ballTrail=[];ballOwner=null;netBallOwner=null;
+}
+function respawnPlayers(){
+  const tA=roster.filter(p=>p.seat%2===0).sort((a,b)=>a.seat-b.seat);
+  const tB=roster.filter(p=>p.seat%2!==0).sort((a,b)=>a.seat-b.seat);
+  const doT=(team,ch)=>team.forEach((p,i)=>{
+    const pl=players[p.sid];if(!pl)return;
+    const sp=getSpawn(i,team.length,ch);
+    Object.assign(pl,{x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
+      kickRelease:false,kickCharge:0,tackleActive:false,stunned:0});
+  });
+  doT(tA,'A');doT(tB,'B');
+  ballOwner=null;netBallOwner=null;
+}
+
+/* ══════════════════════════════════════════════════════
+   내 플레이어 업데이트
+══════════════════════════════════════════════════════ */
+function updateMe(){
+  if(!me||!gameActive||gameOver)return;
+
+  // 쿨다운
+  if(myTackleCd>0)myTackleCd--;
+  if(myTackleDur>0)myTackleDur--;
+  // 모바일 태클 버튼 쿨다운 시각화 (conic-gradient)
+  if(IS_MOBILE){
+    if(myTackleCd>0){
+      const deg=Math.round((myTackleCd/TACKLE_CD_F)*360);
+      btnTackle.style.background=`conic-gradient(rgba(0,0,0,.55) 0deg ${deg}deg, rgba(60,140,255,.68) ${deg}deg 360deg)`;
+      btnTackle.style.opacity='0.72';
+    }else{
+      btnTackle.style.background='rgba(60,140,255,.68)';
+      btnTackle.style.opacity='1';
+    }
+  }
+  if(kickCharging){
+    kickChargeFrames=Math.min(kickChargeFrames+1,MAX_CHARGE_F);
+    const pct=kickChargeFrames/MAX_CHARGE_F;
+    kickChargeFill.style.height=(pct*100)+'%';
+  }
+
+  // 스턴 여부
+  if(me.stunned>0){me.stunned--;me.vx=0;me.vy=0;return;}
+
+  // 입력
+  let dx=0,dy=0;
+  if(keys['ArrowLeft'] ||keys['KeyA'])dx-=1;
+  if(keys['ArrowRight']||keys['KeyD'])dx+=1;
+  if(keys['ArrowUp']   ||keys['KeyW'])dy-=1;
+  if(keys['ArrowDown'] ||keys['KeyS'])dy+=1;
+  if(IS_MOBILE&&(Math.abs(joyX)>.08||Math.abs(joyY)>.08)){dx=joyX;dy=joyY;}
+
+  const len=Math.hypot(dx,dy);
+  if(len>0){dx/=len;dy/=len;me.dir=Math.atan2(dy,dx);}
+
+  // 속도: 태클 대시 > 드리블 소유 > 기본
+  const hasBall=isHost?(ballOwner===mySid):(netBallOwner===mySid);
+  const spd=myTackleDur>0?TACKLE_SPD:(hasBall?PLR_SPD_DRIBBLE:PLR_SPD);
+  me.vx=dx*spd;me.vy=dy*spd;
+  me.x=clamp(me.x+me.vx,FX+PLR_R,FX+FW-PLR_R);
+  me.y=clamp(me.y+me.vy,FY+PLR_R,FY+FH-PLR_R);
+  me.tackleActive=myTackleDur>0;
+}
+
+
+/* ══════════════════════════════════════════════════════
+   플레이어 충돌 물리 (클라이언트 사이드)
+══════════════════════════════════════════════════════ */
+function handlePlayerCollisions(){
+  if(!me||!gameActive||gameOver||me.stunned>0)return;
+  const minDist=PLR_R*2+1; // 최소 거리 (겹침 방지)
+  for(const[sid,p]of Object.entries(players)){
+    if(sid===mySid)continue;
+    const dx=me.x-p.x, dy=me.y-p.y;
+    const dist=Math.hypot(dx,dy);
+    if(dist<minDist&&dist>0){
+      // 겹친 만큼 자신을 밀어냄 (pushStrength = 겹침 비율 * 0.55)
+      const push=(minDist-dist)*0.55;
+      const nx=dx/dist, ny=dy/dist;
+      me.x=clamp(me.x+nx*push, FX+PLR_R, FX+FW-PLR_R);
+      me.y=clamp(me.y+ny*push, FY+PLR_R, FY+FH-PLR_R);
+    }
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   원격 플레이어 보간
+══════════════════════════════════════════════════════ */
+function lerpRemote(){
+  for(const[sid,p]of Object.entries(players)){
+    if(sid===mySid)continue;
+    p.x=lerp(p.x,p.lx,.22);p.y=lerp(p.y,p.ly,.22);
+    if(p.stunned>0)p.stunned--;
+    if(p.tackleDur>0)p.tackleDur--;
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   공 물리 — HOST ONLY
+══════════════════════════════════════════════════════ */
+function updateBallOwner(){
+  // 현재 소유자가 히스테리시스 범위 내에 있으면 유지
+  if(ballOwner&&players[ballOwner]){
+    const op=players[ballOwner];
+    if(op.stunned>0){ballOwner=null;}
+    else if(Math.hypot(ball.x-op.x,ball.y-op.y)<=DRIBBLE_HYST)return;
+  }
+  // 가장 가까운 플레이어 찾기
+  let closest=null,closestD=Infinity;
+  for(const[sid,p]of Object.entries(players)){
+    if(p.stunned>0)continue;
+    const d=Math.hypot(ball.x-p.x,ball.y-p.y);
+    if(d<closestD){closestD=d;closest=sid;}
+  }
+  ballOwner=(closestD<=DRIBBLE_RANGE)?closest:null;
+}
+
+function applyKickFromPlayer(sid,dir,charge,px,py){
+  const p=players[sid];if(!p)return;
+  // 공과의 거리 체크 (호스트 기준)
+  const cx=px??p.x,cy=py??p.y;
+  const dist=Math.hypot(ball.x-cx,ball.y-cy);
+  if(dist>KICK_RANGE)return;
+  const force=lerp(MIN_KICK_F,MAX_KICK_F,Math.min(1,charge||0));
+  ball.vx=Math.cos(Number(dir)||p.dir)*force;
+  ball.vy=Math.sin(Number(dir)||p.dir)*force;
+  // 드리블 해제
+  if(ballOwner===sid)ballOwner=null;
+}
+
+function updateDribbling(){
+  if(!ballOwner)return;
+  const p=players[ballOwner];if(!p)return;
+  const ownerSpd=Math.hypot(p.vx,p.vy);
+  if(ownerSpd>0.12){
+    const tx=p.x+Math.cos(p.dir)*DRIBBLE_DIST;
+    const ty=p.y+Math.sin(p.dir)*DRIBBLE_DIST;
+    const SP=0.28;
+    ball.vx=ball.vx*(1-SP)+(tx-ball.x)*SP*.85+p.vx*.32;
+    ball.vy=ball.vy*(1-SP)+(ty-ball.y)*SP*.85+p.vy*.32;
+    const maxBSpd=Math.max(ownerSpd*1.45,PLR_SPD_DRIBBLE*1.3);
+    const bspd=Math.hypot(ball.vx,ball.vy);
+    if(bspd>maxBSpd){ball.vx=ball.vx/bspd*maxBSpd;ball.vy=ball.vy/bspd*maxBSpd;}
+  }else{
+    ball.vx*=0.82;ball.vy*=0.82;
+  }
+}
+
+function checkTackleSteal(){
+  // 태클 중인 플레이어가 공 소유자를 충분히 가까이 들어가면 탈취
+  for(const[sid,p]of Object.entries(players)){
+    if(!p.tackleActive&&!(sid===mySid&&myTackleDur>0))continue;
+    if(!ballOwner||ballOwner===sid)continue;
+    const owner=players[ballOwner];if(!owner)continue;
+    if(owner.stunned>0)continue;
+    const dist=Math.hypot(p.x-owner.x,p.y-owner.y);
+    if(dist<=TACKLE_STEAL_R){
+      // 탈취!
+      const bounceA=Math.atan2(owner.y-p.y,owner.x-p.x)+(Math.random()-.5)*.9;
+      ball.vx=Math.cos(bounceA)*8;ball.vy=Math.sin(bounceA)*8;
+      owner.stunned=STUN_DUR;ballOwner=null;
+      addTackleFx((p.x+owner.x)/2,(p.y+owner.y)/2);
+      sfxTackle();
+    }
+  }
+}
+
+function updatePhysics(){
+  if(!isHost||!gameActive||gameOver||goalPending)return;
+
+  // 드리블 소유자 결정
+  updateBallOwner();
+  // 드리블 물리
+  updateDribbling();
+  // 태클 탈취 체크
+  checkTackleSteal();
+
+  // 볼 이동·마찰 (드리블 중에는 spring이 이미 적용됨)
+  if(!ballOwner){
+    ball.x+=ball.vx;ball.y+=ball.vy;
+    ball.vx*=BALL_FRIC;ball.vy*=BALL_FRIC;
+    if(Math.abs(ball.vx)<.04)ball.vx=0;if(Math.abs(ball.vy)<.04)ball.vy=0;
+  }else{
+    ball.x+=ball.vx;ball.y+=ball.vy;
+  }
+
+  // 위아래 벽
+  if(ball.y-BALL_R<FY){ball.y=FY+BALL_R;ball.vy=Math.abs(ball.vy)*.8;if(ballOwner)ballOwner=null;}
+  if(ball.y+BALL_R>FY+FH){ball.y=FY+FH-BALL_R;ball.vy=-Math.abs(ball.vy)*.8;if(ballOwner)ballOwner=null;}
+
+  // 왼쪽
+  if(ball.x-BALL_R<GL){
+    if(ball.y>=GY1&&ball.y<=GY2){
+      if(ball.x-BALL_R<GL-GOAL_D&&!goalPending){goalPending=true;bridgeSend('sc_goal',{team:'B',scoreA:score.A,scoreB:score.B+1});}
+    }else{ball.x=GL+BALL_R;ball.vx=Math.abs(ball.vx)*.8;if(ballOwner)ballOwner=null;}
+  }
+  // 오른쪽
+  if(ball.x+BALL_R>GR){
+    if(ball.y>=GY1&&ball.y<=GY2){
+      if(ball.x+BALL_R>GR+GOAL_D&&!goalPending){goalPending=true;bridgeSend('sc_goal',{team:'A',scoreA:score.A+1,scoreB:score.B});}
+    }else{ball.x=GR-BALL_R;ball.vx=-Math.abs(ball.vx)*.8;if(ballOwner)ballOwner=null;}
+  }
+
+  // 볼 잔상 트레일 업데이트
+  ballTrail.push({x:ball.x,y:ball.y});
+  if(ballTrail.length>TRAIL_LEN)ballTrail.shift();
+
+  // 카운트다운 삐
+  if(startTs>0){
+    const rem=Math.max(0,GAME_MS-(Date.now()-startTs)),remSec=Math.ceil(rem/1000);
+    if(rem>0&&remSec<=10&&remSec!==lastBeepSec){lastBeepSec=remSec;sfxBeep();}
+  }
+}
+
+function updateNetBallTrail(){
+  if(isHost)return;
+  ballTrail.push({x:netBall.x,y:netBall.y});
+  if(ballTrail.length>TRAIL_LEN)ballTrail.shift();
+}
+
+function checkTimer(){
+  if(!isHost||!gameActive||gameOver||!startTs)return;
+  if(Date.now()-startTs>=GAME_MS){
+    gameOver=true;gameActive=false;
+    const w=score.A>score.B?'A':score.B>score.A?'B':'draw';
+    bridgeSend('sc_over',{scoreA:score.A,scoreB:score.B,winner:w});
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   네트워크 전송
+══════════════════════════════════════════════════════ */
+function netSends(){
+  if(!EMBED)return;
+  const now=Date.now();
+  if(me&&now-lastPosSent>=40){
+    lastPosSent=now;
+    bridgeSend('sc_pos',{x:me.x,y:me.y,dir:me.dir,vx:me.vx,vy:me.vy,
+      kickRelease:false,kickCharge:0,tackle:me.tackleActive});
+  }
+  if(isHost&&now-lastBallSent>=34){
+    lastBallSent=now;
+    bridgeSend('sc_ball',{x:ball.x,y:ball.y,vx:ball.vx,vy:ball.vy,owner:ballOwner});
+  }
+}
+
+/* ══════════════════════════════════════════════════════
+   그리기
+══════════════════════════════════════════════════════ */
+function drawField(){
+  ctx.fillStyle=CFLD;ctx.fillRect(FX,FY,FW,FH);
+  ctx.fillStyle=CFLD2;for(let x=FX;x<FX+FW;x+=66*2)ctx.fillRect(x,FY,66,FH);
+}
+function drawGoalArea(side){
+  const bx=side==='L'?FX-GOAL_D:FX+FW;
+  ctx.fillStyle='rgba(0,0,0,.32)';ctx.fillRect(bx,GY1,GOAL_D,GOAL_H);
+  ctx.strokeStyle='rgba(255,255,255,.1)';ctx.lineWidth=1;
+  for(let c=1;c<5;c++){const lx=bx+GOAL_D/5*c;ctx.beginPath();ctx.moveTo(lx,GY1);ctx.lineTo(lx,GY2);ctx.stroke();}
+  for(let r=1;r<5;r++){const ly=GY1+GOAL_H/5*r;ctx.beginPath();ctx.moveTo(bx,ly);ctx.lineTo(bx+GOAL_D,ly);ctx.stroke();}
+  ctx.strokeStyle='#fff';ctx.lineWidth=3.5;
+  ctx.beginPath();ctx.moveTo(side==='L'?bx:bx+GOAL_D,GY1);ctx.lineTo(side==='L'?bx:bx+GOAL_D,GY2);ctx.stroke();
+  ctx.lineWidth=4.5;
+  ctx.beginPath();ctx.moveTo(bx,GY1);ctx.lineTo(bx+GOAL_D,GY1);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(bx,GY2);ctx.lineTo(bx+GOAL_D,GY2);ctx.stroke();
+}
+function drawLines(){
+  ctx.strokeStyle='rgba(255,255,255,.72)';ctx.lineWidth=2;
+  ctx.strokeRect(FX,FY,FW,FH);
+  ctx.beginPath();ctx.moveTo(FCX,FY);ctx.lineTo(FCX,FY+FH);ctx.stroke();
+  ctx.beginPath();ctx.arc(FCX,FCY,62,0,Math.PI*2);ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.72)';ctx.beginPath();ctx.arc(FCX,FCY,4,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=1.5;
+  ctx.strokeRect(FX,FCY-98,74,196);ctx.strokeRect(FX+FW-74,FCY-98,74,196);
+  ctx.fillStyle='rgba(255,255,255,.35)';
+  ctx.beginPath();ctx.arc(FX+44,FCY,3,0,Math.PI*2);ctx.fill();
+  ctx.beginPath();ctx.arc(FX+FW-44,FCY,3,0,Math.PI*2);ctx.fill();
+}
+function drawBallTrail(){
+  for(let i=0;i<ballTrail.length;i++){
+    const t=ballTrail[i],a=.03+(i/ballTrail.length)*.17,r=BALL_R*(.38+i/ballTrail.length*.6);
+    ctx.beginPath();ctx.arc(t.x,t.y,r,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,255,200,${a})`;ctx.fill();
+  }
+}
+function drawPlayer(p,isMine){
+  const x=p.x,y=p.y,isSt=p.stunned>0;
+
+  // 그림자
+  ctx.beginPath();ctx.ellipse(x+2,y+3,PLR_R,PLR_R*.62,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.26)';ctx.fill();
+
+  // 태클 대시 모션 블러
+  if(p.tackleActive||(isMine&&myTackleDur>0)){
+    const bx=x-Math.cos(p.dir)*20,by=y-Math.sin(p.dir)*20;
+    const g2=ctx.createLinearGradient(bx,by,x,y);
+    g2.addColorStop(0,'rgba(100,200,255,0)');g2.addColorStop(1,'rgba(100,200,255,.32)');
+    ctx.beginPath();ctx.arc(x,y,PLR_R,0,Math.PI*2);ctx.fillStyle=g2;ctx.fill();
+  }
+
+  // 스턴 시 흑백 처리
+  const col=isSt?'#888':p.color,colDk=isSt?'#555':p.colorDk;
+  const gr=ctx.createRadialGradient(x-4,y-5,2,x,y,PLR_R);
+  gr.addColorStop(0,lighten(col,.28));gr.addColorStop(1,colDk);
+  ctx.beginPath();ctx.arc(x,y,PLR_R,0,Math.PI*2);ctx.fillStyle=gr;ctx.fill();
+
+  // 킥 차징 링 (내 플레이어)
+  if(isMine&&kickCharging){
+    const pct=kickChargeFrames/MAX_CHARGE_F;
+    ctx.beginPath();ctx.arc(x,y,PLR_R+4+pct*8,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(255,220,0,${.5+pct*.5})`;ctx.lineWidth=3;ctx.stroke();
+  }
+  // 공 소유 표시 (나)
+  if(isMine&&(isHost?ballOwner===mySid:netBallOwner===mySid)){
+    ctx.beginPath();ctx.arc(x,y,PLR_R+3,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,100,.8)';ctx.lineWidth=2;ctx.stroke();
+  }
+  // 골드 링 (내 플레이어)
+  if(isMine){
+    ctx.beginPath();ctx.arc(x,y,PLR_R+3,0,Math.PI*2);
+    ctx.strokeStyle='#FFD700';ctx.lineWidth=2.5;ctx.stroke();
+  }
+
+  // 방향 점
+  const fdx=x+Math.cos(p.dir)*(PLR_R-6),fdy=y+Math.sin(p.dir)*(PLR_R-6);
+  ctx.beginPath();ctx.arc(fdx,fdy,4.5,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();
+
+  // 등번호
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.font=`bold ${Math.round(PLR_R*.88)}px monospace`;ctx.fillStyle='#fff';
+  ctx.shadowColor='rgba(0,0,0,.5)';ctx.shadowBlur=3;
+  ctx.fillText(String(p.seat+1),x,y+1);ctx.shadowBlur=0;
+
+  // 닉네임
+  ctx.font='10px monospace';ctx.fillStyle=isMine?'#FFD700':'rgba(255,255,255,.82)';
+  ctx.fillText(p.nick.slice(0,9),x,y+PLR_R+11);
+
+  // 스턴 별 표시
+  if(isSt){
+    const sf=Math.floor(Date.now()/120)%2;
+    ctx.font='14px monospace';ctx.fillStyle='#FFD700';
+    ctx.fillText('★',x+(sf?-8:8),y-PLR_R-12);
+  }
+
+  // 내 쿨다운 표시 (태클)
+  if(isMine&&myTackleCd>0){
+    const pct=1-myTackleCd/TACKLE_CD_F;
+    ctx.beginPath();ctx.arc(x,y,PLR_R+9,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
+    ctx.strokeStyle='rgba(100,180,255,.7)';ctx.lineWidth=2;ctx.stroke();
+  }
+}
+function drawBallSprite(){
+  const b=isHost?ball:netBall;
+  ctx.beginPath();ctx.ellipse(b.x+3,b.y+5,BALL_R*.72,BALL_R*.42,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.26)';ctx.fill();
+  const g=ctx.createRadialGradient(b.x-3,b.y-4,1,b.x,b.y,BALL_R);
+  g.addColorStop(0,'#fff');g.addColorStop(.65,'#e0e0e0');g.addColorStop(1,'#9e9e9e');
+  ctx.beginPath();ctx.arc(b.x,b.y,BALL_R,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+  ctx.strokeStyle='#555';ctx.lineWidth=.8;ctx.stroke();
+  ctx.fillStyle='#333';ctx.beginPath();ctx.arc(b.x,b.y,BALL_R*.3,0,Math.PI*2);ctx.fill();
+  ctx.strokeStyle='#444';ctx.lineWidth=.7;
+  for(let i=0;i<5;i++){
+    const a=(i/5)*Math.PI*2-Math.PI/2;
+    ctx.beginPath();ctx.moveTo(b.x+Math.cos(a)*BALL_R*.3,b.y+Math.sin(a)*BALL_R*.3);
+    ctx.lineTo(b.x+Math.cos(a)*BALL_R*.78,b.y+Math.sin(a)*BALL_R*.78);ctx.stroke();
+  }
+}
+function drawHUD(){
+  ctx.fillStyle='#111827';ctx.fillRect(0,0,CW,HUD_H);
+  ctx.fillStyle='#2a2a3e';ctx.fillRect(0,HUD_H-1,CW,1);
+  ctx.textAlign='left';ctx.textBaseline='middle';
+  ctx.font='bold 15px monospace';ctx.fillStyle=CA;ctx.fillText('A팀',FX+4,HUD_H/2);
+  ctx.font='bold 32px monospace';ctx.fillStyle='#fff';ctx.fillText(String(score.A),FX+44,HUD_H/2+1);
+  ctx.textAlign='right';
+  ctx.font='bold 15px monospace';ctx.fillStyle=CB;ctx.fillText('B팀',FX+FW-4,HUD_H/2);
+  ctx.font='bold 32px monospace';ctx.fillStyle='#fff';ctx.fillText(String(score.B),FX+FW-44,HUD_H/2+1);
+  ctx.textAlign='center';
+  if(startTs>0){
+    const rem=Math.max(0,GAME_MS-(Date.now()-startTs));
+    const mm=Math.floor(rem/60000),ss=Math.floor((rem%60000)/1000);
+    const blink=rem<11000&&Math.floor(Date.now()/400)%2===0;
+    ctx.font='bold 28px monospace';
+    ctx.fillStyle=blink?'#ff5252':rem<20000?'#ff8a80':'#ffe082';
+    ctx.fillText(`${mm}:${String(ss).padStart(2,'0')}`,CW/2,HUD_H/2+1);
+  }else{ctx.font='18px monospace';ctx.fillStyle='#555';ctx.fillText('대기 중',CW/2,HUD_H/2+1);}
+  // PC 힌트
+  ctx.font='9px monospace';ctx.fillStyle='#3a3a55';ctx.textAlign='left';
+  ctx.fillText('이동:WASD  킥:Space(길게=강하게)  태클:Shift/Z',FX+90,14);
+}
+function drawGoalFlash(){
+  if(goalFlash<=0)return;goalFlash=Math.max(0,goalFlash-1);
+  const p=goalFlash/185;
+  ctx.fillStyle=`rgba(255,235,50,${p*.3})`;ctx.fillRect(0,0,CW,CH);
+  if(goalFlash>65){
+    const alpha=Math.min(1,(goalFlash-65)/55);
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.font='bold 52px monospace';
+    ctx.strokeStyle=`rgba(0,0,0,${alpha*.75})`;ctx.lineWidth=7;
+    ctx.strokeText(goalMsg,CW/2,CH/2-8);
+    ctx.fillStyle=`rgba(255,245,80,${alpha})`;ctx.fillText(goalMsg,CW/2,CH/2-8);
+  }
+}
+function draw(){
+  ctx.clearRect(0,0,CW,CH);
+  drawField();drawGoalArea('L');drawGoalArea('R');drawLines();drawBallTrail();
+  for(const[sid,p]of Object.entries(players))if(sid!==mySid)drawPlayer(p,false);
+  if(me)drawPlayer(me,true);
+  drawBallSprite();drawFx();drawHUD();drawGoalFlash();
+}
+
+/* ══════════════════════════════════════════════════════
+   게임 루프
+══════════════════════════════════════════════════════ */
+let loopRunning=false;
+function startLoop(){
+  if(loopRunning)return;loopRunning=true;
+  function tick(){
+    updateMe();handlePlayerCollisions();lerpRemote();updatePhysics();
+    updateNetBallTrail();updateFx();netSends();checkTimer();draw();
+    requestAnimationFrame(tick);
+  }tick();
+}
+
+/* ── 유틸 ── */
+function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
+function lerp(a,b,t){return a+(b-a)*t;}
+function lighten(hex,amt){
+  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  return`rgb(${Math.min(255,Math.round(r+(255-r)*amt))},${Math.min(255,Math.round(g+(255-g)*amt))},${Math.min(255,Math.round(b+(255-b)*amt))})`;
+}
+
+bridgeSend('iframe_ready',{});
+</script>
+</body>
+</html>
