@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title>⚽ 축구</title>
+<title>⚽ 수학축구</title>
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 html, body {
@@ -488,7 +488,14 @@ window.addEventListener('message',e=>{
     roster=(d.players||[]).map(p=>({
       sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
     })).filter(p=>p.seat>=0);
-    initGame();return;
+    initGame();
+    // sc_timer 미수신 대비: 즉시 sc_sync 요청 + 최대 10회 재시도 (1초 간격)
+    bridgeSend('sc_sync',{});
+    let _st=0; const _si=setInterval(()=>{
+      if(gameActive||gameOver||++_st>=10){clearInterval(_si);return;}
+      bridgeSend('sc_sync',{});
+    },1000);
+    return;
   }
   if(d.type==='sc_timer'){
     startTs=Number(d.startTs||Date.now());gameActive=true;gameOver=false;
@@ -605,7 +612,7 @@ function initGame(){
   assign(tA,'A');assign(tB,'B');
   me=players[mySid];
   resetBall();startLoop();
-  showOverlay('⚽ 축구','잠시 후 시작됩니다...');
+  showOverlay('⚽ 수학축구','잠시 후 시작됩니다...');
 }
 function resetBall(){
   ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};

@@ -2970,6 +2970,9 @@ try{
       room.onMessage("sc_end", (msg)=>{
         postToMain({ type:"sc_end", scoreA: msg.scoreA, scoreB: msg.scoreB, winner: msg.winner, winnerNick: msg.winnerNick });
       });
+      room.onMessage("sc_goal_sync", (msg)=>{
+        postToMain({ type:"sc_goal", team:"A", scoreA: msg.scoreA, scoreB: msg.scoreB });
+      });
       // ────────────────────────────────────────────────────────────────
 
       room.onMessage("frame", (frame)=> {

@@ -1067,13 +1067,15 @@ this.onMessage("sc_over", (client, payload) => {
 });
 
 // State sync request (late-join or reconnect)
+// phase 조건 제거 — 게임 중·직후 모두 응답, startedAt > 0 이면 항상 전송
 this.onMessage("sc_sync", (client) => {
-  if (this.state.mode !== "soccer") return;
-  if (!this.sc) return;
-  if (this.state.phase === "playing") {
+  try{
+    if (!this.sc) return;
+    if (this.sc.startedAt <= 0) return; // 아직 initSoccer 전
     client.send("sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
     if (this.sc.ball) client.send("sc_ball", this.sc.ball);
-  }
+    client.send("sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B });
+  }catch(_){}
 });
 
 // ── End Soccer message handlers ──────────────────────────────────────────

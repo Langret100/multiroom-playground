@@ -127,7 +127,7 @@
 
     {
       id: "soccer",
-      name: "축구",
+      name: "수학축구",
       mobileHint: "모바일: 조이스틱으로 이동, 공 근처에서 자동 킥",
       pcHint: "PC: WASD 또는 방향키 이동 · 공에 가까워지면 자동 킥",
       descLines: [
