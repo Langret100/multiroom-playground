@@ -64,8 +64,8 @@ canvas { display:block; }
 <body>
 <canvas id="gc"></canvas>
 
-<div id="overlay">
-  <div id="ovTitle">⚽ 축구</div>
+<div id="overlay" class="hidden">
+  <div id="ovTitle">⚽ 수학축구</div>
   <div id="ovSub">게임 시작을 기다리는 중...</div>
   <div id="ovCtrl">
     🖥️ PC : WASD/방향키 이동 &nbsp;|&nbsp; <b>Space 누르고 떼기</b> 킥 (길게=강하게) &nbsp;|&nbsp; <b>Shift/Z</b> 태클<br>
@@ -483,24 +483,31 @@ window.addEventListener('message',e=>{
   const d=e.data;if(!d||typeof d!=='object')return;
 
   if(d.type==='bridge_init'){
+    // 투게스터 패턴: bridge_init 한 번으로 즉시 게임 시작
     mySid =String(d.sessionId||'');myNick=String(d.nick||'Player');
     mySeat=Number(d.seat??-1);isHost=!!d.isHost;
     roster=(d.players||[]).map(p=>({
       sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
     })).filter(p=>p.seat>=0);
-    initGame();
-    // sc_timer 미수신 대비: 즉시 sc_sync 요청 + 최대 10회 재시도 (1초 간격)
+    // initGame 호출 전에 먼저 startTs·gameActive 설정 (initGame 내부가 gameActive=false 리셋하므로)
+    const sAt=Number(d.startedAt||0);
+    startTs = sAt>0 ? sAt : Date.now();
+    gameOver=false;
+    initGame();            // 내부에서 gameActive=false 리셋하지만
+    gameActive=true;
+    hideOverlay();
+    ensureAudio();
+    bgm.currentTime=0; bgm.play().catch(()=>{});
+    sfxWhistle();
     bridgeSend('sc_sync',{});
-    let _st=0; const _si=setInterval(()=>{
-      if(gameActive||gameOver||++_st>=10){clearInterval(_si);return;}
-      bridgeSend('sc_sync',{});
-    },1000);
     return;
   }
   if(d.type==='sc_timer'){
-    startTs=Number(d.startTs||Date.now());gameActive=true;gameOver=false;
-    hideOverlay();sfxWhistle();ensureAudio();
-    bgm.currentTime=0;bgm.play().catch(()=>{});return;
+    // 서버 권위적 시작 시각으로 타이머 정밀 보정 (이미 hideOverlay/gameActive는 bridge_init에서 처리)
+    const authoritative=Number(d.startTs||0);
+    if(authoritative>0) startTs=authoritative;
+    if(!gameActive&&!gameOver){ gameActive=true; hideOverlay(); }
+    return;
   }
   if(d.type==='sc_pos'){
     const p=players[d.sid];
@@ -612,7 +619,7 @@ function initGame(){
   assign(tA,'A');assign(tB,'B');
   me=players[mySid];
   resetBall();startLoop();
-  showOverlay('⚽ 수학축구','잠시 후 시작됩니다...');
+  // 오버레이는 bridge_init 핸들러에서 직접 관리 (여기서 showOverlay 호출 안 함)
 }
 function resetBall(){
   ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};

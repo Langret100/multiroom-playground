@@ -2182,6 +2182,7 @@ function sendCoopBridgeInit(){
     players: bridgePlayers,
     ...(brBridgeStartPayload ? { startPayload: brBridgeStartPayload } : (coop?.meta?.id === 'backrooms3d' && coop?.startPayload ? { startPayload: coop.startPayload } : {})),
     level: coop.level || 1,
+    startedAt: (coop.meta?.id === 'soccer' && coop.soccerStartedAt) ? coop.soccerStartedAt : 0,
     practice: (() => {
       // Explicit local practice mode (togester only)
       if (coop.practice) return true;
@@ -2737,6 +2738,8 @@ try{
         try{ resetBracket(); }catch(_){ }
         coop.level = 1;
         coop.practice = false;
+        // Soccer: cache authoritative startedAt from server broadcast
+        try{ if ((m?.mode||room?.state?.mode)==='soccer') coop.soccerStartedAt = Number(m?.startedAt||0)||Date.now(); }catch(_){}
         startSim();
 
         // SuhakTokki: capture authoritative start payload from server and forward to iframe.
