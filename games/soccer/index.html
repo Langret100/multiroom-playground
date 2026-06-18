@@ -97,11 +97,22 @@ canvas { display:block; }
  *  - 짝수 석(seat 0,2,4,6) = A팀(빨강), 홀수 석(seat 1,3,5,7) = B팀(파랑)
  *  - 제한 시간: 2분(120초), 종료 시 더 많은 골을 넣은 팀 승리. 동점이면 무승부.
  *
- *  [ 드리블 — 자동 (기본 이동) ]
- *  - 공 근처(DRIBBLE_RANGE px)에서 이동하면 공이 진행 방향 앞으로 부드럽게 밀림
- *  - 가장 가까운 플레이어가 ballOwner(드리블 소유자)로 지정됨 (host 결정)
+ *  [ 공 물리 — 항상 실제 운동량 기반 (예외 없음) ]
+ *  - ball.x/y는 매 프레임 ball.vx/vy로 적분되고, 매 프레임 동일하게 마찰(BALL_FRIC) 적용
+ *  - "소유"라는 개념이 위치를 스냅하거나 발에 붙이는 특수 처리를 하지 않음 —
+ *    공은 항상 자기 속도/마찰 법칙을 그대로 따르는 독립된 물리 객체
+ *  - 시각적 회전(ballSpinAngle)도 매 프레임 속력에 비례해 누적 → 실제로 굴러가는 것처럼 보임
+ *
+ *  [ 드리블 — 힘(가속력) 기반 터치, 위치 스냅 아님 ]
+ *  - 공 근처(DRIBBLE_RANGE px)에 있는 가장 가까운 플레이어가 ballOwner로 지정됨 (host 결정)
  *  - 소유자가 바뀔 때 히스테리시스 적용: 현재 소유자가 DRIBBLE_RANGE*1.4 이내면 유지
- *  - ballOwner는 sc_ball 메시지에 owner 필드로 브로드캐스트됨
+ *  - ballOwner가 이동 중이면 매 프레임 DRIBBLE_TOUCH_ACCEL 만큼의 가속력을
+ *    공의 속도(ball.vx/vy)에 "더할" 뿐 — 위치를 직접 옮기지 않음
+ *    → 정지하면 터치 힘이 사라지고 공은 마찰로 자연스럽게 멈춤 (인위적 감속 없음)
+ *  - 공이 선수에게서 너무 멀어지면(DRIBBLE_RANGE*0.55 초과) 아주 약한 위치 보정만 추가
+ *    (스프링이 아니라 미세한 당김 — 운동량을 거의 해치지 않는 수준)
+ *  - 드리블 중 공 속도 상한: 선수 속도 * DRIBBLE_MAX_REL (너무 빨리 튀어나가지 않게)
+ *  - ballOwner는 sc_ball 메시지에 owner 필드로 브로드캐스트됨 (속도 페널티·태클 타겟 판정용)
  *
  *  [ 속도 ]
  *  - 공 없을 때  : PLR_SPD        (기준 속도)
@@ -115,7 +126,9 @@ canvas { display:block; }
  *  - 최대 차징 시간: MAX_CHARGE_F 프레임 (~0.9초)
  *  - 유효 조건: 킥 발사 시 공이 KICK_RANGE px 이내여야 함
  *  - 모바일 버튼 내부 채워지는 애니메이션으로 차징 정도 시각화
- *  - 킥 후 공은 드리블 소유에서 해제됨
+ *  - 킥 후 공은 드리블 소유에서 해제됨 (= 다음 프레임 updateBallOwner가 재판정)
+ *  - 킥 모션: kickAnimT(KICK_ANIM_F 프레임)가 설정되어 다리를 뻗는 픽셀 애니메이션 표시
+
  *
  *  [ 플레이어 충돌 물리 — 클라이언트 사이드 예측 ]
  *  - 서버 코드 변경 없이 각 클라이언트가 자신의 위치에 대해서만 연산 (분산 물리)
@@ -146,6 +159,19 @@ canvas { display:block; }
  *  - sfxWhistle: 킥오프 휘슬
  *  - sfxEndWhistle: 경기 종료 3연타 휘슬
  *  - sfxBeep: 마지막 10초 카운트다운 삐 소리
+ *
+ *  [ 캐릭터 스프라이트 — 도트(픽셀 블록) 스타일, 투게스터 동일 기법 ]
+ *  - drawPlayer는 단색 원이 아니라 작은 픽셀 그리드를 사각 블록(p() 헬퍼)으로 찍어
+ *    그리는 진짜 도트 스타일 — 투게스터의 p(px,py,w,h,c) 패턴을 그대로 채용
+ *  - ctx.imageSmoothingEnabled=false + 정수 좌표 스냅으로 안티앨리어싱 없는 블록 외곽선
+ *  - 그라디언트 대신 3단 플랫 컬러 밴드(어둡게/기본/밝게)로 레트로 음영 표현
+ *  - 머리(살색)+머리띠(팀색), 유니폼 몸통(팀색)+칼라(흰색), 반바지(흰색),
+ *    다리/양말(팀색)+축구화(검정)로 구성된 탑다운 휴미노이드 스프라이트
+ *  - 걷기 애니메이션: 이동 속력에 따라 두 다리가 교대로 더 길게/짧게 보이는
+ *    워크사이클(performance.now() 기반 위상) — 정지 시 양다리 동일 길이
+ *  - 킥 모션: kickAnimT>0인 동안 앞다리가 p.dir 방향으로 길게 뻗어나가는 픽셀 블록 추가
+ *  - 태클 모션: 대시 중 몸 전체가 진행 방향으로 살짝 기울고 속도선(잔상) 표시
+ *  - 등번호는 가독성을 위해 canvas 텍스트로 유니폼 위에 별도 렌더링 (유지)
  *
  *  [ 이펙트 ]
  *  - 드리블 탭(킥): 작은 흰색 확장 링
@@ -186,9 +212,11 @@ const TACKLE_SPD       = 9.0;              // 태클 대시 속도
 const BALL_FRIC        = 0.975;
 const MIN_KICK_F       = 6.5;              // 최소 킥 파워 (탭)
 const MAX_KICK_F       = 24;               // 최대 킥 파워 (풀 차징)
-const DRIBBLE_RANGE    = PLR_R + BALL_R + 10;  // 드리블 감지 범위 (38px)
-const DRIBBLE_DIST     = PLR_R + BALL_R + 5;   // 드리블 목표 위치 (앞으로)
-const DRIBBLE_HYST     = DRIBBLE_RANGE * 1.4;  // 소유권 히스테리시스 범위
+const DRIBBLE_RANGE    = PLR_R + BALL_R + 10;  // 드리블 터치 감지 범위 (38px)
+const DRIBBLE_HYST     = DRIBBLE_RANGE * 1.4;  // 소유권 히스테리시스 범위 (탈취 판정용)
+const DRIBBLE_TOUCH_ACCEL = 0.62;              // 드리블 중 매 프레임 공에 가하는 가속력 (실제 힘 — 위치 스냅 아님)
+const DRIBBLE_MAX_REL     = 1.55;              // 드리블 시 공 속도 상한 = 선수 속도 * 이 값
+const SPIN_RATE           = 0.018;             // 공 시각적 회전 속도 (속력에 비례)
 const KICK_RANGE       = PLR_R + BALL_R + 26;  // 킥 유효 범위
 const TACKLE_STEAL_R   = PLR_R * 2 + 8;        // 태클 탈취 판정 범위
 const MAX_BV           = 24;
@@ -196,6 +224,7 @@ const GAME_MS          = 120_000;              // 2분
 
 /* ── 쿨다운·타이머 (프레임 기준 @60fps) ── */
 const MAX_CHARGE_F  = 55;   // 최대 차징 시간 (~0.9초)
+const KICK_ANIM_F   = 11;   // 킥 모션(다리 뻗기) 표시 프레임
 const TACKLE_CD_F   = 68;   // 태클 쿨다운 (~1.1초)
 const TACKLE_DUR    = 16;   // 태클 대시 지속
 const STUN_DUR      = 55;   // 스턴 지속 (~0.9초)
@@ -381,6 +410,7 @@ window.addEventListener('keyup',e=>{
    게임 상태
 ══════════════════════════════════════════════════════ */
 let mySid='',myNick='Player',mySeat=-1,isHost=false;
+let gameInitialized=false; // bridge_init must be idempotent: only the FIRST delivery may start the match
 let roster=[];
 let players={};
 /*  players[sid] = {
@@ -389,6 +419,7 @@ let players={};
  *    nick, seat, team,         식별 정보
  *    color, colorDk,           팀 색상
  *    kickRelease, kickCharge,  킥 상태 (bool, 0..1)
+ *    kickAnimT,                킥 모션(다리 뻗기) 표시용 잔여 프레임 — 시각 효과 전용
  *    tackleActive,             태클 대시 중
  *    tackleCd,                 태클 쿨다운 (프레임)
  *    tackleDur,                태클 대시 남은 프레임
@@ -397,6 +428,7 @@ let players={};
  */
 let me=null;
 let ball={x:FCX,y:FCY,vx:0,vy:0};
+let ballSpinAngle=0; // 시각적 회전각 — 매 프레임 속력에 비례해 누적
 let netBall={x:FCX,y:FCY,vx:0,vy:0};
 let netBallOwner=null;  // sc_ball로 수신한 소유자 sid
 let ballOwner=null;     // host가 결정 (자신이 host일 때)
@@ -489,7 +521,9 @@ window.addEventListener('message',e=>{
     roster=(d.players||[]).map(p=>({
       sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
     })).filter(p=>p.seat>=0);
-    // initGame 호출 전에 먼저 startTs·gameActive 설정 (initGame 내부가 gameActive=false 리셋하므로)
+    if(gameInitialized) return; // 중복 전달 방지: 매치 시작은 최초 1회만
+    gameInitialized=true;
+    // startTs를 initGame 전에 먼저 설정 (initGame 내부가 gameActive=false 리셋하므로)
     const sAt=Number(d.startedAt||0);
     startTs = sAt>0 ? sAt : Date.now();
     gameOver=false;
@@ -515,6 +549,7 @@ window.addEventListener('message',e=>{
       p.lx=Number(d.x??p.lx);p.ly=Number(d.y??p.ly);
       p.dir=Number(d.dir??0);p.vx=Number(d.vx??0);p.vy=Number(d.vy??0);
       p.kickRelease=!!d.kickRelease;p.kickCharge=Number(d.kickCharge??0);
+      if(p.kickRelease)p.kickAnimT=KICK_ANIM_F;
       p.tackleActive=!!d.tackle;
       // host가 킥 이벤트 처리
       if(isHost&&p.kickRelease)applyKickFromPlayer(d.sid,d.dir,d.kickCharge,d.x,d.y);
@@ -571,7 +606,7 @@ function cancelKick(){
 function doKickRelease(charge){
   if(!me||!gameActive||gameOver)return;
   const isBig=charge>0.38;
-  me.kickRelease=true;me.kickCharge=charge;
+  me.kickRelease=true;me.kickCharge=charge;me.kickAnimT=KICK_ANIM_F;
   // 호스트는 즉시 처리, 비호스트는 sc_pos로 즉시 전송
   if(isHost)applyKickFromPlayer(mySid,me.dir,charge,me.x,me.y);
   // 즉시 전송 (rate limit 무시)
@@ -612,8 +647,8 @@ function initGame(){
       x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
       dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
       color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
-      kickRelease:false,kickCharge:0,tackleActive:false,
-      tackleCd:0,tackleDur:0,stunned:0,
+      kickRelease:false,kickCharge:0,kickAnimT:0,tackleActive:false,
+      tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
     };
   });
   assign(tA,'A');assign(tB,'B');
@@ -623,7 +658,7 @@ function initGame(){
 }
 function resetBall(){
   ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};
-  ballTrail=[];ballOwner=null;netBallOwner=null;
+  ballTrail=[];ballOwner=null;netBallOwner=null;ballSpinAngle=0;
 }
 function respawnPlayers(){
   const tA=roster.filter(p=>p.seat%2===0).sort((a,b)=>a.seat-b.seat);
@@ -632,7 +667,7 @@ function respawnPlayers(){
     const pl=players[p.sid];if(!pl)return;
     const sp=getSpawn(i,team.length,ch);
     Object.assign(pl,{x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
-      kickRelease:false,kickCharge:0,tackleActive:false,stunned:0});
+      kickRelease:false,kickCharge:0,kickAnimT:0,tackleActive:false,stunned:0});
   });
   doT(tA,'A');doT(tB,'B');
   ballOwner=null;netBallOwner=null;
@@ -647,6 +682,7 @@ function updateMe(){
   // 쿨다운
   if(myTackleCd>0)myTackleCd--;
   if(myTackleDur>0)myTackleDur--;
+  if(me.kickAnimT>0)me.kickAnimT--;
   // 모바일 태클 버튼 쿨다운 시각화 (conic-gradient)
   if(IS_MOBILE){
     if(myTackleCd>0){
@@ -717,6 +753,7 @@ function lerpRemote(){
     p.x=lerp(p.x,p.lx,.22);p.y=lerp(p.y,p.ly,.22);
     if(p.stunned>0)p.stunned--;
     if(p.tackleDur>0)p.tackleDur--;
+    if(p.kickAnimT>0)p.kickAnimT--;
   }
 }
 
@@ -753,22 +790,34 @@ function applyKickFromPlayer(sid,dir,charge,px,py){
   if(ballOwner===sid)ballOwner=null;
 }
 
-function updateDribbling(){
+function applyDribbleTouch(){
+  // 실제 물리 기반 드리블: 위치를 스냅하지 않고, 매 프레임 작은 "터치 힘"을
+  // 공의 속도(ball.vx/vy)에 더해줄 뿐이다. 공은 항상 자기 운동량으로 움직이며,
+  // 마찰도 항상 동일하게 적용된다 (updatePhysics에서 무조건 적용) — 즉 발에
+  // "붙는" 게 아니라 달리는 방향으로 계속 가볍게 차주는 느낌을 만든다.
   if(!ballOwner)return;
   const p=players[ballOwner];if(!p)return;
   const ownerSpd=Math.hypot(p.vx,p.vy);
-  if(ownerSpd>0.12){
-    const tx=p.x+Math.cos(p.dir)*DRIBBLE_DIST;
-    const ty=p.y+Math.sin(p.dir)*DRIBBLE_DIST;
-    const SP=0.28;
-    ball.vx=ball.vx*(1-SP)+(tx-ball.x)*SP*.85+p.vx*.32;
-    ball.vy=ball.vy*(1-SP)+(ty-ball.y)*SP*.85+p.vy*.32;
-    const maxBSpd=Math.max(ownerSpd*1.45,PLR_SPD_DRIBBLE*1.3);
-    const bspd=Math.hypot(ball.vx,ball.vy);
-    if(bspd>maxBSpd){ball.vx=ball.vx/bspd*maxBSpd;ball.vy=ball.vy/bspd*maxBSpd;}
-  }else{
-    ball.vx*=0.82;ball.vy*=0.82;
+  if(ownerSpd<=0.12)return; // 정지해 있으면 터치 힘 없음 — 공은 마찰로 자연 감속
+
+  // 선수가 보고 있는 방향으로 가속력을 가한다 (위치가 아니라 "힘")
+  const fx=Math.cos(p.dir), fy=Math.sin(p.dir);
+  ball.vx += fx*DRIBBLE_TOUCH_ACCEL;
+  ball.vy += fy*DRIBBLE_TOUCH_ACCEL;
+
+  // 공이 선수 옆/뒤로 너무 멀어지지 않도록 아주 약한 위치 보정만 추가
+  // (스프링이 아니라 거리 기반의 미세한 당김 — 운동량을 거의 해치지 않음)
+  const dx=p.x-ball.x, dy=p.y-ball.y, dist=Math.hypot(dx,dy);
+  if(dist>DRIBBLE_RANGE*0.55){
+    const pull=Math.min(0.18,(dist-DRIBBLE_RANGE*0.55)*0.012);
+    ball.vx += (dx/dist)*pull*PLR_SPD;
+    ball.vy += (dy/dist)*pull*PLR_SPD;
   }
+
+  // 드리블 중 공 속도 상한 (선수보다 너무 빨리 튀어나가지 않게)
+  const maxBSpd=Math.max(ownerSpd*DRIBBLE_MAX_REL, PLR_SPD_DRIBBLE*1.3);
+  const bspd=Math.hypot(ball.vx,ball.vy);
+  if(bspd>maxBSpd){ball.vx=ball.vx/bspd*maxBSpd;ball.vy=ball.vy/bspd*maxBSpd;}
 }
 
 function checkTackleSteal(){
@@ -793,37 +842,37 @@ function checkTackleSteal(){
 function updatePhysics(){
   if(!isHost||!gameActive||gameOver||goalPending)return;
 
-  // 드리블 소유자 결정
+  // 드리블 소유자 결정 (탈취 판정·속도 페널티용 — 공 위치에는 직접 개입하지 않음)
   updateBallOwner();
-  // 드리블 물리
-  updateDribbling();
+  // 드리블 "터치 힘" 적용 — 공의 속도에 가속력만 더함 (위치 스냅 없음)
+  applyDribbleTouch();
   // 태클 탈취 체크
   checkTackleSteal();
 
-  // 볼 이동·마찰 (드리블 중에는 spring이 이미 적용됨)
-  if(!ballOwner){
-    ball.x+=ball.vx;ball.y+=ball.vy;
-    ball.vx*=BALL_FRIC;ball.vy*=BALL_FRIC;
-    if(Math.abs(ball.vx)<.04)ball.vx=0;if(Math.abs(ball.vy)<.04)ball.vy=0;
-  }else{
-    ball.x+=ball.vx;ball.y+=ball.vy;
-  }
+  // 볼 이동·마찰 — 항상 동일한 물리 법칙 적용 (소유 여부와 무관)
+  ball.x+=ball.vx;ball.y+=ball.vy;
+  ball.vx*=BALL_FRIC;ball.vy*=BALL_FRIC;
+  if(Math.abs(ball.vx)<.04)ball.vx=0;if(Math.abs(ball.vy)<.04)ball.vy=0;
 
-  // 위아래 벽
-  if(ball.y-BALL_R<FY){ball.y=FY+BALL_R;ball.vy=Math.abs(ball.vy)*.8;if(ballOwner)ballOwner=null;}
-  if(ball.y+BALL_R>FY+FH){ball.y=FY+FH-BALL_R;ball.vy=-Math.abs(ball.vy)*.8;if(ballOwner)ballOwner=null;}
+  // 시각적 회전각 누적 (속력에 비례) — drawBallSprite에서 사용
+  ballSpinAngle += Math.hypot(ball.vx,ball.vy)*SPIN_RATE;
+
+  // 위아래 벽 — 단순 반사. ballOwner는 updateBallOwner()가 다음 프레임에
+  // 거리 기준으로 다시 판정하므로 여기서 강제로 null 처리하지 않는다.
+  if(ball.y-BALL_R<FY){ball.y=FY+BALL_R;ball.vy=Math.abs(ball.vy)*.8;}
+  if(ball.y+BALL_R>FY+FH){ball.y=FY+FH-BALL_R;ball.vy=-Math.abs(ball.vy)*.8;}
 
   // 왼쪽
   if(ball.x-BALL_R<GL){
     if(ball.y>=GY1&&ball.y<=GY2){
       if(ball.x-BALL_R<GL-GOAL_D&&!goalPending){goalPending=true;bridgeSend('sc_goal',{team:'B',scoreA:score.A,scoreB:score.B+1});}
-    }else{ball.x=GL+BALL_R;ball.vx=Math.abs(ball.vx)*.8;if(ballOwner)ballOwner=null;}
+    }else{ball.x=GL+BALL_R;ball.vx=Math.abs(ball.vx)*.8;}
   }
   // 오른쪽
   if(ball.x+BALL_R>GR){
     if(ball.y>=GY1&&ball.y<=GY2){
       if(ball.x+BALL_R>GR+GOAL_D&&!goalPending){goalPending=true;bridgeSend('sc_goal',{team:'A',scoreA:score.A+1,scoreB:score.B});}
-    }else{ball.x=GR-BALL_R;ball.vx=-Math.abs(ball.vx)*.8;if(ballOwner)ballOwner=null;}
+    }else{ball.x=GR-BALL_R;ball.vx=-Math.abs(ball.vx)*.8;}
   }
 
   // 볼 잔상 트레일 업데이트
@@ -841,6 +890,7 @@ function updateNetBallTrail(){
   if(isHost)return;
   ballTrail.push({x:netBall.x,y:netBall.y});
   if(ballTrail.length>TRAIL_LEN)ballTrail.shift();
+  ballSpinAngle += Math.hypot(netBall.vx,netBall.vy)*SPIN_RATE;
 }
 
 function checkTimer(){
@@ -911,22 +961,92 @@ function drawPlayer(p,isMine){
   const x=p.x,y=p.y,isSt=p.stunned>0;
 
   // 그림자
-  ctx.beginPath();ctx.ellipse(x+2,y+3,PLR_R,PLR_R*.62,0,0,Math.PI*2);
-  ctx.fillStyle='rgba(0,0,0,.26)';ctx.fill();
+  ctx.beginPath();ctx.ellipse(x+2,y+12,15,5,0,0,Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.28)';ctx.fill();
 
-  // 태클 대시 모션 블러
+  // 태클 대시 속도선 (스프라이트 뒤에)
   if(p.tackleActive||(isMine&&myTackleDur>0)){
-    const bx=x-Math.cos(p.dir)*20,by=y-Math.sin(p.dir)*20;
+    const bx=x-Math.cos(p.dir)*22,by=y-Math.sin(p.dir)*22;
     const g2=ctx.createLinearGradient(bx,by,x,y);
-    g2.addColorStop(0,'rgba(100,200,255,0)');g2.addColorStop(1,'rgba(100,200,255,.32)');
-    ctx.beginPath();ctx.arc(x,y,PLR_R,0,Math.PI*2);ctx.fillStyle=g2;ctx.fill();
+    g2.addColorStop(0,'rgba(100,200,255,0)');g2.addColorStop(1,'rgba(100,200,255,.35)');
+    ctx.beginPath();ctx.ellipse(x,y,18,20,0,0,Math.PI*2);ctx.fillStyle=g2;ctx.fill();
   }
 
-  // 스턴 시 흑백 처리
-  const col=isSt?'#888':p.color,colDk=isSt?'#555':p.colorDk;
-  const gr=ctx.createRadialGradient(x-4,y-5,2,x,y,PLR_R);
-  gr.addColorStop(0,lighten(col,.28));gr.addColorStop(1,colDk);
-  ctx.beginPath();ctx.arc(x,y,PLR_R,0,Math.PI*2);ctx.fillStyle=gr;ctx.fill();
+  // 좌우 페이싱 갱신 (수평 이동이 충분할 때만 — 수직 이동 중엔 이전 값 유지)
+  const cosD=Math.cos(p.dir);
+  if(Math.abs(cosD)>0.28) p.facing = cosD<0 ? -1 : 1;
+  const flip = p.facing||1;
+
+  // ── 픽셀 블록 스프라이트 (투게스터와 동일한 p(px,py,w,h,c) 기법) ──
+  const PX=3;                 // 1픽셀 = 화면 3px
+  const SW=12, SH=14;         // 스프라이트 그리드 크기
+  const drawW=SW*PX, drawH=SH*PX;
+  const baseX=Math.round(x-drawW/2);
+  const baseY=Math.round(y-drawH/2+2);
+
+  const t=performance.now()/1000;
+  const spd=Math.hypot(p.vx,p.vy);
+  const moving=spd>0.35;
+  const walkPhase=moving?(Math.floor(t*9)%2):0;
+  const legKick=moving?(walkPhase?1:-1):0; // 한쪽 다리만 1px 더 길게
+
+  // 컬러 팔레트 (스턴 시 무채색)
+  const col   = isSt?'#8a8a8a':p.color;
+  const colDk = isSt?'#5a5a5a':p.colorDk;
+  const colLi = isSt?'#bdbdbd':lighten(p.color,.4);
+  const SKIN='#f0c39a', SKIN_DK='#caa078';
+  const SHORTS='#f5f5f5', SHORTS_DK='#d8d8d8';
+  const CLEAT='#262626', EYE='#1f1f1f';
+  const HEADBAND=colDk;
+
+  const px=(gx,gy,gw,gh,c)=>{
+    ctx.fillStyle=c;
+    ctx.fillRect(baseX+gx*PX,baseY+gy*PX,(gw||1)*PX,(gh||1)*PX);
+  };
+
+  ctx.save();
+  ctx.imageSmoothingEnabled=false;
+  const cx2=baseX+drawW/2, cy2=baseY+drawH/2;
+  ctx.translate(cx2,cy2);ctx.scale(flip,1);ctx.translate(-cx2,-cy2);
+
+  // 다리/양말/축구화 (걷기 애니메이션 — 한쪽이 더 길게)
+  const legBaseY=10, legH=3;
+  px(3,legBaseY,2,legH+(legKick<0?1:0), SKIN);       // 왼다리
+  px(7,legBaseY,2,legH+(legKick>0?1:0), SKIN);       // 오른다리
+  px(3,legBaseY+legH-1+(legKick<0?1:0),2,1, col);    // 왼양말
+  px(7,legBaseY+legH-1+(legKick>0?1:0),2,1, col);    // 오른양말
+  px(3,legBaseY+legH+(legKick<0?1:0),2,1, CLEAT);    // 왼축구화
+  px(7,legBaseY+legH+(legKick>0?1:0),2,1, CLEAT);    // 오른축구화
+
+  // 반바지
+  px(2,9,8,2, SHORTS_DK);
+  px(2,8,8,1, SHORTS);
+
+  // 유니폼 몸통 (4행, 좌우 음영 밴드)
+  px(2,5,1,4, colDk);   // 왼쪽 어두운 밴드(소매)
+  px(9,5,1,4, colLi);   // 오른쪽 밝은 밴드(소매)
+  px(3,5,6,4, col);     // 가운데 기본색
+  px(3,5,6,1, '#ffffff'); // 칼라(흰색 V넥 느낌의 윗줄)
+
+  // 목/머리
+  px(4,4,4,1, SKIN);                 // 목
+  px(3,1,6,3, SKIN);                 // 얼굴
+  px(3,1,1,3, SKIN_DK);              // 얼굴 좌측 음영
+  px(4,2,1,1, EYE);px(7,2,1,1, EYE); // 눈
+  px(3,0,6,1, HEADBAND);             // 머리띠
+
+  ctx.restore();
+
+  // 킥 모션: 다리 한쪽이 p.dir 방향으로 길게 뻗는 부츠 (플립 영향 없이 실제 방향으로)
+  const kAnim = isMine ? Math.max(me.kickAnimT||0,(kickCharging?Math.round(kickChargeFrames*0.5):0)) : (p.kickAnimT||0);
+  if(kAnim>0){
+    const reach=10+Math.min(kAnim,KICK_ANIM_F)*1.1;
+    const kx=x+Math.cos(p.dir)*reach, ky=y+Math.sin(p.dir)*reach;
+    ctx.beginPath();ctx.arc(kx,ky,4.5,0,Math.PI*2);
+    ctx.fillStyle=CLEAT;ctx.fill();
+    ctx.beginPath();ctx.moveTo(x+Math.cos(p.dir)*6,y+Math.sin(p.dir)*6);
+    ctx.lineTo(kx,ky);ctx.strokeStyle=SKIN;ctx.lineWidth=5;ctx.lineCap='round';ctx.stroke();
+  }
 
   // 킥 차징 링 (내 플레이어)
   if(isMine&&kickCharging){
@@ -945,19 +1065,15 @@ function drawPlayer(p,isMine){
     ctx.strokeStyle='#FFD700';ctx.lineWidth=2.5;ctx.stroke();
   }
 
-  // 방향 점
-  const fdx=x+Math.cos(p.dir)*(PLR_R-6),fdy=y+Math.sin(p.dir)*(PLR_R-6);
-  ctx.beginPath();ctx.arc(fdx,fdy,4.5,0,Math.PI*2);ctx.fillStyle='#fff';ctx.fill();
-
-  // 등번호
+  // 등번호 (가독성을 위해 캔버스 텍스트 유지)
   ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font=`bold ${Math.round(PLR_R*.88)}px monospace`;ctx.fillStyle='#fff';
-  ctx.shadowColor='rgba(0,0,0,.5)';ctx.shadowBlur=3;
-  ctx.fillText(String(p.seat+1),x,y+1);ctx.shadowBlur=0;
+  ctx.font=`bold 13px monospace`;ctx.fillStyle='#fff';
+  ctx.shadowColor='rgba(0,0,0,.6)';ctx.shadowBlur=3;
+  ctx.fillText(String(p.seat+1),x,y+6);ctx.shadowBlur=0;
 
   // 닉네임
   ctx.font='10px monospace';ctx.fillStyle=isMine?'#FFD700':'rgba(255,255,255,.82)';
-  ctx.fillText(p.nick.slice(0,9),x,y+PLR_R+11);
+  ctx.fillText(p.nick.slice(0,9),x,y+PLR_R+13);
 
   // 스턴 별 표시
   if(isSt){
@@ -981,13 +1097,16 @@ function drawBallSprite(){
   g.addColorStop(0,'#fff');g.addColorStop(.65,'#e0e0e0');g.addColorStop(1,'#9e9e9e');
   ctx.beginPath();ctx.arc(b.x,b.y,BALL_R,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
   ctx.strokeStyle='#555';ctx.lineWidth=.8;ctx.stroke();
-  ctx.fillStyle='#333';ctx.beginPath();ctx.arc(b.x,b.y,BALL_R*.3,0,Math.PI*2);ctx.fill();
+  // 회전하는 펜타곤 패턴 — 실제로 굴러가는 것처럼 보이게 ballSpinAngle만큼 회전
+  ctx.save();ctx.translate(b.x,b.y);ctx.rotate(ballSpinAngle);
+  ctx.fillStyle='#333';ctx.beginPath();ctx.arc(0,0,BALL_R*.3,0,Math.PI*2);ctx.fill();
   ctx.strokeStyle='#444';ctx.lineWidth=.7;
   for(let i=0;i<5;i++){
     const a=(i/5)*Math.PI*2-Math.PI/2;
-    ctx.beginPath();ctx.moveTo(b.x+Math.cos(a)*BALL_R*.3,b.y+Math.sin(a)*BALL_R*.3);
-    ctx.lineTo(b.x+Math.cos(a)*BALL_R*.78,b.y+Math.sin(a)*BALL_R*.78);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(Math.cos(a)*BALL_R*.3,Math.sin(a)*BALL_R*.3);
+    ctx.lineTo(Math.cos(a)*BALL_R*.78,Math.sin(a)*BALL_R*.78);ctx.stroke();
   }
+  ctx.restore();
 }
 function drawHUD(){
   ctx.fillStyle='#111827';ctx.fillRect(0,0,CW,HUD_H);

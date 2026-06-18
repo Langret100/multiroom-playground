@@ -2005,6 +2005,41 @@ function sendCoopBridgeInit(){
     }catch(_){ }
   };
 
+  const CPU_SID = "__cpu__";
+  const humanCount = (()=>{
+    try{
+      // Prefer `order` (seat map) because it is stable even when the `players`
+      // schema isn't exposed yet (important for SuhakTokki late joins).
+      const ord = room?.state?.order;
+      if (ord){
+        let cnt = 0;
+        if (typeof ord.forEach === 'function'){
+          ord.forEach((_, sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
+        } else {
+          Object.keys(ord).forEach((sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
+        }
+        return cnt;
+      }
+      // Fallback: count from players map/object
+      let cnt = 0;
+      forEachPlayer((_, sid)=>{
+        if (String(sid) === CPU_SID) return;
+        cnt++;
+      });
+      return cnt;
+    }catch(_){ return 0; }
+  })();
+  const expectedHumans = (()=>{
+    try{
+      // SuhakTokki: 시작 대기 인원을 "현재 들어온 사람 수"로 두어,
+      // max playerCount(예: 8) 때문에 무한 대기/로딩이 되는 문제를 방지한다.
+      const explicit = Number(coop.expectedHumans || 0);
+      if (explicit > 0) return explicit;
+      return humanCount;
+    }catch(_){ return humanCount; }
+  })();
+  const solo = (expectedHumans <= 1);
+
   // Wait until the room state has enough information to derive my seat + the single host.
   // Some environments can load the iframe faster than the first room_state snapshot.
   // For SuhakTokki we primarily rely on `order` (seat map), because some schemas may
@@ -2022,12 +2057,24 @@ function sendCoopBridgeInit(){
     // 금칙어 게임: 자체 WS 연결 유지 → room.state.order 없이도 바로 전송
     const isGeumchikeo = (coop && coop.meta && coop.meta.id === "geumchikeo");
 
+    // Soccer: teams/positions are built ONCE from the player roster carried in
+    // bridge_init, and the game never asks for an updated roster afterward
+    // (unlike Togester, which keeps receiving live tg_players updates).
+    // If bridge_init fires before every expected player's `order` entry has
+    // synced to this client, that player is permanently missing from the
+    // game's players{} map — their later sc_pos packets get silently dropped,
+    // which is exactly the "I move but they don't see it" symptom. So for
+    // soccer we must wait until humanCount has caught up to expectedHumans,
+    // not just until "I" exist in state.
+    const isSoccer = (coop && coop.meta && coop.meta.id === "soccer");
+    const soccerRosterIncomplete = isSoccer && (humanCount < expectedHumans);
+
     // SuhakTokki: the embedded game uses `init.isHost` for authority.
     // Some deployments do not expose a reliable `isHost` flag in the room state,
     // so we MUST NOT block bridge_init waiting for it. We only wait until we can
     // identify "me" in either `players` or the seat-map `order`. A single host is
     // elected deterministically (lowest seat / smallest sid) below.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo)){
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo) || soccerRosterIncomplete){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -2074,40 +2121,6 @@ function sendCoopBridgeInit(){
   }catch(_){ return -1; }
 })();
 
-  const CPU_SID = "__cpu__";
-  const humanCount = (()=>{
-    try{
-      // Prefer `order` (seat map) because it is stable even when the `players`
-      // schema isn't exposed yet (important for SuhakTokki late joins).
-      const ord = room?.state?.order;
-      if (ord){
-        let cnt = 0;
-        if (typeof ord.forEach === 'function'){
-          ord.forEach((_, sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
-        } else {
-          Object.keys(ord).forEach((sid)=>{ if (String(sid) !== CPU_SID) cnt++; });
-        }
-        return cnt;
-      }
-      // Fallback: count from players map/object
-      let cnt = 0;
-      forEachPlayer((_, sid)=>{
-        if (String(sid) === CPU_SID) return;
-        cnt++;
-      });
-      return cnt;
-    }catch(_){ return 0; }
-  })();
-  const expectedHumans = (()=>{
-    try{
-      // SuhakTokki: 시작 대기 인원을 "현재 들어온 사람 수"로 두어,
-      // max playerCount(예: 8) 때문에 무한 대기/로딩이 되는 문제를 방지한다.
-      const explicit = Number(coop.expectedHumans || 0);
-      if (explicit > 0) return explicit;
-      return humanCount;
-    }catch(_){ return humanCount; }
-  })();
-  const solo = (expectedHumans <= 1);
   // NOTE: SuhakTokki embed authority relies on a single, stable host.
   // Some room-state variants do not expose `players[sid].isHost` reliably/early.
   // In that case, we derive host deterministically from the authoritative seat map
