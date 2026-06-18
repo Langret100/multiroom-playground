@@ -1023,8 +1023,10 @@ this.onMessage("sc_pos", (client, payload) => {
     p.vx  = Number(payload.vx  ?? 0);
     p.vy  = Number(payload.vy  ?? 0);
   }
-  // Relay to all OTHER clients
-  this.broadcast("sc_pos", { sid, x: payload.x, y: payload.y, dir: payload.dir, vx: payload.vx, vy: payload.vy }, { except: client });
+  // Relay to all OTHER clients — must include kick/tackle flags or non-host
+  // kicks never reach the ball (host-only ball physics needs kickRelease here)
+  // and remote players never see the other side's kick/tackle animation.
+  this.broadcast("sc_pos", { sid, x: payload.x, y: payload.y, dir: payload.dir, vx: payload.vx, vy: payload.vy, kickRelease: payload.kickRelease, kickCharge: payload.kickCharge, tackle: payload.tackle }, { except: client });
 });
 
 // Ball position relay (host only)
@@ -1075,6 +1077,7 @@ this.onMessage("sc_sync", (client) => {
     client.send("sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
     if (this.sc.ball) client.send("sc_ball", this.sc.ball);
     client.send("sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B });
+    client.send("sc_roster", { players: buildHumanRoster(this) });
   }catch(_){}
 });
 
@@ -1239,6 +1242,12 @@ this.onMessage("sc_sync", (client) => {
           ...( (this.state.mode === "mathexplorer" || this.state.mode === "math-explorer") && this._mathStartPayload ? { startPayload: this._mathStartPayload } : {}),
           ...( this.state.mode === "backrooms3d" && this.br && this.br.startPayload ? { startPayload: this.br.startPayload } : {}),
         });
+        // Soccer: late-joiner (and everyone else) get a fresh full roster —
+        // mirrors Togester's tg_players broadcast pattern instead of relying
+        // on a single bridge_init snapshot.
+        if (this.state.mode === "soccer" && this.sc){
+          this.broadcast("sc_roster", { players: buildHumanRoster(this) });
+        }
       }
     }catch(_){ }
 
@@ -1991,6 +2000,11 @@ try{
       startTs:    this.sc.startedAt,
       durationMs: this.sc.durationMs,
     });
+    // 투게스터의 tg_players와 동일한 패턴: 서버가 들고 있는 전체 인원 목록을
+    // 별도 메시지로 브로드캐스트한다. bridge_init 한 번에만 의존하지 않고,
+    // 이후 onJoin(늦은 합류)·sc_sync 요청 시에도 같은 메시지로 다시 보내면
+    // 게임 쪽이 항상 "현재 서버가 아는 전체 인원"으로 players{}를 보정할 수 있다.
+    this.broadcast("sc_roster", { players: buildHumanRoster(this) });
 
     // Server-side safety timeout: force finish slightly after game should end
     this.sc.timer = this.clock.setTimeout(() => {

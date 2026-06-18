@@ -1294,11 +1294,14 @@ function updatePreview(modeId){
     // ── Soccer: iframe → server relays ─────────────────────────────
     if (d.type === "sc_pos"){
       if (!fromMain) return;
-      const _now = Date.now();
-      if (!window.__scPosTs) window.__scPosTs = 0;
-      if (_now - window.__scPosTs < 40) return; // max ~25 fps
-      window.__scPosTs = _now;
-      try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy }); }catch(_){ }
+      const isEvent = !!(d.kickRelease || d.tackle); // 킥/태클 이벤트는 쓰로틀 예외 — 절대 누락되면 안 됨
+      if (!isEvent){
+        const _now = Date.now();
+        if (!window.__scPosTs) window.__scPosTs = 0;
+        if (_now - window.__scPosTs < 40) return; // 일반 위치 갱신만 최대 ~25fps로 제한
+        window.__scPosTs = _now;
+      }
+      try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy, kickRelease: d.kickRelease, kickCharge: d.kickCharge, tackle: d.tackle }); }catch(_){ }
       return;
     }
     if (d.type === "sc_ball"){
@@ -2057,24 +2060,12 @@ function sendCoopBridgeInit(){
     // 금칙어 게임: 자체 WS 연결 유지 → room.state.order 없이도 바로 전송
     const isGeumchikeo = (coop && coop.meta && coop.meta.id === "geumchikeo");
 
-    // Soccer: teams/positions are built ONCE from the player roster carried in
-    // bridge_init, and the game never asks for an updated roster afterward
-    // (unlike Togester, which keeps receiving live tg_players updates).
-    // If bridge_init fires before every expected player's `order` entry has
-    // synced to this client, that player is permanently missing from the
-    // game's players{} map — their later sc_pos packets get silently dropped,
-    // which is exactly the "I move but they don't see it" symptom. So for
-    // soccer we must wait until humanCount has caught up to expectedHumans,
-    // not just until "I" exist in state.
-    const isSoccer = (coop && coop.meta && coop.meta.id === "soccer");
-    const soccerRosterIncomplete = isSoccer && (humanCount < expectedHumans);
-
     // SuhakTokki: the embedded game uses `init.isHost` for authority.
     // Some deployments do not expose a reliable `isHost` flag in the room state,
     // so we MUST NOT block bridge_init waiting for it. We only wait until we can
     // identify "me" in either `players` or the seat-map `order`. A single host is
     // elected deterministically (lowest seat / smallest sid) below.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo) || soccerRosterIncomplete){
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -2975,7 +2966,7 @@ try{
         postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
       });
       room.onMessage("sc_pos", (msg)=>{
-        postToMain({ type:"sc_pos", sid: msg.sid, x: msg.x, y: msg.y, dir: msg.dir, vx: msg.vx, vy: msg.vy });
+        postToMain({ type:"sc_pos", sid: msg.sid, x: msg.x, y: msg.y, dir: msg.dir, vx: msg.vx, vy: msg.vy, kickRelease: msg.kickRelease, kickCharge: msg.kickCharge, tackle: msg.tackle });
       });
       room.onMessage("sc_ball", (msg)=>{
         postToMain({ type:"sc_ball", x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy });
@@ -2988,6 +2979,11 @@ try{
       });
       room.onMessage("sc_goal_sync", (msg)=>{
         postToMain({ type:"sc_goal", team:"A", scoreA: msg.scoreA, scoreB: msg.scoreB });
+      });
+      // 투게스터의 tg_players 릴레이와 동일한 패턴 — 서버가 보낸 전체 인원
+      // 목록을 그대로 iframe에 전달. 게임 쪽이 이걸로 players{}를 보정한다.
+      room.onMessage("sc_roster", (msg)=>{
+        postToMain({ type:"sc_roster", players: msg.players || [] });
       });
       // ────────────────────────────────────────────────────────────────
 

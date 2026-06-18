@@ -173,6 +173,15 @@ canvas { display:block; }
  *  - 태클 모션: 대시 중 몸 전체가 진행 방향으로 살짝 기울고 속도선(잔상) 표시
  *  - 등번호는 가독성을 위해 canvas 텍스트로 유니폼 위에 별도 렌더링 (유지)
  *
+ *  [ 내 캐릭터 식별·게이지 UI — 캐릭터를 둘러싸는 원 금지 ]
+ *  - "이게 나"라는 표시는 캐릭터를 둘러싸는 링이 아니라 발밑의 작은 금색
+ *    삼각형 마커 하나로만 표시한다 (여러 원이 겹쳐 보이는 혼란 방지)
+ *  - 킥 차징/태클 쿨다운 게이지는 캐릭터 주변 원호가 아니라 발밑의 작은
+ *    가로 바(22×3px, 닉네임보다 위)로 표시 — 둘 중 하나만 활성화될 때 표시
+ *    (차징 중이면 노란 바, 아니면 쿨다운 중이면 파란 바)
+ *  - 공 소유(드리블) 표시용 별도 링은 만들지 않음 — 드리블 물리 자체가 공이
+ *    발 옆에 붙어 있는 것으로 소유 여부를 자연스럽게 보여주기 때문
+ *
  *  [ 이펙트 ]
  *  - 드리블 탭(킥): 작은 흰색 확장 링
  *  - 파워킥: 큰 금색 링 + 플레이어 주변 차징 링
@@ -184,8 +193,25 @@ canvas { display:block; }
  *  [ 네트워크 아키텍처 ]
  *  - Host (seat 0): 공 물리 계산·드리블·탈취 판정 → sc_ball 브로드캐스트 (30fps)
  *  - 모든 클라이언트: 자기 위치+킥/태클 상태 sc_pos 전송 (25fps, 킥 발사 시 즉시)
+ *  - sc_pos는 client→server→client 3단 릴레이를 거치며, 세 곳 모두
+ *    kickRelease/kickCharge/tackle 필드를 빠뜻 없이 전달해야 한다 — 누락되면
+ *    게스트(non-host)의 킥이 공에 전혀 영향을 못 주는 버그가 됨 (host만 킥이 먹힘)
+ *  - room.js의 출력 쓰로틀(~25fps 제한)은 kickRelease/tackle이 true인 패킷은
+ *    예외로 통과시킨다 — 그렇지 않으면 쓰로틀 타이밍에 걸려 킥 이벤트 자체가
+ *    누락될 수 있음 (일반 위치 갱신만 쓰로틀 대상)
  *  - 골: host → sc_goal → 서버 브로드캐스트 → 전 클라이언트 점수 업데이트
  *  - 게임 종료: host → sc_over → 서버 finishSoccer() → backToRoom
+ *
+ *  [ 선수 목록(roster) 동기화 — 투게스터의 tg_players와 동일한 패턴 ]
+ *  - bridge_init은 입장 시 1회만 오는 스냅샷이라 그것만 믿지 않는다.
+ *    서버가 buildHumanRoster()로 만든 "현재 서버가 아는 전체 인원" 목록을
+ *    sc_roster 메시지로 (a) 매치 시작 시, (b) 늦은 합류(onJoin) 시,
+ *    (c) 클라이언트가 sc_sync를 요청할 때 브로드캐스트한다
+ *  - 게임은 sc_roster를 받을 때마다 applyServerRoster()로 roster 배열을
+ *    합집합 갱신하고, 이미 시작된 상태라면 mergeNewRosterPlayers()로
+ *    아직 players{}에 없는 선수만 점수/공 상태를 그대로 둔 채 추가한다
+ *  - 즉 soccer도 투게스터처럼 "서버가 미는 전체 명단"을 지속적으로 받는
+ *    구조이고, bridge_init 타이밍에만 의존하는 특수 게이트는 두지 않는다
  *
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -514,6 +540,10 @@ function bridgeSend(type,payload={}){
 window.addEventListener('message',e=>{
   const d=e.data;if(!d||typeof d!=='object')return;
 
+  if(d.type==='sc_roster'){
+    applyServerRoster(d.players);
+    return;
+  }
   if(d.type==='bridge_init'){
     // 투게스터 패턴: bridge_init 한 번으로 즉시 게임 시작
     mySid =String(d.sessionId||'');myNick=String(d.nick||'Player');
@@ -521,7 +551,7 @@ window.addEventListener('message',e=>{
     roster=(d.players||[]).map(p=>({
       sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
     })).filter(p=>p.seat>=0);
-    if(gameInitialized) return; // 중복 전달 방지: 매치 시작은 최초 1회만
+    if(gameInitialized){ mergeNewRosterPlayers(); return; } // 매치 시작 후엔 늦게 합류한 선수만 병합
     gameInitialized=true;
     // startTs를 initGame 전에 먼저 설정 (initGame 내부가 gameActive=false 리셋하므로)
     const sAt=Number(d.startedAt||0);
@@ -655,6 +685,41 @@ function initGame(){
   me=players[mySid];
   resetBall();startLoop();
   // 오버레이는 bridge_init 핸들러에서 직접 관리 (여기서 showOverlay 호출 안 함)
+}
+function applyServerRoster(list){
+  // 투게스터의 tg_players 처리와 동일한 역할: 서버가 보내준 "현재 전체 인원"
+  // 목록으로 roster를 갱신한다. bridge_init 한 번에만 의존하지 않고, 매치
+  // 시작 후 늦게 합류/복제된 선수도 이 메시지를 통해 항상 따라잡을 수 있다.
+  if(!Array.isArray(list))return;
+  const incoming=list.map(p=>({
+    sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
+  })).filter(p=>p.sid&&p.seat>=0);
+  const bySid={};
+  for(const p of roster)bySid[p.sid]=p;
+  for(const p of incoming)bySid[p.sid]=p; // 최신 정보로 덮어씀
+  roster=Object.values(bySid);
+  if(gameInitialized) mergeNewRosterPlayers(); // 이미 시작된 경우 누락 선수만 추가
+}
+function mergeNewRosterPlayers(){
+  // 매치가 이미 시작된 후 더 늦게 합류 정보가 도착한 선수를 점수/공/기존 포지션을
+  // 건드리지 않고 players{}에 추가한다 — 시작 시점 게이트가 혹시 놓친 경우의 안전망.
+  let added=false;
+  for(const p of roster){
+    if(players[p.sid])continue;
+    const ch=(p.seat%2===0)?'A':'B';
+    const sameTeamCount=Object.values(players).filter(q=>q.team===ch).length;
+    const sp=getSpawn(sameTeamCount,sameTeamCount+1,ch);
+    players[p.sid]={
+      x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
+      dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
+      color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
+      kickRelease:false,kickCharge:0,kickAnimT:0,tackleActive:false,
+      tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
+    };
+    added=true;
+  }
+  if(added && !me) me=players[mySid];
+  return added;
 }
 function resetBall(){
   ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};
@@ -1048,21 +1113,14 @@ function drawPlayer(p,isMine){
     ctx.lineTo(kx,ky);ctx.strokeStyle=SKIN;ctx.lineWidth=5;ctx.lineCap='round';ctx.stroke();
   }
 
-  // 킥 차징 링 (내 플레이어)
-  if(isMine&&kickCharging){
-    const pct=kickChargeFrames/MAX_CHARGE_F;
-    ctx.beginPath();ctx.arc(x,y,PLR_R+4+pct*8,0,Math.PI*2);
-    ctx.strokeStyle=`rgba(255,220,0,${.5+pct*.5})`;ctx.lineWidth=3;ctx.stroke();
-  }
-  // 공 소유 표시 (나)
-  if(isMine&&(isHost?ballOwner===mySid:netBallOwner===mySid)){
-    ctx.beginPath();ctx.arc(x,y,PLR_R+3,0,Math.PI*2);
-    ctx.strokeStyle='rgba(255,255,100,.8)';ctx.lineWidth=2;ctx.stroke();
-  }
-  // 골드 링 (내 플레이어)
+  // "나" 식별 마커 — 캐릭터를 둘러싸는 원 대신 발밑의 작은 삼각형
   if(isMine){
-    ctx.beginPath();ctx.arc(x,y,PLR_R+3,0,Math.PI*2);
-    ctx.strokeStyle='#FFD700';ctx.lineWidth=2.5;ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x,y+PLR_R+2);
+    ctx.lineTo(x-5,y+PLR_R+8);
+    ctx.lineTo(x+5,y+PLR_R+8);
+    ctx.closePath();
+    ctx.fillStyle='#FFD700';ctx.fill();
   }
 
   // 등번호 (가독성을 위해 캔버스 텍스트 유지)
@@ -1071,22 +1129,29 @@ function drawPlayer(p,isMine){
   ctx.shadowColor='rgba(0,0,0,.6)';ctx.shadowBlur=3;
   ctx.fillText(String(p.seat+1),x,y+6);ctx.shadowBlur=0;
 
+  // 작은 게이지 바 — 캐릭터를 둘러싸지 않고 발 아래에 작게 표시
+  // (킥 차징 중엔 노란 바, 아니면 태클 쿨다운 중엔 파란 바 — 동시에 겹치지 않게 하나만)
+  if(isMine&&(kickCharging||myTackleCd>0)){
+    const gw=22,gh=3,gy=y+PLR_R+11;
+    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(x-gw/2,gy,gw,gh);
+    if(kickCharging){
+      const pct=kickChargeFrames/MAX_CHARGE_F;
+      ctx.fillStyle='#ffd400';ctx.fillRect(x-gw/2,gy,gw*pct,gh);
+    }else{
+      const pct=1-myTackleCd/TACKLE_CD_F;
+      ctx.fillStyle='#64b4ff';ctx.fillRect(x-gw/2,gy,gw*pct,gh);
+    }
+  }
+
   // 닉네임
   ctx.font='10px monospace';ctx.fillStyle=isMine?'#FFD700':'rgba(255,255,255,.82)';
-  ctx.fillText(p.nick.slice(0,9),x,y+PLR_R+13);
+  ctx.fillText(p.nick.slice(0,9),x,y+PLR_R+22);
 
   // 스턴 별 표시
   if(isSt){
     const sf=Math.floor(Date.now()/120)%2;
     ctx.font='14px monospace';ctx.fillStyle='#FFD700';
     ctx.fillText('★',x+(sf?-8:8),y-PLR_R-12);
-  }
-
-  // 내 쿨다운 표시 (태클)
-  if(isMine&&myTackleCd>0){
-    const pct=1-myTackleCd/TACKLE_CD_F;
-    ctx.beginPath();ctx.arc(x,y,PLR_R+9,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
-    ctx.strokeStyle='rgba(100,180,255,.7)';ctx.lineWidth=2;ctx.stroke();
   }
 }
 function drawBallSprite(){
