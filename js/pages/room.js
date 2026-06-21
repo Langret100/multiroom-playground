@@ -1294,24 +1294,29 @@ function updatePreview(modeId){
     // ── Soccer: iframe → server relays ─────────────────────────────
     if (d.type === "sc_pos"){
       if (!fromMain) return;
-      const isEvent = !!(d.kickRelease || d.tackle); // 킥/태클 이벤트는 쓰로틀 예외 — 절대 누락되면 안 됨
+      const isEvent = !!(d.kickAt || d.tackle); // 킥/태클 이벤트는 쓰로틀 예외 (지연 없이 즉시 전달)
       if (!isEvent){
         const _now = Date.now();
         if (!window.__scPosTs) window.__scPosTs = 0;
         if (_now - window.__scPosTs < 40) return; // 일반 위치 갱신만 최대 ~25fps로 제한
         window.__scPosTs = _now;
       }
-      try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy, kickRelease: d.kickRelease, kickCharge: d.kickCharge, tackle: d.tackle }); }catch(_){ }
+      try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy, kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle }); }catch(_){ }
       return;
     }
     if (d.type === "sc_ball"){
       if (!fromMain) return;
-      try{ room.send("sc_ball", { x: d.x, y: d.y, vx: d.vx, vy: d.vy }); }catch(_){ }
+      try{ room.send("sc_ball", { x: d.x, y: d.y, vx: d.vx, vy: d.vy, owner: d.owner }); }catch(_){ }
       return;
     }
     if (d.type === "sc_goal"){
       if (!fromMain) return;
       try{ room.send("sc_goal", { team: d.team, scoreA: d.scoreA, scoreB: d.scoreB }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_stun"){
+      if (!fromMain) return;
+      try{ room.send("sc_stun", { sid: d.sid, dur: d.dur }); }catch(_){ }
       return;
     }
     if (d.type === "sc_over"){
@@ -2965,20 +2970,31 @@ try{
       room.onMessage("sc_timer", (msg)=>{
         postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
       });
-      room.onMessage("sc_pos", (msg)=>{
-        postToMain({ type:"sc_pos", sid: msg.sid, x: msg.x, y: msg.y, dir: msg.dir, vx: msg.vx, vy: msg.vy, kickRelease: msg.kickRelease, kickCharge: msg.kickCharge, tackle: msg.tackle });
+      // 투게스터의 tg_players 릴레이와 완전히 동일한 패턴: 서버가 집계한
+      // "전체 인원 위치 스냅샷"을 그대로 iframe에 전달한다. 개별 sc_pos를
+      // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는
+      // 전제가 있어 roster 타이밍 문제에 취약했다 — 이제는 그 전제가 없다.
+      room.onMessage("sc_players", (msg)=>{
+        postToMain({ type:"sc_players", players: msg.players || {} });
       });
       room.onMessage("sc_ball", (msg)=>{
-        postToMain({ type:"sc_ball", x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy });
+        postToMain({ type:"sc_ball", x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, owner: msg.owner });
       });
       room.onMessage("sc_goal", (msg)=>{
         postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB });
+      });
+      room.onMessage("sc_stun", (msg)=>{
+        postToMain({ type:"sc_stun", sid: msg.sid, dur: msg.dur });
       });
       room.onMessage("sc_end", (msg)=>{
         postToMain({ type:"sc_end", scoreA: msg.scoreA, scoreB: msg.scoreB, winner: msg.winner, winnerNick: msg.winnerNick });
       });
       room.onMessage("sc_goal_sync", (msg)=>{
-        postToMain({ type:"sc_goal", team:"A", scoreA: msg.scoreA, scoreB: msg.scoreB });
+        // 주의: 이건 "방금 골이 들어갔다"는 이벤트가 아니라, sc_sync 요청에
+        // 대한 "현재 점수 그대로 알려주기"일 뿐이다. sc_goal로 잘못 변환해서
+        // 보내면 게임 시작 직후(0:0이라도) 매번 가짜 골 이펙트(컨페티·사운드·
+        // 2.5초 정지·리스폰)가 터지는 심각한 버그가 된다 — 반드시 별도 타입으로.
+        postToMain({ type:"sc_score_sync", scoreA: msg.scoreA, scoreB: msg.scoreB });
       });
       // 투게스터의 tg_players 릴레이와 동일한 패턴 — 서버가 보낸 전체 인원
       // 목록을 그대로 iframe에 전달. 게임 쪽이 이걸로 players{}를 보정한다.

@@ -212,13 +212,14 @@ this.st = {
 
 // ---- Soccer transient state ----
 this.sc = {
-  players: {},   // sessionId -> { x, y, dir, vx, vy, nick, seat, team }
+  players: {},   // sessionId -> { x, y, dir, vx, vy, nick, seat, team, kickAt, kickCharge, tackle }
   ball: null,    // { x, y, vx, vy } — last known ball from host
   score: { A: 0, B: 0 },
   startedAt: 0,
   durationMs: 120000, // 2 minutes
   timer: null,
   over: false,
+  lastPosBroadcastAt: 0, // sc_players 집계 브로드캐스트 쓰로틀 (~20Hz)
 };
 
     this.onMessage("ready", (client, { ready }) => {
@@ -1014,19 +1015,35 @@ this.onMessage("st_over", (client, { reason, winnerSid }) => {
 this.onMessage("sc_pos", (client, payload) => {
   if (this.state.mode !== "soccer") return;
   if (this.state.phase !== "playing") return;
+  if (!this.sc) return;
   const sid = client.sessionId;
-  const p = this.sc?.players?.[sid];
-  if (p) {
-    p.x   = Number(payload.x   ?? p.x);
-    p.y   = Number(payload.y   ?? p.y);
-    p.dir = Number(payload.dir ?? p.dir);
-    p.vx  = Number(payload.vx  ?? 0);
-    p.vy  = Number(payload.vy  ?? 0);
+  const p = this.sc.players?.[sid];
+  if (!p) return; // 시트가 없는(관전 등) 클라이언트는 무시
+  p.x   = Number(payload.x   ?? p.x);
+  p.y   = Number(payload.y   ?? p.y);
+  p.dir = Number(payload.dir ?? p.dir);
+  p.vx  = Number(payload.vx  ?? 0);
+  p.vy  = Number(payload.vy  ?? 0);
+  p.tackle = !!payload.tackle;
+  // 킥은 "한 프레임만 true"인 엣지 이벤트라 일반 위치 갱신에 덮여 사라질 수 있다.
+  // 그래서 boolean이 아니라 "발생 시각(ms)"을 점성(sticky) 필드로 저장한다 —
+  // 다음 평범한 위치 패킷이 와도 kickAt이 없으면 덮어쓰지 않으므로, 집계
+  // 브로드캐스트가 몇 번을 거치든 그 킥 이벤트가 살아남는다. 받는 쪽은
+  // "이 sid에서 마지막으로 처리한 kickAt과 다르면 새 킥"으로 판정한다.
+  if (payload.kickAt) {
+    p.kickAt     = Number(payload.kickAt) || p.kickAt;
+    p.kickCharge = Number(payload.kickCharge ?? p.kickCharge ?? 0);
   }
-  // Relay to all OTHER clients — must include kick/tackle flags or non-host
-  // kicks never reach the ball (host-only ball physics needs kickRelease here)
-  // and remote players never see the other side's kick/tackle animation.
-  this.broadcast("sc_pos", { sid, x: payload.x, y: payload.y, dir: payload.dir, vx: payload.vx, vy: payload.vy, kickRelease: payload.kickRelease, kickCharge: payload.kickCharge, tackle: payload.tackle }, { except: client });
+
+  // 투게스터의 tg_state→tg_players와 동일한 패턴: 받은 위치는 서버가 들고
+  // 있는 "전체 인원" 집계(this.sc.players)에 반영만 하고, 실제 클라이언트로는
+  // 그 전체 집계를 주기적으로(~20Hz) 통째로 내려보낸다. 받는 쪽 클라이언트가
+  // 그 sid를 "이미 알고 있어야" 한다는 전제가 전혀 없어서, roster 타이밍
+  // 문제와 무관하게 항상 자기복구된다.
+  const now = Date.now();
+  if (now - (this.sc.lastPosBroadcastAt || 0) < 50) return; // ~20Hz
+  this.sc.lastPosBroadcastAt = now;
+  this.broadcast("sc_players", { players: this.sc.players });
 });
 
 // Ball position relay (host only)
@@ -1037,7 +1054,7 @@ this.onMessage("sc_ball", (client, payload) => {
   const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
   if (seat !== 0) return;
   if (this.sc) {
-    this.sc.ball = { x: Number(payload.x ?? 0), y: Number(payload.y ?? 0), vx: Number(payload.vx ?? 0), vy: Number(payload.vy ?? 0) };
+    this.sc.ball = { x: Number(payload.x ?? 0), y: Number(payload.y ?? 0), vx: Number(payload.vx ?? 0), vy: Number(payload.vy ?? 0), owner: payload.owner ?? null };
   }
   this.broadcast("sc_ball", this.sc.ball, { except: client });
 });
@@ -1058,6 +1075,20 @@ this.onMessage("sc_goal", (client, payload) => {
   this.broadcast("sc_goal", { team, scoreA, scoreB });
 });
 
+// Tackle-steal stun — host is authoritative for ball physics/tackle detection.
+// Must reach the VICTIM's own client (not just everyone else's local view of
+// them) so their own updateMe() actually blocks input during the stun window.
+this.onMessage("sc_stun", (client, payload) => {
+  if (this.state.mode !== "soccer") return;
+  if (this.state.phase !== "playing") return;
+  const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
+  if (seat !== 0) return;
+  const sid = String(payload.sid || "");
+  const dur = Number(payload.dur || 0);
+  if (!sid || dur <= 0) return;
+  this.broadcast("sc_stun", { sid, dur });
+});
+
 // Game over (host sends when timer runs out)
 this.onMessage("sc_over", (client, payload) => {
   if (this.state.mode !== "soccer") return;
@@ -1074,6 +1105,7 @@ this.onMessage("sc_sync", (client) => {
   try{
     if (!this.sc) return;
     if (this.sc.startedAt <= 0) return; // 아직 initSoccer 전
+    this.ensureSoccerPlayerRegistered(client.sessionId);
     client.send("sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
     if (this.sc.ball) client.send("sc_ball", this.sc.ball);
     client.send("sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B });
@@ -1246,6 +1278,7 @@ this.onMessage("sc_sync", (client) => {
         // mirrors Togester's tg_players broadcast pattern instead of relying
         // on a single bridge_init snapshot.
         if (this.state.mode === "soccer" && this.sc){
+          this.ensureSoccerPlayerRegistered(client.sessionId);
           this.broadcast("sc_roster", { players: buildHumanRoster(this) });
         }
       }
@@ -1970,6 +2003,24 @@ try{
 
   // ── Soccer ──────────────────────────────────────────────────────────────
 
+  // sc_pos 핸들러는 this.sc.players에 항목이 없는 sid를 무시한다(관전자 등
+  // 비시트 클라이언트 보호용). 그래서 매치 시작 이후 합류한 사람은 이 항목이
+  // 없으면 자기 위치를 보내도 서버에 영원히 저장이 안 된다 — onJoin과
+  // sc_sync 양쪽에서 호출해 누락을 막는다.
+  ensureSoccerPlayerRegistered(sessionId){
+    if (!this.sc || this.sc.players[sessionId]) return;
+    const seat = Number(this.state.order?.get(sessionId) ?? -1);
+    if (seat < 0) return;
+    const ps = this.state.players.get(sessionId);
+    this.sc.players[sessionId] = {
+      x: 0, y: 0, dir: 0, vx: 0, vy: 0,
+      nick: String(ps?.nick || "Player"),
+      seat,
+      team: seat % 2 === 0 ? "A" : "B",
+      kickAt: 0, kickCharge: 0, tackle: false,
+    };
+  }
+
   initSoccer() {
     if (!this.sc) return;
 
@@ -1980,6 +2031,7 @@ try{
     this.sc.over    = false;
     this.sc.startedAt  = Date.now();
     this.sc.durationMs = 120_000; // 2 minutes
+    this.sc.lastPosBroadcastAt = 0;
 
     // Build player entries from room roster (even seat = team A, odd = team B)
     try {
@@ -1991,6 +2043,7 @@ try{
           nick: String(ps?.nick || "Player"),
           seat,
           team: seat % 2 === 0 ? "A" : "B",
+          kickAt: 0, kickCharge: 0, tackle: false,
         };
       }
     } catch (_) {}

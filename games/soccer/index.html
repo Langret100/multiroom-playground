@@ -174,11 +174,12 @@ canvas { display:block; }
  *  - 등번호는 가독성을 위해 canvas 텍스트로 유니폼 위에 별도 렌더링 (유지)
  *
  *  [ 내 캐릭터 식별·게이지 UI — 캐릭터를 둘러싸는 원 금지 ]
- *  - "이게 나"라는 표시는 캐릭터를 둘러싸는 링이 아니라 발밑의 작은 금색
- *    삼각형 마커 하나로만 표시한다 (여러 원이 겹쳐 보이는 혼란 방지)
+ *  - "이게 나"라는 표시는 캐릭터를 둘러싸는 링이 아니라 머리 위 작은 금색
+ *    역삼각형 마커 하나로만 표시한다 (여러 원이 겹쳐 보이는 혼란 방지)
  *  - 킥 차징/태클 쿨다운 게이지는 캐릭터 주변 원호가 아니라 발밑의 작은
- *    가로 바(22×3px, 닉네임보다 위)로 표시 — 둘 중 하나만 활성화될 때 표시
- *    (차징 중이면 노란 바, 아니면 쿨다운 중이면 파란 바)
+ *    가로 바(22×3px, 닉네임보다 위)로 표시 — 평소엔 완전히 숨겨져 있고
+ *    실제로 차징/쿨다운 중일 때만 나타난다 (둘 중 하나만 활성화될 때 표시,
+ *    차징 중이면 노란 바, 쿨다운 중이면 파란 바)
  *  - 공 소유(드리블) 표시용 별도 링은 만들지 않음 — 드리블 물리 자체가 공이
  *    발 옆에 붙어 있는 것으로 소유 여부를 자연스럽게 보여주기 때문
  *
@@ -190,15 +191,23 @@ canvas { display:block; }
  *  - 골: 55개 색종이 컨페티 폭발 + 화면 플래시
  *  - 볼 잔상: 최근 14프레임 궤적 트레일
  *
- *  [ 네트워크 아키텍처 ]
+ *  [ 네트워크 아키텍처 — 투게스터의 tg_state→tg_players와 완전히 동일한 패턴 ]
  *  - Host (seat 0): 공 물리 계산·드리블·탈취 판정 → sc_ball 브로드캐스트 (30fps)
- *  - 모든 클라이언트: 자기 위치+킥/태클 상태 sc_pos 전송 (25fps, 킥 발사 시 즉시)
- *  - sc_pos는 client→server→client 3단 릴레이를 거치며, 세 곳 모두
- *    kickRelease/kickCharge/tackle 필드를 빠뜻 없이 전달해야 한다 — 누락되면
- *    게스트(non-host)의 킥이 공에 전혀 영향을 못 주는 버그가 됨 (host만 킥이 먹힘)
- *  - room.js의 출력 쓰로틀(~25fps 제한)은 kickRelease/tackle이 true인 패킷은
- *    예외로 통과시킨다 — 그렇지 않으면 쓰로틀 타이밍에 걸려 킥 이벤트 자체가
- *    누락될 수 있음 (일반 위치 갱신만 쓰로틀 대상)
+ *  - 모든 클라이언트: 자기 위치를 sc_pos로 "서버에게만" 전송 (업로드, 25fps)
+ *  - 서버는 sc_pos를 받을 때마다 this.sc.players[sid]에 누적 반영하고,
+ *    ~20Hz로 쓰로틀해서 그 "전체 인원 스냅샷"을 sc_players로 전체 브로드캐스트
+ *  - 예전엔 받은 사람의 위치만 골라서 다른 사람에게 1:1 중계(broadcast except
+ *    sender)했는데, 이 방식은 받는 클라이언트의 players{}에 그 sid가 "이미
+ *    있어야" 갱신이 먹히는 전제가 있어서, roster 타이밍이 조금만 어긋나도
+ *    그 선수가 영원히 안 보이는 결함이 있었다. 투게스터처럼 "전체 집계를
+ *    그대로 받아서, 모르는 sid면 그 자리에서 즉석 생성"하는 방식으로
+ *    바꾸면 그 전제 자체가 사라진다 (applyRemotePlayers 참고)
+ *  - 킥(kickAt)은 한 프레임만 true였다가 사라지는 boolean이 아니라
+ *    "발생 시각(ms)"을 점성(sticky)으로 들고 있다 — 집계 브로드캐스트가
+ *    몇 번을 거치든, 일반 위치 갱신에 덮여 사라지지 않는다. 받는 쪽은
+ *    "이 sid의 마지막 처리 시각과 다르면 새 킥"으로 정확히 한 번만 처리
+ *  - 태클(tackle)은 TACKLE_DUR(~267ms)간 지속되는 상태라 20Hz 폴링에도
+ *    충분히 여러 번 잡히므로 별도 타임스탬프 트릭이 필요 없음
  *  - 골: host → sc_goal → 서버 브로드캐스트 → 전 클라이언트 점수 업데이트
  *  - 게임 종료: host → sc_over → 서버 finishSoccer() → backToRoom
  *
@@ -210,6 +219,10 @@ canvas { display:block; }
  *  - 게임은 sc_roster를 받을 때마다 applyServerRoster()로 roster 배열을
  *    합집합 갱신하고, 이미 시작된 상태라면 mergeNewRosterPlayers()로
  *    아직 players{}에 없는 선수만 점수/공 상태를 그대로 둔 채 추가한다
+ *  - 다만 실제 위치 동기화는 이제 sc_players(applyRemotePlayers)가 항상
+ *    스스로 복구하므로, roster/bridge_init이 설령 불완전해도 위치 동기화
+ *    자체는 깨지지 않는다 — roster 메시지는 팀배정/스폰 등 "보기 좋은
+ *    초기화"를 위한 보조 수단일 뿐, 더 이상 위치 동기화의 전제조건이 아님
  *  - 즉 soccer도 투게스터처럼 "서버가 미는 전체 명단"을 지속적으로 받는
  *    구조이고, bridge_init 타이밍에만 의존하는 특수 게이트는 두지 않는다
  *
@@ -444,7 +457,8 @@ let players={};
  *    vx, vy, dir,              속도·방향
  *    nick, seat, team,         식별 정보
  *    color, colorDk,           팀 색상
- *    kickRelease, kickCharge,  킥 상태 (bool, 0..1)
+ *    kickAt, kickCharge,       킥 발생 시각(ms, 점성)·파워(0..1)
+ *    _lastKickAt,              마지막으로 "처리한" kickAt — 중복 처리 방지용 (엣지 검출)
  *    kickAnimT,                킥 모션(다리 뻗기) 표시용 잔여 프레임 — 시각 효과 전용
  *    tackleActive,             태클 대시 중
  *    tackleCd,                 태클 쿨다운 (프레임)
@@ -573,17 +587,9 @@ window.addEventListener('message',e=>{
     if(!gameActive&&!gameOver){ gameActive=true; hideOverlay(); }
     return;
   }
-  if(d.type==='sc_pos'){
-    const p=players[d.sid];
-    if(p&&d.sid!==mySid){
-      p.lx=Number(d.x??p.lx);p.ly=Number(d.y??p.ly);
-      p.dir=Number(d.dir??0);p.vx=Number(d.vx??0);p.vy=Number(d.vy??0);
-      p.kickRelease=!!d.kickRelease;p.kickCharge=Number(d.kickCharge??0);
-      if(p.kickRelease)p.kickAnimT=KICK_ANIM_F;
-      p.tackleActive=!!d.tackle;
-      // host가 킥 이벤트 처리
-      if(isHost&&p.kickRelease)applyKickFromPlayer(d.sid,d.dir,d.kickCharge,d.x,d.y);
-    }return;
+  if(d.type==='sc_players'){
+    applyRemotePlayers(d.players);
+    return;
   }
   if(d.type==='sc_ball'){
     if(!isHost){
@@ -592,6 +598,18 @@ window.addEventListener('message',e=>{
       netBallOwner=d.owner??null;
     }return;
   }
+  if(d.type==='sc_stun'){
+    const sid=String(d.sid||'');
+    const dur=Number(d.dur||0);
+    if(sid===mySid){ if(me) me.stunned=dur; }
+    else { const p=players[sid]; if(p) p.stunned=dur; }
+    return;
+  }
+  if(d.type==='sc_score_sync'){
+    // sc_sync 요청에 대한 "현재 점수 그대로" 응답 — 골 이펙트 없이 숫자만 갱신
+    score.A=Number(d.scoreA??score.A);score.B=Number(d.scoreB??score.B);
+    return;
+  }
   if(d.type==='sc_goal'){
     score.A=Number(d.scoreA??score.A);score.B=Number(d.scoreB??score.B);
     goalFlash=185;goalMsg=d.team==='A'?'🔴 A팀 득점!':'🔵 B팀 득점!';
@@ -599,7 +617,7 @@ window.addEventListener('message',e=>{
     setTimeout(()=>{
       if(gameOver)return;
       goalPending=false;resetBall();
-      if(isHost)respawnPlayers();
+      respawnMe();
       gameActive=true;
     },2500);return;
   }
@@ -636,17 +654,19 @@ function cancelKick(){
 function doKickRelease(charge){
   if(!me||!gameActive||gameOver)return;
   const isBig=charge>0.38;
-  me.kickRelease=true;me.kickCharge=charge;me.kickAnimT=KICK_ANIM_F;
+  // 킥은 "한 프레임만 true"인 불(boolean)이 아니라 발생 시각(ms)을 점성으로
+  // 저장한다 — 집계 브로드캐스트(sc_players)가 몇 번을 거치든, 다음 평범한
+  // 위치 갱신에 덮여 사라지지 않고 살아남는다 (받는 쪽은 타임스탬프 변화로
+  // "새 킥"을 판정하므로 몇 번 중복 수신해도 안전).
+  me.kickAt=Date.now();me.kickCharge=charge;me.kickAnimT=KICK_ANIM_F;
   // 호스트는 즉시 처리, 비호스트는 sc_pos로 즉시 전송
   if(isHost)applyKickFromPlayer(mySid,me.dir,charge,me.x,me.y);
   // 즉시 전송 (rate limit 무시)
   bridgeSend('sc_pos',{x:me.x,y:me.y,dir:me.dir,vx:me.vx,vy:me.vy,
-    kickRelease:true,kickCharge:charge,tackle:me.tackleActive});
+    kickAt:me.kickAt,kickCharge:charge,tackle:me.tackleActive});
   // 로컬 이펙트·사운드
   addKickFx(me.x+Math.cos(me.dir)*PLR_R,me.y+Math.sin(me.dir)*PLR_R,isBig);
   if(isBig)sfxPowerKick();else sfxKick();
-  // 다음 프레임에 플래그 리셋
-  requestAnimationFrame(()=>{if(me)me.kickRelease=false;});
 }
 
 /* ══════════════════════════════════════════════════════
@@ -677,7 +697,7 @@ function initGame(){
       x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
       dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
       color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
-      kickRelease:false,kickCharge:0,kickAnimT:0,tackleActive:false,
+      kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,
       tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
     };
   });
@@ -713,7 +733,7 @@ function mergeNewRosterPlayers(){
       x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
       dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
       color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
-      kickRelease:false,kickCharge:0,kickAnimT:0,tackleActive:false,
+      kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,
       tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
     };
     added=true;
@@ -721,21 +741,59 @@ function mergeNewRosterPlayers(){
   if(added && !me) me=players[mySid];
   return added;
 }
+
+function applyRemotePlayers(map){
+  // 투게스터의 applyRemotePlayers와 완전히 동일한 패턴 — 서버가 보내준
+  // "전체 인원 스냅샷"을 그대로 반영한다. 받는 쪽에 그 sid가 "이미 있어야
+  // 한다"는 전제가 전혀 없다: 모르는 sid가 나오면 그 자리에서 즉석으로
+  // player 객체를 만든다. roster/bridge_init 타이밍과 완전히 무관하게
+  // 항상 자기복구되는 것이 이 함수의 핵심.
+  if(!map||typeof map!=='object')return;
+  for(const [sid,snap] of Object.entries(map)){
+    if(sid===mySid)continue;
+    let p=players[sid];
+    if(!p){
+      const seat=Number(snap.seat??-1); if(seat<0)continue;
+      const ch=seat%2===0?'A':'B';
+      p=players[sid]={
+        x:Number(snap.x||FCX),y:Number(snap.y||FCY),
+        lx:Number(snap.x||FCX),ly:Number(snap.y||FCY),vx:0,vy:0,
+        dir:Number(snap.dir||0),nick:String(snap.nick||'Player'),seat,team:ch,
+        color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
+        kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,
+        tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
+      };
+    }
+    p.lx=Number(snap.x??p.lx);p.ly=Number(snap.y??p.ly);
+    p.dir=Number(snap.dir??p.dir);p.vx=Number(snap.vx??0);p.vy=Number(snap.vy??0);
+    p.tackleActive=!!snap.tackle;
+    // 킥 엣지 검출: 타임스탬프가 이전과 다르면 "새 킥" — 집계가 몇 번을
+    // 거쳐 왔든, 몇 번 중복 수신해도 정확히 한 번만 처리된다.
+    const kAt=Number(snap.kickAt||0);
+    if(kAt && kAt!==p._lastKickAt){
+      p._lastKickAt=kAt;
+      p.kickAnimT=KICK_ANIM_F;
+      if(isHost) applyKickFromPlayer(sid,snap.dir,snap.kickCharge,snap.x,snap.y);
+    }
+  }
+}
 function resetBall(){
   ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};
   ballTrail=[];ballOwner=null;netBallOwner=null;ballSpinAngle=0;
 }
-function respawnPlayers(){
-  const tA=roster.filter(p=>p.seat%2===0).sort((a,b)=>a.seat-b.seat);
-  const tB=roster.filter(p=>p.seat%2!==0).sort((a,b)=>a.seat-b.seat);
-  const doT=(team,ch)=>team.forEach((p,i)=>{
-    const pl=players[p.sid];if(!pl)return;
-    const sp=getSpawn(i,team.length,ch);
-    Object.assign(pl,{x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
-      kickRelease:false,kickCharge:0,kickAnimT:0,tackleActive:false,stunned:0});
-  });
-  doT(tA,'A');doT(tB,'B');
-  ballOwner=null;netBallOwner=null;
+function respawnMe(){
+  // 골 이후 리스폰은 "각자 자기 자신만" 자기 스폰 위치로 되돌린다.
+  // 예전엔 host만 respawnPlayers()로 전원 위치를 로컬에서 추측해 옮겼는데,
+  // 게스트 클라이언트에서는 이 함수가 전혀 호출되지 않아 게스트 자신의
+  // 위치가 골 이후에도 리셋되지 않는 버그가 있었다. 이제는 모든 클라이언트가
+  // 동일한 코드로 "나"만 리셋하고, 그 결과는 평소처럼 sc_pos→sc_players로
+  // 자연스럽게 전파된다 — 다른 사람 위치를 추측해서 옮길 필요가 없다.
+  if(!me)return;
+  const myTeamSeats=roster.filter(p=>((p.seat%2===0)?'A':'B')===me.team).sort((a,b)=>a.seat-b.seat);
+  const idx=Math.max(0,myTeamSeats.findIndex(p=>p.sid===mySid));
+  const sp=getSpawn(idx,Math.max(myTeamSeats.length,1),me.team);
+  Object.assign(me,{x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
+    kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,stunned:0});
 }
 
 /* ══════════════════════════════════════════════════════
@@ -895,11 +953,18 @@ function checkTackleSteal(){
     const dist=Math.hypot(p.x-owner.x,p.y-owner.y);
     if(dist<=TACKLE_STEAL_R){
       // 탈취!
+      const victimSid=ballOwner; // ballOwner를 null로 만들기 전에 미리 캡처
       const bounceA=Math.atan2(owner.y-p.y,owner.x-p.x)+(Math.random()-.5)*.9;
       ball.vx=Math.cos(bounceA)*8;ball.vy=Math.sin(bounceA)*8;
       owner.stunned=STUN_DUR;ballOwner=null;
       addTackleFx((p.x+owner.x)/2,(p.y+owner.y)/2);
       sfxTackle();
+      // 스턴은 host의 로컬 복사본뿐 아니라 "당사자 본인 클라이언트"에게도
+      // 전달해야 한다 — 안 그러면 당사자는 자기가 스턴된 줄 모르고 계속
+      // 자유롭게 움직여서, 그 위치 보고가 다시 들어와 멈춘 것처럼 보이는
+      // 효과를 덮어써 버린다 (다른 사람 화면에서만 "멈춘 듯" 보이고 실제
+      // 게임플레이엔 영향이 없는 상태가 됨).
+      bridgeSend('sc_stun',{sid:victimSid,dur:STUN_DUR});
     }
   }
 }
@@ -976,7 +1041,7 @@ function netSends(){
   if(me&&now-lastPosSent>=40){
     lastPosSent=now;
     bridgeSend('sc_pos',{x:me.x,y:me.y,dir:me.dir,vx:me.vx,vy:me.vy,
-      kickRelease:false,kickCharge:0,tackle:me.tackleActive});
+      kickAt:me.kickAt||0,kickCharge:me.kickCharge||0,tackle:me.tackleActive});
   }
   if(isHost&&now-lastBallSent>=34){
     lastBallSent=now;
@@ -1113,12 +1178,13 @@ function drawPlayer(p,isMine){
     ctx.lineTo(kx,ky);ctx.strokeStyle=SKIN;ctx.lineWidth=5;ctx.lineCap='round';ctx.stroke();
   }
 
-  // "나" 식별 마커 — 캐릭터를 둘러싸는 원 대신 발밑의 작은 삼각형
+  // "나" 식별 마커 — 머리 위 작은 역삼각형 (캐릭터를 둘러싸는 원 대신)
   if(isMine){
+    const mY=y-PLR_R-12; // 머리 위쪽
     ctx.beginPath();
-    ctx.moveTo(x,y+PLR_R+2);
-    ctx.lineTo(x-5,y+PLR_R+8);
-    ctx.lineTo(x+5,y+PLR_R+8);
+    ctx.moveTo(x,mY+7);     // 아래 꼭짓점 — 머리를 향해 가리킴
+    ctx.lineTo(x-5,mY);
+    ctx.lineTo(x+5,mY);
     ctx.closePath();
     ctx.fillStyle='#FFD700';ctx.fill();
   }
