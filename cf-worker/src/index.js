@@ -399,7 +399,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "soccer");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -509,6 +509,8 @@ export class RoomDO{
     this.tour = null;              // tournament state for duel mode
     this.tg = { players:{}, floors:{}, buttons:{}, boxes:{}, lastBroadcast:0, timer:null }; // coop state aggregation
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
+    // Soccer (수학축구): authoritative player/ball/score aggregation, mirrors GameRoom.js (Colyseus) implementation.
+    this.sc = { players:{}, ball:null, score:{A:0,B:0}, startedAt:0, durationMs:120000, timer:null, over:false, lastPosBroadcastAt:0 };
 
     // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
     // Stored here so late-joiners can be synced.
@@ -837,6 +839,16 @@ export class RoomDO{
           try{ this._send(ws, "st_scores", { scores: this.st.scores || {} }); }catch(_){ }
         }
 
+        // Soccer: if a match is already running, sync timer/ball/score/roster to the joining
+        // (or reconnecting) client — mirrors the SnakeTail/Togester late-join sync pattern.
+        if (this.meta.phase === "playing" && this.meta.mode === "soccer" && this.sc && this.sc.startedAt > 0){
+          try{ this._ensureSoccerPlayerRegistered(wantUid); }catch(_){ }
+          try{ this._send(ws, "sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs }); }catch(_){ }
+          try{ if (this.sc.ball) this._send(ws, "sc_ball", this.sc.ball); }catch(_){ }
+          try{ this._send(ws, "sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B }); }catch(_){ }
+          try{ this._broadcast("sc_roster", { players: this._buildSoccerRoster() }); }catch(_){ }
+        }
+
         // Togester: if a match is already running, sync current players + floors to the joining client
         if (this.meta.phase === "playing" && this.meta.mode === "togester"){
           try{ this._send(ws, "tg_players", { players: this.tg.players || {} }); }catch(_){ }
@@ -946,6 +958,17 @@ export class RoomDO{
         this.st.startedAt = 0;
         if (this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ }
           this.st.timer = null;
+        }
+
+        // Soccer transient state (server is authoritative for roster/score/timer)
+        this.sc.players = {};
+        this.sc.ball = null;
+        this.sc.score = { A:0, B:0 };
+        this.sc.over = false;
+        this.sc.startedAt = 0;
+        this.sc.lastPosBroadcastAt = 0;
+        if (this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ }
+          this.sc.timer = null;
         }
 
         // DrawAnswer transient state
@@ -1071,6 +1094,11 @@ export class RoomDO{
           this.st.timer = setTimeout(()=>{
             try{ this._endSnakeTail("timeout"); }catch(_){ }
           }, this.st.durationMs + 200);
+        }
+
+        // Soccer: 2-minute match init (server builds roster + teams, owns timer/score)
+        if (this.meta.mode === "soccer"){
+          try{ this._initSoccer(); }catch(_){ }
         }
 
         // DrawAnswer: start 5-question session (2 minutes each)
@@ -1637,6 +1665,86 @@ export class RoomDO{
         return;
       }
 
+      // ----- Soccer relay (soccer) -----
+      if (t === "sc_pos"){
+        if (this.meta.mode !== "soccer") return;
+        if (this.meta.phase !== "playing") return;
+        if (!this.sc) return;
+        const p = this.sc.players?.[uid];
+        if (!p) return; // 시트가 없는(관전 등) 클라이언트는 무시
+        p.x   = Number(d.x   ?? p.x);
+        p.y   = Number(d.y   ?? p.y);
+        p.dir = Number(d.dir ?? p.dir);
+        p.vx  = Number(d.vx  ?? 0);
+        p.vy  = Number(d.vy  ?? 0);
+        p.tackle = !!d.tackle;
+        if (d.kickAt){
+          p.kickAt = Number(d.kickAt) || p.kickAt;
+          p.kickCharge = Number(d.kickCharge ?? p.kickCharge ?? 0);
+        }
+        const n = now();
+        if (n - (this.sc.lastPosBroadcastAt || 0) < 50) return; // ~20Hz
+        this.sc.lastPosBroadcastAt = n;
+        this._broadcast("sc_players", { players: this.sc.players });
+        return;
+      }
+      if (t === "sc_ball"){
+        if (this.meta.mode !== "soccer") return;
+        if (this.meta.phase !== "playing") return;
+        const u = this.users.get(uid);
+        if (Number(u?.seat ?? -1) !== 0) return; // host (seat 0) only
+        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), owner: d.owner ?? null };
+        // broadcast to everyone except the sender (host already has authoritative local state)
+        for (const [sock, sUid] of this.sockets.entries()){
+          if (sUid && sUid !== uid) this._send(sock, "sc_ball", this.sc.ball);
+        }
+        return;
+      }
+      if (t === "sc_goal"){
+        if (this.meta.mode !== "soccer") return;
+        if (this.meta.phase !== "playing") return;
+        if (this.sc.over) return;
+        const u = this.users.get(uid);
+        if (Number(u?.seat ?? -1) !== 0) return; // host only
+        const team = String(d.team || "");
+        if (team !== "A" && team !== "B") return;
+        const scoreA = Number(d.scoreA ?? 0);
+        const scoreB = Number(d.scoreB ?? 0);
+        this.sc.score.A = scoreA; this.sc.score.B = scoreB;
+        this._broadcast("sc_goal", { team, scoreA, scoreB });
+        return;
+      }
+      if (t === "sc_stun"){
+        if (this.meta.mode !== "soccer") return;
+        if (this.meta.phase !== "playing") return;
+        const u = this.users.get(uid);
+        if (Number(u?.seat ?? -1) !== 0) return; // host only
+        const sid = String(d.sid || "");
+        const dur = Number(d.dur || 0);
+        if (!sid || dur <= 0) return;
+        this._broadcast("sc_stun", { sid, dur });
+        return;
+      }
+      if (t === "sc_over"){
+        if (this.meta.mode !== "soccer") return;
+        if (this.meta.phase !== "playing") return;
+        const u = this.users.get(uid);
+        if (Number(u?.seat ?? -1) !== 0) return; // host only
+        const winner = String(d.winner || "draw");
+        this._finishSoccer(winner);
+        return;
+      }
+      if (t === "sc_sync"){
+        if (this.meta.mode !== "soccer") return;
+        if (!this.sc || this.sc.startedAt <= 0) return;
+        try{ this._ensureSoccerPlayerRegistered(uid); }catch(_){ }
+        this._send(ws, "sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
+        if (this.sc.ball) this._send(ws, "sc_ball", this.sc.ball);
+        this._send(ws, "sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B });
+        this._send(ws, "sc_roster", { players: this._buildSoccerRoster() });
+        return;
+      }
+
       // ----- Duel relay (spectate snapshots) -----
       if (t === "duel_state"){
         const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0 };
@@ -1707,6 +1815,15 @@ export class RoomDO{
             this._broadcast("st_scores", { scores: this.st.scores || {} });
             try{ this._maybeEndSnakeTail(); }catch(_){ }
           }
+        }
+      }catch(_){ }
+
+      // Soccer: drop the leaver's tracked position and let everyone know the roster shrank.
+      try{
+        if (this.sc && this.sc.players && this.sc.players[uid]) delete this.sc.players[uid];
+        if (this.meta.mode === "soccer" && this.meta.phase === "playing"){
+          this._broadcast("sc_players", { players: this.sc.players || {} });
+          this._broadcast("sc_roster", { players: this._buildSoccerRoster() });
         }
       }catch(_){ }
 
@@ -1844,6 +1961,88 @@ export class RoomDO{
       this.tg.timer = null;
       this._broadcast("tg_players", { players: this.tg.players });
     }, 50);
+  }
+
+  // -------- Soccer helpers --------
+  _buildSoccerRoster(){
+    const cpu = this._cpuUid();
+    return Array.from(this.users.entries())
+      .filter(([uid]) => uid !== cpu)
+      .map(([uid, u]) => ({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99) }))
+      .sort((a,b)=> (a.seat??99) - (b.seat??99));
+  }
+
+  _ensureSoccerPlayerRegistered(uid){
+    if (!this.sc || this.sc.players[uid]) return;
+    const u = this.users.get(uid);
+    const seat = Number(u?.seat ?? -1);
+    if (seat < 0) return;
+    this.sc.players[uid] = {
+      x: 0, y: 0, dir: 0, vx: 0, vy: 0,
+      nick: safeNick(u?.nick),
+      seat,
+      team: (seat % 2 === 0) ? "A" : "B",
+      kickAt: 0, kickCharge: 0, tackle: false,
+    };
+  }
+
+  _initSoccer(){
+    this.sc.players = {};
+    this.sc.ball = null;
+    this.sc.score = { A:0, B:0 };
+    this.sc.over = false;
+    this.sc.startedAt = now();
+    this.sc.durationMs = 120000; // 2 minutes
+    this.sc.lastPosBroadcastAt = 0;
+
+    const cpu = this._cpuUid();
+    for (const [uid, u] of this.users.entries()){
+      if (uid === cpu) continue;
+      const seat = Number(u?.seat ?? -1);
+      if (seat < 0) continue;
+      this.sc.players[uid] = {
+        x: 0, y: 0, dir: 0, vx: 0, vy: 0,
+        nick: safeNick(u?.nick),
+        seat,
+        team: (seat % 2 === 0) ? "A" : "B",
+        kickAt: 0, kickCharge: 0, tackle: false,
+      };
+    }
+
+    this._broadcast("sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
+    this._broadcast("sc_roster", { players: this._buildSoccerRoster() });
+
+    if (this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } }
+    this.sc.timer = setTimeout(()=>{
+      try{
+        if (this.meta.mode !== "soccer" || this.meta.phase !== "playing" || this.sc.over) return;
+        const w = (this.sc.score.A > this.sc.score.B) ? "A" : (this.sc.score.B > this.sc.score.A) ? "B" : "draw";
+        this._finishSoccer(w);
+      }catch(_){ }
+    }, this.sc.durationMs + 5000); // 5s buffer for network lag
+  }
+
+  _finishSoccer(winner){
+    if (!this.sc || this.sc.over) return;
+    if (this.meta.mode !== "soccer") return;
+    this.sc.over = true;
+    if (this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
+
+    const sA = this.sc.score.A, sB = this.sc.score.B;
+    const winnerNick = winner === "A" ? "A팀" : winner === "B" ? "B팀" : "무승부";
+
+    let winnerSid = "";
+    try{
+      for (const [sid, p] of Object.entries(this.sc.players)){
+        if (!winnerSid) winnerSid = sid;
+        if (winner !== "draw" && p.team === winner){ winnerSid = sid; break; }
+      }
+    }catch(_){ }
+
+    this._broadcast("sc_end", { scoreA: sA, scoreB: sB, winner, winnerNick });
+    this._broadcast("result", { mode:"soccer", done:true, winnerSid, winnerNick, scoreA: sA, scoreB: sB, winner });
+
+    this._endAndBackToLobby(2600);
   }
 
   // -------- SnakeTail helpers --------
@@ -2356,6 +2555,9 @@ export class RoomDO{
       if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
       try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
       if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
+
+      try{ this.sc.players = {}; this.sc.ball = null; this.sc.score = { A:0, B:0 }; this.sc.over = false; this.sc.startedAt = 0; }catch(_){ }
+      if (this.sc && this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
 
       // Clear authoritative start payloads / transient coop caches when returning to lobby.
       try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }

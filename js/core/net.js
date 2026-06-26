@@ -189,6 +189,8 @@ if (isDuel && humans.length === 1){
         "tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota","tg_over","tg_sync","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
         // SnakeTail
         "st_state","st_timer","st_foods","st_spawn","st_eat","st_eaten","st_players","st_scores","st_event","st_over",
+        // Soccer
+        "sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync",
         // misc
         "frame","match"
       ]);
@@ -232,6 +234,8 @@ if (isDuel && humans.length === 1){
         "mx_msg",
         // Backrooms3d (coop)
         "br_msg",
+        // Soccer (coop) — server → client relays (positions/ball/score/timer/roster/end)
+        "sc_timer","sc_players","sc_ball","sc_goal","sc_stun","sc_end","sc_goal_sync","sc_roster",
         // misc
         "frame"
       ]);
