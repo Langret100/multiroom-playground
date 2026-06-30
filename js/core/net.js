@@ -130,15 +130,19 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","backrooms3d"]);
+const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","backrooms3d","soccer","geumchikeo"]);
 const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
+const isSoccer = (String(this.state.mode||"") === "soccer");
 
 if (isDuel && humans.length === 1){
   // 1인 듀얼은 서버가 CPU를 붙여 시작하므로 ready 조건을 true로 봄(프론트 UX용)
   this.state.allReady = true;
 } else {
-  this.state.allReady = humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready);
+  const baseReady = humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready);
+  // 수학축구: 반드시 짝수 인원(2·4·6·8)이어야 시작 가능
+  const evenOk = !isSoccer || (humans.length % 2 === 0);
+  this.state.allReady = baseReady && evenOk;
 }
       if(typeof this.state.onChange === "function") {
         try{ this.state.onChange(); }catch(e){}

@@ -1303,7 +1303,7 @@ function lighten(hex,amt){
   return`rgb(${Math.min(255,Math.round(r+(255-r)*amt))},${Math.min(255,Math.round(g+(255-g)*amt))},${Math.min(255,Math.round(b+(255-b)*amt))})`;
 }
 
-bridgeSend('iframe_ready',{});
+bridgeSend('bridge_ready',{});
 </script>
 </body>
 </html>

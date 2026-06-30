@@ -302,7 +302,11 @@ export class LobbyDO{
       const mode = String(opts.mode || "stackga").slice(0, 24);
       // Allow larger rooms for some coop modes (e.g., snaketail). UI still limits per-game.
       const minPlayers = (mode === "mathexplorer") ? 1 : 2;
-      const maxPlayers = Math.max(minPlayers, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
+      let maxPlayers = Math.max(minPlayers, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
+      // 수학축구는 짝수 인원(2/4/6/8)만 가능 — 방 생성 시점부터 강제
+      if (mode === "soccer" && maxPlayers % 2 !== 0){
+        maxPlayers = Math.max(2, maxPlayers - 1);
+      }
       this.rooms[roomId] = {
         roomId, title, mode,
         maxPlayers,
@@ -920,6 +924,11 @@ export class RoomDO{
           const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer"].includes(this.meta.mode)) ? 1 : 2;
           if (humanCount < minHumans){
             this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
+            return;
+          }
+          // 수학축구: 반드시 짝수 인원이어야 함
+          if (this.meta.mode === "soccer" && humanCount % 2 !== 0){
+            this._send(ws, "system", { text:`수학축구는 짝수 인원(2·4·6·8명)이어야 시작할 수 있습니다. (현재 ${humanCount}명)`, ts: now() });
             return;
           }
         } else {

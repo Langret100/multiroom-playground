@@ -420,29 +420,36 @@ function statusDot(room){
     }
 
     // maxClients options depend on selected game (e.g., 꼬리잡기 supports up to 8)
+    // 수학축구는 짝수 인원만 가능하므로 홀수 선택지를 숨긴다.
     const updateMaxClientsOptions = ()=>{
       try{
         const mode = els.gameMode.value || "stackga";
         const meta = (window.gameById ? window.gameById(mode) : null);
         const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
+        const evenOnly = (mode === "soccer");
         // Keep create disabled when the currently selected game is marked disabled
         // in the registry. To re-enable Backrooms3D creation, set registry.disabled=false.
         try{ if (els.createConfirm) els.createConfirm.disabled = !!meta?.disabled; }catch(_){ }
 
         // label hint
         const minCap = (mode === "mathexplorer") ? 1 : 2;
-        if (els.maxClientsLabel) els.maxClientsLabel.textContent = `최대 인원 (${minCap}~${cap})`;
+        if (els.maxClientsLabel) els.maxClientsLabel.textContent = evenOnly
+          ? `최대 인원 (짝수, ${minCap}~${cap}명)`
+          : `최대 인원 (${minCap}~${cap})`;
 
         const sel = els.maxClients;
         if (!sel) return;
         const defaultVal = Math.max(2, Math.min(cap, Math.min(4, cap)));
         const prev = parseInt(sel.value || "", 10);
-        const next = (!maxClientsTouched || Number.isNaN(prev))
+        let next = (!maxClientsTouched || Number.isNaN(prev))
           ? defaultVal
           : Math.max(2, Math.min(cap, prev));
+        // soccer: 홀수면 짝수로 보정
+        if (evenOnly && next % 2 !== 0) next = Math.max(2, next - 1);
 
         sel.innerHTML = "";
         for (let n = cap; n >= 2; n--){
+          if (evenOnly && n % 2 !== 0) continue; // 홀수 옵션 제외
           const o = document.createElement("option");
           o.value = String(n);
           o.textContent = String(n);
