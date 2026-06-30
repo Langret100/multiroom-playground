@@ -1679,8 +1679,15 @@ export class RoomDO{
         if (this.meta.mode !== "soccer") return;
         if (this.meta.phase !== "playing") return;
         if (!this.sc) return;
+        // 자기복구: _initSoccer() 시점에 등록되지 못했거나(레이스), 그 사이
+        // 좌석이 늦게 배정된 클라이언트라도 첫 sc_pos가 도착하면 즉시
+        // 등록한다. 이게 없으면 한 번이라도 등록을 놓친 클라이언트는
+        // 이후 어떤 sc_pos를 보내도 영원히 무시되어, 그 사람만 자기
+        // 화면에서는 움직이지만 다른 사람 화면(특히 호스트의 공 물리
+        // 판정)에는 전혀 반영되지 않는 문제가 생긴다.
+        try{ this._ensureSoccerPlayerRegistered(uid); }catch(_){ }
         const p = this.sc.players?.[uid];
-        if (!p) return; // 시트가 없는(관전 등) 클라이언트는 무시
+        if (!p) return; // 좌석이 없는(관전 등) 클라이언트만 무시
         p.x   = Number(d.x   ?? p.x);
         p.y   = Number(d.y   ?? p.y);
         p.dir = Number(d.dir ?? p.dir);
@@ -1701,7 +1708,12 @@ export class RoomDO{
         if (this.meta.mode !== "soccer") return;
         if (this.meta.phase !== "playing") return;
         const u = this.users.get(uid);
-        if (Number(u?.seat ?? -1) !== 0) return; // host (seat 0) only
+        // 다른 협동 게임(mx_msg/br_msg)과 동일한 패턴: 방장(isHost) 또는 seat 0
+        // 둘 중 하나라도 맞으면 권한 인정. seat===0만 체크하면, 클라이언트가
+        // 스스로를 "호스트"라고 판단하는 기준(ownerUserId 기반 isHost)과
+        // 서버 권한 기준이 어긋날 때(좌석 0이 방장이 아닌 경우) 공 물리를
+        // 아무도 계산하지 못해 공이 완전히 멈춰버리는 치명적 버그가 된다.
+        if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
         this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), owner: d.owner ?? null };
         // broadcast to everyone except the sender (host already has authoritative local state)
         for (const [sock, sUid] of this.sockets.entries()){
@@ -1714,7 +1726,7 @@ export class RoomDO{
         if (this.meta.phase !== "playing") return;
         if (this.sc.over) return;
         const u = this.users.get(uid);
-        if (Number(u?.seat ?? -1) !== 0) return; // host only
+        if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
         const team = String(d.team || "");
         if (team !== "A" && team !== "B") return;
         const scoreA = Number(d.scoreA ?? 0);
@@ -1727,7 +1739,7 @@ export class RoomDO{
         if (this.meta.mode !== "soccer") return;
         if (this.meta.phase !== "playing") return;
         const u = this.users.get(uid);
-        if (Number(u?.seat ?? -1) !== 0) return; // host only
+        if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
         const sid = String(d.sid || "");
         const dur = Number(d.dur || 0);
         if (!sid || dur <= 0) return;
@@ -1738,7 +1750,7 @@ export class RoomDO{
         if (this.meta.mode !== "soccer") return;
         if (this.meta.phase !== "playing") return;
         const u = this.users.get(uid);
-        if (Number(u?.seat ?? -1) !== 0) return; // host only
+        if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
         const winner = String(d.winner || "draw");
         this._finishSoccer(winner);
         return;
