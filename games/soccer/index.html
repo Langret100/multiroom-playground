@@ -574,9 +574,16 @@ window.addEventListener('message',e=>{
     initGame();            // 내부에서 gameActive=false 리셋하지만
     gameActive=true;
     hideOverlay();
-    ensureAudio();
-    bgm.currentTime=0; bgm.play().catch(()=>{});
-    sfxWhistle();
+    // 오디오 자동재생 예외(브라우저 정책 차이 등)가 여기서 터지면 이 메시지
+    // 핸들러가 중간에 멈춰서 sc_sync 요청조차 못 나가는 문제가 있었다.
+    // 오디오 실패가 게임 진행에 영향을 주면 안 되므로 격리한다.
+    try{
+      ensureAudio();
+      bgm.currentTime=0;
+      const p=bgm.play();
+      if(p&&typeof p.catch==='function')p.catch(()=>{});
+    }catch(_){}
+    try{sfxWhistle();}catch(_){}
     bridgeSend('sc_sync',{});
     return;
   }
@@ -1289,8 +1296,18 @@ let loopRunning=false;
 function startLoop(){
   if(loopRunning)return;loopRunning=true;
   function tick(){
-    updateMe();handlePlayerCollisions();lerpRemote();updatePhysics();
-    updateNetBallTrail();updateFx();netSends();checkTimer();draw();
+    // 프레임 하나에서 예외가 나면(예: 상대방 스냅샷의 예기치 못한 값 등)
+    // requestAnimationFrame(tick) 호출까지 못 가서 루프 전체가 "그 프레임에서
+    // 영원히 멈춰버리는" 문제가 있었다. 그러면 그 순간부터 내 조작도,
+    // 상대방 움직임 렌더링도, netSends()의 위치 송신도, 공 렌더링도 전부
+    // 조용히 정지해버려 "상대가 안 보이고 공도 반응 없음"처럼 보인다.
+    // 한 프레임의 예외가 루프 전체를 죽이지 않도록 반드시 격리한다.
+    try{
+      updateMe();handlePlayerCollisions();lerpRemote();updatePhysics();
+      updateNetBallTrail();updateFx();netSends();checkTimer();draw();
+    }catch(err){
+      try{console.error('[soccer] frame error (자동 복구됨):',err);}catch(_){}
+    }
     requestAnimationFrame(tick);
   }tick();
 }
