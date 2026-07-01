@@ -231,7 +231,12 @@ canvas { display:block; }
 
 'use strict';
 
-const EMBED     = window.self !== window.top;
+// 투게스터와 동일한 방식: room.js가 iframe src에 항상 심어주는 ?embed=1
+// 쿼리파라미터로 판정한다. window.self!==window.top 비교는 일부 모바일
+// 인앱브라우저/웹뷰 환경에서 신뢰할 수 없어서, 그 값이 false로 잡히면
+// bridgeSend/netSends가 통째로 아무 것도 보내지 않는(=상대가 안 보이고
+// 공도 안 움직이는) 문제로 이어질 수 있었다.
+const EMBED     = new URLSearchParams(location.search).get('embed') === '1';
 const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window;
 
 /* ── 캔버스 레이아웃 ── */

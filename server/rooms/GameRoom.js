@@ -1017,8 +1017,23 @@ this.onMessage("sc_pos", (client, payload) => {
   if (this.state.phase !== "playing") return;
   if (!this.sc) return;
   const sid = client.sessionId;
-  const p = this.sc.players?.[sid];
-  if (!p) return; // 시트가 없는(관전 등) 클라이언트는 무시
+  // 투게스터(tg_state)와 동일하게: "미리 등록되어 있어야만" 받아주지 않고,
+  // 정식으로 착석된(seat 배정된) 클라이언트라면 이 자리에서 즉석으로
+  // 등록하고 받아준다. initSoccer() 시점의 등록 타이밍을 조금이라도
+  // 놓치면 그 이후 위치가 영구히 무시되던 문제의 근본 원인이었다.
+  let p = this.sc.players?.[sid];
+  if (!p) {
+    const seat = Number(this.state.order?.get(sid) ?? -1);
+    if (seat < 0) return; // 정말로 착석되지 않은 관전자만 무시
+    const ps = this.state.players.get(sid);
+    p = this.sc.players[sid] = {
+      x: 0, y: 0, dir: 0, vx: 0, vy: 0,
+      nick: String(ps?.nick || "Player"),
+      seat,
+      team: seat % 2 === 0 ? "A" : "B",
+      kickAt: 0, kickCharge: 0, tackle: false,
+    };
+  }
   p.x   = Number(payload.x   ?? p.x);
   p.y   = Number(payload.y   ?? p.y);
   p.dir = Number(payload.dir ?? p.dir);
@@ -1046,16 +1061,18 @@ this.onMessage("sc_pos", (client, payload) => {
   this.broadcast("sc_players", { players: this.sc.players });
 });
 
-// Ball position relay (host only)
+// Ball position relay. 투게스터의 tg_push처럼 "보낸 사람이 정말 호스트인지"만
+// 최소한으로 확인하고 그 외엔 별도 등록/사전조건 없이 그대로 릴레이한다.
 this.onMessage("sc_ball", (client, payload) => {
   if (this.state.mode !== "soccer") return;
   if (this.state.phase !== "playing") return;
-  // Only accept from the host (seat 0)
+  if (!this.sc) return;
+  // Only accept from the host (seat 0) — but fall back to the ps.isHost flag
+  // too, in case seat/order ever drifts from the actual host assignment.
   const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
-  if (seat !== 0) return;
-  if (this.sc) {
-    this.sc.ball = { x: Number(payload.x ?? 0), y: Number(payload.y ?? 0), vx: Number(payload.vx ?? 0), vy: Number(payload.vy ?? 0), owner: payload.owner ?? null };
-  }
+  const ps = this.state.players.get(client.sessionId);
+  if (seat !== 0 && !ps?.isHost) return;
+  this.sc.ball = { x: Number(payload.x ?? 0), y: Number(payload.y ?? 0), vx: Number(payload.vx ?? 0), vy: Number(payload.vy ?? 0), owner: payload.owner ?? null };
   this.broadcast("sc_ball", this.sc.ball, { except: client });
 });
 
