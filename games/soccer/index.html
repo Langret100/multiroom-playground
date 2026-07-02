@@ -2,1330 +2,478 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0">
 <title>⚽ 수학축구</title>
 <style>
-* { margin:0; padding:0; box-sizing:border-box; }
-html, body {
-  width:100%; height:100%; background:#0a0f0a;
-  display:flex; align-items:center; justify-content:center;
-  overflow:hidden; user-select:none; -webkit-user-select:none; touch-action:none;
-}
-canvas { display:block; }
-#overlay {
-  position:fixed; inset:0; z-index:30;
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  background:rgba(0,0,0,.88); font-family:monospace;
-}
-#overlay.hidden { display:none; }
-#ovTitle { font-size:2.8rem; font-weight:bold; color:#fff; letter-spacing:3px; }
-#ovSub   { font-size:1.05rem; color:#aaa; margin-top:12px; text-align:center; padding:0 24px; line-height:1.8; }
-#ovCtrl  { margin-top:18px; padding:12px 22px; border:1px solid #333; border-radius:8px;
-           color:#777; font-size:.8rem; line-height:1.85; text-align:left; }
-#mobileUI { position:fixed; inset:0; pointer-events:none; z-index:20; display:none; }
-/* Joystick */
-#joy { position:absolute; bottom:20px; left:20px; width:118px; height:118px;
-       pointer-events:all; touch-action:none; }
-#joyBase { position:absolute; inset:0; border-radius:50%;
-           background:rgba(255,255,255,.07); border:2px solid rgba(255,255,255,.2); }
-#joyKnob { position:absolute; width:50px; height:50px; border-radius:50%;
-           background:rgba(255,255,255,.38); top:34px; left:34px; }
-/* Kick button — shows charge */
-#btnKick {
-  position:absolute; bottom:22px; right:22px;
-  width:76px; height:76px; border-radius:50%;
-  border:3px solid rgba(255,200,0,.85);
-  overflow:hidden; pointer-events:all; touch-action:none;
-  display:flex; align-items:center; justify-content:center; flex-direction:column;
-  font:bold 12px monospace; color:#fff; line-height:1.3;
-}
-#kickChargeFill {
-  position:absolute; bottom:0; left:0; right:0; height:0%;
-  background:rgba(255,180,0,.55); transition:height .04s linear;
-}
-#kickLabel { position:relative; z-index:1; text-align:center; font-size:22px; line-height:1; }
-#kickSub   { position:relative; z-index:1; font-size:11px; }
-/* Tackle button */
-#btnTackle {
-  position:absolute; bottom:112px; right:26px;
-  width:62px; height:62px; border-radius:50%;
-  background:rgba(60,140,255,.68); border:3px solid rgba(100,180,255,.85);
-  color:#fff; font:bold 11px monospace;
-  display:flex; align-items:center; justify-content:center; flex-direction:column;
-  pointer-events:all; touch-action:none; line-height:1.3;
-}
-#volBtn {
-  position:fixed; top:8px; right:10px; z-index:40;
-  background:rgba(0,0,0,.55); border:1px solid #444; border-radius:6px;
-  color:#aaa; font:14px monospace; padding:4px 8px; cursor:pointer;
-}
+  * { margin:0; padding:0; box-sizing:border-box; touch-action:none;
+      -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+  html,body { width:100%; height:100%; background:#0b1220; overflow:hidden;
+      font-family:'Segoe UI',system-ui,sans-serif; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  #gc { background:#1f7a3d; display:block; touch-action:none; }
+  #overlay {
+    position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:14px; background:rgba(0,0,0,.72); color:#fff;
+    text-align:center; padding:24px; z-index:20;
+  }
+  #overlay.hidden { display:none; }
+  #overlay h2 { font-size:22px; }
+  #overlay p { font-size:14px; opacity:.85; line-height:1.6; }
+  #joy {
+    position:fixed; left:22px; bottom:22px; width:120px; height:120px; border-radius:50%;
+    background:rgba(255,255,255,.14); border:2px solid rgba(255,255,255,.35); z-index:15; display:none;
+  }
+  #joyStick {
+    position:absolute; left:50%; top:50%; width:52px; height:52px; margin:-26px 0 0 -26px;
+    border-radius:50%; background:rgba(255,255,255,.55);
+  }
+  body.mobile #joy { display:block; }
 </style>
 </head>
 <body>
-<canvas id="gc"></canvas>
-
-<div id="overlay" class="hidden">
-  <div id="ovTitle">⚽ 수학축구</div>
-  <div id="ovSub">게임 시작을 기다리는 중...</div>
-  <div id="ovCtrl">
-    🖥️ PC : WASD/방향키 이동 &nbsp;|&nbsp; <b>Space 누르고 떼기</b> 킥 (길게=강하게) &nbsp;|&nbsp; <b>Shift/Z</b> 태클<br>
-    📱 모바일 : 조이스틱 이동 &nbsp;|&nbsp; <b>⚽ KICK</b> 누르고 떼기 (길게=강하게) &nbsp;|&nbsp; <b>💨 TACKLE</b> 태클
-  </div>
-</div>
-
-<div id="mobileUI">
-  <div id="joy"><div id="joyBase"></div><div id="joyKnob"></div></div>
-  <div id="btnKick">
-    <div id="kickChargeFill"></div>
-    <div id="kickLabel">⚽</div>
-    <div id="kickSub">KICK</div>
-  </div>
-  <div id="btnTackle"><span style="font-size:18px">💨</span><span>TACKLE</span></div>
-</div>
-
-<button id="volBtn">🔊</button>
+<div id="wrap"><canvas id="gc"></canvas></div>
+<div id="joy"><div id="joyStick"></div></div>
+<div id="overlay"><h2 id="ovTitle">연결 대기 중...</h2><p id="ovText">잠시만 기다려주세요.</p></div>
 
 <script>
-/*
- * ═══════════════════════════════════════════════════════════════════════════
- *  SOCCER  –  게임 사양서 (Game Specification)
- *  이 주석은 새 대화방에서 수정 시 참고용입니다. 절대 삭제하지 마세요.
- * ═══════════════════════════════════════════════════════════════════════════
- *
- *  [ 기본 규칙 ]
- *  - 짝수 인원 전용: 2·4·6·8명 (홀수이면 로비에서 시작 불가)
- *  - 짝수 석(seat 0,2,4,6) = A팀(빨강), 홀수 석(seat 1,3,5,7) = B팀(파랑)
- *  - 제한 시간: 2분(120초), 종료 시 더 많은 골을 넣은 팀 승리. 동점이면 무승부.
- *
- *  [ 공 물리 — 항상 실제 운동량 기반 (예외 없음) ]
- *  - ball.x/y는 매 프레임 ball.vx/vy로 적분되고, 매 프레임 동일하게 마찰(BALL_FRIC) 적용
- *  - "소유"라는 개념이 위치를 스냅하거나 발에 붙이는 특수 처리를 하지 않음 —
- *    공은 항상 자기 속도/마찰 법칙을 그대로 따르는 독립된 물리 객체
- *  - 시각적 회전(ballSpinAngle)도 매 프레임 속력에 비례해 누적 → 실제로 굴러가는 것처럼 보임
- *
- *  [ 드리블 — 힘(가속력) 기반 터치, 위치 스냅 아님 ]
- *  - 공 근처(DRIBBLE_RANGE px)에 있는 가장 가까운 플레이어가 ballOwner로 지정됨 (host 결정)
- *  - 소유자가 바뀔 때 히스테리시스 적용: 현재 소유자가 DRIBBLE_RANGE*1.4 이내면 유지
- *  - ballOwner가 이동 중이면 매 프레임 DRIBBLE_TOUCH_ACCEL 만큼의 가속력을
- *    공의 속도(ball.vx/vy)에 "더할" 뿐 — 위치를 직접 옮기지 않음
- *    → 정지하면 터치 힘이 사라지고 공은 마찰로 자연스럽게 멈춤 (인위적 감속 없음)
- *  - 공이 선수에게서 너무 멀어지면(DRIBBLE_RANGE*0.55 초과) 아주 약한 위치 보정만 추가
- *    (스프링이 아니라 미세한 당김 — 운동량을 거의 해치지 않는 수준)
- *  - 드리블 중 공 속도 상한: 선수 속도 * DRIBBLE_MAX_REL (너무 빨리 튀어나가지 않게)
- *  - ballOwner는 sc_ball 메시지에 owner 필드로 브로드캐스트됨 (속도 페널티·태클 타겟 판정용)
- *
- *  [ 속도 ]
- *  - 공 없을 때  : PLR_SPD        (기준 속도)
- *  - 드리블 중   : PLR_SPD / 1.08  (≈ 8% 느림)
- *  - 태클 대시 중: TACKLE_SPD      (일시적 고속)
- *
- *  [ 킥 — 차징 시스템 ]
- *  - PC: Space 누름 → 차징 시작, 떼면 킥 발사
- *  - 모바일: ⚽ KICK 버튼 누름 → 차징, 떼면 킥 발사
- *  - 차징 길이에 따라 킥 파워 선형 증가: MIN_KICK_F ~ MAX_KICK_F
- *  - 최대 차징 시간: MAX_CHARGE_F 프레임 (~0.9초)
- *  - 유효 조건: 킥 발사 시 공이 KICK_RANGE px 이내여야 함
- *  - 모바일 버튼 내부 채워지는 애니메이션으로 차징 정도 시각화
- *  - 킥 후 공은 드리블 소유에서 해제됨 (= 다음 프레임 updateBallOwner가 재판정)
- *  - 킥 모션: kickAnimT(KICK_ANIM_F 프레임)가 설정되어 다리를 뻗는 픽셀 애니메이션 표시
-
- *
- *  [ 플레이어 충돌 물리 — 클라이언트 사이드 예측 ]
- *  - 서버 코드 변경 없이 각 클라이언트가 자신의 위치에 대해서만 연산 (분산 물리)
- *  - 다른 플레이어와 PLR_R*2 이내 겹치면 자신을 밀어냄 (pushStrength = 겹침량 * 0.55)
- *  - 보정된 위치는 다음 sc_pos 전송(~40ms)에 자동 반영됨
- *  - 공 소유자 앞으로 몸을 끼워 넣으면 내가 공에 가장 가까운 플레이어가 되어 ballOwner 교체
- *    → 태클 버튼 없이도 달려들어 몸싸움으로 공 탈취 가능
- *
- *  [ 태클 — 고속 강제 탈취 ]
- *  - PC: Shift 또는 Z
- *  - 모바일: 💨 TACKLE 버튼 (쿨다운 중 버튼에 conic-gradient 시계방향 채움 시각화)
- *  - 효과: 플레이어가 TACKLE_DUR 프레임간 고속 대시 (일반 충돌보다 강력한 돌파)
- *  - 탈취 조건: 대시 중 상대 ballOwner에게 TACKLE_STEAL_R px 이내 접근
- *    → 공이 임의 방향으로 튕겨 나감
- *    → 상대 STUN_DUR 프레임 동안 스턴 (조작 불가)
- *  - 쿨다운: TACKLE_CD_F 프레임 (~1.1초)
- *  - 모바일 버튼: 쿨다운 중 어두운 conic-gradient 오버레이, 준비되면 원래 색 복귀
- *
- *  [ 골 ]
- *  - 공이 골라인을 완전히 넘으면 득점 (host가 판정)
- *  - 득점 후 2.5초간 화면 플래시 + 컨페티 → 전원 리스폰 → 재개
- *
- *  [ 효과음 — Web Audio API 합성 ]
- *  - sfxKick: 가벼운 드리블 탭 사운드
- *  - sfxPowerKick: 풀 차징 킥 사운드
- *  - sfxTackle: 태클 충격음
- *  - sfxGoal: 골 팡파레 (4음 상행)
- *  - sfxWhistle: 킥오프 휘슬
- *  - sfxEndWhistle: 경기 종료 3연타 휘슬
- *  - sfxBeep: 마지막 10초 카운트다운 삐 소리
- *
- *  [ 캐릭터 스프라이트 — 도트(픽셀 블록) 스타일, 투게스터 동일 기법 ]
- *  - drawPlayer는 단색 원이 아니라 작은 픽셀 그리드를 사각 블록(p() 헬퍼)으로 찍어
- *    그리는 진짜 도트 스타일 — 투게스터의 p(px,py,w,h,c) 패턴을 그대로 채용
- *  - ctx.imageSmoothingEnabled=false + 정수 좌표 스냅으로 안티앨리어싱 없는 블록 외곽선
- *  - 그라디언트 대신 3단 플랫 컬러 밴드(어둡게/기본/밝게)로 레트로 음영 표현
- *  - 머리(살색)+머리띠(팀색), 유니폼 몸통(팀색)+칼라(흰색), 반바지(흰색),
- *    다리/양말(팀색)+축구화(검정)로 구성된 탑다운 휴미노이드 스프라이트
- *  - 걷기 애니메이션: 이동 속력에 따라 두 다리가 교대로 더 길게/짧게 보이는
- *    워크사이클(performance.now() 기반 위상) — 정지 시 양다리 동일 길이
- *  - 킥 모션: kickAnimT>0인 동안 앞다리가 p.dir 방향으로 길게 뻗어나가는 픽셀 블록 추가
- *  - 태클 모션: 대시 중 몸 전체가 진행 방향으로 살짝 기울고 속도선(잔상) 표시
- *  - 등번호는 가독성을 위해 canvas 텍스트로 유니폼 위에 별도 렌더링 (유지)
- *
- *  [ 내 캐릭터 식별·게이지 UI — 캐릭터를 둘러싸는 원 금지 ]
- *  - "이게 나"라는 표시는 캐릭터를 둘러싸는 링이 아니라 머리 위 작은 금색
- *    역삼각형 마커 하나로만 표시한다 (여러 원이 겹쳐 보이는 혼란 방지)
- *  - 킥 차징/태클 쿨다운 게이지는 캐릭터 주변 원호가 아니라 발밑의 작은
- *    가로 바(22×3px, 닉네임보다 위)로 표시 — 평소엔 완전히 숨겨져 있고
- *    실제로 차징/쿨다운 중일 때만 나타난다 (둘 중 하나만 활성화될 때 표시,
- *    차징 중이면 노란 바, 쿨다운 중이면 파란 바)
- *  - 공 소유(드리블) 표시용 별도 링은 만들지 않음 — 드리블 물리 자체가 공이
- *    발 옆에 붙어 있는 것으로 소유 여부를 자연스럽게 보여주기 때문
- *
- *  [ 이펙트 ]
- *  - 드리블 탭(킥): 작은 흰색 확장 링
- *  - 파워킥: 큰 금색 링 + 플레이어 주변 차징 링
- *  - 태클: 충돌 지점에 별 파티클 6개
- *  - 스턴: 스턴된 플레이어 머리 위 ★ 표시
- *  - 골: 55개 색종이 컨페티 폭발 + 화면 플래시
- *  - 볼 잔상: 최근 14프레임 궤적 트레일
- *
- *  [ 네트워크 아키텍처 — 투게스터의 tg_state→tg_players와 완전히 동일한 패턴 ]
- *  - Host (seat 0): 공 물리 계산·드리블·탈취 판정 → sc_ball 브로드캐스트 (30fps)
- *  - 모든 클라이언트: 자기 위치를 sc_pos로 "서버에게만" 전송 (업로드, 25fps)
- *  - 서버는 sc_pos를 받을 때마다 this.sc.players[sid]에 누적 반영하고,
- *    ~20Hz로 쓰로틀해서 그 "전체 인원 스냅샷"을 sc_players로 전체 브로드캐스트
- *  - 예전엔 받은 사람의 위치만 골라서 다른 사람에게 1:1 중계(broadcast except
- *    sender)했는데, 이 방식은 받는 클라이언트의 players{}에 그 sid가 "이미
- *    있어야" 갱신이 먹히는 전제가 있어서, roster 타이밍이 조금만 어긋나도
- *    그 선수가 영원히 안 보이는 결함이 있었다. 투게스터처럼 "전체 집계를
- *    그대로 받아서, 모르는 sid면 그 자리에서 즉석 생성"하는 방식으로
- *    바꾸면 그 전제 자체가 사라진다 (applyRemotePlayers 참고)
- *  - 킥(kickAt)은 한 프레임만 true였다가 사라지는 boolean이 아니라
- *    "발생 시각(ms)"을 점성(sticky)으로 들고 있다 — 집계 브로드캐스트가
- *    몇 번을 거치든, 일반 위치 갱신에 덮여 사라지지 않는다. 받는 쪽은
- *    "이 sid의 마지막 처리 시각과 다르면 새 킥"으로 정확히 한 번만 처리
- *  - 태클(tackle)은 TACKLE_DUR(~267ms)간 지속되는 상태라 20Hz 폴링에도
- *    충분히 여러 번 잡히므로 별도 타임스탬프 트릭이 필요 없음
- *  - 골: host → sc_goal → 서버 브로드캐스트 → 전 클라이언트 점수 업데이트
- *  - 게임 종료: host → sc_over → 서버 finishSoccer() → backToRoom
- *
- *  [ 선수 목록(roster) 동기화 — 투게스터의 tg_players와 동일한 패턴 ]
- *  - bridge_init은 입장 시 1회만 오는 스냅샷이라 그것만 믿지 않는다.
- *    서버가 buildHumanRoster()로 만든 "현재 서버가 아는 전체 인원" 목록을
- *    sc_roster 메시지로 (a) 매치 시작 시, (b) 늦은 합류(onJoin) 시,
- *    (c) 클라이언트가 sc_sync를 요청할 때 브로드캐스트한다
- *  - 게임은 sc_roster를 받을 때마다 applyServerRoster()로 roster 배열을
- *    합집합 갱신하고, 이미 시작된 상태라면 mergeNewRosterPlayers()로
- *    아직 players{}에 없는 선수만 점수/공 상태를 그대로 둔 채 추가한다
- *  - 다만 실제 위치 동기화는 이제 sc_players(applyRemotePlayers)가 항상
- *    스스로 복구하므로, roster/bridge_init이 설령 불완전해도 위치 동기화
- *    자체는 깨지지 않는다 — roster 메시지는 팀배정/스폰 등 "보기 좋은
- *    초기화"를 위한 보조 수단일 뿐, 더 이상 위치 동기화의 전제조건이 아님
- *  - 즉 soccer도 투게스터처럼 "서버가 미는 전체 명단"을 지속적으로 받는
- *    구조이고, bridge_init 타이밍에만 의존하는 특수 게이트는 두지 않는다
- *
- * ═══════════════════════════════════════════════════════════════════════════
- */
-
 'use strict';
 
-// 투게스터와 동일한 방식: room.js가 iframe src에 항상 심어주는 ?embed=1
-// 쿼리파라미터로 판정한다. window.self!==window.top 비교는 일부 모바일
-// 인앱브라우저/웹뷰 환경에서 신뢰할 수 없어서, 그 값이 false로 잡히면
-// bridgeSend/netSends가 통째로 아무 것도 보내지 않는(=상대가 안 보이고
-// 공도 안 움직이는) 문제로 이어질 수 있었다.
-const EMBED     = new URLSearchParams(location.search).get('embed') === '1';
-const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window;
-
-/* ── 캔버스 레이아웃 ── */
-const CW = 900, CH = 570;
-const HUD_H = 56;
-const FX = 52, FY = HUD_H + 6, FW = 796, FH = 450;
-const FCX = FX + FW/2, FCY = FY + FH/2;
-const GOAL_H = 154, GOAL_D = 30;
-const GY1 = FCY - GOAL_H/2, GY2 = FCY + GOAL_H/2;
-const GL = FX, GR = FX + FW;
-
-/* ── 물리 상수 ── */
-const BALL_R = 11, PLR_R = 17;
-const PLR_SPD          = 3.8;               // 공 없을 때 기준 속도
-const PLR_SPD_DRIBBLE  = PLR_SPD / 1.08;   // 드리블 중 속도 (약 8% 느림)
-const TACKLE_SPD       = 9.0;              // 태클 대시 속도
-const BALL_FRIC        = 0.975;
-const MIN_KICK_F       = 6.5;              // 최소 킥 파워 (탭)
-const MAX_KICK_F       = 24;               // 최대 킥 파워 (풀 차징)
-const DRIBBLE_RANGE    = PLR_R + BALL_R + 10;  // 드리블 터치 감지 범위 (38px)
-const DRIBBLE_HYST     = DRIBBLE_RANGE * 1.4;  // 소유권 히스테리시스 범위 (탈취 판정용)
-const DRIBBLE_TOUCH_ACCEL = 0.62;              // 드리블 중 매 프레임 공에 가하는 가속력 (실제 힘 — 위치 스냅 아님)
-const DRIBBLE_MAX_REL     = 1.55;              // 드리블 시 공 속도 상한 = 선수 속도 * 이 값
-const SPIN_RATE           = 0.018;             // 공 시각적 회전 속도 (속력에 비례)
-const KICK_RANGE       = PLR_R + BALL_R + 26;  // 킥 유효 범위
-const TACKLE_STEAL_R   = PLR_R * 2 + 8;        // 태클 탈취 판정 범위
-const MAX_BV           = 24;
-const GAME_MS          = 120_000;              // 2분
-
-/* ── 쿨다운·타이머 (프레임 기준 @60fps) ── */
-const MAX_CHARGE_F  = 55;   // 최대 차징 시간 (~0.9초)
-const KICK_ANIM_F   = 11;   // 킥 모션(다리 뻗기) 표시 프레임
-const TACKLE_CD_F   = 68;   // 태클 쿨다운 (~1.1초)
-const TACKLE_DUR    = 16;   // 태클 대시 지속
-const STUN_DUR      = 55;   // 스턴 지속 (~0.9초)
-
-/* ── 팔레트 ── */
-const CA='#f44336', CA2='#b71c1c', CB='#1e88e5', CB2='#0d47a1';
-const CFLD='#1b6b1b', CFLD2='#196019';
-
-/* ── 스폰 테이블 [rx, ry] — 하프필드 상대 좌표 ── */
-const SPAWNS=[[[.28,.50]],[[.28,.31],[.28,.69]],[[.20,.50],[.36,.27],[.36,.73]],
-              [[.20,.29],[.20,.71],[.38,.29],[.38,.71]]];
-function getSpawn(i,sz,tm){
-  const[rx,ry]=SPAWNS[Math.min(sz,4)-1][i%Math.min(sz,4)];
-  return{x:tm==='A'?FX+rx*FW*.47:FX+FW-rx*FW*.47,y:FY+ry*FH};
-}
-
-/* ══════════════════════════════════════════════════════
-   오디오
-══════════════════════════════════════════════════════ */
-let muted=false, audioReady=false, actx=null;
-const bgm=new Audio('./soccmusic.mp3');
-bgm.loop=true; bgm.volume=0.38;
-
-document.getElementById('volBtn').addEventListener('click',()=>{
-  muted=!muted; bgm.muted=muted;
-  document.getElementById('volBtn').textContent=muted?'🔇':'🔊';
-});
-function ensureAudio(){
-  if(audioReady)return; audioReady=true;
-  try{actx=new(window.AudioContext||window.webkitAudioContext)();}catch(_){}
-  bgm.play().catch(()=>{});
-}
-['keydown','touchstart','mousedown'].forEach(ev=>
-  window.addEventListener(ev,ensureAudio,{once:true,passive:true}));
-
-function sfx(fn){if(!actx||muted)return;try{fn(actx);}catch(_){}}
-
-function sfxKick(){sfx(ac=>{
-  const o=ac.createOscillator(),g=ac.createGain();
-  o.connect(g);g.connect(ac.destination);o.type='sine';
-  const t=ac.currentTime;
-  o.frequency.setValueAtTime(190,t);o.frequency.exponentialRampToValueAtTime(50,t+.12);
-  g.gain.setValueAtTime(.45,t);g.gain.exponentialRampToValueAtTime(.001,t+.13);
-  o.start(t);o.stop(t+.13);
-});}
-function sfxPowerKick(){sfx(ac=>{
-  ['sawtooth','square'].forEach((type,i)=>{
-    const o=ac.createOscillator(),g=ac.createGain();
-    o.connect(g);g.connect(ac.destination);
-    const t=ac.currentTime;
-    o.type=type;o.frequency.setValueAtTime(300-i*90,t);
-    o.frequency.exponentialRampToValueAtTime(48,t+.22);
-    g.gain.setValueAtTime(.38-i*.08,t);g.gain.exponentialRampToValueAtTime(.001,t+.24);
-    o.start(t);o.stop(t+.24);
-  });
-});}
-function sfxTackle(){sfx(ac=>{
-  const buf=ac.createBuffer(1,ac.sampleRate*.18,ac.sampleRate);
-  const d=buf.getChannelData(0);
-  for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*(1-i/d.length)*.7;
-  const src=ac.createBufferSource(),g=ac.createGain(),f=ac.createBiquadFilter();
-  f.type='lowpass';f.frequency.value=380;
-  src.buffer=buf;src.connect(f);f.connect(g);g.connect(ac.destination);
-  g.gain.setValueAtTime(.85,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+.18);
-  src.start();
-});}
-function sfxGoal(){sfx(ac=>{
-  [261,329,392,523].forEach((fr,i)=>{
-    const o=ac.createOscillator(),g=ac.createGain();
-    o.connect(g);g.connect(ac.destination);
-    const t=ac.currentTime+i*.13;o.type='square';o.frequency.value=fr;
-    g.gain.setValueAtTime(.28,t);g.gain.exponentialRampToValueAtTime(.001,t+.34);
-    o.start(t);o.stop(t+.35);
-  });
-});}
-function sfxWhistle(){sfx(ac=>{
-  const o=ac.createOscillator(),g=ac.createGain();
-  o.connect(g);g.connect(ac.destination);
-  const t=ac.currentTime;o.type='sine';
-  o.frequency.setValueAtTime(2600,t);o.frequency.setValueAtTime(2100,t+.2);
-  g.gain.setValueAtTime(.38,t);g.gain.exponentialRampToValueAtTime(.001,t+.54);
-  o.start(t);o.stop(t+.55);
-});}
-function sfxEndWhistle(){sfx(ac=>{
-  for(let i=0;i<3;i++){
-    const o=ac.createOscillator(),g=ac.createGain();
-    o.connect(g);g.connect(ac.destination);
-    const t=ac.currentTime+i*.22;o.type='sine';o.frequency.value=2400;
-    g.gain.setValueAtTime(.33,t);g.gain.exponentialRampToValueAtTime(.001,t+.18);
-    o.start(t);o.stop(t+.19);
-  }
-});}
-function sfxBeep(){sfx(ac=>{
-  const o=ac.createOscillator(),g=ac.createGain();
-  o.connect(g);g.connect(ac.destination);
-  const t=ac.currentTime;o.type='sine';o.frequency.value=880;
-  g.gain.setValueAtTime(.22,t);g.gain.exponentialRampToValueAtTime(.001,t+.09);
-  o.start(t);o.stop(t+.1);
-});}
-
-/* ══════════════════════════════════════════════════════
-   캔버스
-══════════════════════════════════════════════════════ */
-const canvas=document.getElementById('gc');
-const ctx=canvas.getContext('2d');
-let scale=1,dpr=1;
-function resize(){
-  dpr=Math.min(window.devicePixelRatio||1,2);scale=Math.min(innerWidth/CW,innerHeight/CH);
-  canvas.style.width=Math.floor(CW*scale)+'px';canvas.style.height=Math.floor(CH*scale)+'px';
-  canvas.width=Math.round(CW*scale*dpr);canvas.height=Math.round(CH*scale*dpr);
-  ctx.setTransform(scale*dpr,0,0,scale*dpr,0,0);
-}
-window.addEventListener('resize',resize);resize();
-
-/* ══════════════════════════════════════════════════════
-   오버레이
-══════════════════════════════════════════════════════ */
-const ovEl=document.getElementById('overlay');
-function showOverlay(t,s){
-  ovEl.querySelector('#ovTitle').textContent=t;
-  ovEl.querySelector('#ovSub').textContent=s;
-  ovEl.classList.remove('hidden');
-}
-function hideOverlay(){ovEl.classList.add('hidden');}
-
-/* ══════════════════════════════════════════════════════
-   모바일 UI
-══════════════════════════════════════════════════════ */
-const mobileUI=document.getElementById('mobileUI');
-const joyEl=document.getElementById('joy'),joyKnob=document.getElementById('joyKnob');
-const btnKick=document.getElementById('btnKick'),btnTackle=document.getElementById('btnTackle');
-const kickChargeFill=document.getElementById('kickChargeFill');
-const JOY_R=58,KNOB_R=25;
-let joyX=0,joyY=0,joyTid=null,joyOx=0,joyOy=0;
-
-function setupMobile(){
-  if(!IS_MOBILE)return;
-  mobileUI.style.display='block';
-  joyEl.addEventListener('touchstart',e=>{
-    ensureAudio();e.preventDefault();
-    const t=e.changedTouches[0],r=joyEl.getBoundingClientRect();
-    joyOx=r.left+r.width/2;joyOy=r.top+r.height/2;joyTid=t.identifier;
-  },{passive:false});
-  joyEl.addEventListener('touchmove',e=>{
-    e.preventDefault();
-    for(const t of e.changedTouches){
-      if(t.identifier!==joyTid)continue;
-      const dx=t.clientX-joyOx,dy=t.clientY-joyOy,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx);
-      joyX=Math.cos(a)*Math.min(d,JOY_R)/JOY_R;joyY=Math.sin(a)*Math.min(d,JOY_R)/JOY_R;
-      const kd=Math.min(d,JOY_R-KNOB_R);
-      joyKnob.style.transform=`translate(${Math.cos(a)*kd}px,${Math.sin(a)*kd}px)`;
-    }
-  },{passive:false});
-  const jEnd=()=>{joyX=0;joyY=0;joyTid=null;joyKnob.style.transform='';};
-  joyEl.addEventListener('touchend',jEnd);joyEl.addEventListener('touchcancel',jEnd);
-
-  btnKick.addEventListener('touchstart',e=>{ensureAudio();e.preventDefault();startKickCharge();},{passive:false});
-  btnKick.addEventListener('touchend',  e=>{e.preventDefault();releaseKick();},{passive:false});
-  btnKick.addEventListener('touchcancel',e=>{e.preventDefault();cancelKick();},{passive:false});
-  btnTackle.addEventListener('touchstart',e=>{ensureAudio();e.preventDefault();triggerTackle();},{passive:false});
-}
-setupMobile();
-
-/* ══════════════════════════════════════════════════════
-   키보드
-══════════════════════════════════════════════════════ */
-const keys={};
-window.addEventListener('keydown',e=>{
-  ensureAudio();
-  if(!keys[e.code]){
-    if(e.code==='Space')startKickCharge();
-    if(e.code==='ShiftLeft'||e.code==='ShiftRight'||e.code==='KeyZ')triggerTackle();
-  }
-  keys[e.code]=true;
-  if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
-});
-window.addEventListener('keyup',e=>{
-  if(e.code==='Space')releaseKick();
-  keys[e.code]=false;
-});
-
-/* ══════════════════════════════════════════════════════
-   게임 상태
-══════════════════════════════════════════════════════ */
-let mySid='',myNick='Player',mySeat=-1,isHost=false;
-let gameInitialized=false; // bridge_init must be idempotent: only the FIRST delivery may start the match
-let roster=[];
-let players={};
-/*  players[sid] = {
- *    x, y, lx, ly,            위치 (lx/ly = lerp 목표)
- *    vx, vy, dir,              속도·방향
- *    nick, seat, team,         식별 정보
- *    color, colorDk,           팀 색상
- *    kickAt, kickCharge,       킥 발생 시각(ms, 점성)·파워(0..1)
- *    _lastKickAt,              마지막으로 "처리한" kickAt — 중복 처리 방지용 (엣지 검출)
- *    kickAnimT,                킥 모션(다리 뻗기) 표시용 잔여 프레임 — 시각 효과 전용
- *    tackleActive,             태클 대시 중
- *    tackleCd,                 태클 쿨다운 (프레임)
- *    tackleDur,                태클 대시 남은 프레임
- *    stunned,                  스턴 남은 프레임
- *  }
+/* ── 임베드/브릿지 (투게스터와 동일한 방식) ─────────────────────────────
+ * room.js가 iframe을 열 때 항상 ?embed=1 을 URL에 심어준다. window.self
+ * !== window.top 같은 런타임 판정은 일부 모바일 인앱브라우저/웹뷰에서
+ * 신뢰할 수 없어서 쓰지 않는다 — 이 값이 어긋나면 아래 두 함수가 통째로
+ * 아무 것도 보내지 않게 되어 "상대가 안 보이고 공도 안 움직이는" 증상으로
+ * 이어진다.
  */
+const EMBED = new URLSearchParams(location.search).get('embed') === '1';
+const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || 'ontouchstart' in window;
+if (IS_MOBILE) document.body.classList.add('mobile');
+
+function bridgeSend(type, payload={}){
+  if (!EMBED) return;
+  try{ parent.postMessage({ type, ...payload }, '*'); }catch(_){}
+}
+
+/* ── 캔버스 / 필드 좌표계 (고정 논리좌표, CSS로만 스케일) ── */
+const CW=900, CH=560;
+const FX=40, FY=54, FW=820, FH=452;
+const GOAL_W=14, GOAL_H=130;
+const GOAL_Y1 = FY+FH/2-GOAL_H/2, GOAL_Y2 = FY+FH/2+GOAL_H/2;
+const PR=17, BR=11;
+
+const canvas = document.getElementById('gc');
+const ctx = canvas.getContext('2d');
+function resize(){
+  const wrap = document.getElementById('wrap');
+  const vw = wrap.clientWidth, vh = wrap.clientHeight;
+  const scale = Math.min(vw/CW, vh/CH);
+  canvas.width = CW; canvas.height = CH;
+  canvas.style.width = (CW*scale)+'px';
+  canvas.style.height = (CH*scale)+'px';
+}
+window.addEventListener('resize', resize, { passive:true });
+resize();
+
+/* ── 입력 ── */
+const keys = {};
+window.addEventListener('keydown', e=>{ keys[e.code]=true; }, { passive:true });
+window.addEventListener('keyup',   e=>{ keys[e.code]=false; }, { passive:true });
+
+let joyDX=0, joyDY=0, joyTouchId=null;
+const joyEl = document.getElementById('joy'), joyStickEl = document.getElementById('joyStick');
+function joyReset(){ joyDX=0; joyDY=0; joyStickEl.style.transform='translate(0,0)'; }
+function joyHandle(t){
+  const r = joyEl.getBoundingClientRect();
+  const cx = r.left+r.width/2, cy = r.top+r.height/2;
+  let dx=(t.clientX-cx)/(r.width/2), dy=(t.clientY-cy)/(r.height/2);
+  const len=Math.hypot(dx,dy);
+  if(len>1){ dx/=len; dy/=len; }
+  joyDX=dx; joyDY=dy;
+  joyStickEl.style.transform = `translate(${dx*34}px, ${dy*34}px)`;
+}
+joyEl.addEventListener('touchstart', e=>{
+  const t=e.changedTouches[0]; joyTouchId=t.identifier; joyHandle(t); e.preventDefault();
+}, { passive:false });
+joyEl.addEventListener('touchmove', e=>{
+  for(const t of e.changedTouches){ if(t.identifier===joyTouchId){ joyHandle(t); e.preventDefault(); } }
+}, { passive:false });
+window.addEventListener('touchend', e=>{
+  for(const t of e.changedTouches){ if(t.identifier===joyTouchId){ joyTouchId=null; joyReset(); } }
+}, { passive:true });
+window.addEventListener('touchcancel', e=>{ joyTouchId=null; joyReset(); }, { passive:true });
+
+/* ── 게임 상태 ── */
+let mySid='', myNick='Player', mySeat=-1, isHost=false, roster=[];
+let players={};      // sid -> {x,y,lx,ly,vx,vy,seat,team,nick,color}
 let me=null;
-let ball={x:FCX,y:FCY,vx:0,vy:0};
-let ballSpinAngle=0; // 시각적 회전각 — 매 프레임 속력에 비례해 누적
-let netBall={x:FCX,y:FCY,vx:0,vy:0};
-let netBallOwner=null;  // sc_ball로 수신한 소유자 sid
-let ballOwner=null;     // host가 결정 (자신이 host일 때)
-let ballTrail=[];
-const TRAIL_LEN=14;
-
+let ball={x:FX+FW/2,y:FY+FH/2,vx:0,vy:0};
+let netBall={...ball};
 let score={A:0,B:0};
-let startTs=0,gameActive=false,gameOver=false,goalPending=false;
-let goalFlash=0,goalMsg='';
-let lastPosSent=0,lastBallSent=0;
-let lastBeepSec=-1;
+let startTs=0, durationMs=120000;
+let gameInitialized=false, gameActive=false, gameOver=false;
+let lastPosSent=0, lastBallSent=0;
 
-/* 킥 차징 상태 */
-let kickCharging=false,kickChargeFrames=0;
-/* 태클 상태 */
-let myTackleCd=0,myTackleDur=0;
+function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function teamOf(seat){ return (Number(seat)||0)%2===0 ? 'A' : 'B'; }
+function colorOf(team){ return team==='A' ? '#e74c3c' : '#3b82f6'; }
 
-/* ══════════════════════════════════════════════════════
-   이펙트 시스템
-══════════════════════════════════════════════════════ */
-const fx=[];
-function addFx(type,x,y,opts={}){fx.push({type,x,y,t:0,...opts});}
-
-function addGoalConfetti(){
-  const cols=['#f44336','#ff9800','#ffeb3b','#4caf50','#2196f3','#9c27b0','#ffffff','#e91e63'];
-  for(let i=0;i<55;i++){
-    const a=Math.random()*Math.PI*2,spd=4+Math.random()*6;
-    addFx('conf',FCX+(Math.random()-.5)*200,FCY-30,{
-      vx:Math.cos(a)*spd,vy:-6-Math.random()*7,col:cols[i%cols.length],
-      rot:Math.random()*360,rotV:(Math.random()-.5)*12,
-      w:6+Math.random()*7,h:4+Math.random()*5,maxT:95+Math.floor(Math.random()*60),
-    });
-  }
+function getSpawn(seat){
+  const team = teamOf(seat);
+  const idx = Math.floor((Number(seat)||0)/2); // 같은 팀 내 순번
+  const laneY = FY + FH*0.30 + idx*90;
+  const x = team==='A' ? FX+FW*0.28 : FX+FW*0.72;
+  return { x, y: clamp(laneY, FY+PR+4, FY+FH-PR-4) };
 }
-function addKickFx(x,y,big=false){addFx('ring',x,y,{big,maxT:big?22:14});}
-function addTackleFx(x,y){addFx('stars',x,y,{maxT:28});}
 
-function updateFx(){
-  for(let i=fx.length-1;i>=0;i--){
-    fx[i].t++;if(fx[i].t>=(fx[i].maxT||30))fx.splice(i,1);
-  }
-}
-function drawFx(){
-  for(const e of fx){
-    const p=e.t/(e.maxT||30);
-    if(e.type==='ring'){
-      ctx.beginPath();ctx.arc(e.x,e.y,BALL_R+(e.big?52:26)*p,0,Math.PI*2);
-      ctx.strokeStyle=e.big?`rgba(255,200,0,${1-p})`:`rgba(255,255,180,${1-p})`;
-      ctx.lineWidth=e.big?4:2.5;ctx.stroke();
-    } else if(e.type==='stars'){
-      for(let i=0;i<6;i++){
-        const a=(i/6)*Math.PI*2+e.t*.18,r=p*36;
-        const sx=e.x+Math.cos(a)*r,sy=e.y+Math.sin(a)*r,sz=7*(1-p);
-        ctx.save();ctx.translate(sx,sy);ctx.rotate(a);
-        ctx.fillStyle=`rgba(255,230,50,${1-p})`;
-        ctx.beginPath();
-        for(let k=0;k<5;k++){
-          const ka=(k/5)*Math.PI*2-Math.PI/2,ki=((k+.5)/5)*Math.PI*2-Math.PI/2;
-          k===0?ctx.moveTo(Math.cos(ka)*sz,Math.sin(ka)*sz):ctx.lineTo(Math.cos(ka)*sz,Math.sin(ka)*sz);
-          ctx.lineTo(Math.cos(ki)*sz*.38,Math.sin(ki)*sz*.38);
-        }
-        ctx.closePath();ctx.fill();ctx.restore();
-      }
-    } else if(e.type==='conf'){
-      const gy=0.32;
-      const px=e.x+e.vx*e.t,py=e.y+e.vy*e.t+gy*e.t*e.t;
-      const alpha=p<.75?1:(1-p)/.25;
-      ctx.save();ctx.translate(px,py);ctx.rotate((e.rot+e.rotV*e.t)*Math.PI/180);
-      ctx.fillStyle=e.col+(Math.round(alpha*255).toString(16).padStart(2,'0'));
-      ctx.fillRect(-e.w/2,-e.h/2,e.w,e.h);ctx.restore();
-    }
+function resetKickoff(){
+  ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0 };
+  netBall = { ...ball };
+  for(const p of Object.values(players)){
+    const sp = getSpawn(p.seat);
+    p.x=sp.x; p.y=sp.y; p.lx=sp.x; p.ly=sp.y; p.vx=0; p.vy=0;
   }
 }
 
-/* ══════════════════════════════════════════════════════
-   브리지
-══════════════════════════════════════════════════════ */
-function bridgeSend(type,payload={}){
-  if(!EMBED)return;
-  try{parent.postMessage({type,...payload},'*');}catch(_){}
-}
-
-window.addEventListener('message',e=>{
-  const d=e.data;if(!d||typeof d!=='object')return;
-
-  if(d.type==='sc_roster'){
-    applyServerRoster(d.players);
-    return;
-  }
-  if(d.type==='bridge_init'){
-    // 투게스터 패턴: bridge_init 한 번으로 즉시 게임 시작
-    mySid =String(d.sessionId||'');myNick=String(d.nick||'Player');
-    mySeat=Number(d.seat??-1);isHost=!!d.isHost;
-    roster=(d.players||[]).map(p=>({
-      sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
-    })).filter(p=>p.seat>=0);
-    if(gameInitialized){ mergeNewRosterPlayers(); return; } // 매치 시작 후엔 늦게 합류한 선수만 병합
-    gameInitialized=true;
-    // startTs를 initGame 전에 먼저 설정 (initGame 내부가 gameActive=false 리셋하므로)
-    const sAt=Number(d.startedAt||0);
-    startTs = sAt>0 ? sAt : Date.now();
-    gameOver=false;
-    initGame();            // 내부에서 gameActive=false 리셋하지만
-    gameActive=true;
-    hideOverlay();
-    // 오디오 자동재생 예외(브라우저 정책 차이 등)가 여기서 터지면 이 메시지
-    // 핸들러가 중간에 멈춰서 sc_sync 요청조차 못 나가는 문제가 있었다.
-    // 오디오 실패가 게임 진행에 영향을 주면 안 되므로 격리한다.
-    try{
-      ensureAudio();
-      bgm.currentTime=0;
-      const p=bgm.play();
-      if(p&&typeof p.catch==='function')p.catch(()=>{});
-    }catch(_){}
-    try{sfxWhistle();}catch(_){}
-    bridgeSend('sc_sync',{});
-    return;
-  }
-  if(d.type==='sc_timer'){
-    // 서버 권위적 시작 시각으로 타이머 정밀 보정 (이미 hideOverlay/gameActive는 bridge_init에서 처리)
-    const authoritative=Number(d.startTs||0);
-    if(authoritative>0) startTs=authoritative;
-    if(!gameActive&&!gameOver){ gameActive=true; hideOverlay(); }
-    return;
-  }
-  if(d.type==='sc_players'){
-    applyRemotePlayers(d.players);
-    return;
-  }
-  if(d.type==='sc_ball'){
-    if(!isHost){
-      netBall.x=Number(d.x??FCX);netBall.y=Number(d.y??FCY);
-      netBall.vx=Number(d.vx??0);netBall.vy=Number(d.vy??0);
-      netBallOwner=d.owner??null;
-    }return;
-  }
-  if(d.type==='sc_stun'){
-    const sid=String(d.sid||'');
-    const dur=Number(d.dur||0);
-    if(sid===mySid){ if(me) me.stunned=dur; }
-    else { const p=players[sid]; if(p) p.stunned=dur; }
-    return;
-  }
-  if(d.type==='sc_score_sync'){
-    // sc_sync 요청에 대한 "현재 점수 그대로" 응답 — 골 이펙트 없이 숫자만 갱신
-    score.A=Number(d.scoreA??score.A);score.B=Number(d.scoreB??score.B);
-    return;
-  }
-  if(d.type==='sc_goal'){
-    score.A=Number(d.scoreA??score.A);score.B=Number(d.scoreB??score.B);
-    goalFlash=185;goalMsg=d.team==='A'?'🔴 A팀 득점!':'🔵 B팀 득점!';
-    gameActive=false;sfxGoal();addGoalConfetti();
-    setTimeout(()=>{
-      if(gameOver)return;
-      goalPending=false;resetBall();
-      respawnMe();
-      gameActive=true;
-    },2500);return;
-  }
-  if(d.type==='sc_end'){
-    const sA=Number(d.scoreA??score.A),sB=Number(d.scoreB??score.B);
-    score.A=sA;score.B=sB;gameActive=false;gameOver=true;
-    bgm.pause();sfxEndWhistle();
-    setTimeout(()=>{
-      const w=d.winner;
-      showOverlay(w==='draw'?'🤝 무승부!':`${w==='A'?'🔴 A팀':'🔵 B팀'} 승리!`,
-        `최종 점수  A팀 ${sA} : ${sB} B팀`);
-    },700);return;
-  }
-});
-
-/* ══════════════════════════════════════════════════════
-   킥 차징 액션
-══════════════════════════════════════════════════════ */
-function startKickCharge(){
-  if(!gameActive||gameOver)return;
-  kickCharging=true;kickChargeFrames=0;
-}
-function releaseKick(){
-  if(!kickCharging)return;
-  const charge=Math.min(kickChargeFrames,MAX_CHARGE_F)/MAX_CHARGE_F;
-  kickCharging=false;kickChargeFrames=0;
-  kickChargeFill.style.height='0%';
-  doKickRelease(charge);
-}
-function cancelKick(){
-  kickCharging=false;kickChargeFrames=0;
-  kickChargeFill.style.height='0%';
-}
-function doKickRelease(charge){
-  if(!me||!gameActive||gameOver)return;
-  const isBig=charge>0.38;
-  // 킥은 "한 프레임만 true"인 불(boolean)이 아니라 발생 시각(ms)을 점성으로
-  // 저장한다 — 집계 브로드캐스트(sc_players)가 몇 번을 거치든, 다음 평범한
-  // 위치 갱신에 덮여 사라지지 않고 살아남는다 (받는 쪽은 타임스탬프 변화로
-  // "새 킥"을 판정하므로 몇 번 중복 수신해도 안전).
-  me.kickAt=Date.now();me.kickCharge=charge;me.kickAnimT=KICK_ANIM_F;
-  // 호스트는 즉시 처리, 비호스트는 sc_pos로 즉시 전송
-  if(isHost)applyKickFromPlayer(mySid,me.dir,charge,me.x,me.y);
-  // 즉시 전송 (rate limit 무시)
-  bridgeSend('sc_pos',{x:me.x,y:me.y,dir:me.dir,vx:me.vx,vy:me.vy,
-    kickAt:me.kickAt,kickCharge:charge,tackle:me.tackleActive});
-  // 로컬 이펙트·사운드
-  addKickFx(me.x+Math.cos(me.dir)*PLR_R,me.y+Math.sin(me.dir)*PLR_R,isBig);
-  if(isBig)sfxPowerKick();else sfxKick();
-}
-
-/* ══════════════════════════════════════════════════════
-   태클 액션
-══════════════════════════════════════════════════════ */
-function triggerTackle(){
-  if(!me||!gameActive||gameOver)return;
-  if(myTackleCd>0)return;
-  myTackleCd=TACKLE_CD_F;myTackleDur=TACKLE_DUR;
-  addTackleFx(me.x,me.y);sfxTackle();
-}
-
-/* ══════════════════════════════════════════════════════
-   게임 초기화
-══════════════════════════════════════════════════════ */
 function initGame(){
-  if(!roster.length)return;
-  players={};score={A:0,B:0};goalFlash=0;goalPending=false;
-  gameOver=false;gameActive=false;ballTrail=[];fx.length=0;
-  kickCharging=false;kickChargeFrames=0;myTackleCd=0;myTackleDur=0;
-  ballOwner=null;netBallOwner=null;lastBeepSec=-1;
-
-  const tA=roster.filter(p=>p.seat%2===0).sort((a,b)=>a.seat-b.seat);
-  const tB=roster.filter(p=>p.seat%2!==0).sort((a,b)=>a.seat-b.seat);
-  const assign=(team,ch)=>team.forEach((p,i)=>{
-    const sp=getSpawn(i,team.length,ch);
-    players[p.sid]={
-      x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
-      dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
-      color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
-      kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,
-      tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
-    };
-  });
-  assign(tA,'A');assign(tB,'B');
-  me=players[mySid];
-  resetBall();startLoop();
-  // 오버레이는 bridge_init 핸들러에서 직접 관리 (여기서 showOverlay 호출 안 함)
-}
-function applyServerRoster(list){
-  // 투게스터의 tg_players 처리와 동일한 역할: 서버가 보내준 "현재 전체 인원"
-  // 목록으로 roster를 갱신한다. bridge_init 한 번에만 의존하지 않고, 매치
-  // 시작 후 늦게 합류/복제된 선수도 이 메시지를 통해 항상 따라잡을 수 있다.
-  if(!Array.isArray(list))return;
-  const incoming=list.map(p=>({
-    sid:String(p.sid||p.sessionId||''),nick:String(p.nick||'Player'),seat:Number(p.seat??-1),
-  })).filter(p=>p.sid&&p.seat>=0);
-  const bySid={};
-  for(const p of roster)bySid[p.sid]=p;
-  for(const p of incoming)bySid[p.sid]=p; // 최신 정보로 덮어씀
-  roster=Object.values(bySid);
-  if(gameInitialized) mergeNewRosterPlayers(); // 이미 시작된 경우 누락 선수만 추가
-}
-function mergeNewRosterPlayers(){
-  // 매치가 이미 시작된 후 더 늦게 합류 정보가 도착한 선수를 점수/공/기존 포지션을
-  // 건드리지 않고 players{}에 추가한다 — 시작 시점 게이트가 혹시 놓친 경우의 안전망.
-  let added=false;
-  for(const p of roster){
-    if(players[p.sid])continue;
-    const ch=(p.seat%2===0)?'A':'B';
-    const sameTeamCount=Object.values(players).filter(q=>q.team===ch).length;
-    const sp=getSpawn(sameTeamCount,sameTeamCount+1,ch);
-    players[p.sid]={
-      x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
-      dir:ch==='A'?0:Math.PI,nick:p.nick,seat:p.seat,team:ch,
-      color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
-      kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,
-      tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
-    };
-    added=true;
+  if (!roster.length) return;
+  players = {};
+  for (const p of roster){
+    const team = teamOf(p.seat);
+    const sp = getSpawn(p.seat);
+    players[p.sid] = { x:sp.x, y:sp.y, lx:sp.x, ly:sp.y, vx:0, vy:0,
+      seat:p.seat, team, nick:p.nick, color: colorOf(team) };
   }
-  if(added && !me) me=players[mySid];
-  return added;
+  me = players[mySid] || null;
+  score = { A:0, B:0 };
+  ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0 };
+  netBall = { ...ball };
+  gameOver = false;
+  gameActive = true;
+  hideOverlay();
+  startLoop();
+}
+
+function mergeNewRosterPlayers(){
+  let added = false;
+  for (const p of roster){
+    if (players[p.sid]) continue;
+    const team = teamOf(p.seat);
+    const sp = getSpawn(p.seat);
+    players[p.sid] = { x:sp.x, y:sp.y, lx:sp.x, ly:sp.y, vx:0, vy:0,
+      seat:p.seat, team, nick:p.nick, color: colorOf(team) };
+    added = true;
+  }
+  if (added && !me) me = players[mySid] || null;
 }
 
 function applyRemotePlayers(map){
-  // 투게스터의 applyRemotePlayers와 완전히 동일한 패턴 — 서버가 보내준
-  // "전체 인원 스냅샷"을 그대로 반영한다. 받는 쪽에 그 sid가 "이미 있어야
-  // 한다"는 전제가 전혀 없다: 모르는 sid가 나오면 그 자리에서 즉석으로
-  // player 객체를 만든다. roster/bridge_init 타이밍과 완전히 무관하게
-  // 항상 자기복구되는 것이 이 함수의 핵심.
-  if(!map||typeof map!=='object')return;
-  for(const [sid,snap] of Object.entries(map)){
-    if(sid===mySid)continue;
-    let p=players[sid];
-    if(!p){
-      const seat=Number(snap.seat??-1); if(seat<0)continue;
-      const ch=seat%2===0?'A':'B';
-      p=players[sid]={
-        x:Number(snap.x||FCX),y:Number(snap.y||FCY),
-        lx:Number(snap.x||FCX),ly:Number(snap.y||FCY),vx:0,vy:0,
-        dir:Number(snap.dir||0),nick:String(snap.nick||'Player'),seat,team:ch,
-        color:ch==='A'?CA:CB,colorDk:ch==='A'?CA2:CB2,
-        kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,
-        tackleCd:0,tackleDur:0,stunned:0,facing:(ch==='A'?1:-1),
-      };
+  if (!map) return;
+  for (const [sid, snap] of Object.entries(map)){
+    if (sid === mySid) continue;
+    let p = players[sid];
+    if (!p){
+      const seat = Number(snap.seat ?? -1);
+      if (seat < 0) continue;
+      const team = teamOf(seat);
+      const sp = getSpawn(seat);
+      p = players[sid] = { x:sp.x, y:sp.y, lx:sp.x, ly:sp.y, vx:0, vy:0,
+        seat, team, nick:snap.nick || 'Player', color: colorOf(team) };
     }
-    p.lx=Number(snap.x??p.lx);p.ly=Number(snap.y??p.ly);
-    p.dir=Number(snap.dir??p.dir);p.vx=Number(snap.vx??0);p.vy=Number(snap.vy??0);
-    p.tackleActive=!!snap.tackle;
-    // 킥 엣지 검출: 타임스탬프가 이전과 다르면 "새 킥" — 집계가 몇 번을
-    // 거쳐 왔든, 몇 번 중복 수신해도 정확히 한 번만 처리된다.
-    const kAt=Number(snap.kickAt||0);
-    if(kAt && kAt!==p._lastKickAt){
-      p._lastKickAt=kAt;
-      p.kickAnimT=KICK_ANIM_F;
-      if(isHost) applyKickFromPlayer(sid,snap.dir,snap.kickCharge,snap.x,snap.y);
-    }
+    p.lx = Number(snap.x ?? p.lx);
+    p.ly = Number(snap.y ?? p.ly);
+    p.vx = Number(snap.vx ?? 0);
+    p.vy = Number(snap.vy ?? 0);
   }
 }
-function resetBall(){
-  ball={x:FCX,y:FCY,vx:0,vy:0};netBall={...ball};
-  ballTrail=[];ballOwner=null;netBallOwner=null;ballSpinAngle=0;
-}
-function respawnMe(){
-  // 골 이후 리스폰은 "각자 자기 자신만" 자기 스폰 위치로 되돌린다.
-  // 예전엔 host만 respawnPlayers()로 전원 위치를 로컬에서 추측해 옮겼는데,
-  // 게스트 클라이언트에서는 이 함수가 전혀 호출되지 않아 게스트 자신의
-  // 위치가 골 이후에도 리셋되지 않는 버그가 있었다. 이제는 모든 클라이언트가
-  // 동일한 코드로 "나"만 리셋하고, 그 결과는 평소처럼 sc_pos→sc_players로
-  // 자연스럽게 전파된다 — 다른 사람 위치를 추측해서 옮길 필요가 없다.
-  if(!me)return;
-  const myTeamSeats=roster.filter(p=>((p.seat%2===0)?'A':'B')===me.team).sort((a,b)=>a.seat-b.seat);
-  const idx=Math.max(0,myTeamSeats.findIndex(p=>p.sid===mySid));
-  const sp=getSpawn(idx,Math.max(myTeamSeats.length,1),me.team);
-  Object.assign(me,{x:sp.x,y:sp.y,lx:sp.x,ly:sp.y,vx:0,vy:0,
-    kickAt:0,kickCharge:0,kickAnimT:0,_lastKickAt:0,tackleActive:false,stunned:0});
+
+function hideOverlay(){ document.getElementById('overlay').classList.add('hidden'); }
+function showOverlay(title, text){
+  document.getElementById('ovTitle').textContent = title;
+  document.getElementById('ovText').textContent = text || '';
+  document.getElementById('overlay').classList.remove('hidden');
 }
 
-/* ══════════════════════════════════════════════════════
-   내 플레이어 업데이트
-══════════════════════════════════════════════════════ */
+/* ── 매 프레임 갱신 ── */
 function updateMe(){
-  if(!me||!gameActive||gameOver)return;
-
-  // 쿨다운
-  if(myTackleCd>0)myTackleCd--;
-  if(myTackleDur>0)myTackleDur--;
-  if(me.kickAnimT>0)me.kickAnimT--;
-  // 모바일 태클 버튼 쿨다운 시각화 (conic-gradient)
-  if(IS_MOBILE){
-    if(myTackleCd>0){
-      const deg=Math.round((myTackleCd/TACKLE_CD_F)*360);
-      btnTackle.style.background=`conic-gradient(rgba(0,0,0,.55) 0deg ${deg}deg, rgba(60,140,255,.68) ${deg}deg 360deg)`;
-      btnTackle.style.opacity='0.72';
-    }else{
-      btnTackle.style.background='rgba(60,140,255,.68)';
-      btnTackle.style.opacity='1';
-    }
-  }
-  if(kickCharging){
-    kickChargeFrames=Math.min(kickChargeFrames+1,MAX_CHARGE_F);
-    const pct=kickChargeFrames/MAX_CHARGE_F;
-    kickChargeFill.style.height=(pct*100)+'%';
-  }
-
-  // 스턴 여부
-  if(me.stunned>0){me.stunned--;me.vx=0;me.vy=0;return;}
-
-  // 입력
-  let dx=0,dy=0;
-  if(keys['ArrowLeft'] ||keys['KeyA'])dx-=1;
-  if(keys['ArrowRight']||keys['KeyD'])dx+=1;
-  if(keys['ArrowUp']   ||keys['KeyW'])dy-=1;
-  if(keys['ArrowDown'] ||keys['KeyS'])dy+=1;
-  if(IS_MOBILE&&(Math.abs(joyX)>.08||Math.abs(joyY)>.08)){dx=joyX;dy=joyY;}
-
-  const len=Math.hypot(dx,dy);
-  if(len>0){dx/=len;dy/=len;me.dir=Math.atan2(dy,dx);}
-
-  // 속도: 태클 대시 > 드리블 소유 > 기본
-  const hasBall=isHost?(ballOwner===mySid):(netBallOwner===mySid);
-  const spd=myTackleDur>0?TACKLE_SPD:(hasBall?PLR_SPD_DRIBBLE:PLR_SPD);
-  me.vx=dx*spd;me.vy=dy*spd;
-  me.x=clamp(me.x+me.vx,FX+PLR_R,FX+FW-PLR_R);
-  me.y=clamp(me.y+me.vy,FY+PLR_R,FY+FH-PLR_R);
-  me.tackleActive=myTackleDur>0;
+  if (!me || !gameActive || gameOver) return;
+  let dx=0, dy=0;
+  if (keys['ArrowLeft']||keys['KeyA']) dx-=1;
+  if (keys['ArrowRight']||keys['KeyD']) dx+=1;
+  if (keys['ArrowUp']||keys['KeyW']) dy-=1;
+  if (keys['ArrowDown']||keys['KeyS']) dy+=1;
+  if (IS_MOBILE && (Math.abs(joyDX)>0.12 || Math.abs(joyDY)>0.12)){ dx=joyDX; dy=joyDY; }
+  const len = Math.hypot(dx,dy);
+  if (len>0){ dx/=len; dy/=len; }
+  const SPD = 3.6;
+  me.vx = dx*SPD; me.vy = dy*SPD;
+  me.x = clamp(me.x+me.vx, FX+PR, FX+FW-PR);
+  me.y = clamp(me.y+me.vy, FY+PR, FY+FH-PR);
 }
 
-
-/* ══════════════════════════════════════════════════════
-   플레이어 충돌 물리 (클라이언트 사이드)
-══════════════════════════════════════════════════════ */
-function handlePlayerCollisions(){
-  if(!me||!gameActive||gameOver||me.stunned>0)return;
-  const minDist=PLR_R*2+1; // 최소 거리 (겹침 방지)
-  for(const[sid,p]of Object.entries(players)){
-    if(sid===mySid)continue;
-    const dx=me.x-p.x, dy=me.y-p.y;
-    const dist=Math.hypot(dx,dy);
-    if(dist<minDist&&dist>0){
-      // 겹친 만큼 자신을 밀어냄 (pushStrength = 겹침 비율 * 0.55)
-      const push=(minDist-dist)*0.55;
-      const nx=dx/dist, ny=dy/dist;
-      me.x=clamp(me.x+nx*push, FX+PLR_R, FX+FW-PLR_R);
-      me.y=clamp(me.y+ny*push, FY+PLR_R, FY+FH-PLR_R);
-    }
-  }
-}
-
-/* ══════════════════════════════════════════════════════
-   원격 플레이어 보간
-══════════════════════════════════════════════════════ */
 function lerpRemote(){
-  for(const[sid,p]of Object.entries(players)){
-    if(sid===mySid)continue;
-    p.x=lerp(p.x,p.lx,.22);p.y=lerp(p.y,p.ly,.22);
-    if(p.stunned>0)p.stunned--;
-    if(p.tackleDur>0)p.tackleDur--;
-    if(p.kickAnimT>0)p.kickAnimT--;
+  for (const [sid,p] of Object.entries(players)){
+    if (sid===mySid) continue;
+    p.x = lerp(p.x, p.lx, 0.28);
+    p.y = lerp(p.y, p.ly, 0.28);
   }
 }
 
-/* ══════════════════════════════════════════════════════
-   공 물리 — HOST ONLY
-══════════════════════════════════════════════════════ */
-function updateBallOwner(){
-  // 현재 소유자가 히스테리시스 범위 내에 있으면 유지
-  if(ballOwner&&players[ballOwner]){
-    const op=players[ballOwner];
-    if(op.stunned>0){ballOwner=null;}
-    else if(Math.hypot(ball.x-op.x,ball.y-op.y)<=DRIBBLE_HYST)return;
-  }
-  // 가장 가까운 플레이어 찾기
-  let closest=null,closestD=Infinity;
-  for(const[sid,p]of Object.entries(players)){
-    if(p.stunned>0)continue;
-    const d=Math.hypot(ball.x-p.x,ball.y-p.y);
-    if(d<closestD){closestD=d;closest=sid;}
-  }
-  ballOwner=(closestD<=DRIBBLE_RANGE)?closest:null;
-}
+/* 공은 호스트만 물리 계산을 하고(권위), 나머지는 sc_ball 수신값을 그대로
+   보간 표시만 한다 — 투게스터가 박스/퍼즐 상태를 다루는 방식과 동일한
+   "한쪽만 계산, 나머지는 받아서 보간" 패턴. */
+const MAX_BALL_SPEED = 11;
+function updateBallHost(){
+  if (!isHost || !gameActive || gameOver) return;
 
-function applyKickFromPlayer(sid,dir,charge,px,py){
-  const p=players[sid];if(!p)return;
-  // 공과의 거리 체크 (호스트 기준)
-  const cx=px??p.x,cy=py??p.y;
-  const dist=Math.hypot(ball.x-cx,ball.y-cy);
-  if(dist>KICK_RANGE)return;
-  const force=lerp(MIN_KICK_F,MAX_KICK_F,Math.min(1,charge||0));
-  ball.vx=Math.cos(Number(dir)||p.dir)*force;
-  ball.vy=Math.sin(Number(dir)||p.dir)*force;
-  // 드리블 해제
-  if(ballOwner===sid)ballOwner=null;
-}
-
-function applyDribbleTouch(){
-  // 실제 물리 기반 드리블: 위치를 스냅하지 않고, 매 프레임 작은 "터치 힘"을
-  // 공의 속도(ball.vx/vy)에 더해줄 뿐이다. 공은 항상 자기 운동량으로 움직이며,
-  // 마찰도 항상 동일하게 적용된다 (updatePhysics에서 무조건 적용) — 즉 발에
-  // "붙는" 게 아니라 달리는 방향으로 계속 가볍게 차주는 느낌을 만든다.
-  if(!ballOwner)return;
-  const p=players[ballOwner];if(!p)return;
-  const ownerSpd=Math.hypot(p.vx,p.vy);
-  if(ownerSpd<=0.12)return; // 정지해 있으면 터치 힘 없음 — 공은 마찰로 자연 감속
-
-  // 선수가 보고 있는 방향으로 가속력을 가한다 (위치가 아니라 "힘")
-  const fx=Math.cos(p.dir), fy=Math.sin(p.dir);
-  ball.vx += fx*DRIBBLE_TOUCH_ACCEL;
-  ball.vy += fy*DRIBBLE_TOUCH_ACCEL;
-
-  // 공이 선수 옆/뒤로 너무 멀어지지 않도록 아주 약한 위치 보정만 추가
-  // (스프링이 아니라 거리 기반의 미세한 당김 — 운동량을 거의 해치지 않음)
-  const dx=p.x-ball.x, dy=p.y-ball.y, dist=Math.hypot(dx,dy);
-  if(dist>DRIBBLE_RANGE*0.55){
-    const pull=Math.min(0.18,(dist-DRIBBLE_RANGE*0.55)*0.012);
-    ball.vx += (dx/dist)*pull*PLR_SPD;
-    ball.vy += (dy/dist)*pull*PLR_SPD;
-  }
-
-  // 드리블 중 공 속도 상한 (선수보다 너무 빨리 튀어나가지 않게)
-  const maxBSpd=Math.max(ownerSpd*DRIBBLE_MAX_REL, PLR_SPD_DRIBBLE*1.3);
-  const bspd=Math.hypot(ball.vx,ball.vy);
-  if(bspd>maxBSpd){ball.vx=ball.vx/bspd*maxBSpd;ball.vy=ball.vy/bspd*maxBSpd;}
-}
-
-function checkTackleSteal(){
-  // 태클 중인 플레이어가 공 소유자를 충분히 가까이 들어가면 탈취
-  for(const[sid,p]of Object.entries(players)){
-    if(!p.tackleActive&&!(sid===mySid&&myTackleDur>0))continue;
-    if(!ballOwner||ballOwner===sid)continue;
-    const owner=players[ballOwner];if(!owner)continue;
-    if(owner.stunned>0)continue;
-    const dist=Math.hypot(p.x-owner.x,p.y-owner.y);
-    if(dist<=TACKLE_STEAL_R){
-      // 탈취!
-      const victimSid=ballOwner; // ballOwner를 null로 만들기 전에 미리 캡처
-      const bounceA=Math.atan2(owner.y-p.y,owner.x-p.x)+(Math.random()-.5)*.9;
-      ball.vx=Math.cos(bounceA)*8;ball.vy=Math.sin(bounceA)*8;
-      owner.stunned=STUN_DUR;ballOwner=null;
-      addTackleFx((p.x+owner.x)/2,(p.y+owner.y)/2);
-      sfxTackle();
-      // 스턴은 host의 로컬 복사본뿐 아니라 "당사자 본인 클라이언트"에게도
-      // 전달해야 한다 — 안 그러면 당사자는 자기가 스턴된 줄 모르고 계속
-      // 자유롭게 움직여서, 그 위치 보고가 다시 들어와 멈춘 것처럼 보이는
-      // 효과를 덮어써 버린다 (다른 사람 화면에서만 "멈춘 듯" 보이고 실제
-      // 게임플레이엔 영향이 없는 상태가 됨).
-      bridgeSend('sc_stun',{sid:victimSid,dur:STUN_DUR});
+  for (const p of Object.values(players)){
+    const dx = ball.x-p.x, dy = ball.y-p.y;
+    const d = Math.hypot(dx,dy) || 0.0001;
+    const minD = PR+BR;
+    if (d < minD){
+      const nx = dx/d, ny = dy/d;
+      ball.x = p.x + nx*minD;
+      ball.y = p.y + ny*minD;
+      const speed = Math.hypot(p.vx||0, p.vy||0);
+      const kick = Math.max(speed*2.1, 1.4);
+      ball.vx += nx*kick;
+      ball.vy += ny*kick;
     }
   }
-}
 
-function updatePhysics(){
-  if(!isHost||!gameActive||gameOver||goalPending)return;
+  ball.x += ball.vx; ball.y += ball.vy;
+  ball.vx *= 0.985; ball.vy *= 0.985;
+  const bs = Math.hypot(ball.vx, ball.vy);
+  if (bs > MAX_BALL_SPEED){ ball.vx *= MAX_BALL_SPEED/bs; ball.vy *= MAX_BALL_SPEED/bs; }
 
-  // 드리블 소유자 결정 (탈취 판정·속도 페널티용 — 공 위치에는 직접 개입하지 않음)
-  updateBallOwner();
-  // 드리블 "터치 힘" 적용 — 공의 속도에 가속력만 더함 (위치 스냅 없음)
-  applyDribbleTouch();
-  // 태클 탈취 체크
-  checkTackleSteal();
+  if (ball.y-BR < FY){ ball.y = FY+BR; ball.vy = Math.abs(ball.vy)*0.6; }
+  if (ball.y+BR > FY+FH){ ball.y = FY+FH-BR; ball.vy = -Math.abs(ball.vy)*0.6; }
 
-  // 볼 이동·마찰 — 항상 동일한 물리 법칙 적용 (소유 여부와 무관)
-  ball.x+=ball.vx;ball.y+=ball.vy;
-  ball.vx*=BALL_FRIC;ball.vy*=BALL_FRIC;
-  if(Math.abs(ball.vx)<.04)ball.vx=0;if(Math.abs(ball.vy)<.04)ball.vy=0;
-
-  // 시각적 회전각 누적 (속력에 비례) — drawBallSprite에서 사용
-  ballSpinAngle += Math.hypot(ball.vx,ball.vy)*SPIN_RATE;
-
-  // 위아래 벽 — 단순 반사. ballOwner는 updateBallOwner()가 다음 프레임에
-  // 거리 기준으로 다시 판정하므로 여기서 강제로 null 처리하지 않는다.
-  if(ball.y-BALL_R<FY){ball.y=FY+BALL_R;ball.vy=Math.abs(ball.vy)*.8;}
-  if(ball.y+BALL_R>FY+FH){ball.y=FY+FH-BALL_R;ball.vy=-Math.abs(ball.vy)*.8;}
-
-  // 왼쪽
-  if(ball.x-BALL_R<GL){
-    if(ball.y>=GY1&&ball.y<=GY2){
-      if(ball.x-BALL_R<GL-GOAL_D&&!goalPending){goalPending=true;bridgeSend('sc_goal',{team:'B',scoreA:score.A,scoreB:score.B+1});}
-    }else{ball.x=GL+BALL_R;ball.vx=Math.abs(ball.vx)*.8;}
+  if (ball.x-BR < FX){
+    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2) scoreGoal('B');
+    else { ball.x = FX+BR; ball.vx = Math.abs(ball.vx)*0.6; }
   }
-  // 오른쪽
-  if(ball.x+BALL_R>GR){
-    if(ball.y>=GY1&&ball.y<=GY2){
-      if(ball.x+BALL_R>GR+GOAL_D&&!goalPending){goalPending=true;bridgeSend('sc_goal',{team:'A',scoreA:score.A+1,scoreB:score.B});}
-    }else{ball.x=GR-BALL_R;ball.vx=-Math.abs(ball.vx)*.8;}
-  }
-
-  // 볼 잔상 트레일 업데이트
-  ballTrail.push({x:ball.x,y:ball.y});
-  if(ballTrail.length>TRAIL_LEN)ballTrail.shift();
-
-  // 카운트다운 삐
-  if(startTs>0){
-    const rem=Math.max(0,GAME_MS-(Date.now()-startTs)),remSec=Math.ceil(rem/1000);
-    if(rem>0&&remSec<=10&&remSec!==lastBeepSec){lastBeepSec=remSec;sfxBeep();}
+  if (ball.x+BR > FX+FW){
+    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2) scoreGoal('A');
+    else { ball.x = FX+FW-BR; ball.vx = -Math.abs(ball.vx)*0.6; }
   }
 }
 
-function updateNetBallTrail(){
-  if(isHost)return;
-  ballTrail.push({x:netBall.x,y:netBall.y});
-  if(ballTrail.length>TRAIL_LEN)ballTrail.shift();
-  ballSpinAngle += Math.hypot(netBall.vx,netBall.vy)*SPIN_RATE;
+let goalPending = false;
+function scoreGoal(team){
+  if (goalPending) return;
+  goalPending = true;
+  if (team==='A') score.A++; else score.B++;
+  bridgeSend('sc_goal', { team, scoreA:score.A, scoreB:score.B });
+  showGoalFlash(team);
+  setTimeout(()=>{ resetKickoff(); goalPending=false; }, 900);
 }
 
-function checkTimer(){
-  if(!isHost||!gameActive||gameOver||!startTs)return;
-  if(Date.now()-startTs>=GAME_MS){
-    gameOver=true;gameActive=false;
-    const w=score.A>score.B?'A':score.B>score.A?'B':'draw';
-    bridgeSend('sc_over',{scoreA:score.A,scoreB:score.B,winner:w});
-  }
-}
+let goalFlashUntil=0, goalFlashTeam=null;
+function showGoalFlash(team){ goalFlashTeam=team; goalFlashUntil=Date.now()+900; }
 
-/* ══════════════════════════════════════════════════════
-   네트워크 전송
-══════════════════════════════════════════════════════ */
+/* ── 네트워크 송신 ── */
 function netSends(){
-  if(!EMBED)return;
-  const now=Date.now();
-  if(me&&now-lastPosSent>=40){
-    lastPosSent=now;
-    bridgeSend('sc_pos',{x:me.x,y:me.y,dir:me.dir,vx:me.vx,vy:me.vy,
-      kickAt:me.kickAt||0,kickCharge:me.kickCharge||0,tackle:me.tackleActive});
+  if (!EMBED || !gameActive) return;
+  const now = Date.now();
+  if (me && now-lastPosSent >= 40){
+    lastPosSent = now;
+    bridgeSend('sc_pos', { x:me.x, y:me.y, vx:me.vx, vy:me.vy });
   }
-  if(isHost&&now-lastBallSent>=34){
-    lastBallSent=now;
-    bridgeSend('sc_ball',{x:ball.x,y:ball.y,vx:ball.vx,vy:ball.vy,owner:ballOwner});
+  if (isHost && now-lastBallSent >= 34){
+    lastBallSent = now;
+    bridgeSend('sc_ball', { x:ball.x, y:ball.y, vx:ball.vx, vy:ball.vy, owner:null });
   }
 }
 
-/* ══════════════════════════════════════════════════════
-   그리기
-══════════════════════════════════════════════════════ */
+/* ── 타이머 ── */
+let overSent = false;
+function checkTimer(){
+  if (!gameActive || gameOver || startTs<=0) return;
+  const left = durationMs - (Date.now()-startTs);
+  if (left <= 0 && isHost && !overSent){
+    overSent = true;
+    const winner = score.A===score.B ? 'draw' : (score.A>score.B ? 'A' : 'B');
+    bridgeSend('sc_over', { winner, scoreA:score.A, scoreB:score.B });
+  }
+}
+
+/* ── 렌더링 ── */
 function drawField(){
-  ctx.fillStyle=CFLD;ctx.fillRect(FX,FY,FW,FH);
-  ctx.fillStyle=CFLD2;for(let x=FX;x<FX+FW;x+=66*2)ctx.fillRect(x,FY,66,FH);
-}
-function drawGoalArea(side){
-  const bx=side==='L'?FX-GOAL_D:FX+FW;
-  ctx.fillStyle='rgba(0,0,0,.32)';ctx.fillRect(bx,GY1,GOAL_D,GOAL_H);
-  ctx.strokeStyle='rgba(255,255,255,.1)';ctx.lineWidth=1;
-  for(let c=1;c<5;c++){const lx=bx+GOAL_D/5*c;ctx.beginPath();ctx.moveTo(lx,GY1);ctx.lineTo(lx,GY2);ctx.stroke();}
-  for(let r=1;r<5;r++){const ly=GY1+GOAL_H/5*r;ctx.beginPath();ctx.moveTo(bx,ly);ctx.lineTo(bx+GOAL_D,ly);ctx.stroke();}
-  ctx.strokeStyle='#fff';ctx.lineWidth=3.5;
-  ctx.beginPath();ctx.moveTo(side==='L'?bx:bx+GOAL_D,GY1);ctx.lineTo(side==='L'?bx:bx+GOAL_D,GY2);ctx.stroke();
-  ctx.lineWidth=4.5;
-  ctx.beginPath();ctx.moveTo(bx,GY1);ctx.lineTo(bx+GOAL_D,GY1);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(bx,GY2);ctx.lineTo(bx+GOAL_D,GY2);ctx.stroke();
-}
-function drawLines(){
-  ctx.strokeStyle='rgba(255,255,255,.72)';ctx.lineWidth=2;
+  ctx.fillStyle = '#0b1220';
+  ctx.fillRect(0,0,CW,CH);
+
+  ctx.fillStyle = '#1f7a3d';
+  ctx.fillRect(FX,FY,FW,FH);
+  for(let i=0;i<10;i++){
+    ctx.fillStyle = i%2===0 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.035)';
+    ctx.fillRect(FX+FW*i/10, FY, FW/10, FH);
+  }
+
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 3;
   ctx.strokeRect(FX,FY,FW,FH);
-  ctx.beginPath();ctx.moveTo(FCX,FY);ctx.lineTo(FCX,FY+FH);ctx.stroke();
-  ctx.beginPath();ctx.arc(FCX,FCY,62,0,Math.PI*2);ctx.stroke();
-  ctx.fillStyle='rgba(255,255,255,.72)';ctx.beginPath();ctx.arc(FCX,FCY,4,0,Math.PI*2);ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=1.5;
-  ctx.strokeRect(FX,FCY-98,74,196);ctx.strokeRect(FX+FW-74,FCY-98,74,196);
-  ctx.fillStyle='rgba(255,255,255,.35)';
-  ctx.beginPath();ctx.arc(FX+44,FCY,3,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.arc(FX+FW-44,FCY,3,0,Math.PI*2);ctx.fill();
+  ctx.beginPath(); ctx.moveTo(FX+FW/2,FY); ctx.lineTo(FX+FW/2,FY+FH); ctx.stroke();
+  ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 54, 0, Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 3, 0, Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+
+  // 골대
+  ctx.fillStyle = 'rgba(255,255,255,.9)';
+  ctx.fillRect(FX-GOAL_W, GOAL_Y1, GOAL_W, GOAL_H);
+  ctx.fillRect(FX+FW,     GOAL_Y1, GOAL_W, GOAL_H);
+  ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=2;
+  ctx.strokeRect(FX-GOAL_W, GOAL_Y1, GOAL_W, GOAL_H);
+  ctx.strokeRect(FX+FW,     GOAL_Y1, GOAL_W, GOAL_H);
 }
-function drawBallTrail(){
-  for(let i=0;i<ballTrail.length;i++){
-    const t=ballTrail[i],a=.03+(i/ballTrail.length)*.17,r=BALL_R*(.38+i/ballTrail.length*.6);
-    ctx.beginPath();ctx.arc(t.x,t.y,r,0,Math.PI*2);
-    ctx.fillStyle=`rgba(255,255,200,${a})`;ctx.fill();
-  }
-}
-function drawPlayer(p,isMine){
-  const x=p.x,y=p.y,isSt=p.stunned>0;
 
-  // 그림자
-  ctx.beginPath();ctx.ellipse(x+2,y+12,15,5,0,0,Math.PI*2);
-  ctx.fillStyle='rgba(0,0,0,.28)';ctx.fill();
-
-  // 태클 대시 속도선 (스프라이트 뒤에)
-  if(p.tackleActive||(isMine&&myTackleDur>0)){
-    const bx=x-Math.cos(p.dir)*22,by=y-Math.sin(p.dir)*22;
-    const g2=ctx.createLinearGradient(bx,by,x,y);
-    g2.addColorStop(0,'rgba(100,200,255,0)');g2.addColorStop(1,'rgba(100,200,255,.35)');
-    ctx.beginPath();ctx.ellipse(x,y,18,20,0,0,Math.PI*2);ctx.fillStyle=g2;ctx.fill();
-  }
-
-  // 좌우 페이싱 갱신 (수평 이동이 충분할 때만 — 수직 이동 중엔 이전 값 유지)
-  const cosD=Math.cos(p.dir);
-  if(Math.abs(cosD)>0.28) p.facing = cosD<0 ? -1 : 1;
-  const flip = p.facing||1;
-
-  // ── 픽셀 블록 스프라이트 (투게스터와 동일한 p(px,py,w,h,c) 기법) ──
-  const PX=3;                 // 1픽셀 = 화면 3px
-  const SW=12, SH=14;         // 스프라이트 그리드 크기
-  const drawW=SW*PX, drawH=SH*PX;
-  const baseX=Math.round(x-drawW/2);
-  const baseY=Math.round(y-drawH/2+2);
-
-  const t=performance.now()/1000;
-  const spd=Math.hypot(p.vx,p.vy);
-  const moving=spd>0.35;
-  const walkPhase=moving?(Math.floor(t*9)%2):0;
-  const legKick=moving?(walkPhase?1:-1):0; // 한쪽 다리만 1px 더 길게
-
-  // 컬러 팔레트 (스턴 시 무채색)
-  const col   = isSt?'#8a8a8a':p.color;
-  const colDk = isSt?'#5a5a5a':p.colorDk;
-  const colLi = isSt?'#bdbdbd':lighten(p.color,.4);
-  const SKIN='#f0c39a', SKIN_DK='#caa078';
-  const SHORTS='#f5f5f5', SHORTS_DK='#d8d8d8';
-  const CLEAT='#262626', EYE='#1f1f1f';
-  const HEADBAND=colDk;
-
-  const px=(gx,gy,gw,gh,c)=>{
-    ctx.fillStyle=c;
-    ctx.fillRect(baseX+gx*PX,baseY+gy*PX,(gw||1)*PX,(gh||1)*PX);
-  };
-
+function drawPlayer(p, mine){
   ctx.save();
-  ctx.imageSmoothingEnabled=false;
-  const cx2=baseX+drawW/2, cy2=baseY+drawH/2;
-  ctx.translate(cx2,cy2);ctx.scale(flip,1);ctx.translate(-cx2,-cy2);
+  ctx.beginPath(); ctx.ellipse(p.x, p.y+PR*0.75, PR*0.9, PR*0.32, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fill();
 
-  // 다리/양말/축구화 (걷기 애니메이션 — 한쪽이 더 길게)
-  const legBaseY=10, legH=3;
-  px(3,legBaseY,2,legH+(legKick<0?1:0), SKIN);       // 왼다리
-  px(7,legBaseY,2,legH+(legKick>0?1:0), SKIN);       // 오른다리
-  px(3,legBaseY+legH-1+(legKick<0?1:0),2,1, col);    // 왼양말
-  px(7,legBaseY+legH-1+(legKick>0?1:0),2,1, col);    // 오른양말
-  px(3,legBaseY+legH+(legKick<0?1:0),2,1, CLEAT);    // 왼축구화
-  px(7,legBaseY+legH+(legKick>0?1:0),2,1, CLEAT);    // 오른축구화
+  ctx.beginPath(); ctx.arc(p.x,p.y,PR,0,Math.PI*2);
+  ctx.fillStyle = p.color; ctx.fill();
+  ctx.lineWidth = mine ? 3.5 : 2;
+  ctx.strokeStyle = mine ? '#fff' : 'rgba(255,255,255,.55)';
+  ctx.stroke();
 
-  // 반바지
-  px(2,9,8,2, SHORTS_DK);
-  px(2,8,8,1, SHORTS);
-
-  // 유니폼 몸통 (4행, 좌우 음영 밴드)
-  px(2,5,1,4, colDk);   // 왼쪽 어두운 밴드(소매)
-  px(9,5,1,4, colLi);   // 오른쪽 밝은 밴드(소매)
-  px(3,5,6,4, col);     // 가운데 기본색
-  px(3,5,6,1, '#ffffff'); // 칼라(흰색 V넥 느낌의 윗줄)
-
-  // 목/머리
-  px(4,4,4,1, SKIN);                 // 목
-  px(3,1,6,3, SKIN);                 // 얼굴
-  px(3,1,1,3, SKIN_DK);              // 얼굴 좌측 음영
-  px(4,2,1,1, EYE);px(7,2,1,1, EYE); // 눈
-  px(3,0,6,1, HEADBAND);             // 머리띠
-
-  ctx.restore();
-
-  // 킥 모션: 다리 한쪽이 p.dir 방향으로 길게 뻗는 부츠 (플립 영향 없이 실제 방향으로)
-  const kAnim = isMine ? Math.max(me.kickAnimT||0,(kickCharging?Math.round(kickChargeFrames*0.5):0)) : (p.kickAnimT||0);
-  if(kAnim>0){
-    const reach=10+Math.min(kAnim,KICK_ANIM_F)*1.1;
-    const kx=x+Math.cos(p.dir)*reach, ky=y+Math.sin(p.dir)*reach;
-    ctx.beginPath();ctx.arc(kx,ky,4.5,0,Math.PI*2);
-    ctx.fillStyle=CLEAT;ctx.fill();
-    ctx.beginPath();ctx.moveTo(x+Math.cos(p.dir)*6,y+Math.sin(p.dir)*6);
-    ctx.lineTo(kx,ky);ctx.strokeStyle=SKIN;ctx.lineWidth=5;ctx.lineCap='round';ctx.stroke();
-  }
-
-  // "나" 식별 마커 — 머리 위 작은 역삼각형 (캐릭터를 둘러싸는 원 대신)
-  if(isMine){
-    const mY=y-PLR_R-12; // 머리 위쪽
-    ctx.beginPath();
-    ctx.moveTo(x,mY+7);     // 아래 꼭짓점 — 머리를 향해 가리킴
-    ctx.lineTo(x-5,mY);
-    ctx.lineTo(x+5,mY);
-    ctx.closePath();
-    ctx.fillStyle='#FFD700';ctx.fill();
-  }
-
-  // 등번호 (가독성을 위해 캔버스 텍스트 유지)
-  ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.font=`bold 13px monospace`;ctx.fillStyle='#fff';
-  ctx.shadowColor='rgba(0,0,0,.6)';ctx.shadowBlur=3;
-  ctx.fillText(String(p.seat+1),x,y+6);ctx.shadowBlur=0;
-
-  // 작은 게이지 바 — 캐릭터를 둘러싸지 않고 발 아래에 작게 표시
-  // (킥 차징 중엔 노란 바, 아니면 태클 쿨다운 중엔 파란 바 — 동시에 겹치지 않게 하나만)
-  if(isMine&&(kickCharging||myTackleCd>0)){
-    const gw=22,gh=3,gy=y+PLR_R+11;
-    ctx.fillStyle='rgba(0,0,0,.45)';ctx.fillRect(x-gw/2,gy,gw,gh);
-    if(kickCharging){
-      const pct=kickChargeFrames/MAX_CHARGE_F;
-      ctx.fillStyle='#ffd400';ctx.fillRect(x-gw/2,gy,gw*pct,gh);
-    }else{
-      const pct=1-myTackleCd/TACKLE_CD_F;
-      ctx.fillStyle='#64b4ff';ctx.fillRect(x-gw/2,gy,gw*pct,gh);
-    }
-  }
-
-  // 닉네임
-  ctx.font='10px monospace';ctx.fillStyle=isMine?'#FFD700':'rgba(255,255,255,.82)';
-  ctx.fillText(p.nick.slice(0,9),x,y+PLR_R+22);
-
-  // 스턴 별 표시
-  if(isSt){
-    const sf=Math.floor(Date.now()/120)%2;
-    ctx.font='14px monospace';ctx.fillStyle='#FFD700';
-    ctx.fillText('★',x+(sf?-8:8),y-PLR_R-12);
-  }
-}
-function drawBallSprite(){
-  const b=isHost?ball:netBall;
-  ctx.beginPath();ctx.ellipse(b.x+3,b.y+5,BALL_R*.72,BALL_R*.42,0,0,Math.PI*2);
-  ctx.fillStyle='rgba(0,0,0,.26)';ctx.fill();
-  const g=ctx.createRadialGradient(b.x-3,b.y-4,1,b.x,b.y,BALL_R);
-  g.addColorStop(0,'#fff');g.addColorStop(.65,'#e0e0e0');g.addColorStop(1,'#9e9e9e');
-  ctx.beginPath();ctx.arc(b.x,b.y,BALL_R,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
-  ctx.strokeStyle='#555';ctx.lineWidth=.8;ctx.stroke();
-  // 회전하는 펜타곤 패턴 — 실제로 굴러가는 것처럼 보이게 ballSpinAngle만큼 회전
-  ctx.save();ctx.translate(b.x,b.y);ctx.rotate(ballSpinAngle);
-  ctx.fillStyle='#333';ctx.beginPath();ctx.arc(0,0,BALL_R*.3,0,Math.PI*2);ctx.fill();
-  ctx.strokeStyle='#444';ctx.lineWidth=.7;
-  for(let i=0;i<5;i++){
-    const a=(i/5)*Math.PI*2-Math.PI/2;
-    ctx.beginPath();ctx.moveTo(Math.cos(a)*BALL_R*.3,Math.sin(a)*BALL_R*.3);
-    ctx.lineTo(Math.cos(a)*BALL_R*.78,Math.sin(a)*BALL_R*.78);ctx.stroke();
-  }
+  ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText((p.nick||'').slice(0,8), p.x, p.y-PR-8);
   ctx.restore();
 }
+
+function drawBall(b){
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(b.x, b.y+BR*0.7, BR*0.85, BR*0.3, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fill();
+  ctx.beginPath(); ctx.arc(b.x,b.y,BR,0,Math.PI*2);
+  ctx.fillStyle='#fff'; ctx.fill();
+  ctx.lineWidth=1.5; ctx.strokeStyle='#222'; ctx.stroke();
+  ctx.restore();
+}
+
 function drawHUD(){
-  ctx.fillStyle='#111827';ctx.fillRect(0,0,CW,HUD_H);
-  ctx.fillStyle='#2a2a3e';ctx.fillRect(0,HUD_H-1,CW,1);
-  ctx.textAlign='left';ctx.textBaseline='middle';
-  ctx.font='bold 15px monospace';ctx.fillStyle=CA;ctx.fillText('A팀',FX+4,HUD_H/2);
-  ctx.font='bold 32px monospace';ctx.fillStyle='#fff';ctx.fillText(String(score.A),FX+44,HUD_H/2+1);
-  ctx.textAlign='right';
-  ctx.font='bold 15px monospace';ctx.fillStyle=CB;ctx.fillText('B팀',FX+FW-4,HUD_H/2);
-  ctx.font='bold 32px monospace';ctx.fillStyle='#fff';ctx.fillText(String(score.B),FX+FW-44,HUD_H/2+1);
-  ctx.textAlign='center';
-  if(startTs>0){
-    const rem=Math.max(0,GAME_MS-(Date.now()-startTs));
-    const mm=Math.floor(rem/60000),ss=Math.floor((rem%60000)/1000);
-    const blink=rem<11000&&Math.floor(Date.now()/400)%2===0;
-    ctx.font='bold 28px monospace';
-    ctx.fillStyle=blink?'#ff5252':rem<20000?'#ff8a80':'#ffe082';
-    ctx.fillText(`${mm}:${String(ss).padStart(2,'0')}`,CW/2,HUD_H/2+1);
-  }else{ctx.font='18px monospace';ctx.fillStyle='#555';ctx.fillText('대기 중',CW/2,HUD_H/2+1);}
-  // PC 힌트
-  ctx.font='9px monospace';ctx.fillStyle='#3a3a55';ctx.textAlign='left';
-  ctx.fillText('이동:WASD  킥:Space(길게=강하게)  태클:Shift/Z',FX+90,14);
-}
-function drawGoalFlash(){
-  if(goalFlash<=0)return;goalFlash=Math.max(0,goalFlash-1);
-  const p=goalFlash/185;
-  ctx.fillStyle=`rgba(255,235,50,${p*.3})`;ctx.fillRect(0,0,CW,CH);
-  if(goalFlash>65){
-    const alpha=Math.min(1,(goalFlash-65)/55);
-    ctx.textAlign='center';ctx.textBaseline='middle';
-    ctx.font='bold 52px monospace';
-    ctx.strokeStyle=`rgba(0,0,0,${alpha*.75})`;ctx.lineWidth=7;
-    ctx.strokeText(goalMsg,CW/2,CH/2-8);
-    ctx.fillStyle=`rgba(255,245,80,${alpha})`;ctx.fillText(goalMsg,CW/2,CH/2-8);
-  }
-}
-function draw(){
-  ctx.clearRect(0,0,CW,CH);
-  drawField();drawGoalArea('L');drawGoalArea('R');drawLines();drawBallTrail();
-  for(const[sid,p]of Object.entries(players))if(sid!==mySid)drawPlayer(p,false);
-  if(me)drawPlayer(me,true);
-  drawBallSprite();drawFx();drawHUD();drawGoalFlash();
+  ctx.fillStyle='rgba(0,0,0,.55)';
+  ctx.fillRect(0,0,CW,FY-4);
+  ctx.font='bold 22px sans-serif'; ctx.textBaseline='middle';
+  ctx.fillStyle='#ff6b6b'; ctx.textAlign='left';  ctx.fillText('A '+score.A, 16, (FY-4)/2);
+  ctx.fillStyle='#5b9dff'; ctx.textAlign='right'; ctx.fillText(score.B+' B', CW-16, (FY-4)/2);
+  ctx.fillStyle='#fff'; ctx.textAlign='center';
+  let sec = Math.max(0, Math.ceil((durationMs-(Date.now()-startTs))/1000));
+  if (!startTs) sec = Math.ceil(durationMs/1000);
+  const mm = String(Math.floor(sec/60)).padStart(2,'0');
+  const ss = String(sec%60).padStart(2,'0');
+  ctx.fillText(mm+':'+ss, CW/2, (FY-4)/2);
 }
 
-/* ══════════════════════════════════════════════════════
-   게임 루프
-══════════════════════════════════════════════════════ */
-let loopRunning=false;
+function drawGoalFlash(){
+  if (!goalFlashTeam || Date.now()>goalFlashUntil) { goalFlashTeam=null; return; }
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = goalFlashTeam==='A' ? '#e74c3c' : '#3b82f6';
+  ctx.fillRect(0,0,CW,CH);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle='#fff'; ctx.font='bold 46px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('GOAL!', CW/2, CH/2);
+  ctx.restore();
+}
+
+function draw(){
+  drawField();
+  for (const [sid,p] of Object.entries(players)) if (sid!==mySid) drawPlayer(p, false);
+  if (me) drawPlayer(me, true);
+  drawBall(isHost ? ball : netBall);
+  drawHUD();
+  drawGoalFlash();
+}
+
+/* ── 게임 루프 (프레임 하나의 예외가 루프 전체를 죽이지 않도록 격리) ── */
+let loopRunning = false;
 function startLoop(){
-  if(loopRunning)return;loopRunning=true;
+  if (loopRunning) return; loopRunning = true;
   function tick(){
-    // 프레임 하나에서 예외가 나면(예: 상대방 스냅샷의 예기치 못한 값 등)
-    // requestAnimationFrame(tick) 호출까지 못 가서 루프 전체가 "그 프레임에서
-    // 영원히 멈춰버리는" 문제가 있었다. 그러면 그 순간부터 내 조작도,
-    // 상대방 움직임 렌더링도, netSends()의 위치 송신도, 공 렌더링도 전부
-    // 조용히 정지해버려 "상대가 안 보이고 공도 반응 없음"처럼 보인다.
-    // 한 프레임의 예외가 루프 전체를 죽이지 않도록 반드시 격리한다.
     try{
-      updateMe();handlePlayerCollisions();lerpRemote();updatePhysics();
-      updateNetBallTrail();updateFx();netSends();checkTimer();draw();
+      updateMe(); lerpRemote(); updateBallHost(); netSends(); checkTimer(); draw();
     }catch(err){
-      try{console.error('[soccer] frame error (자동 복구됨):',err);}catch(_){}
+      try{ console.error('[soccer] frame error (자동 복구됨):', err); }catch(_){}
     }
     requestAnimationFrame(tick);
-  }tick();
+  }
+  tick();
 }
 
-/* ── 유틸 ── */
-function clamp(v,lo,hi){return v<lo?lo:v>hi?hi:v;}
-function lerp(a,b,t){return a+(b-a)*t;}
-function lighten(hex,amt){
-  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
-  return`rgb(${Math.min(255,Math.round(r+(255-r)*amt))},${Math.min(255,Math.round(g+(255-g)*amt))},${Math.min(255,Math.round(b+(255-b)*amt))})`;
-}
+/* ── 브릿지 메시지 수신 ── */
+window.addEventListener('message', e=>{
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
 
-bridgeSend('bridge_ready',{});
+  if (d.type === 'bridge_init'){
+    mySid = String(d.sessionId||'');
+    myNick = String(d.nick||'Player');
+    mySeat = Number(d.seat ?? -1);
+    isHost = !!d.isHost;
+    roster = (d.players||[]).map(p=>({
+      sid: String(p.sid||p.sessionId||''),
+      nick: String(p.nick||'Player'),
+      seat: Number(p.seat ?? -1),
+    })).filter(p=>p.seat>=0);
+
+    if (gameInitialized){ mergeNewRosterPlayers(); return; }
+    gameInitialized = true;
+    const sAt = Number(d.startedAt||0);
+    startTs = sAt>0 ? sAt : Date.now();
+    initGame();
+    bridgeSend('sc_sync', {});
+    return;
+  }
+
+  if (d.type === 'sc_timer'){
+    const t = Number(d.startTs||0);
+    if (t>0) startTs = t;
+    if (d.durationMs) durationMs = Number(d.durationMs);
+    return;
+  }
+
+  if (d.type === 'sc_players'){
+    applyRemotePlayers(d.players);
+    return;
+  }
+
+  if (d.type === 'sc_ball'){
+    netBall.x = Number(d.x ?? netBall.x);
+    netBall.y = Number(d.y ?? netBall.y);
+    netBall.vx = Number(d.vx ?? 0);
+    netBall.vy = Number(d.vy ?? 0);
+    return;
+  }
+
+  if (d.type === 'sc_goal' || d.type === 'sc_goal_sync'){
+    score.A = Number(d.scoreA ?? score.A);
+    score.B = Number(d.scoreB ?? score.B);
+    if (d.type === 'sc_goal' && !isHost) showGoalFlash(d.team);
+    return;
+  }
+
+  if (d.type === 'sc_roster'){
+    roster = (d.players||[]).map(p=>({
+      sid: String(p.sid||p.sessionId||''),
+      nick: String(p.nick||'Player'),
+      seat: Number(p.seat ?? -1),
+    })).filter(p=>p.seat>=0);
+    if (gameInitialized) mergeNewRosterPlayers();
+    return;
+  }
+
+  if (d.type === 'sc_end'){
+    gameOver = true; gameActive = false;
+    const a = Number(d.scoreA ?? score.A), b = Number(d.scoreB ?? score.B);
+    const winner = d.winner || (a===b ? 'draw' : (a>b?'A':'B'));
+    const msg = winner==='draw' ? '무승부!' : (winner==='A' ? '🔴 A팀 승리!' : '🔵 B팀 승리!');
+    showOverlay(msg, `최종 스코어  A ${a} : ${b} B`);
+    return;
+  }
+});
+
+bridgeSend('bridge_ready', {});
 </script>
 </body>
 </html>
