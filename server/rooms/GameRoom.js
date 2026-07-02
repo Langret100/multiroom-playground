@@ -1082,7 +1082,8 @@ this.onMessage("sc_goal", (client, payload) => {
   if (this.state.phase !== "playing") return;
   if (this.sc?.over) return;
   const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
-  if (seat !== 0) return;
+  const ps = this.state.players.get(client.sessionId);
+  if (seat !== 0 && !ps?.isHost) return;
   const team   = String(payload.team || "");
   if (team !== "A" && team !== "B") return;
   const scoreA = Number(payload.scoreA ?? 0);
@@ -1111,7 +1112,8 @@ this.onMessage("sc_over", (client, payload) => {
   if (this.state.mode !== "soccer") return;
   if (this.state.phase !== "playing") return;
   const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
-  if (seat !== 0) return;
+  const ps = this.state.players.get(client.sessionId);
+  if (seat !== 0 && !ps?.isHost) return;
   const winner = String(payload.winner || "draw");
   this.finishSoccer(winner);
 });
