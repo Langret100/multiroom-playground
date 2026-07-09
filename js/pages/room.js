@@ -357,6 +357,9 @@ function setupBgm(audioElId, btnId){
   const GAME_BGM_MAP = {
     suika: "assets/audio/suikamusic.mp3",
     stackga: "assets/audio/stackmusic.mp3",
+    // NOTE: soccmusic.mp3 파일은 games/soccer/ 안에 이미 있었지만 이 맵에
+    // 등록이 안 되어 있어서 축구 경기 중 배경음악이 전혀 나오지 않던 버그.
+    soccer: "games/soccer/soccmusic.mp3",
   };
   const _gameBgm = { el: null, handle: null, lastMode: null, primed: false };
 
@@ -1298,7 +1301,7 @@ function updatePreview(modeId){
       if (!isEvent){
         const _now = Date.now();
         if (!window.__scPosTs) window.__scPosTs = 0;
-        if (_now - window.__scPosTs < 40) return; // 일반 위치 갱신만 최대 ~25fps로 제한
+        if (_now - window.__scPosTs < 30) return; // 일반 위치 갱신만 최대 ~33fps로 제한
         window.__scPosTs = _now;
       }
       try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy, kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle }); }catch(_){ }
