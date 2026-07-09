@@ -28,11 +28,29 @@
     border-radius:50%; background:rgba(255,255,255,.55);
   }
   body.mobile #joy { display:block; }
+  #actionBtns { position:fixed; right:18px; bottom:22px; z-index:15; display:none;
+      flex-direction:row; gap:14px; align-items:flex-end; }
+  body.mobile #actionBtns { display:flex; }
+  .actBtn {
+    width:76px; height:76px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:13px; font-weight:700; color:#fff; text-align:center; line-height:1.2;
+    background:rgba(255,255,255,.14); border:2px solid rgba(255,255,255,.35); position:relative;
+    overflow:hidden;
+  }
+  .actBtn .chargeFill{ position:absolute; left:0; right:0; bottom:0; height:0%; background:rgba(255,214,64,.55); transition:height .05s linear; }
+  .actBtn.cooling { opacity:.4; }
+  .actBtn span{ position:relative; z-index:1; }
+  #kickBtn { background:rgba(231,76,60,.22); }
+  #tackleBtn { background:rgba(59,130,246,.22); }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="gc"></canvas></div>
 <div id="joy"><div id="joyStick"></div></div>
+<div id="actionBtns">
+  <div id="tackleBtn" class="actBtn"><span>돌진<br>태클</span></div>
+  <div id="kickBtn" class="actBtn"><div class="chargeFill" id="kickChargeFill"></div><span>킥<br>(누르기)</span></div>
+</div>
 <div id="overlay"><h2 id="ovTitle">연결 대기 중...</h2><p id="ovText">잠시만 기다려주세요.</p></div>
 
 <script>
@@ -60,6 +78,9 @@ const FX=40, FY=54, FW=820, FH=452;
 const GOAL_W=14, GOAL_H=130;
 const GOAL_Y1 = FY+FH/2-GOAL_H/2, GOAL_Y2 = FY+FH/2+GOAL_H/2;
 const PR=17, BR=11;
+const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
+const TACKLE_RANGE = PR*2+8;
+const MAX_BALL_SPEED = 14;
 
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
@@ -74,10 +95,112 @@ function resize(){
 window.addEventListener('resize', resize, { passive:true });
 resize();
 
+/* ── 아주 작은 자체 SFX (부모 window.SFX는 iframe이라 접근 불가라서 자체 구현) ── */
+let sfxCtx = null;
+function getSfxCtx(){
+  if (sfxCtx) return sfxCtx;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  try{ sfxCtx = new Ctx(); }catch(_){ sfxCtx = null; }
+  return sfxCtx;
+}
+function tone(freq, dur, delay, type, vol){
+  const c = getSfxCtx(); if (!c) return;
+  try{
+    const t0 = c.currentTime + (delay||0);
+    const osc = c.createOscillator(), gain = c.createGain();
+    osc.type = type||'triangle';
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol||0.05, t0+0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+    osc.connect(gain); gain.connect(c.destination);
+    osc.start(t0); osc.stop(t0+dur+0.02);
+  }catch(_){}
+}
+// 짧은 화이트노이즈를 밴드패스로 걸러 "퍽/쏴아" 하는 타격감/군중 질감을 낸다.
+function noiseBurst(dur, delay, vol, bandFreq, Q, decayType){
+  const c = getSfxCtx(); if (!c) return null;
+  try{
+    const t0 = c.currentTime + (delay||0);
+    const bufLen = Math.max(1, Math.floor(c.sampleRate*dur));
+    const buf = c.createBuffer(1, bufLen, c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i=0;i<bufLen;i++) data[i] = (Math.random()*2-1);
+    const src = c.createBufferSource(); src.buffer = buf;
+    const bp = c.createBiquadFilter(); bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(bandFreq||900, t0); bp.Q.setValueAtTime(Q||1.2, t0);
+    const gain = c.createGain();
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(vol||0.06, t0+0.01);
+    if (decayType==='linear') gain.gain.linearRampToValueAtTime(0.0001, t0+dur);
+    else gain.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+    src.connect(bp); bp.connect(gain); gain.connect(c.destination);
+    src.start(t0); src.stop(t0+dur+0.02);
+    return { src, gain };
+  }catch(_){ return null; }
+}
+function sfxKick(power){
+  tone(200+power*220, 0.09, 0, 'square', 0.05+power*0.03);
+  noiseBurst(0.07, 0, 0.09+power*0.05, 1400+power*900, 2.2);
+}
+function sfxSwing(power){ tone(600+power*260, 0.05, 0, 'sine', 0.025+power*0.02); }
+function sfxTackle(){
+  tone(120, 0.12, 0, 'sawtooth', 0.05); tone(90, 0.1, 0.05, 'sawtooth', 0.04);
+  noiseBurst(0.14, 0, 0.14, 350, 1.4);
+}
+function sfxGoal(){
+  tone(660,0.12,0,'triangle',0.07); tone(880,0.14,0.09,'triangle',0.07); tone(1180,0.18,0.18,'triangle',0.07);
+  sfxCheer();
+}
+function sfxCheer(){
+  // 관중 함성: 대역이 서서히 열리는 노이즈 스웰
+  noiseBurst(1.6, 0, 0.11, 1000, 0.7, 'linear');
+  noiseBurst(1.9, 0.05, 0.09, 1800, 0.6, 'linear');
+}
+function sfxStun(){ tone(300,0.08,0,'sine',0.04); tone(220,0.08,0.06,'sine',0.03); }
+function sfxTick(){ tone(880, 0.05, 0, 'square', 0.05); }
+function sfxWhistle(long){
+  const dur = long ? 0.55 : 0.22;
+  tone(2400, dur, 0, 'sine', 0.06);
+  tone(2380, dur, 0.02, 'sine', 0.04);
+  if (long){ tone(2400, 0.3, dur+0.12, 'sine', 0.06); }
+}
+function primeSfx(){
+  try{ const c=getSfxCtx(); if (c && c.state==='suspended') c.resume(); }catch(_){}
+  startAmbientCrowd();
+}
+
+// 은은한 관중 웅성거림(경기 내내 배경에 낮게 깔림)
+let ambientStarted = false;
+function startAmbientCrowd(){
+  if (ambientStarted) return;
+  const c = getSfxCtx(); if (!c) return;
+  ambientStarted = true;
+  try{
+    const bufLen = c.sampleRate*2;
+    const buf = c.createBuffer(1, bufLen, c.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i=0;i<bufLen;i++) data[i] = (Math.random()*2-1)*0.6;
+    const src = c.createBufferSource(); src.buffer = buf; src.loop = true;
+    const bp = c.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=500; bp.Q.value=0.6;
+    const gain = c.createGain(); gain.gain.value = 0.018;
+    src.connect(bp); bp.connect(gain); gain.connect(c.destination);
+    src.start();
+  }catch(_){}
+}
+
 /* ── 입력 ── */
 const keys = {};
-window.addEventListener('keydown', e=>{ keys[e.code]=true; }, { passive:true });
-window.addEventListener('keyup',   e=>{ keys[e.code]=false; }, { passive:true });
+window.addEventListener('keydown', e=>{
+  keys[e.code]=true; primeSfx();
+  if (e.code === 'Space') beginKickCharge();
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') tryTackle();
+}, { passive:true });
+window.addEventListener('keyup', e=>{
+  keys[e.code]=false;
+  if (e.code === 'Space') releaseKickCharge();
+}, { passive:true });
 
 let joyDX=0, joyDY=0, joyTouchId=null;
 const joyEl = document.getElementById('joy'), joyStickEl = document.getElementById('joyStick');
@@ -92,7 +215,7 @@ function joyHandle(t){
   joyStickEl.style.transform = `translate(${dx*34}px, ${dy*34}px)`;
 }
 joyEl.addEventListener('touchstart', e=>{
-  const t=e.changedTouches[0]; joyTouchId=t.identifier; joyHandle(t); e.preventDefault();
+  const t=e.changedTouches[0]; joyTouchId=t.identifier; joyHandle(t); e.preventDefault(); primeSfx();
 }, { passive:false });
 joyEl.addEventListener('touchmove', e=>{
   for(const t of e.changedTouches){ if(t.identifier===joyTouchId){ joyHandle(t); e.preventDefault(); } }
@@ -102,21 +225,67 @@ window.addEventListener('touchend', e=>{
 }, { passive:true });
 window.addEventListener('touchcancel', e=>{ joyTouchId=null; joyReset(); }, { passive:true });
 
+// 모바일 킥/태클 버튼
+const kickBtnEl = document.getElementById('kickBtn');
+const tackleBtnEl = document.getElementById('tackleBtn');
+const kickChargeFillEl = document.getElementById('kickChargeFill');
+kickBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); beginKickCharge(); }, { passive:false });
+kickBtnEl.addEventListener('touchend',   e=>{ e.preventDefault(); releaseKickCharge(); }, { passive:false });
+kickBtnEl.addEventListener('touchcancel',e=>{ e.preventDefault(); releaseKickCharge(); }, { passive:false });
+tackleBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); tryTackle(); }, { passive:false });
+
 /* ── 게임 상태 ── */
 let mySid='', myNick='Player', mySeat=-1, isHost=false, roster=[];
-let players={};      // sid -> {x,y,lx,ly,vx,vy,seat,team,nick,color}
+let players={};      // sid -> {x,y,netX,netY,netVX,netVY,netT, seat,team,nick,color,dir,kickAt,kickCharge,tackle,_lastKickAt}
 let me=null;
 let ball={x:FX+FW/2,y:FY+FH/2,vx:0,vy:0};
-let netBall={...ball};
+let netBall={x:FX+FW/2,y:FY+FH/2,vx:0,vy:0,netX:FX+FW/2,netY:FY+FH/2,netT:0};
 let score={A:0,B:0};
 let startTs=0, durationMs=120000;
 let gameInitialized=false, gameActive=false, gameOver=false;
 let lastPosSent=0, lastBallSent=0;
+let stunUntilMap = {};       // sid -> 스턴 해제 시각(ms)
+let particles = [];          // 골 세리머니/충격 파티클
+let rings = [];               // 킥/태클 충격파 링 {x,y,r,alpha,color}
+let ballTrail = [];           // 빠른 공 뒤에 남는 잔상
+let shakeUntil = 0, shakeMag = 0;   // 화면 흔들림
+let kickoffUntil = 0;         // 이 시각까지는 킥오프 카운트다운(입력/공 물리 정지)
+let kickoffSoundsDone = new Set();
+let scoreAnimA = 0, scoreAnimB = 0; // 골 넣었을 때 스코어보드 팝 애니메이션 타임스탬프
+let prevScoreA = 0, prevScoreB = 0;
+
+function addShake(mag, durMs){
+  shakeMag = Math.max(shakeMag, mag);
+  shakeUntil = Math.max(shakeUntil, Date.now()+durMs);
+}
+function spawnBurst(x, y, color, count, spread){
+  for (let i=0;i<count;i++){
+    const a = Math.random()*Math.PI*2, sp = 1+Math.random()*(spread||3);
+    particles.push({ x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-1, life:1, color, size:2.5+Math.random()*2.5 });
+  }
+}
+function spawnRing(x, y, color){
+  rings.push({ x, y, r:6, alpha:0.55, color });
+}
+
+function updateKickoffCountdown(){
+  if (kickoffUntil<=0) return;
+  const left = kickoffUntil - Date.now();
+  if (left<=0){
+    if (!kickoffSoundsDone.has('go')){ kickoffSoundsDone.add('go'); sfxWhistle(false); }
+    kickoffUntil = 0;
+    return;
+  }
+  const sec = Math.ceil(left/1000);
+  const key = 'tick'+sec;
+  if (!kickoffSoundsDone.has(key) && sec<=3){ kickoffSoundsDone.add(key); sfxTick(); }
+}
 
 function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
 function lerp(a,b,t){ return a+(b-a)*t; }
 function teamOf(seat){ return (Number(seat)||0)%2===0 ? 'A' : 'B'; }
 function colorOf(team){ return team==='A' ? '#e74c3c' : '#3b82f6'; }
+function defaultDir(team){ return team==='A' ? 0 : Math.PI; } // A는 오른쪽(B골), B는 왼쪽(A골)을 바라봄
 
 function getSpawn(seat){
   const team = teamOf(seat);
@@ -126,64 +295,120 @@ function getSpawn(seat){
   return { x, y: clamp(laneY, FY+PR+4, FY+FH-PR-4) };
 }
 
+function makePlayer(seat, nick){
+  const team = teamOf(seat);
+  const sp = getSpawn(seat);
+  return {
+    x:sp.x, y:sp.y, vx:0, vy:0,
+    netX:sp.x, netY:sp.y, netVX:0, netVY:0, netT:Date.now(),
+    seat, team, nick: nick||'Player', color: colorOf(team),
+    dir: defaultDir(team), kickAt:0, kickCharge:0, tackle:false, _lastKickAt:0,
+  };
+}
+
+function startKickoffCountdown(ms){
+  kickoffUntil = Date.now() + (ms||3000);
+  kickoffSoundsDone = new Set();
+}
+
 function resetKickoff(){
   ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0 };
-  netBall = { ...ball };
+  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y, netT:Date.now() };
+  ballTrail = [];
+  lastBallSpeedSeen = 0;
   for(const p of Object.values(players)){
     const sp = getSpawn(p.seat);
-    p.x=sp.x; p.y=sp.y; p.lx=sp.x; p.ly=sp.y; p.vx=0; p.vy=0;
+    p.x=sp.x; p.y=sp.y; p.vx=0; p.vy=0;
+    p.netX=sp.x; p.netY=sp.y; p.netVX=0; p.netVY=0; p.netT=Date.now();
   }
+  startKickoffCountdown(2400);
 }
 
 function initGame(){
   if (!roster.length) return;
   players = {};
   for (const p of roster){
-    const team = teamOf(p.seat);
-    const sp = getSpawn(p.seat);
-    players[p.sid] = { x:sp.x, y:sp.y, lx:sp.x, ly:sp.y, vx:0, vy:0,
-      seat:p.seat, team, nick:p.nick, color: colorOf(team) };
+    players[p.sid] = makePlayer(p.seat, p.nick);
   }
   me = players[mySid] || null;
-  score = { A:0, B:0 };
+  score = { A:0, B:0 }; prevScoreA=0; prevScoreB=0;
   ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0 };
-  netBall = { ...ball };
+  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y, netT:Date.now() };
   gameOver = false;
   gameActive = true;
   hideOverlay();
+  startKickoffCountdown(3000);
   startLoop();
 }
 
-function mergeNewRosterPlayers(){
-  let added = false;
-  for (const p of roster){
-    if (players[p.sid]) continue;
-    const team = teamOf(p.seat);
-    const sp = getSpawn(p.seat);
-    players[p.sid] = { x:sp.x, y:sp.y, lx:sp.x, ly:sp.y, vx:0, vy:0,
-      seat:p.seat, team, nick:p.nick, color: colorOf(team) };
-    added = true;
+/* 로스터(전원 명단)를 서버 권위값(this.sc_roster의 seat/isHost)과 항상 일치하도록
+ * 맞춘다. 예전 버전은 새로 들어온 사람만 "추가"만 하고, 이미 있던 사람의
+ * seat/team이 잘못됐거나(초기 roster 스냅샷이 아직 order 동기화 전이었던 경우
+ * seat가 임시값으로 온 적이 있었다) 나간 사람이 필드에 유령처럼 남는 문제,
+ * 그리고 방장이 중간에 나갔을 때 공 권위(isHost)가 아무에게도 넘어가지 않아
+ * 공이 영원히 멈추는 문제가 있었다. sc_roster는 서버가 "지금 진짜로 방에
+ * 있는 사람 + 정확한 좌석 + 정확한 방장"을 주는 유일한 소스이므로, 받을
+ * 때마다 전체를 다시 맞춘다(좌표는 순간이동하지 않도록 보존).
+ */
+function applyRoster(list){
+  roster = (list||[]).map(p=>({
+    sid: String(p.sid||p.sessionId||''),
+    nick: String(p.nick||'Player'),
+    seat: Number(p.seat ?? -1),
+    isHost: !!p.isHost,
+  })).filter(p=>p.seat>=0 && p.sid);
+  if (!roster.length) return;
+
+  const knownSids = new Set(roster.map(r=>r.sid));
+
+  // 1) 로스터에 더 이상 없는 유령 플레이어 제거(중간 퇴장자가 필드에 얼어붙어
+  //    남아있던 문제의 원인).
+  for (const sid of Object.keys(players)){
+    if (!knownSids.has(sid)) delete players[sid];
   }
-  if (added && !me) me = players[mySid] || null;
+
+  // 2) 신규/기존 플레이어를 좌석·팀·닉네임 기준으로 동기화(좌표는 유지).
+  for (const r of roster){
+    let p = players[r.sid];
+    if (!p){
+      p = players[r.sid] = makePlayer(r.seat, r.nick);
+    } else {
+      if (p.seat !== r.seat){
+        p.seat = r.seat;
+        p.team = teamOf(r.seat);
+        p.color = colorOf(p.team);
+        p.dir = defaultDir(p.team);
+      }
+      p.nick = r.nick;
+    }
+    if (r.sid === mySid){
+      isHost = r.isHost; // 방장이 바뀌어도(중간 퇴장 등) 항상 최신값으로 갱신 → 공 권위가 끊기지 않음
+    }
+  }
+
+  if (!me) me = players[mySid] || null;
 }
 
 function applyRemotePlayers(map){
   if (!map) return;
+  const now = Date.now();
   for (const [sid, snap] of Object.entries(map)){
     if (sid === mySid) continue;
     let p = players[sid];
     if (!p){
       const seat = Number(snap.seat ?? -1);
       if (seat < 0) continue;
-      const team = teamOf(seat);
-      const sp = getSpawn(seat);
-      p = players[sid] = { x:sp.x, y:sp.y, lx:sp.x, ly:sp.y, vx:0, vy:0,
-        seat, team, nick:snap.nick || 'Player', color: colorOf(team) };
+      p = players[sid] = makePlayer(seat, snap.nick);
     }
-    p.lx = Number(snap.x ?? p.lx);
-    p.ly = Number(snap.y ?? p.ly);
-    p.vx = Number(snap.vx ?? 0);
-    p.vy = Number(snap.vy ?? 0);
+    p.netX = Number(snap.x ?? p.netX);
+    p.netY = Number(snap.y ?? p.netY);
+    p.netVX = Number(snap.vx ?? 0);
+    p.netVY = Number(snap.vy ?? 0);
+    p.netT = now;
+    if (snap.dir != null) p.dir = Number(snap.dir);
+    p.kickAt = Number(snap.kickAt ?? p.kickAt ?? 0);
+    p.kickCharge = Number(snap.kickCharge ?? p.kickCharge ?? 0);
+    p.tackle = !!snap.tackle;
   }
 }
 
@@ -194,9 +419,51 @@ function showOverlay(title, text){
   document.getElementById('overlay').classList.remove('hidden');
 }
 
+/* ── 킥 차징 / 태클 ── */
+let kickCharging = false, kickChargeStart = 0;
+let pendingKickAt = 0, pendingKickCharge = 0;
+let tackleCooldownUntil = 0;
+let tackleActiveUntil = 0;
+const KICK_CHARGE_MS = 600;
+const TACKLE_COOLDOWN_MS = 900;
+const TACKLE_DUR_MS = 220;
+const STUN_MS = 550;
+
+function isStunned(sid, now){ return (stunUntilMap[sid]||0) > (now||Date.now()); }
+
+function beginKickCharge(){
+  if (!me || !gameActive || gameOver) return;
+  if (isStunned(mySid)) return;
+  if (kickCharging) return;
+  kickCharging = true;
+  kickChargeStart = Date.now();
+}
+function releaseKickCharge(){
+  if (!kickCharging) return;
+  kickCharging = false;
+  if (!me || !gameActive || gameOver) return;
+  const held = Date.now() - kickChargeStart;
+  const charge = clamp(held / KICK_CHARGE_MS, 0, 1);
+  pendingKickAt = Date.now();
+  pendingKickCharge = 0.3 + 0.7*charge; // 탭만 해도 최소한의 슛은 나가도록
+  sfxSwing(pendingKickCharge); // 호스트 여부와 상관없이 내가 찬 순간 즉시 피드백
+}
+function tryTackle(){
+  if (!me || !gameActive || gameOver) return;
+  if (isStunned(mySid)) return;
+  const now = Date.now();
+  if (now < tackleCooldownUntil) return;
+  tackleActiveUntil = now + TACKLE_DUR_MS;
+  tackleCooldownUntil = now + TACKLE_COOLDOWN_MS;
+}
+
 /* ── 매 프레임 갱신 ── */
 function updateMe(){
   if (!me || !gameActive || gameOver) return;
+  const now = Date.now();
+  if (now < kickoffUntil){ me.vx=0; me.vy=0; me.tackle=false; return; }
+  if (isStunned(mySid, now)){ me.vx=0; me.vy=0; me.tackle=false; return; }
+
   let dx=0, dy=0;
   if (keys['ArrowLeft']||keys['KeyA']) dx-=1;
   if (keys['ArrowRight']||keys['KeyD']) dx+=1;
@@ -204,40 +471,119 @@ function updateMe(){
   if (keys['ArrowDown']||keys['KeyS']) dy+=1;
   if (IS_MOBILE && (Math.abs(joyDX)>0.12 || Math.abs(joyDY)>0.12)){ dx=joyDX; dy=joyDY; }
   const len = Math.hypot(dx,dy);
-  if (len>0){ dx/=len; dy/=len; }
-  const SPD = 3.6;
+  if (len>0){ dx/=len; dy/=len; me.dir = Math.atan2(dy,dx); }
+
+  const tackling = now < tackleActiveUntil;
+  const SPD = tackling ? 6.2 : 3.6;
   me.vx = dx*SPD; me.vy = dy*SPD;
+  if (tackling && len===0){
+    // 방향 입력이 없어도 바라보는 방향으로 돌진
+    me.vx = Math.cos(me.dir)*SPD; me.vy = Math.sin(me.dir)*SPD;
+  }
   me.x = clamp(me.x+me.vx, FX+PR, FX+FW-PR);
   me.y = clamp(me.y+me.vy, FY+PR, FY+FH-PR);
+  me.tackle = tackling;
+
+  // 킥 차지 UI(모바일 버튼 게이지)
+  if (kickCharging){
+    const pct = clamp((now-kickChargeStart)/KICK_CHARGE_MS, 0, 1)*100;
+    kickChargeFillEl.style.height = pct+'%';
+  } else {
+    kickChargeFillEl.style.height = '0%';
+  }
+  tackleBtnEl.classList.toggle('cooling', now < tackleCooldownUntil);
+}
+
+/* 원격 플레이어 보간: 마지막 스냅샷 시각(netT)로부터 경과한 시간만큼 속도로
+ * 짧게 외삽(extrapolate)한 뒤 그 목표점으로 부드럽게 당긴다. 예전 버전은
+ * "마지막으로 받은 좌표"로 곧장 당기기만 해서 20Hz 스냅샷 사이에 살짝
+ * 끊겨 보였는데, 이렇게 하면 패킷 사이에도 자연스럽게 이어져 보인다. */
+function smoothToward(cur, netX, netY, netVX, netVY, netT, now, factor){
+  const dt = clamp(now-(netT||now), 0, 160); // 과도한 외삽 방지
+  const tx = netX + (netVX||0)*dt*0.06;
+  const ty = netY + (netVY||0)*dt*0.06;
+  return { x: lerp(cur.x, clamp(tx, FX+PR, FX+FW-PR), factor),
+           y: lerp(cur.y, clamp(ty, FY+PR, FY+FH-PR), factor) };
 }
 
 function lerpRemote(){
+  const now = Date.now();
   for (const [sid,p] of Object.entries(players)){
     if (sid===mySid) continue;
-    p.x = lerp(p.x, p.lx, 0.28);
-    p.y = lerp(p.y, p.ly, 0.28);
+    const nxt = smoothToward(p, p.netX, p.netY, p.netVX, p.netVY, p.netT, now, 0.35);
+    p.x = nxt.x; p.y = nxt.y;
   }
+}
+
+function updateNetBall(){
+  if (isHost) return; // 호스트는 자기 물리 계산 결과(ball)를 그대로 그린다
+  const now = Date.now();
+  const nxt = smoothToward(netBall, netBall.netX, netBall.netY, netBall.vx, netBall.vy, netBall.netT, now, 0.35);
+  netBall.x = nxt.x; netBall.y = nxt.y;
 }
 
 /* 공은 호스트만 물리 계산을 하고(권위), 나머지는 sc_ball 수신값을 그대로
    보간 표시만 한다 — 투게스터가 박스/퍼즐 상태를 다루는 방식과 동일한
-   "한쪽만 계산, 나머지는 받아서 보간" 패턴. */
-const MAX_BALL_SPEED = 11;
+   "한쪽만 계산, 나머지는 받아서 보간" 패턴.
+   isHost는 이제 sc_roster를 받을 때마다 최신값으로 갱신되므로(applyRoster),
+   방장이 중간에 나가도 새 방장 클라이언트가 자동으로 공 계산을 이어받는다. */
 function updateBallHost(){
   if (!isHost || !gameActive || gameOver) return;
+  const now = Date.now();
+  if (now < kickoffUntil) return;
 
   for (const p of Object.values(players)){
     const dx = ball.x-p.x, dy = ball.y-p.y;
     const d = Math.hypot(dx,dy) || 0.0001;
     const minD = PR+BR;
+
+    // 접촉 시 소극적 밀어내기(기존 동작 유지, 강도만 살짝 낮춤 — 이제 진짜 킥은 아래에서 처리)
     if (d < minD){
       const nx = dx/d, ny = dy/d;
       ball.x = p.x + nx*minD;
       ball.y = p.y + ny*minD;
       const speed = Math.hypot(p.vx||0, p.vy||0);
-      const kick = Math.max(speed*2.1, 1.4);
+      const kick = Math.max(speed*1.5, 0.9);
       ball.vx += nx*kick;
       ball.vy += ny*kick;
+    }
+
+    // 충전 슛: kickAt이 마지막으로 처리한 값과 다르면 "새 킥"으로 인식(간헐적
+    // 위치 패킷에 덮여 한 프레임짜리 이벤트가 사라지지 않도록 sticky 필드로 옴).
+    if (p.kickAt && p.kickAt !== p._lastKickAt){
+      p._lastKickAt = p.kickAt;
+      if (d < KICK_RANGE){
+        const dir = Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx);
+        const power = 5 + clamp(p.kickCharge||0,0,1)*9;
+        ball.vx += Math.cos(dir)*power;
+        ball.vy += Math.sin(dir)*power;
+      }
+    }
+
+    // 돌진 태클: 상대 팀 선수와 부딪히면 스턴시키고 공을 살짝 튕겨낸다.
+    // 서버는 sc_stun을 seat 0(호스트)만 보낼 수 있게 막아뒀으므로, 태클
+    // "판정" 자체는 반드시 호스트 쪽에서 해야 한다 — 그래서 각 클라이언트는
+    // 의사만(sc_pos.tackle) 보내고, 실제 스턴 발생은 여기 호스트 루프에서만.
+    if (p.tackle){
+      for (const q of Object.values(players)){
+        if (q === p || q.team === p.team) continue;
+        if (isStunned(playerSidOf(q), now)) continue;
+        const qd = Math.hypot(q.x-p.x, q.y-p.y);
+        if (qd < TACKLE_RANGE){
+          const qsid = playerSidOf(q);
+          const key = qsid;
+          if ((p._tackleHitAt && p._tackleHitAt[key] && now - p._tackleHitAt[key] < 700)) continue;
+          p._tackleHitAt = p._tackleHitAt || {};
+          p._tackleHitAt[key] = now;
+          applyStun(qsid, STUN_MS, /*local broadcast now, plus tell server*/true);
+          // 태클한 방향으로 공도 살짝 튕겨나가도록(뺏는 느낌)
+          const bd = Math.hypot(ball.x-q.x, ball.y-q.y);
+          if (bd < KICK_RANGE){
+            ball.vx += Math.cos(p.dir)*3.5;
+            ball.vy += Math.sin(p.dir)*3.5;
+          }
+        }
+      }
     }
   }
 
@@ -259,28 +605,102 @@ function updateBallHost(){
   }
 }
 
+let lastBallSpeedSeen = 0;
+function updateBallImpactFx(){
+  const b = ball_or_netball();
+  const spd = Math.hypot(b.vx||0, b.vy||0);
+  const jump = spd - lastBallSpeedSeen;
+  if (jump > 3.2){
+    spawnRing(b.x, b.y, '#ffd640');
+    spawnBurst(b.x, b.y, '#ffffff', 6, 2.2);
+    addShake(Math.min(7, jump*1.1), 130);
+    sfxKick(clamp(jump/9, 0, 1));
+  }
+  lastBallSpeedSeen = spd;
+}
+function updateBallTrail(){
+  const b = ball_or_netball();
+  const spd = Math.hypot(b.vx||0, b.vy||0);
+  if (spd > 3){
+    ballTrail.push({ x:b.x, y:b.y, life:1 });
+    if (ballTrail.length > 14) ballTrail.shift();
+  }
+  for (const t of ballTrail) t.life -= 0.09;
+  ballTrail = ballTrail.filter(t=>t.life>0);
+}
+function updateRings(){
+  for (const r of rings){ r.r += 2.4; r.alpha -= 0.045; }
+  rings = rings.filter(r=>r.alpha>0);
+}
+
+function playerSidOf(p){
+  for (const [sid, v] of Object.entries(players)) if (v === p) return sid;
+  return null;
+}
+
+let stunFxThrottle = {};
+function applyStun(sid, dur, notifyServer){
+  stunUntilMap[sid] = Date.now()+dur;
+  const now = Date.now();
+  if (!stunFxThrottle[sid] || now - stunFxThrottle[sid] > 300){
+    stunFxThrottle[sid] = now;
+    const p = players[sid];
+    if (p){ spawnBurst(p.x, p.y, '#ffe08a', 10, 3); spawnRing(p.x, p.y, '#ffffff'); }
+    if (sid === mySid){ sfxStun(); addShake(5, 200); }
+    else { sfxTackle(); }
+  }
+  if (notifyServer){
+    bridgeSend('sc_stun', { sid, dur });
+  }
+}
+
 let goalPending = false;
 function scoreGoal(team){
   if (goalPending) return;
   goalPending = true;
   if (team==='A') score.A++; else score.B++;
+  if (team==='A') scoreAnimA = Date.now(); else scoreAnimB = Date.now();
   bridgeSend('sc_goal', { team, scoreA:score.A, scoreB:score.B });
   showGoalFlash(team);
+  spawnGoalParticles(team);
+  sfxGoal();
+  addShake(8, 400);
   setTimeout(()=>{ resetKickoff(); goalPending=false; }, 900);
 }
 
 let goalFlashUntil=0, goalFlashTeam=null;
 function showGoalFlash(team){ goalFlashTeam=team; goalFlashUntil=Date.now()+900; }
+function spawnGoalParticles(team){
+  const cx = team==='A' ? FX+FW : FX;
+  const cy = (GOAL_Y1+GOAL_Y2)/2;
+  const cols = team==='A' ? ['#e74c3c','#ff8a80','#fff'] : ['#3b82f6','#8ab4ff','#fff'];
+  for (let i=0;i<26;i++){
+    const a = Math.random()*Math.PI*2, sp = 2+Math.random()*4;
+    particles.push({ x:cx, y:cy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-2,
+      life:1, color: cols[i%cols.length], size:3+Math.random()*3 });
+  }
+}
+function updateParticles(){
+  for (const pt of particles){
+    pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.12; pt.life -= 0.018;
+  }
+  particles = particles.filter(pt=>pt.life>0);
+}
 
 /* ── 네트워크 송신 ── */
 function netSends(){
   if (!EMBED || !gameActive) return;
   const now = Date.now();
-  if (me && now-lastPosSent >= 40){
+  if (me && now-lastPosSent >= 30){
     lastPosSent = now;
-    bridgeSend('sc_pos', { x:me.x, y:me.y, vx:me.vx, vy:me.vy });
+    const kickAt = pendingKickAt; const kickCharge = pendingKickCharge;
+    pendingKickAt = 0; // edge 이벤트는 한 번만 새 값으로 보내면 됨(서버가 sticky 저장)
+    bridgeSend('sc_pos', {
+      x:me.x, y:me.y, vx:me.vx, vy:me.vy, dir:me.dir,
+      kickAt, kickCharge, tackle: !!me.tackle,
+    });
   }
-  if (isHost && now-lastBallSent >= 34){
+  if (isHost && now-lastBallSent >= 30){
     lastBallSent = now;
     bridgeSend('sc_ball', { x:ball.x, y:ball.y, vx:ball.vx, vy:ball.vy, owner:null });
   }
@@ -299,11 +719,51 @@ function checkTimer(){
 }
 
 /* ── 렌더링 ── */
-function drawField(){
-  ctx.fillStyle = '#0b1220';
-  ctx.fillRect(0,0,CW,CH);
+let crowdCanvas = null;
+function buildCrowdCanvas(){
+  const c = document.createElement('canvas');
+  c.width = CW; c.height = CH;
+  const g = c.getContext('2d');
+  // 배경(하늘/조명)
+  const sky = g.createLinearGradient(0,0,0,FY);
+  sky.addColorStop(0,'#1a2740'); sky.addColorStop(1,'#0b1220');
+  g.fillStyle = sky; g.fillRect(0,0,CW,FY+8);
+  const skyB = g.createLinearGradient(0,FY+FH,0,CH);
+  skyB.addColorStop(0,'#0b1220'); skyB.addColorStop(1,'#141d33');
+  g.fillStyle = skyB; g.fillRect(0,FY+FH-8,CW,CH-(FY+FH-8));
+  // 관중석 점들(위/아래 스탠드)
+  const rows = [ {y0:6, y1:FY-10, n:5}, {y0:FY+FH+10, y1:CH-6, n:5} ];
+  const palette = ['#c99','#99c','#cc9','#9cc','#e2b','#bcb','#eec'];
+  for (const band of rows){
+    const rowH = (band.y1-band.y0)/band.n;
+    for (let r=0;r<band.n;r++){
+      const y = band.y0 + r*rowH + rowH/2;
+      const jitter = (r%2)*6;
+      for (let x=8+jitter; x<CW-8; x+=9){
+        g.fillStyle = palette[(Math.random()*palette.length)|0];
+        g.globalAlpha = 0.55 + Math.random()*0.35;
+        g.beginPath(); g.arc(x, y+Math.random()*2, 2.4, 0, Math.PI*2); g.fill();
+      }
+    }
+  }
+  g.globalAlpha = 1;
+  // 조명탑 은은한 스포트라이트
+  for (const lx of [FX+40, FX+FW-40]){
+    const gg = g.createRadialGradient(lx, 4, 2, lx, 4, 160);
+    gg.addColorStop(0,'rgba(255,255,255,.10)'); gg.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle = gg; g.fillRect(0,0,CW,FY+FH*0.5);
+  }
+  return c;
+}
 
-  ctx.fillStyle = '#1f7a3d';
+function drawField(){
+  if (!crowdCanvas) crowdCanvas = buildCrowdCanvas();
+  ctx.drawImage(crowdCanvas, 0, 0);
+
+  // 잔디 + 은은한 비네트
+  const grad = ctx.createRadialGradient(FX+FW/2,FY+FH/2,60, FX+FW/2,FY+FH/2, FW*0.75);
+  grad.addColorStop(0,'#22884a'); grad.addColorStop(1,'#1a6b3a');
+  ctx.fillStyle = grad;
   ctx.fillRect(FX,FY,FW,FH);
   for(let i=0;i<10;i++){
     ctx.fillStyle = i%2===0 ? 'rgba(255,255,255,.035)' : 'rgba(0,0,0,.035)';
@@ -316,29 +776,172 @@ function drawField(){
   ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 54, 0, Math.PI*2); ctx.stroke();
   ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 3, 0, Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
 
-  // 골대
-  ctx.fillStyle = 'rgba(255,255,255,.9)';
-  ctx.fillRect(FX-GOAL_W, GOAL_Y1, GOAL_W, GOAL_H);
-  ctx.fillRect(FX+FW,     GOAL_Y1, GOAL_W, GOAL_H);
-  ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=2;
-  ctx.strokeRect(FX-GOAL_W, GOAL_Y1, GOAL_W, GOAL_H);
-  ctx.strokeRect(FX+FW,     GOAL_Y1, GOAL_W, GOAL_H);
+  // 코너 아크 + 페널티 박스(장식용, 실제 판정에는 영향 없음)
+  ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.55)';
+  const cornerR = 14;
+  [[FX,FY,0,Math.PI/2],[FX+FW,FY,Math.PI/2,Math.PI],[FX,FY+FH,-Math.PI/2,0],[FX+FW,FY+FH,Math.PI,Math.PI*1.5]]
+    .forEach(([cx,cy,s,e])=>{ ctx.beginPath(); ctx.arc(cx,cy,cornerR,s,e); ctx.stroke(); });
+  const boxW=70, boxH=210, boxY=FY+FH/2-boxH/2;
+  ctx.strokeRect(FX, boxY, boxW, boxH);
+  ctx.strokeRect(FX+FW-boxW, boxY, boxW, boxH);
+
+  // 골대 + 그물망(그물이 최근 골 방향으로 살짝 출렁이는 효과)
+  const netWobble = goalFlashTeam && Date.now()<goalFlashUntil
+    ? (1-((goalFlashUntil-Date.now())/900)) : 0;
+  for (const side of ['L','R']){
+    const gx = side==='L' ? FX-GOAL_W : FX+FW;
+    const wobbleSign = side==='L' ? (goalFlashTeam==='B'?1:0) : (goalFlashTeam==='A'?1:0);
+    const wob = wobbleSign ? Math.sin(netWobble*Math.PI*3)*(1-netWobble)*5 : 0;
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.fillRect(gx, GOAL_Y1, GOAL_W, GOAL_H);
+    ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=2;
+    ctx.strokeRect(gx, GOAL_Y1, GOAL_W, GOAL_H);
+    ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1;
+    for (let i=1;i<4;i++){
+      const nx = gx+i*(GOAL_W/4) + (side==='L'?-wob:wob)*(i/4);
+      ctx.beginPath(); ctx.moveTo(nx, GOAL_Y1); ctx.lineTo(nx, GOAL_Y2); ctx.stroke();
+    }
+    for (let i=1;i<7;i++){
+      const ny = GOAL_Y1+i*(GOAL_H/7);
+      ctx.beginPath(); ctx.moveTo(gx, ny); ctx.lineTo(gx+GOAL_W+(side==='L'?-wob:wob)*0.6, ny); ctx.stroke();
+    }
+  }
 }
 
-function drawPlayer(p, mine){
-  ctx.save();
-  ctx.beginPath(); ctx.ellipse(p.x, p.y+PR*0.75, PR*0.9, PR*0.32, 0, 0, Math.PI*2);
-  ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fill();
+function shadeColor(hex, amt){
+  // amt: -1(검게)~+1(밝게)
+  const c = hex.replace('#','');
+  const n = parseInt(c.length===3 ? c.split('').map(ch=>ch+ch).join('') : c, 16);
+  let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  const f = amt<0 ? amt+1 : amt;
+  if (amt<0){ r*=f; g*=f; b*=f; } else { r=r+(255-r)*f; g=g+(255-g)*f; b=b+(255-b)*f; }
+  return `rgb(${r|0},${g|0},${b|0})`;
+}
 
-  ctx.beginPath(); ctx.arc(p.x,p.y,PR,0,Math.PI*2);
-  ctx.fillStyle = p.color; ctx.fill();
+function jerseyNumberOf(p){ return Math.floor((Number(p.seat)||0)/2)+1; }
+
+function ball_or_netball(){ return isHost ? ball : netBall; }
+
+function drawPlayer(p, mine, sid){
+  const now = Date.now();
+  const stunned = isStunned(sid, now);
+  const dir = Number.isFinite(p.dir) ? p.dir : 0;
+  const spd = Math.hypot(p.vx||0, p.vy||0);
+  const moving = spd > 0.35;
+  const nearBall = !stunned && Math.hypot(ball_or_netball().x-p.x, ball_or_netball().y-p.y) < KICK_RANGE+4;
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  // 그림자
+  ctx.beginPath(); ctx.ellipse(0, PR*0.95, PR*0.95, PR*0.34, 0, 0, Math.PI*2);
+  ctx.fillStyle='rgba(0,0,0,.30)'; ctx.fill();
+
+  // 돌진 태클 중 잔상
+  if (now < tackleActiveUntil && mine){
+    ctx.globalAlpha = 0.25;
+    ctx.beginPath(); ctx.arc(-Math.cos(dir)*16, -Math.sin(dir)*16, PR*0.85, 0, Math.PI*2);
+    ctx.fillStyle = p.color; ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // 소유(가까이 있는) 표시 글로우
+  if (nearBall){
+    ctx.beginPath(); ctx.arc(0,0,PR+9,0,Math.PI*2);
+    ctx.strokeStyle = 'rgba(255,214,64,.55)'; ctx.lineWidth = 2.5; ctx.setLineDash([4,3]); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // 다리(뛰는 동작): 이동 중일 때 좌우로 교차 애니메이션, 정지 시 모아짐
+  const legPhase = moving ? Math.sin(now/85 + (Number(p.seat)||0)*1.7) : 0;
+  const perp = dir + Math.PI/2;
+  const legSpread = moving ? 5.5 : 2.5;
+  for (const s of [-1,1]){
+    const swing = moving ? s*legPhase*4 : 0;
+    const lx = Math.cos(perp)*legSpread*s + Math.cos(dir)*(2+Math.abs(swing)*0.4);
+    const ly = Math.sin(perp)*legSpread*s + Math.sin(dir)*(2+Math.abs(swing)*0.4);
+    ctx.beginPath();
+    ctx.ellipse(lx, ly+PR*0.55+swing*0.15, 3.6, 6, 0, 0, Math.PI*2);
+    ctx.fillStyle = stunned ? '#6d6d6d' : '#2b2b2b';
+    ctx.fill();
+  }
+
+  // 몸통(유니폼) — 살짝 입체감 있는 방사형 그라디언트
+  const bodyColor = stunned ? '#8a8a8a' : p.color;
+  const grad = ctx.createRadialGradient(-PR*0.3,-PR*0.35,2, 0,0,PR+2);
+  grad.addColorStop(0, shadeColor(bodyColor, 0.35));
+  grad.addColorStop(1, shadeColor(bodyColor, -0.15));
+  ctx.beginPath(); ctx.arc(0,0,PR,0,Math.PI*2);
+  ctx.fillStyle = grad; ctx.fill();
   ctx.lineWidth = mine ? 3.5 : 2;
-  ctx.strokeStyle = mine ? '#fff' : 'rgba(255,255,255,.55)';
+  ctx.strokeStyle = mine ? '#ffd640' : 'rgba(255,255,255,.55)';
   ctx.stroke();
 
+  // 유니폼 어깨 트림(흰 줄무늬 두 개)
+  if (!stunned){
+    ctx.save();
+    ctx.beginPath(); ctx.arc(0,0,PR,0,Math.PI*2); ctx.clip();
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    ctx.fillRect(-PR, -PR*0.22, PR*2, PR*0.14);
+    ctx.restore();
+  }
+
+  // 등번호
+  ctx.fillStyle = 'rgba(255,255,255,.95)';
+  ctx.font = `bold ${Math.floor(PR*0.95)}px sans-serif`;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(String(jerseyNumberOf(p)), 0, PR*0.08);
+
+  // 머리(바라보는 방향으로 살짝 앞으로)
+  const hx = Math.cos(dir)*PR*0.62, hy = Math.sin(dir)*PR*0.62 - PR*0.75;
+  ctx.beginPath(); ctx.arc(hx, hy, PR*0.5, 0, Math.PI*2);
+  ctx.fillStyle = stunned ? '#b7b7b7' : '#ffd8ad';
+  ctx.fill();
+  ctx.lineWidth=1.3; ctx.strokeStyle='rgba(0,0,0,.18)'; ctx.stroke();
+  if (!stunned){
+    // 작은 눈(진행 방향을 바라봄)
+    const ex = hx+Math.cos(dir)*PR*0.28, ey = hy+Math.sin(dir)*PR*0.28;
+    ctx.beginPath(); ctx.arc(ex,ey,1.7,0,Math.PI*2); ctx.fillStyle='#3a2a1a'; ctx.fill();
+  }
+
+  // 충전 중인 킥 게이지 링(본인만)
+  if (mine && kickCharging){
+    const pct = clamp((now-kickChargeStart)/KICK_CHARGE_MS,0,1);
+    ctx.beginPath();
+    ctx.arc(0,0, PR+13, -Math.PI/2, -Math.PI/2 + pct*Math.PI*2);
+    ctx.strokeStyle = '#ffd640'; ctx.lineWidth = 3; ctx.stroke();
+  }
+
+  // 스턴 아이콘
+  if (stunned){
+    ctx.font = '13px sans-serif'; ctx.textAlign='center';
+    ctx.fillStyle = '#fff59d';
+    ctx.fillText('💫', 0, -PR-24);
+  }
+
   ctx.fillStyle='#fff'; ctx.font='11px sans-serif'; ctx.textAlign='center';
-  ctx.fillText((p.nick||'').slice(0,8), p.x, p.y-PR-8);
+  ctx.fillText((p.nick||'').slice(0,8), 0, -PR-14);
   ctx.restore();
+}
+
+function drawBallTrail(){
+  for (const t of ballTrail){
+    ctx.save();
+    ctx.globalAlpha = clamp(t.life,0,1)*0.35;
+    ctx.beginPath(); ctx.arc(t.x, t.y, BR*0.85, 0, Math.PI*2);
+    ctx.fillStyle = '#fff'; ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawRings(){
+  for (const r of rings){
+    ctx.save();
+    ctx.globalAlpha = clamp(r.alpha,0,1);
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI*2);
+    ctx.strokeStyle = r.color; ctx.lineWidth = 2.4; ctx.stroke();
+    ctx.restore();
+  }
 }
 
 function drawBall(b){
@@ -348,21 +951,65 @@ function drawBall(b){
   ctx.beginPath(); ctx.arc(b.x,b.y,BR,0,Math.PI*2);
   ctx.fillStyle='#fff'; ctx.fill();
   ctx.lineWidth=1.5; ctx.strokeStyle='#222'; ctx.stroke();
+  // 속도에 비례한 회전 무늬(장식용 스핀 느낌)
+  const spin = (Date.now()/40) + (b.vx||0)*6;
+  ctx.beginPath();
+  ctx.moveTo(b.x+Math.cos(spin)*BR*0.6, b.y+Math.sin(spin)*BR*0.6);
+  ctx.lineTo(b.x-Math.cos(spin)*BR*0.6, b.y-Math.sin(spin)*BR*0.6);
+  ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.stroke();
   ctx.restore();
 }
 
+function drawParticles(){
+  for (const pt of particles){
+    ctx.save();
+    ctx.globalAlpha = clamp(pt.life,0,1);
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x-pt.size/2, pt.y-pt.size/2, pt.size, pt.size);
+    ctx.restore();
+  }
+}
+
 function drawHUD(){
+  const now = Date.now();
   ctx.fillStyle='rgba(0,0,0,.55)';
   ctx.fillRect(0,0,CW,FY-4);
-  ctx.font='bold 22px sans-serif'; ctx.textBaseline='middle';
-  ctx.fillStyle='#ff6b6b'; ctx.textAlign='left';  ctx.fillText('A '+score.A, 16, (FY-4)/2);
-  ctx.fillStyle='#5b9dff'; ctx.textAlign='right'; ctx.fillText(score.B+' B', CW-16, (FY-4)/2);
-  ctx.fillStyle='#fff'; ctx.textAlign='center';
-  let sec = Math.max(0, Math.ceil((durationMs-(Date.now()-startTs))/1000));
+  ctx.textBaseline='middle';
+
+  const popScale = (t)=> t>0 && now-t<300 ? 1+0.5*(1-(now-t)/300) : 1;
+  ctx.save();
+  ctx.translate(16,(FY-4)/2); ctx.scale(popScale(scoreAnimA), popScale(scoreAnimA));
+  ctx.font='bold 22px sans-serif'; ctx.fillStyle='#ff6b6b'; ctx.textAlign='left';
+  ctx.fillText('A '+score.A, 0, 0);
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(CW-16,(FY-4)/2); ctx.scale(popScale(scoreAnimB), popScale(scoreAnimB));
+  ctx.font='bold 22px sans-serif'; ctx.fillStyle='#5b9dff'; ctx.textAlign='right';
+  ctx.fillText(score.B+' B', 0, 0);
+  ctx.restore();
+
+  let sec = Math.max(0, Math.ceil((durationMs-(now-startTs))/1000));
   if (!startTs) sec = Math.ceil(durationMs/1000);
+  const lowTime = sec<=10 && gameActive && !gameOver;
+  ctx.font='bold 22px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle = lowTime ? (Math.floor(now/300)%2===0 ? '#ff4d4d' : '#fff') : '#fff';
   const mm = String(Math.floor(sec/60)).padStart(2,'0');
   const ss = String(sec%60).padStart(2,'0');
   ctx.fillText(mm+':'+ss, CW/2, (FY-4)/2);
+}
+
+function drawKickoffCountdown(){
+  if (kickoffUntil<=0) return;
+  const left = kickoffUntil - Date.now();
+  if (left<=0) return;
+  const sec = Math.ceil(left/1000);
+  ctx.save();
+  ctx.fillStyle='rgba(0,0,0,.28)'; ctx.fillRect(FX,FY,FW,FH);
+  ctx.font='bold 64px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#fff';
+  ctx.fillText(sec<=0 ? 'GO!' : String(sec), FX+FW/2, FY+FH/2);
+  ctx.restore();
 }
 
 function drawGoalFlash(){
@@ -378,10 +1025,24 @@ function drawGoalFlash(){
 }
 
 function draw(){
+  ctx.save();
+  const now = Date.now();
+  if (now < shakeUntil){
+    const decay = (shakeUntil-now)/300;
+    const mag = shakeMag*clamp(decay,0,1);
+    ctx.translate((Math.random()*2-1)*mag, (Math.random()*2-1)*mag);
+  } else {
+    shakeMag = 0;
+  }
   drawField();
-  for (const [sid,p] of Object.entries(players)) if (sid!==mySid) drawPlayer(p, false);
-  if (me) drawPlayer(me, true);
-  drawBall(isHost ? ball : netBall);
+  drawBallTrail();
+  for (const [sid,p] of Object.entries(players)) if (sid!==mySid) drawPlayer(p, false, sid);
+  if (me) drawPlayer(me, true, mySid);
+  drawBall(ball_or_netball());
+  drawRings();
+  drawParticles();
+  drawKickoffCountdown();
+  ctx.restore();
   drawHUD();
   drawGoalFlash();
 }
@@ -392,7 +1053,10 @@ function startLoop(){
   if (loopRunning) return; loopRunning = true;
   function tick(){
     try{
-      updateMe(); lerpRemote(); updateBallHost(); netSends(); checkTimer(); draw();
+      updateKickoffCountdown();
+      updateMe(); lerpRemote(); updateNetBall(); updateBallHost();
+      updateBallImpactFx(); updateBallTrail(); updateRings();
+      updateParticles(); netSends(); checkTimer(); draw();
     }catch(err){
       try{ console.error('[soccer] frame error (자동 복구됨):', err); }catch(_){}
     }
@@ -411,18 +1075,38 @@ window.addEventListener('message', e=>{
     myNick = String(d.nick||'Player');
     mySeat = Number(d.seat ?? -1);
     isHost = !!d.isHost;
-    roster = (d.players||[]).map(p=>({
+
+    const incoming = (d.players||[]).map(p=>({
       sid: String(p.sid||p.sessionId||''),
       nick: String(p.nick||'Player'),
       seat: Number(p.seat ?? -1),
+      isHost: !!p.isHost,
     })).filter(p=>p.seat>=0);
 
-    if (gameInitialized){ mergeNewRosterPlayers(); return; }
+    if (gameInitialized){ applyRoster(incoming); return; }
     gameInitialized = true;
+    roster = incoming;
     const sAt = Number(d.startedAt||0);
     startTs = sAt>0 ? sAt : Date.now();
     initGame();
     bridgeSend('sc_sync', {});
+    return;
+  }
+
+  // room.js는 room.state.players(방 전체의 실시간 상태)를 감시하다가 방장이
+  // 바뀔 때마다 이 메시지를 보내준다 — 투게스터 등 다른 협동 게임들이 방장
+  // 승계를 안정적으로 처리하는 데 쓰는 바로 그 채널이다. sc_roster는 축구
+  // 전용 보조 채널이라 타이밍이 늦거나 빠질 수 있으니, 항상 이걸 1차 소스로
+  // 삼는다.
+  if (d.type === 'bridge_host'){
+    const prevHost = isHost;
+    isHost = !!d.isHost;
+    if (isHost && !prevHost){
+      // 막 방장이 됐다면, 기존에 보던 netBall 위치/속도를 그대로 물려받아
+      // 공이 순간이동하듯 튀지 않게 하고, 즉시 공 계산을 이어받는다.
+      ball = { x:netBall.x, y:netBall.y, vx:netBall.vx||0, vy:netBall.vy||0 };
+      lastBallSpeedSeen = Math.hypot(ball.vx, ball.vy);
+    }
     return;
   }
 
@@ -439,32 +1123,37 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_ball'){
-    netBall.x = Number(d.x ?? netBall.x);
-    netBall.y = Number(d.y ?? netBall.y);
+    netBall.netX = Number(d.x ?? netBall.netX);
+    netBall.netY = Number(d.y ?? netBall.netY);
     netBall.vx = Number(d.vx ?? 0);
     netBall.vy = Number(d.vy ?? 0);
+    netBall.netT = Date.now();
     return;
   }
 
   if (d.type === 'sc_goal' || d.type === 'sc_goal_sync'){
-    score.A = Number(d.scoreA ?? score.A);
-    score.B = Number(d.scoreB ?? score.B);
-    if (d.type === 'sc_goal' && !isHost) showGoalFlash(d.team);
+    const newA = Number(d.scoreA ?? score.A), newB = Number(d.scoreB ?? score.B);
+    if (newA !== score.A) scoreAnimA = Date.now();
+    if (newB !== score.B) scoreAnimB = Date.now();
+    score.A = newA; score.B = newB;
+    if (d.type === 'sc_goal' && !isHost){ showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400); }
+    return;
+  }
+
+  if (d.type === 'sc_stun'){
+    const sid = String(d.sid||''); const dur = Number(d.dur||0);
+    if (sid && dur>0) applyStun(sid, dur, false);
     return;
   }
 
   if (d.type === 'sc_roster'){
-    roster = (d.players||[]).map(p=>({
-      sid: String(p.sid||p.sessionId||''),
-      nick: String(p.nick||'Player'),
-      seat: Number(p.seat ?? -1),
-    })).filter(p=>p.seat>=0);
-    if (gameInitialized) mergeNewRosterPlayers();
+    applyRoster(d.players||[]);
     return;
   }
 
   if (d.type === 'sc_end'){
     gameOver = true; gameActive = false;
+    sfxWhistle(true);
     const a = Number(d.scoreA ?? score.A), b = Number(d.scoreB ?? score.B);
     const winner = d.winner || (a===b ? 'draw' : (a>b?'A':'B'));
     const msg = winner==='draw' ? '무승부!' : (winner==='A' ? '🔴 A팀 승리!' : '🔵 B팀 승리!');

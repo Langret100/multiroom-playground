@@ -1056,7 +1056,7 @@ this.onMessage("sc_pos", (client, payload) => {
   // 그 sid를 "이미 알고 있어야" 한다는 전제가 전혀 없어서, roster 타이밍
   // 문제와 무관하게 항상 자기복구된다.
   const now = Date.now();
-  if (now - (this.sc.lastPosBroadcastAt || 0) < 50) return; // ~20Hz
+  if (now - (this.sc.lastPosBroadcastAt || 0) < 33) return; // ~30Hz (was ~20Hz; tighter for smoother sync)
   this.sc.lastPosBroadcastAt = now;
   this.broadcast("sc_players", { players: this.sc.players });
 });
@@ -1100,7 +1100,12 @@ this.onMessage("sc_stun", (client, payload) => {
   if (this.state.mode !== "soccer") return;
   if (this.state.phase !== "playing") return;
   const seat = Number(this.state.order?.get(client.sessionId) ?? -1);
-  if (seat !== 0) return;
+  const ps = this.state.players.get(client.sessionId);
+  // NOTE: seat===0만 허용하면, 원래 방장(0번 자리)이 중간 퇴장한 뒤 새로 선출된
+  // 방장(0번이 아닌 자리)이 보내는 태클/스턴 판정이 전부 조용히 씹혀서 "공/스턴이
+  // 안 먹힌다"는 증상으로 이어졌다. sc_ball/sc_goal/sc_over와 동일하게 isHost도
+  // 함께 허용해 방장 승계 후에도 판정 권한이 정상적으로 이어지게 한다.
+  if (seat !== 0 && !ps?.isHost) return;
   const sid = String(payload.sid || "");
   const dur = Number(payload.dur || 0);
   if (!sid || dur <= 0) return;

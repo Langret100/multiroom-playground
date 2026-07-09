@@ -1699,7 +1699,7 @@ export class RoomDO{
           p.kickCharge = Number(d.kickCharge ?? p.kickCharge ?? 0);
         }
         const n = now();
-        if (n - (this.sc.lastPosBroadcastAt || 0) < 50) return; // ~20Hz
+        if (n - (this.sc.lastPosBroadcastAt || 0) < 33) return; // ~30Hz (was ~20Hz; tighter for smoother sync)
         this.sc.lastPosBroadcastAt = n;
         this._broadcast("sc_players", { players: this.sc.players });
         return;
@@ -1803,6 +1803,14 @@ export class RoomDO{
       this.users.delete(uid);
       this.userSockets.delete(uid);
 
+      // 방장이 나간 경우 다음 사람에게 즉시 승계(호스트 재계산)한다. 이걸
+      // 아래 축구 sc_roster 브로드캐스트보다 먼저 해야 한다 — 순서가 바뀌면
+      // 방금 나간(구) 방장 정보가 담긴 로스터가 먼저 나가버려서, 공 물리
+      // 계산 권한(isHost)이 아무에게도 정상적으로 넘어가지 못하고 공이
+      // 멈추는 문제로 이어진다.
+      this._recalcHost();
+      this._applyHostFlags();
+
       // ---- transient per-game state cleanup (no persistence) ----
       // Make sure a leaving player does not remain in any server-side snapshots
       // (prevents ghost state and avoids leaving per-user records in memory).
@@ -1845,6 +1853,19 @@ export class RoomDO{
         if (this.meta.mode === "soccer" && this.meta.phase === "playing"){
           this._broadcast("sc_players", { players: this.sc.players || {} });
           this._broadcast("sc_roster", { players: this._buildSoccerRoster() });
+
+          // 수학축구는 반드시 짝수(양 팀 동수)로만 진행되어야 하는 게임이다.
+          // 경기 도중 누군가 나가서 인원이 홀수가 되거나 한쪽 팀이 아예
+          // 없어지면(2명 미만) 그 즉시 현재 스코어 기준으로 경기를 종료한다
+          // — 팀 밸런스가 깨진 채로 경기가 계속 진행되는 상황을 막는다.
+          const cpu = this._cpuUid();
+          let scHumanCount = 0;
+          for (const pid of this.users.keys()){ if (pid !== cpu) scHumanCount++; }
+          if (!this.sc.over && (scHumanCount < 2 || scHumanCount % 2 !== 0)){
+            const sA = this.sc.score?.A||0, sB = this.sc.score?.B||0;
+            const w = (sA > sB) ? "A" : (sB > sA) ? "B" : "draw";
+            this._finishSoccer(w);
+          }
         }
       }catch(_){ }
 
@@ -1989,7 +2010,7 @@ export class RoomDO{
     const cpu = this._cpuUid();
     return Array.from(this.users.entries())
       .filter(([uid]) => uid !== cpu)
-      .map(([uid, u]) => ({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99) }))
+      .map(([uid, u]) => ({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99), isHost: !!u?.isHost }))
       .sort((a,b)=> (a.seat??99) - (b.seat??99));
   }
 
