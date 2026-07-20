@@ -130,7 +130,7 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","backrooms3d","soccer","geumchikeo"]);
+const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo"]);
 const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
 const isSoccer = (String(this.state.mode||"") === "soccer");
@@ -139,7 +139,8 @@ if (isDuel && humans.length === 1){
   // 1인 듀얼은 서버가 CPU를 붙여 시작하므로 ready 조건을 true로 봄(프론트 UX용)
   this.state.allReady = true;
 } else {
-  const baseReady = humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready);
+  const soloCoopOk = isCoop && humans.length === 1 && new Set(["suhaktokki","snaketail","mathexplorer","math-explorer"]).has(String(this.state.mode||""));
+  const baseReady = soloCoopOk || (humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready));
   // 수학축구: 반드시 짝수 인원(2·4·6·8)이어야 시작 가능
   const evenOk = !isSoccer || (humans.length % 2 === 0);
   this.state.allReady = baseReady && evenOk;
@@ -183,7 +184,17 @@ if (isDuel && humans.length === 1){
         const v = (typeof payload === "boolean") ? payload : !!(payload && (payload.ready ?? payload.v));
         return { t:"ready", d:{ v } };
       } // room.js sends boolean
-      if(legacyType === "start") return { t:"start", d:{} };
+      if(legacyType === "start") {
+        // Keep the host's selected options. In particular, MathExplorer reads
+        // coopDifficulty from this payload when constructing game_start.
+        return {
+          t:"start",
+          d:{
+            cpuDifficulty: safeText(payload?.cpuDifficulty, 12),
+            coopDifficulty: Number(payload?.coopDifficulty ?? 1) || 1
+          }
+        };
+      }
       // relay game messages as-is
       const passthrough = new Set([
         "duel_state","duel_event","duel_over",
@@ -237,7 +248,7 @@ if (isDuel && humans.length === 1){
         // MathExplorer (coop)
         "mx_msg",
         // Backrooms3d (coop)
-        "br_msg",
+        "br_msg","br_batch",
         // Soccer (coop) — server → client relays (positions/ball/score/timer/roster/end)
         "sc_timer","sc_players","sc_ball","sc_goal","sc_stun","sc_end","sc_goal_sync","sc_roster",
         // misc
@@ -380,6 +391,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-01-07-fix-ready-bgm";
+  window.__BUILD_ID = "2026-07-20-full-room-sync-v4";
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();

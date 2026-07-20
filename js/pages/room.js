@@ -1025,10 +1025,8 @@ function updatePreview(modeId){
       const isGkSender = !!(coop.active && coop.meta && coop.meta.id === "geumchikeo");
       if (!fromMain && !isGkSender) return;
       try{ room.send("gk_over", { reason: d.reason || "match_end" }); }catch(_){ }
-      forceLobbyUI = true;
-      showDuelUI(false);
-      try{ exitGameFullscreen(); }catch(_){ }
-      try{ renderPlayers(); }catch(_){ }
+      // Keep the result screen visible until the Worker sends backToRoom.
+      // Exiting immediately here blanked the iframe before players could see results.
       return;
     }
 
@@ -1076,6 +1074,7 @@ function updatePreview(modeId){
       // Some environments may not classify the iframe as "mainForMx" due to reloads/timing.
       // Accept quit from the main game iframe as well.
       if (!fromMainForMx && !fromMain) return;
+      try{ room.send("mx_over", { reason: String(d.reason || "quit") }); }catch(_){ }
       forceLobbyUI = true;
       try{ exitGameFullscreen(); }catch(_){ }
       try{ renderPlayers(); }catch(_){ }
@@ -1760,7 +1759,7 @@ else if (isCoop){
     canStart = true;
     startText = "혼자 시작";
     startAction = "start";
-  } else if (modeId === "mathexplorer" && humanCount === 1){
+  } else if (["mathexplorer","math-explorer"].includes(modeId) && humanCount === 1){
     // 수학 탐험대: 1~4인 협동 플레이(최대 4인). 혼자도 시작 가능.
     canStart = true;
     startText = "혼자 시작";
@@ -2274,10 +2273,12 @@ function buildMathExplorerFallbackStartPayload(base){
       else if (pls && typeof pls === 'object'){ Object.keys(pls).forEach((sid)=>pushSid(sid, pls[sid]?.seat)); }
     }catch(_){ }
     roster.sort((a,b)=> (a.seat??99)-(b.seat??99) || String(a.sid).localeCompare(String(b.sid)));
-    const playerCount = Math.max(1, Number((base && base.playerCount) || room.state.playerCount || roster.length || 1));
+    // Prefer the current room roster. The authoritative payload may have been
+    // created before a co-op late join and therefore contain an older count.
+    const playerCount = Math.max(1, Number(roster.length || room.state.playerCount || (base && base.playerCount) || 1));
     return {
       mode,
-      seed: Number((base && base.startedAt) || Date.now()) >>> 0,
+      seed: Number((base && (base.seed ?? base.startedAt)) || Date.now()) >>> 0,
       playerCount,
       expectedHumans: playerCount,
       roster,
@@ -2297,7 +2298,10 @@ function maybeSendCoopGameStart(){
     const mySid = String(mySessionId || '');
     const mySeat = getMySeat();
     const myHost = getMyIsHost();
-    const gsPayload = Object.assign({ mode: (coop?.meta?.id || room?.state?.mode || coop?.startPayload?.mode || 'mathexplorer') }, (coop.startPayload || {}), {
+    const normalizedStart = isMathExplorerCoopMode()
+      ? (buildMathExplorerFallbackStartPayload(coop.startPayload) || coop.startPayload)
+      : coop.startPayload;
+    const gsPayload = Object.assign({ mode: (coop?.meta?.id || room?.state?.mode || normalizedStart?.mode || 'mathexplorer') }, (normalizedStart || {}), {
       mySid,
       mySeat,
       myHost
@@ -2716,7 +2720,9 @@ try{
     if (coop._lastHostSid !== hostSid || coop._lastMeIsHost !== meIsHost){
       coop._lastHostSid = hostSid;
       coop._lastMeIsHost = meIsHost;
-      postToMain({ type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid });
+      const hostMsg = { type: "bridge_host", isHost: meIsHost, hostSessionId: hostSid };
+      if (isMathExplorerCoopMode()) postToMathExplorer(hostMsg);
+      else postToMain(hostMsg);
     }
   }
 }catch(_){ }
@@ -2742,7 +2748,7 @@ try{
         // Start per-game BGM for supported games (best-effort; may require user gesture on mobile)
         try{ playGameBgm(room.state.mode || (m && m.gameId)); }catch(_){ }
         tickRate = m.tickRate || 20;
-        try{ coop.expectedHumans = Number(m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
+        try{ coop.expectedHumans = Number(m?.startPayload?.playerCount || m?.playerCount || coop.expectedHumans || 0) || coop.expectedHumans; }catch(_){ }
         setStatus("", "info");
         // reset per-game transient UI/state
         try{ spec.last.clear(); }catch(_){ }
@@ -3035,8 +3041,6 @@ try{
         coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
-        // Notify iframes (best-effort) before clearing.
-        postToAllIframes({ type: "duel_back" });
         // Notify iframes (best-effort) before clearing.
         postToAllIframes({ type: "duel_back" });
         if(duel.iframeEl) duel.iframeEl.src="about:blank";
