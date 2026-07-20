@@ -1267,6 +1267,7 @@ const countdownEl = $("countdown");
   function endGame(msg){
     if(gameOver) return;
     gameOver = true;
+    gameOverMessage = String(msg || '게임 종료');
     addChat("🏁 "+msg);
     const cd = $("countdown");
     cd.style.display="block";
@@ -1276,6 +1277,13 @@ const countdownEl = $("countdown");
     for(const k in keysDown) keysDown[k]=0;
     sprint.active=false; sprint.hold=false;
     monsterAI=false;
+    // 호스트가 게임 종료를 서버에도 알려 방 상태가 다시 대기실로 돌아가게 한다.
+    // 비호스트의 탈출은 world_patch를 통해 호스트가 적용한 뒤 이 경로를 탄다.
+    try{
+      if(bridge && bridge.isHost && bridge.sid){
+        relay('game_end', { message:gameOverMessage });
+      }
+    }catch(_){ }
   }
 
 let monsterReleaseLeft = 10.0; // seconds
@@ -1784,6 +1792,13 @@ function spawnShelfPillar(wx,wz, idx=0){
     const x = (gx-GW/2)*CELL, z = (gy-GH/2)*CELL;
     const box = spawnShelfPillar(x, z, seed);
     box.rotation.y = (seed % 2 === 0 ? 0 : Math.PI/2);
+    // 실제 상호작용 가능한 책장 목록에도 등록해야 E로 쓰러뜨릴 수 있다.
+    box.userData.fallen = false;
+    box.userData.fallT = 0;
+    box.userData.stunArmed = false;
+    box.userData.cleared = false;
+    box.userData.netKey = `shelf:${gx}:${gy}:${seed}`;
+    shelves.push(box);
   }
   for(let i=0;i<2;i++){
     const r = rooms[1 + (i % Math.max(1, rooms.length-1))];
@@ -1974,6 +1989,7 @@ function spawnShelfPillar(wx,wz, idx=0){
   let revealPingT = 0; // monster sprint reveal ping (seconds)
   let huntLeft = 90; let huntActive = false; // hunter must catch within 90s
   let gameOver = false;
+  let gameOverMessage = '';
   let shiftHeld = false;
   addEventListener("keydown",(e)=>{ if((chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show"))) return; if(e.key==="Shift") shiftHeld=true; });
   addEventListener("keyup",(e)=>{ if(e.key==="Shift") shiftHeld=false; });
@@ -2095,7 +2111,7 @@ function spawnShelfPillar(wx,wz, idx=0){
     addChat("[싱글] 책장을 쓰러뜨렸다!");
   }
   function doInteract(){
-
+    if(gameOver) return;
     if(chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show")) return;
     if(rabbitGhost){
       addChat('유령 상태에서는 상호작용할 수 없습니다.');
@@ -2488,6 +2504,10 @@ function pushOutWalls(px,pz,rad){
     // [FIX] 싱글/호스트만 타이머 감소, 비호스트는 world sync로 수신
     if(bridge.isHost || !bridge.start || !(bridge.start.playerCount >= 2)){
       remaining=Math.max(0, remaining-dt);
+      if(remaining <= 0 && !gameOver){
+        endGame("괴물 승리!");
+        try{ maybeSendWorld(true); }catch(_){ }
+      }
     }
     const mm=String(Math.floor(remaining/60)).padStart(2,'0');
     const ss=String(Math.floor(remaining%60)).padStart(2,'0');
@@ -2972,11 +2992,11 @@ if(monsterReleaseLeft>0){
     let turn=(keysDown.a?1:0)-(keysDown.d?1:0)+(-joyX);
     // 괴물 카운트다운 중 회전/이동 잠금
     const monsterLocked = (playerRole==='monster') && (monsterReleaseLeft > 0);
-    if(monsterLocked) turn = 0;
+    if(monsterLocked || gameOver) turn = 0;
     yaw += turn*2.35*dt;
 
     let fb=(keysDown.w?1:0)-(keysDown.s?1:0)+(-joyY);
-    if(monsterLocked) fb = 0; // 카운트다운 중 이동 불가
+    if(monsterLocked || gameOver) fb = 0; // 카운트다운/게임 종료 중 이동 불가
     // sprint / water slow
     const inWater = isInPool(player.position.x, player.position.z);
     let wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
@@ -3103,13 +3123,13 @@ if(monsterReleaseLeft>0){
   const q=(id)=>document.getElementById(id);
   const qs=new URLSearchParams(location.search);
   const roomId=window.__BR_ROOM_ID__ || qs.get('roomId') || '';
-  let bridge={ sid:String(window.__BR_BOOT_ID__||'')||null, nick:String(window.__BR_BOOT_NICK__||'Player'), isHost:!!window.__BR_BOOT_HOST__, selfSeat:Number(window.__BR_BOOT_SEAT__ ?? -1), roomId, start:(window.__BR_START__||null), active:false, remotes:new Map(), lastStateAt:0, lastWorldAt:0, lastCatchAt:0, stateSeq:0, hostSid:null, forceSpawnUntil:0, ignoreCaughtUntil:0, startId:null, spawn:null, spawnApplied:false, prevAnimateNow:0 };
+  let bridge={ sid:String(window.__BR_BOOT_ID__||'')||null, nick:String(window.__BR_BOOT_NICK__||'Player'), isHost:!!window.__BR_BOOT_HOST__, selfSeat:Number(window.__BR_BOOT_SEAT__ ?? -1), roomId, start:(window.__BR_START__||null), active:false, remotes:new Map(), lastStateAt:0, lastWorldAt:0, lastWorldReqAt:0, lastCatchAt:0, lastEndCheckAt:0, stateSeq:0, hostSid:null, forceSpawnUntil:0, ignoreCaughtUntil:0, startId:null, spawn:null, spawnApplied:false, prevAnimateNow:0 };
   let pendingStartPayload = null;
   let helperMonster = null, helperRemote = null, helperState = null;
   const bridgeStateCache = { x:null, y:null, z:null, yaw:null, hasKey:null, caught:null, ghost:null, trapped:null, sentAt:0 };
   function post(msg){ try{ parent.postMessage(Object.assign({ gameId:'backrooms3d' }, msg||{}),'*'); }catch(_){ } }
   const brExitBtn = document.getElementById('brExitBtn');
-  if (brExitBtn) brExitBtn.addEventListener('click', ()=>{ post({ type:'br_exit_to_lobby' }); });
+  if (brExitBtn) brExitBtn.addEventListener('click', ()=>{ relay('leave', {}); post({ type:'br_exit_to_lobby' }); });
   function relay(kind, data){ post({ type:'br_msg', msg:Object.assign({ kind }, data||{}) }); }
   function sanitizeStoredStart(sp){
     try{
@@ -3254,16 +3274,42 @@ if(monsterReleaseLeft>0){
     if (Number.isFinite(Number(partial.selfSeat))) bridge.selfSeat = Number(partial.selfSeat);
     if (typeof partial.isHost === 'boolean') bridge.isHost = !!partial.isHost;
   }
+  function ensureCurrentPlayerInStart(startPayload){
+    if (!startPayload || typeof startPayload !== 'object') return startPayload;
+    const sid = String(bridge.sid || startPayload.mySid || '');
+    if (!sid) return startPayload;
+    const roster = Array.isArray(startPayload.roster) ? startPayload.roster.map(r=>Object.assign({}, r)) : [];
+    const exists = roster.some(r=>String(r?.sid||'') === sid);
+    if (exists) return startPayload;
+
+    // 협동 게임은 진행 중 합류를 허용한다. 시작 당시 로스터에 없던 플레이어는
+    // 괴물 역할을 바꾸지 않고 새 토끼로 편입한다.
+    const seat = Number.isFinite(Number(bridge.selfSeat)) ? Number(bridge.selfSeat) : Number(startPayload.mySeat ?? 99);
+    roster.push({ sid, nick:String(bridge.nick || 'Player'), seat, isHost:!!bridge.isHost });
+    roster.sort((a,b)=>(Number(a?.seat??99)-Number(b?.seat??99)) || String(a?.sid||'').localeCompare(String(b?.sid||'')));
+    const roles = Object.assign({}, (startPayload.roles && typeof startPayload.roles === 'object') ? startPayload.roles : {});
+    roles[sid] = Object.assign({}, roles[sid] || {}, { role:'rabbit', seat });
+    return Object.assign({}, startPayload, {
+      roster,
+      roles,
+      playerCount: Math.max(2, Number(startPayload.playerCount||0), roster.length),
+      mySid: sid,
+      mySeat: seat,
+      myHost: !!bridge.isHost,
+      myRole: 'rabbit'
+    });
+  }
   function applyBridgeStartPayload(startPayload, identity){
     if (!startPayload || String(startPayload.mode || '') !== 'backrooms3d') return false;
     const prevSid = String(bridge.sid || '');
     const prevSeat = Number.isFinite(Number(bridge.selfSeat)) ? Number(bridge.selfSeat) : -1;
     const prevHost = !!bridge.isHost;
     setBridgeIdentity(identity || {});
-    const merged = Object.assign({}, startPayload, {
-      mySid: String(startPayload.mySid || bridge.sid || ''),
-      mySeat: Number.isFinite(Number(startPayload.mySeat)) ? Number(startPayload.mySeat) : Number(bridge.selfSeat ?? -1),
-      myHost: (typeof startPayload.myHost === 'boolean') ? !!startPayload.myHost : !!bridge.isHost,
+    const normalizedStart = ensureCurrentPlayerInStart(startPayload);
+    const merged = Object.assign({}, normalizedStart, {
+      mySid: String(normalizedStart.mySid || bridge.sid || ''),
+      mySeat: Number.isFinite(Number(normalizedStart.mySeat)) ? Number(normalizedStart.mySeat) : Number(bridge.selfSeat ?? -1),
+      myHost: (typeof normalizedStart.myHost === 'boolean') ? !!normalizedStart.myHost : !!bridge.isHost,
     });
     if (merged.mySid && !bridge.sid) bridge.sid = String(merged.mySid);
     if (Number.isFinite(Number(merged.mySeat)) && Number(prevSeat) < 0) bridge.selfSeat = Number(merged.mySeat);
@@ -3443,6 +3489,33 @@ if(monsterReleaseLeft>0){
     }
     return r;
   }
+  function removeRemote(sid){
+    const id = String(sid || '');
+    if(!id) return null;
+    const r = bridge.remotes.get(id) || null;
+    if(r?.obj){ try{ scene.remove(r.obj); }catch(_){ } }
+    bridge.remotes.delete(id);
+    return r;
+  }
+  function maybeFinishMultiplayerRound(){
+    if(!bridge.isHost || gameOver || !bridge.start || Number(bridge.start.playerCount||0) < 2) return;
+    let monsterPresent = playerRole === 'monster';
+    let rabbitCount = playerRole === 'rabbit' ? 1 : 0;
+    let activeRabbits = (playerRole === 'rabbit' && !rabbitGhost) ? 1 : 0;
+    for(const r of bridge.remotes.values()){
+      if(r.role === 'monster') monsterPresent = true;
+      if(r.role !== 'rabbit') continue;
+      rabbitCount++;
+      if(!r.state?.ghost) activeRabbits++;
+    }
+    if(!monsterPresent){
+      endGame('토끼 승리! (괴물 퇴장)');
+      maybeSendWorld(true);
+    }else if(rabbitCount === 0 || activeRabbits === 0){
+      endGame('괴물 승리!');
+      maybeSendWorld(true);
+    }
+  }
 
   function seedRemotesFromStart(start){
     try{
@@ -3548,44 +3621,136 @@ if(monsterReleaseLeft>0){
       try{ scene.remove(o); }catch(_){ }
     }
   }
+  function snapshotShelves(){
+    return (shelves||[]).map((s, idx)=>({
+      netKey:String(s?.userData?.netKey || `shelf:${idx}`),
+      fallen:!!s?.userData?.fallen,
+      fallT:+Math.max(0, Math.min(1, Number(s?.userData?.fallT||0))).toFixed(3),
+      y:+Number(s?.position?.y||0).toFixed(3),
+      rx:+Number(s?.rotation?.x||0).toFixed(4),
+      halfX:+Number(s?.userData?.halfX||0).toFixed(3),
+      halfZ:+Number(s?.userData?.halfZ||0).toFixed(3)
+    }));
+  }
+  function applyShelfStates(items){
+    if(!Array.isArray(items)) return;
+    const byKey = new Map((shelves||[]).map((s, idx)=>[String(s?.userData?.netKey || `shelf:${idx}`), s]));
+    items.forEach((it, idx)=>{
+      const s = byKey.get(String(it?.netKey || `shelf:${idx}`));
+      if(!s) return;
+      s.userData.fallen = !!it.fallen;
+      s.userData.fallT = Math.max(0, Math.min(1, Number(it.fallT||0)));
+      s.userData.stunArmed = false;
+      if(Number.isFinite(Number(it.y))) s.position.y = Number(it.y);
+      if(Number.isFinite(Number(it.rx))) s.rotation.x = Number(it.rx);
+      if(Number.isFinite(Number(it.halfX))) s.userData.halfX = Number(it.halfX);
+      if(Number.isFinite(Number(it.halfZ))) s.userData.halfZ = Number(it.halfZ);
+    });
+  }
   function snapshotWorld(){
     return {
       kind:'world',
       keys: (keys||[]).map(k=>({x:+k.position.x.toFixed(3), z:+k.position.z.toFixed(3)})),
+      shelves: snapshotShelves(),
       doorProg: Number(doorProg||0),
+      doorOpen: !!doorState?.open,
+      doorOpenT: +(doorState?.openT || 0),
       cageLocked: !!cage?.userData?.locked,
       cageDoorOpen: !!cage?.userData?.doorOpen,
       cageAutoCloseT: +(cage?.userData?.autoCloseT || 0),
       releaseLeft: +(monsterReleaseLeft||0),
       sealUsed: !!doorState?.sealUsed,
-      sealLeft: +(sealLeft||0),
+      sealLeftMs: +Math.max(0, (doorState?.sealedUntil || 0) - performance.now()),
       remaining: +(remaining||0),
       huntLeft: +(huntLeft||0),
       huntActive: !!huntActive,
+      gameOver: !!gameOver,
+      gameOverMessage: String(gameOverMessage || ''),
       ts: Date.now()
     };
   }
+  function snapshotInteractionWorld(){
+    const w = snapshotWorld();
+    return {
+      keys:w.keys,
+      shelves:w.shelves,
+      doorProg:w.doorProg,
+      doorOpen:w.doorOpen,
+      doorOpenT:w.doorOpenT,
+      cageLocked:w.cageLocked,
+      cageDoorOpen:w.cageDoorOpen,
+      cageAutoCloseT:w.cageAutoCloseT,
+      sealUsed:w.sealUsed,
+      sealLeftMs:w.sealLeftMs,
+      gameOver:w.gameOver,
+      gameOverMessage:w.gameOverMessage,
+      ts:w.ts
+    };
+  }
+  function buildInteractionPatch(before, after){
+    const patch = { kind:'world_patch', ts:Date.now() };
+    let changed = false;
+    const fields = ['keys','shelves','doorProg','doorOpen','doorOpenT','cageLocked','cageDoorOpen','cageAutoCloseT','sealUsed','sealLeftMs','gameOver','gameOverMessage'];
+    for(const key of fields){
+      if(JSON.stringify(before?.[key]) === JSON.stringify(after?.[key])) continue;
+      patch[key] = after?.[key];
+      changed = true;
+    }
+    return changed ? patch : null;
+  }
   let lastAppliedWorldTs = 0;
+  function applySharedWorld(w, includeTimers){
+    if(!w || typeof w!=='object') return;
+    try{
+      if(Array.isArray(w.keys)){
+        while(keys.length){ const k=keys.pop(); scene.remove(k); }
+        w.keys.forEach(it=>spawnKeyAt(Number(it.x)||0, Number(it.z)||0));
+      }
+      if(Array.isArray(w.shelves)) applyShelfStates(w.shelves);
+      if(w.doorProg !== undefined){
+        doorProg = Math.max(0, Math.min(3, Number(w.doorProg||0)));
+        doorState.locksUnlocked = doorProg;
+        q('pDoor').textContent = '문: '+doorProg+'/3';
+        const locks = (doorG.userData && doorG.userData.locks) ? doorG.userData.locks : [];
+        locks.forEach((lk, idx)=>{
+          const unlocked = idx < doorProg;
+          if(lk?.userData) lk.userData.locked = !unlocked;
+          if(lk) lk.visible = !unlocked;
+        });
+      }
+      if(w.doorOpen !== undefined) doorState.open = !!w.doorOpen;
+      if(w.doorOpenT !== undefined) doorState.openT = Math.max(0, Math.min(1, Number(w.doorOpenT||0)));
+      if(w.cageLocked !== undefined) cage.userData.locked = !!w.cageLocked;
+      if(w.cageDoorOpen !== undefined) cage.userData.doorOpen = !!w.cageDoorOpen;
+      if(w.cageAutoCloseT !== undefined) cage.userData.autoCloseT = Math.max(0, Number(w.cageAutoCloseT||0));
+      const lock = cage.getObjectByName('cageLock'); if(lock) lock.visible = !!cage.userData.locked;
+      if(w.sealUsed !== undefined) doorState.sealUsed = !!w.sealUsed;
+      if(w.sealLeftMs !== undefined || w.sealLeft !== undefined){
+        const leftMs = Math.max(0, Number(w.sealLeftMs ?? w.sealLeft ?? 0));
+        sealLeft = leftMs;
+        doorState.sealedUntil = performance.now() + leftMs;
+        sealSprite.visible = leftMs > 0;
+        updateSealSprite(leftMs/1000);
+      }
+      if(w.gameOver && !gameOver) endGame(String(w.gameOverMessage || '게임 종료'));
+      if(includeTimers){
+        // 비호스트는 항상 호스트 기준 타이머 사용 (네트워크 지연을 작게 보정).
+        if(w.remaining !== undefined) remaining = Math.max(0, Number(w.remaining||0) - 0.05);
+        if(w.huntActive !== undefined) huntActive = !!w.huntActive;
+        if(w.huntLeft !== undefined) huntLeft = Math.max(0, Number(w.huntLeft||0) - 0.05);
+        if(w.releaseLeft !== undefined){
+          monsterReleaseLeft = Math.max(0, Number(w.releaseLeft||0) - 0.05);
+          if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01;
+        }
+      }
+    }catch(_){ }
+  }
   function applyWorld(w){
     if(!w || typeof w!=='object') return;
     const ts = Number(w.ts || 0);
     if(ts && ts < lastAppliedWorldTs) return;
     if(ts) lastAppliedWorldTs = ts;
-    try{
-      while(keys.length){ const k=keys.pop(); scene.remove(k); }
-      (w.keys||[]).forEach(it=>spawnKeyAt(Number(it.x)||0, Number(it.z)||0));
-      doorProg = Number(w.doorProg||0); q('pDoor').textContent = '문: '+doorProg+'/3';
-      cage.userData.locked = !!w.cageLocked; cage.userData.doorOpen = !!w.cageDoorOpen; cage.userData.autoCloseT = Number(w.cageAutoCloseT||0);
-      const lock = cage.getObjectByName('cageLock'); if(lock) lock.visible = !!cage.userData.locked;
-      monsterReleaseLeft = Number(w.releaseLeft||0); if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01;
-      doorState.sealUsed = !!w.sealUsed; sealLeft = Number(w.sealLeft||0);
-      // [FIX] 비호스트는 항상 호스트 기준 타이머 사용 (네트워크 딜레이 ~50ms 보정)
-      if(w.remaining !== undefined){ remaining = Math.max(0, Number(w.remaining||0) - 0.05); }
-      if(w.huntActive !== undefined){ huntActive = !!w.huntActive; }
-      if(w.huntLeft !== undefined){ huntLeft = Math.max(0, Number(w.huntLeft||0) - 0.05); }
-      // [FIX] monsterReleaseLeft도 호스트 기준 동기화
-      if(w.releaseLeft !== undefined){ monsterReleaseLeft = Math.max(0, Number(w.releaseLeft||0) - 0.05); if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01; }
-    }catch(_){ }
+    applySharedWorld(w, true);
   }
   function appendChatLine(nick, text){
     try{ const line = (nick ? (nick+': ') : '') + String(text||''); addChat(line); }catch(_){ }
@@ -3645,7 +3810,23 @@ if(monsterReleaseLeft>0){
   const _updatePanicMusic = (typeof window.updatePanicMusic === 'function' ? window.updatePanicMusic : (typeof updatePanicMusic === 'function' ? updatePanicMusic : null));
   if(_updatePanicMusic){ window.updatePanicMusic = function(dist){ if(playerRole==='monster') return; return _updatePanicMusic(dist); }; try{ updatePanicMusic = window.updatePanicMusic; }catch(_){ } }
   const _doInteract = (typeof window.doInteract === 'function' ? window.doInteract : (typeof doInteract === 'function' ? doInteract : null));
-  if(_doInteract){ window.doInteract = function(){ const before = JSON.stringify(snapshotWorld()); const r = _doInteract.apply(this, arguments); setTimeout(()=>{ try{ if(JSON.stringify(snapshotWorld()) !== before) maybeSendWorld(true); }catch(_){ } }, 0); return r; }; try{ doInteract = window.doInteract; }catch(_){ } }
+  if(_doInteract){
+    window.doInteract = function(){
+      const before = snapshotInteractionWorld();
+      const r = _doInteract.apply(this, arguments);
+      setTimeout(()=>{
+        try{
+          const after = snapshotInteractionWorld();
+          const patch = buildInteractionPatch(before, after);
+          if(!patch) return;
+          if(bridge.isHost) maybeSendWorld(true);
+          else relay('world_patch', patch);
+        }catch(_){ }
+      }, 0);
+      return r;
+    };
+    try{ doInteract = window.doInteract; }catch(_){ }
+  }
   if(!window.__BR3D_MESSAGE_HANDLER__){ window.__BR3D_MESSAGE_HANDLER__ = (e)=>{
     const d=e.data||{};
     if(!d || typeof d!=='object') return;
@@ -3661,6 +3842,25 @@ if(monsterReleaseLeft>0){
       else if (pendingStartPayload) applyBridgeStartPayload(pendingStartPayload);
       post({ type:'bridge_ready', gameId:'backrooms3d' });
       if (bridge.start) { maybeSendWorld(true); sendState(true); }
+      return;
+    }
+    if(d.type==='bridge_host'){
+      const nextHostSid = String(d.hostSessionId || '');
+      if(nextHostSid) bridge.hostSid = nextHostSid;
+      bridge.isHost = (typeof d.isHost === 'boolean') ? !!d.isHost : (!!nextHostSid && nextHostSid === String(bridge.sid||''));
+      // 새 방장은 마지막으로 받은 상태에서 즉시 월드 권위를 이어받고,
+      // 나머지는 새 방장에게 최신 월드를 요청한다.
+      if(bridge.isHost){
+        bridge.lastWorldAt = 0;
+        maybeSendWorld(true);
+      }else if(bridge.sid){
+        bridge.lastWorldReqAt = performance.now();
+        relay('world_req', {});
+      }
+      return;
+    }
+    if(d.type==='bridge_leave'){
+      if(bridge.sid) relay('leave', { reason:String(d.reason||'exit') });
       return;
     }
     if(d.type==='game_start'){
@@ -3690,10 +3890,7 @@ if(monsterReleaseLeft>0){
         // 상대방 state가 도착 → 게임 진행 중 확인 → bridge.active 활성화
         if(!bridge.active && bridge.sid) bridge.active = true;
         const msgSeat=Number(m.seat ?? -1);
-        // bridge.start가 없어도 sid만으로 처리 (초기 연결 지연 해소)
-        const roster = Array.isArray(bridge.start?.roster) ? bridge.start.roster : [];
-        const rosterOk = !roster.length || roster.some(entry => String(entry?.sid||'') === sid);
-        if (!rosterOk) return;
+        // 서버가 인증된 발신자 ID를 덮어쓰므로 시작 뒤 합류한 사용자도 허용한다.
         const remoteKey = sid;
         // [FIX] state 메시지의 role 필드 우선 사용 (bridge.start 없어도 역할 처리)
         const msgRole = String(m.role || '');
@@ -3717,10 +3914,29 @@ if(monsterReleaseLeft>0){
         return;
       }
       if(kind==='world'){ if(!bridge.isHost && sid!==bridge.sid) applyWorld(m); return; }
+      if(kind==='world_patch'){
+        if(bridge.isHost && sid && sid!==bridge.sid){
+          applySharedWorld(m, false);
+          maybeSendWorld(true);
+        }
+        return;
+      }
       if(kind==='world_req'){ if(bridge.isHost && sid!==bridge.sid){ relay('world', snapshotWorld()); } return; }
       if(kind==='helper_state'){ if(!bridge.isHost && sid!==bridge.sid) applyHelperState(m); return; }
+      if(kind==='leave' || kind==='peer_left'){
+        const leavingSid = String(m.sid || (kind==='leave' ? sid : '') || '');
+        if(leavingSid && leavingSid!==bridge.sid) removeRemote(leavingSid);
+        if(bridge.isHost) maybeFinishMultiplayerRound();
+        return;
+      }
+      if(kind==='game_end'){
+        if(!gameOver) endGame(String(m.message || m.gameOverMessage || '게임 종료'));
+        return;
+      }
       if(kind==='caught'){
-        // relay는 발신자(호스트) 제외 전송 → 수신자는 항상 타겟 본인 또는 제3자
+        // 일부 서버 버전은 발신자에게도 메시지를 되돌려준다. 호스트는 이미
+        // 로컬 판정을 반영했으므로 자기 에코를 다시 계산하면 안 된다.
+        if(sid && sid===bridge.sid) return;
         const catchTarget = String(m.target||'');
         if(catchTarget===bridge.sid){
           // 내가 타겟: 포획 처리
@@ -3729,7 +3945,9 @@ if(monsterReleaseLeft>0){
           bridge.ignoreCaughtUntil = performance.now() + 3000;
           rabbitCaughtCount = Number(rabbitCaughtCount||0) + 1;
           updateCaughtCloud(); syncUiState();
-          if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); placeKey(); }
+          // 원격 플레이어가 들고 있던 열쇠의 재배치는 호스트 월드가 담당한다.
+          // 여기서 각 클라이언트가 따로 랜덤 배치하면 서로 다른 위치에 열쇠가 생긴다.
+          if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); }
           if(rabbitCaughtCount>=2){ makeRabbitGhost(); } else { trapRabbitInCage(6); }
           maybeSendWorld(true); sendState(true);
         } else {
@@ -3800,11 +4018,15 @@ if(monsterReleaseLeft>0){
       // [FIX] 호스트: 500ms마다 world 상태 전송, 비호스트: 2초마다 world 요청
       if(bridge.isHost){
         if(nowp - (bridge.lastWorldAt||0) > 500){ maybeSendWorld(true); }
+        if(nowp - (bridge.lastEndCheckAt||0) > 250){
+          bridge.lastEndCheckAt = nowp;
+          maybeFinishMultiplayerRound();
+        }
       } else {
         if(nowp - (bridge.lastWorldReqAt||0) > 2000){ bridge.lastWorldReqAt = nowp; relay('world_req', {}); }
       }
-      // catch loop: 호스트만 판정 + relay (서버가 발신자 제외 브로드캐스트)
-      // 호스트가 relay한 caught는 타겟 클라이언트에게 전달됨
+      // catch loop: 호스트만 판정 + relay. 서버가 발신자에게도 되돌려줄 수
+      // 있으므로 위 메시지 처리기에서 자기 에코는 무시한다.
       // 호스트 자신이 타겟이면 relay 대신 직접 처리
       if(bridge.isHost && nowp - bridge.lastCatchAt > 120){
         bridge.lastCatchAt = nowp;
@@ -3852,9 +4074,15 @@ if(monsterReleaseLeft>0){
                     // 호스트 화면에서도 원격 플레이어 state 즉시 반영
                     const rr = bridge.remotes.get(target);
                     if(rr && rr.state){
+                      const droppedKey = !!rr.state.hasKey;
                       rr.state.caught = (Number(rr.state.caught||0)+1);
                       rr.state.trapped = rr.state.caught < 2;
                       rr.state.ghost = rr.state.caught >= 2;
+                      rr.state.hasKey = false;
+                      if(droppedKey){
+                        placeKey();
+                        maybeSendWorld(true);
+                      }
                     }
                   }
                 }

@@ -388,6 +388,12 @@ function applyRoster(list){
   }
 
   if (!me) me = players[mySid] || null;
+
+  // bridge_init가 첫 room_state보다 먼저 와 빈 로스터로 초기화된 경우에도,
+  // 뒤이어 도착한 서버 로스터만으로 게임을 정상 시작한다.
+  if (gameInitialized && !gameActive && !gameOver && me){
+    initGame();
+  }
 }
 
 function applyRemotePlayers(map){
@@ -1184,8 +1190,6 @@ window.addEventListener('message', e=>{
     return;
   }
 
-  // room.js sends the initial/current score as sc_score_sync so it cannot be
-  // mistaken for a real goal event. Accept the legacy name as well.
   if (d.type === 'sc_goal' || d.type === 'sc_goal_sync' || d.type === 'sc_score_sync'){
     const newA = Number(d.scoreA ?? score.A), newB = Number(d.scoreB ?? score.B);
     if (newA !== score.A) scoreAnimA = Date.now();

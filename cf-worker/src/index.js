@@ -403,7 +403,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "soccer");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer" || m === "backrooms3d" || m === "soccer" || m === "geumchikeo");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -519,8 +519,8 @@ export class RoomDO{
     // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
     // Stored here so late-joiners can be synced.
     this.sk = { startPayload: null };
-    this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, lastActiveAt: 0 };
-    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [] };
+    this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, latestEvent: null, lastActiveAt: 0 };
+    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [], ending:false };
 
     // DrawAnswer (Pictionary-like): minimal server = relays + round/timer/score authority
     this.da = {
@@ -539,6 +539,7 @@ export class RoomDO{
 
     this._wired = new WeakSet();
     this._lobbyUpdateTimer = null;
+    this._backToLobbyTimer = null;
     this._relayLimiter = new Map(); // uid -> {duelTs, tgTs}
 
     // CPU player is virtual (no websocket). Only used to allow solo duel 1:1.
@@ -626,7 +627,12 @@ export class RoomDO{
   _allReady(){
     const cpu = this._cpuUid();
     const duel = isDuelMode(this.meta.mode);
-    const soloCoopOk = (this.meta.mode === "suhaktokki" || this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer");
+    const soloCoopOk = (
+      this.meta.mode === "suhaktokki" ||
+      this.meta.mode === "snaketail" ||
+      this.meta.mode === "mathexplorer" ||
+      this.meta.mode === "math-explorer"
+    );
     let humanCount = 0;
     for (const [uid] of this.users.entries()){
       if (uid === cpu) continue;
@@ -635,7 +641,7 @@ export class RoomDO{
 
     // Solo duel: host can start immediately (server will attach CPU)
     if (duel && humanCount === 1) return true;
-    // SuhakTokki allows solo play inside a co-op room.
+    // These co-op games explicitly support a one-player room.
     if (!duel && soloCoopOk && humanCount === 1) return true;
     if (humanCount < 2) return false;
 
@@ -1002,6 +1008,11 @@ export class RoomDO{
         let brStartPayload = null;
         if (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer"){
           try{
+            this.mx.latestStates = {};
+            this.mx.latestWorld = null;
+            this.mx.latestPhase = null;
+            this.mx.latestEvent = null;
+            this.mx.lastActiveAt = 0;
             const cpuUid = this._cpuUid();
             const roster = Array.from(this.users.entries())
               .filter(([ruid])=> String(ruid) !== String(cpuUid))
@@ -1074,8 +1085,9 @@ export class RoomDO{
             this.br.latestStates = {};
             this.br.latestWorld = null;
             this.br.latestChat = [];
+            this.br.ending = false;
           }catch(_){
-            try{ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; }catch(_e){}
+            try{ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; }catch(_e){}
           }
         }
 
@@ -1126,6 +1138,8 @@ export class RoomDO{
 
       // ----- SuhakTokki relay (generic packet) -----
       if (t === "sk_msg"){
+        if (this.meta.phase !== "playing") return;
+        if (this.meta.mode !== "suhaktokki" && this.meta.mode !== "geumchikeo") return;
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
         // throttle high-frequency state packets
         if (String(inner.t||"") === "state"){
@@ -1135,7 +1149,37 @@ export class RoomDO{
           lim.skTs = n;
           this._relayLimiter.set(uid, lim);
         }
-        this._broadcast("sk_msg", { msg: inner });
+        // Geumchikeo routes players by `from`; bind that field to the
+        // authenticated room user so one client cannot impersonate another.
+        const out = (this.meta.mode === "geumchikeo")
+          ? Object.assign({}, inner, { from:String(uid) })
+          : inner;
+        this._broadcast("sk_msg", { msg: out });
+        return;
+      }
+
+      // SuhakTokki match-end/host-exit: the iframe reports this through room.js.
+      // Only the current authoritative host may end the shared room session.
+      if (t === "sk_over"){
+        if (this.meta.mode !== "suhaktokki" || this.meta.phase !== "playing") return;
+        const sender = this.users.get(uid);
+        if (!sender?.isHost && Number(sender?.seat ?? -1) !== 0) return;
+        this._endAndBackToLobby(300);
+        return;
+      }
+
+      // Geumchikeo shares sk_msg for its realtime packets, but has its own end signal.
+      if (t === "gk_over"){
+        if (this.meta.mode !== "geumchikeo" || this.meta.phase !== "playing") return;
+        this._endAndBackToLobby(2600);
+        return;
+      }
+
+      // MathExplorer is host-authoritative; closing one embedded game while
+      // leaving the room in `playing` would strand the remaining clients.
+      if (t === "mx_over"){
+        if ((this.meta.mode !== "mathexplorer" && this.meta.mode !== "math-explorer") || this.meta.phase !== "playing") return;
+        this._endAndBackToLobby(300);
         return;
       }
 
@@ -1143,6 +1187,8 @@ export class RoomDO{
 
       // ----- MathExplorer relay (generic packet) -----
       if (t === "mx_msg") {
+        if (this.meta.phase !== "playing") return;
+        if (this.meta.mode !== "mathexplorer" && this.meta.mode !== "math-explorer") return;
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
         let kind = String(inner.kind||inner.t||"");
         if (kind === "mx_chat" || kind === "chat_msg") kind = "chat";
@@ -1171,7 +1217,7 @@ export class RoomDO{
 
         // cache latest states/world/phase for late-join sync
         try{
-          if (!this.mx) this.mx = { startPayload:null, latestStates:{}, latestWorld:null, latestPhase:null, lastActiveAt:0 };
+          if (!this.mx) this.mx = { startPayload:null, latestStates:{}, latestWorld:null, latestPhase:null, latestEvent:null, lastActiveAt:0 };
           this.mx.lastActiveAt = now();
           if (kind === "state") {
             this.mx.latestStates[String(uid)] = Object.assign({}, inner, { from:String(uid) });
@@ -1186,10 +1232,14 @@ export class RoomDO{
 
         const out = Object.assign({}, inner, { from: String(uid), seat: Number(this.users.get(uid)?.seat ?? -1), nick: safeNick(this.users.get(uid)?.nick || "") });
         this._broadcast("mx_msg", { msg: out });
+        if (kind === "mx_event" && String(inner.evt || "") === "game_over_all") {
+          this._endAndBackToLobby(2300);
+        }
         return;
       }
       // ----- Backrooms3d relay (generic packet) -----
       if (t === "br_msg") {
+        if (this.meta.mode !== "backrooms3d" || this.meta.phase !== "playing") return;
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
         let kind = String(inner.kind || inner.t || "");
 
@@ -1209,24 +1259,34 @@ export class RoomDO{
         const sender = this.users.get(uid);
         const senderSeat = Number(sender?.seat ?? 99);
         const isAuthoritativeSender = !!sender?.isHost || senderSeat === 0;
-        if ((kind === "world") && !isAuthoritativeSender) {
+        if ((kind === "world" || kind === "caught" || kind === "game_end") && !isAuthoritativeSender) {
           return;
         }
 
         try{
-          if (!this.br) this.br = { startPayload:null, latestStates:{}, latestWorld:null, latestChat:[] };
-          if (kind === "state") {
+          if (!this.br) this.br = { startPayload:null, latestStates:{}, latestWorld:null, latestChat:[], ending:false };
+          if (kind === "game_end" && this.br.ending) return;
+          if (kind === "leave") {
+            if (this.br.latestStates) delete this.br.latestStates[String(uid)];
+          } else if (kind === "state") {
             this.br.latestStates[String(uid)] = Object.assign({}, inner, { from:String(uid) });
           } else if (kind === "world") {
             this.br.latestWorld = Object.assign({}, inner, { from:String(uid) });
           } else if (kind === "chat") {
             this.br.latestChat.push(Object.assign({}, inner, { from:String(uid) }));
             if (this.br.latestChat.length > 30) this.br.latestChat = this.br.latestChat.slice(-30);
+          } else if (kind === "game_end") {
+            this.br.ending = true;
           }
         }catch(_){ }
 
         const out = Object.assign({}, inner, { from: String(uid), seat: Number(this.users.get(uid)?.seat ?? -1), nick: safeNick(this.users.get(uid)?.nick || "") });
         this._broadcast("br_msg", { msg: out });
+        // If the authoritative room host closes Backrooms while staying in the
+        // outer room, nobody else can publish world snapshots. End cleanly
+        // instead of leaving the remaining players in a frozen match.
+        if (kind === "leave" && isAuthoritativeSender) this._endAndBackToLobby(300);
+        if (kind === "game_end") this._endAndBackToLobby(2600);
         return;
       }
 
@@ -1869,6 +1929,24 @@ export class RoomDO{
         }
       }catch(_){ }
 
+      // Backrooms3d: remove the cached avatar immediately. Without this cleanup,
+      // reconnecting/late-joining clients receive a ghost player forever.
+      try{
+        if (this.br && this.br.latestStates) delete this.br.latestStates[String(uid)];
+        if (this.meta.mode === "backrooms3d" && this.meta.phase === "playing"){
+          this._broadcast("br_msg", { msg:{ kind:"peer_left", from:"server", sid:String(uid), nick:safeNick(u?.nick || "") } });
+        }
+      }catch(_){ }
+
+      // MathExplorer: remove departed peers from late-join snapshots and notify
+      // the running clients so shared selection phases do not wait on ghosts.
+      try{
+        if (this.mx && this.mx.latestStates) delete this.mx.latestStates[String(uid)];
+        if ((this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer") && this.meta.phase === "playing"){
+          this._broadcast("mx_msg", { msg:{ kind:"peer_left", from:"server", sid:String(uid), nick:safeNick(u?.nick || "") } });
+        }
+      }catch(_){ }
+
       // DrawAnswer: remove leaver from order/score; if drawer left, advance round
       try{
         if (this.meta.mode === "drawanswer" && this.meta.phase === "playing"){
@@ -1934,8 +2012,10 @@ export class RoomDO{
     // Hard-reset all in-memory transient room/game state when the room becomes empty.
     // This prevents ghost timers/state surviving hibernation or object reuse.
     try{ if (this._lobbyUpdateTimer){ clearTimeout(this._lobbyUpdateTimer); this._lobbyUpdateTimer = null; } }catch(_){}
+    try{ if (this._backToLobbyTimer){ clearTimeout(this._backToLobbyTimer); this._backToLobbyTimer = null; } }catch(_){}
     try{ if (this.tg && this.tg.timer){ clearTimeout(this.tg.timer); } }catch(_){}
     try{ if (this.st && this.st.timer){ clearTimeout(this.st.timer); } }catch(_){}
+    try{ if (this.sc && this.sc.timer){ clearTimeout(this.sc.timer); } }catch(_){}
     try{ if (this.da && this.da.timer){ clearTimeout(this.da.timer); } }catch(_){}
 
     try{ this.sockets = new Map(); }catch(_){}
@@ -1947,9 +2027,10 @@ export class RoomDO{
     this.tour = null;
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null };
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} };
+    this.sc = { players:{}, ball:null, score:{A:0,B:0}, startedAt:0, durationMs:120000, timer:null, over:false, lastPosBroadcastAt:0 };
     this.sk = { startPayload: null };
-    this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, lastActiveAt: 0 };
-    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [] };
+    this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, latestEvent: null, lastActiveAt: 0 };
+    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [], ending:false };
     this.da = { active:false, round:0, maxRounds:5, order:[], drawerIdx:0, drawerUid:'', word:'', endAt:0, timer:null, scores:{}, ops:[] };
     this._cpu = { active:false };
 
@@ -2585,8 +2666,12 @@ export class RoomDO{
 
 
   _endAndBackToLobby(delayMs){
+    // Several clients may report the same shared game end nearly simultaneously.
+    // Schedule exactly one reset/backToRoom broadcast for the room.
+    if (this._backToLobbyTimer) return;
     const d = Number(delayMs || 0);
-    setTimeout(()=>{
+    this._backToLobbyTimer = setTimeout(()=>{
+      this._backToLobbyTimer = null;
       this.meta.phase = "lobby";
       this.meta.status = "waiting";
       this.tour = null;
@@ -2603,7 +2688,8 @@ export class RoomDO{
 
       // Clear authoritative start payloads / transient coop caches when returning to lobby.
       try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
-      try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.lastActiveAt = 0; } }catch(_){ }
+      try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.latestEvent = null; this.mx.lastActiveAt = 0; } }catch(_){ }
+      try{ if (this.br){ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; } }catch(_){ }
 
       try{ this.da && this._daReset(); }catch(_){ }
 

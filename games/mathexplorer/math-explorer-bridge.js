@@ -278,7 +278,7 @@
   function autoPickCard(sel){ try{ document.querySelector(sel)?.click(); }catch(_){ } }
   function currentPhaseKey(){ return `${state.phase}:${safeNum(state.phaseDeadline,0)}`; }
   function resetChoiceDone(){ state.choiceDoneBySid={}; state.choiceAckKey=''; }
-  function getExpectedChoiceParticipants(){ const arr=(Array.isArray(state.phaseParticipants)?state.phaseParticipants:[]).filter(Boolean); if(arr.length) return Array.from(new Set(arr)); const roster=(Array.isArray(state.rosterSids)?state.rosterSids:[]).filter(Boolean); if(roster.length) return Array.from(new Set(roster)); const sel=Object.keys(state.selectedBySid||{}).filter(Boolean); if(sel.length) return Array.from(new Set(sel)); return [mySid()||'self']; }
+  function getExpectedChoiceParticipants(){ const arr=(Array.isArray(state.phaseParticipants)?state.phaseParticipants:[]).filter(Boolean); if(arr.length) return Array.from(new Set(arr)); const all=new Set(); for(const sid of (Array.isArray(state.rosterSids)?state.rosterSids:[])){ if(sid) all.add(String(sid)); } for(const sid of Array.from(state.peers||[])){ if(sid) all.add(String(sid)); } for(const sid of Object.keys(state.selectedBySid||{})){ if(sid) all.add(String(sid)); } const me=mySid()||'self'; if(me) all.add(me); return Array.from(all); }
   function inChoicePhase(){ return state.phase===PHASES.LEVEL_CHOICE || state.phase===PHASES.CHEST_CHOICE; }
   function localChoiceFinished(){ const sid=mySid()||''; return !!(sid && state.choiceDoneBySid && Object.prototype.hasOwnProperty.call(state.choiceDoneBySid,sid)); }
   function queueLocalChoiceCommit(kind){ try{ state.__mxPendingChoiceCommit=String(kind||''); state.__mxPendingChoiceAt=now(); }catch(_){} }
@@ -304,7 +304,7 @@
     if(!participants.length) return;
     const me = String(mySid()||'');
     const nowTs = now();
-    const roster = Array.from(new Set((Array.isArray(state.rosterSids)?state.rosterSids:[]).filter(Boolean)));
+    const roster = Array.from(new Set([...(Array.isArray(state.rosterSids)?state.rosterSids:[]), ...participants].filter(Boolean)));
     const live = new Set();
     for(const sid of (roster.length?roster:participants)){
       const ss=String(sid||''); if(!ss) continue;
@@ -1146,6 +1146,15 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     if(k==='mx_world'){ k='world'; }
     if(k==='hello'){ send('hello_ack',{}); return; }
     if(k==='hello_ack'){ if(from) markPeer(from); return; }
+    if(k==='peer_left'){
+      const sid=String(m.sid||'');
+      if(!sid) return;
+      try{ state.peers.delete(sid); }catch(_){}
+      state.rosterSids=(state.rosterSids||[]).filter(x=>String(x)!==sid);
+      try{ delete state.remoteStates[sid]; delete state.selectedBySid[sid]; delete state.choiceDoneBySid[sid]; }catch(_){}
+      if(iAmHost()) maybeFinishSharedChoice();
+      return;
+    }
     if(k==='chat'){
       dbgBump('in'); dbgBump('chatIn');
       if(!m.text) return;
@@ -1405,7 +1414,28 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         return origCheckMath();
       };
     }
-    if(origCloseMath){ g.closeMath=function(){ const r=origCloseMath(); try{ if(state.phase===PHASES.CHEST_CHOICE){ g.paused=true; document.getElementById('mathScreen')?.classList.add('hidden'); if(!state.__mxChestMathSolved){ // [FIX v25] 정답 아닌 경우(닫기/시간초과)만 abort. // checkMathAnswer가 origCheckMath() 전에 __mxChestMathSolved를 설정하므로 // closeMath 진입 시점엔 정답 여부가 이미 확정되어 있음. state.__mxChestAbortedLocal=true; markChoiceDoneLocal(false); setSelecting(true,'보물'); setOverlay('다른 플레이어 선택 대기'); document.getElementById('itemScreen')?.classList.add('hidden'); } // 정답인 경우: showItemScreen이 이어서 호출됨. 여기서 abort 처리 금지. } }catch(_){} return r; }; }
+    if(origCloseMath){
+      g.closeMath=function(){
+        const r=origCloseMath();
+        try{
+          if(state.phase===PHASES.CHEST_CHOICE){
+            g.paused=true;
+            document.getElementById('mathScreen')?.classList.add('hidden');
+            // 정답이 아닌 닫기/시간초과만 선택 포기로 처리한다.
+            // checkMathAnswer가 origCheckMath()보다 먼저 이 값을 설정한다.
+            if(!state.__mxChestMathSolved){
+              state.__mxChestAbortedLocal=true;
+              markChoiceDoneLocal(false);
+              setSelecting(true,'보물');
+              setOverlay('다른 플레이어 선택 대기');
+              document.getElementById('itemScreen')?.classList.add('hidden');
+            }
+            // 정답이면 이어지는 showItemScreen 흐름을 그대로 유지한다.
+          }
+        }catch(_){}
+        return r;
+      };
+    }
     if(origShowItem){ g.showItemScreen=function(){ if(inChoicePhase() && localChoiceFinished() && !state.__mxForceChoiceUi){ setOverlay('다른 플레이어 선택 대기'); try{ g.paused=true; }catch(_){} return; } // [FIX] 이미 itemScreen 열려있어도 return 하지 않고 카드 래핑 진행
   if(state.phase===PHASES.CHEST_CHOICE && isChoiceVisible()==='itemScreen' && !state.__mxForceChoiceUi){ try{ state.__mxChestMathSolved=true; }catch(_){} /* return 제거 - 카드 래핑 계속 진행 */ } /* [BUG FIX] 게스트가 수학 풀고 나서 직접 아이템 화면을 열어야 함. choice_request는 보내되 return하지 않고 계속 진행 */ if(!iAmHost() && !state.__mxForceChoiceUi){ sendEvent('choice_request',{ phase:PHASES.CHEST_CHOICE }); /* 게스트도 아이템 화면 직접 표시 - return 제거 */ } const r=origShowItem(); try{ const root=document.getElementById('itemScreen'); try{ if(root && !localChoiceFinished()){ delete root.dataset.mxSelectedLocked; } }catch(_){} const cards=[...document.querySelectorAll('#items .upgradeCard')]; try{ if(root && !root.__mxChoiceClickCap){ root.addEventListener('click', ()=>{ try{ if(state.phase===PHASES.CHEST_CHOICE){ queueLocalChoiceCommit('item'); setTimeout(()=>flushPendingLocalChoiceCommit(),0); } }catch(_){} }, true); root.__mxChoiceClickCap=1; } }catch(_){} cards.forEach(card=>{ try{ delete card.dataset.mxPicked; delete card.dataset.mxWrapped; }catch(_){} if(card.dataset.mxWrapped==='1') return; card.dataset.mxWrapped='1'; const oc=card.onclick; card.onclick=(ev)=>{ if(card.dataset.mxPicked==='1') return; card.dataset.mxPicked='1'; try{ markChoiceUiPicked(root,card); }catch(_){} /* 원본 onclick 항상 실행 → 스탯/이펙트 적용 보장 */ try{ if(typeof oc==='function') oc.call(card,ev); }catch(_){} /* 멀티동기화만 처리 */ /* [BUG FIX] choice_apply+markChoiceDoneLocal은 __mxOnItemPick 콜백이 처리 → 여기서 중복 발송 제거 */ if(inChoicePhase()){ try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} const _pk=currentPhaseKey(); setTimeout(()=>{ if(!inChoicePhase()||currentPhaseKey()!==_pk) return; try{ root?.classList.remove('hidden'); }catch(_){} try{ g.paused=true; }catch(_){} },0); setOverlay('다른 플레이어 선택 대기'); } }; }); }catch(_){} try{ maybeInjectTauntShieldCard(); }catch(_){} try{ if(state.phase===PHASES.CHEST_CHOICE){ state.__mxChestMathSolved = true; } }catch(_){} if(iAmHost() && !state.__mxForceChoiceUi && state.phase!==PHASES.CHEST_CHOICE){ const deadline=now()+20000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.CHEST_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.CHEST_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); state.__mxChestMathSolved=true; /* [FIX v26] setPhase(CHEST_CHOICE)가 __mxChestMathSolved를 false로 리셋하므로 복원. 미복원 시 ticker가 200ms마다 markChoiceDoneLocal(false) 호출 → 아이템창 즉시 닫힘/멈춤. */ } state.__mxChoiceUiOpened = state.__mxChoiceUiOpened || !!isChoiceVisible(); return r; }; }
     try{ const PlayerCtor=getGlobalCtor('Player') || window.Player; if(PlayerCtor&&PlayerCtor.prototype && !PlayerCtor.prototype.__mxRemoteAttackHooked){ const _oa=PlayerCtor.prototype.attack; if(typeof _oa==='function'){ PlayerCtor.prototype.attack=function(target){ const r=_oa.apply(this, arguments); try{ if((window.location.search||'').includes('embed=1') && !inChoicePhase()){ const pulse = getLocalAttackPulse(this) || Date.now(); if(pulse !== safeNum(state.lastAttackPulseSent,0)){ state.lastAttackPulseSent = pulse; sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(this.x)), y:Math.round(safeNum(this.y)), tx:Math.round(safeNum(target&&target.x, NaN)), ty:Math.round(safeNum(target&&target.y, NaN)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), atkSpeed:safeNum(this.atkSpeed,0), crit:safeNum(this.crit,0), multishot:safeNum(this.multishot,0), pierce:safeNum(this.pierce,0), poison:!!this.poison, poisonDmg:safeNum(this.poisonDmg,0), freeze:!!this.freeze, explode:!!this.explode, lightning:safeNum(this.lightning,0), meteorChance:safeNum(this.meteorChance,0), meteorDmg:safeNum(this.meteorDmg,0), spinBlade:!!this.spinBlade, spinDmgMultiplier:safeNum(this.spinDmgMultiplier,1), shield:!!this.shield, shieldHp:safeNum(this.shieldHp,0), itemLevels:Object.assign({}, this.itemLevels||{}), charType:String((this.design&&this.design.type)||state.localCharType||''), pulse }); } } }catch(_){} return r; }; } PlayerCtor.prototype.__mxRemoteAttackHooked=true; } }catch(_){}
