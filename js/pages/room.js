@@ -1335,6 +1335,8 @@ function updatePreview(modeId){
         __game: "soccer",
         x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
         kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
+        kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
+        kickBallX:d.kickBallX, kickBallY:d.kickBallY,
         seat: getMySeat(), nick: myNick || "Player", isHost: getMyIsHost()
       };
       // 호스트가 보낸 최신 공/이벤트를 위치 스냅샷에도 계속 싣는다.

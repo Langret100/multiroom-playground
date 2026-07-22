@@ -297,20 +297,14 @@ function spawnBurst(x, y, color, count, spread){
   }
 }
 function spawnRing(x, y, color){
-  rings.push({ x, y, r:5, alpha:0.9, color });
+  rings.push({ x, y, r:6, alpha:0.55, color });
 }
 function playKickImpact(x,y,power,dir){
   const p=clamp(power||.5,0,1);
-  spawnRing(x,y,p>.72?'#fff2a8':'#ffd640');
-  rings.push({x,y,r:10,alpha:.68,color:'#ffffff'});
-  spawnBurst(x,y,'#ffffff',9+Math.round(p*9),3+p*2.8);
-  // 공 진행방향 반대쪽으로 잔디 조각을 뿌려 발에 맞은 방향이 읽히게 한다.
-  for(let i=0;i<4+Math.round(p*3);i++){
-    const a=(Number.isFinite(dir)?dir:0)+Math.PI+(Math.random()-.5)*1.15;
-    const sp=1.4+Math.random()*(2.6+p*2);
-    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:.72,color:'#a7e8ad',size:2+Math.random()*2});
-  }
-  addShake(4.5+p*6.5,170+p*110);
+  // v7에서 게스트에게 보이던 짧고 선명한 타격감 그대로 사용한다.
+  spawnRing(x,y,'#ffd640');
+  spawnBurst(x,y,'#ffffff',6,2.2);
+  addShake(Math.min(7,(5+p*9)*.72),130);
   sfxKick(p);
 }
 function playKickImpactOnce(impactAt,x,y,power,dir){
@@ -469,6 +463,11 @@ function applyRemotePlayers(map){
     if(incomingKickAt && incomingKickAt!==p.kickAt) p._kickPoseUntil=now+180;
     p.kickAt = Number(snap.kickAt ?? p.kickAt ?? 0);
     p.kickCharge = Number(snap.kickCharge ?? p.kickCharge ?? 0);
+    if(snap.kickX!=null) p.kickX=Number(snap.kickX);
+    if(snap.kickY!=null) p.kickY=Number(snap.kickY);
+    if(snap.kickDir!=null) p.kickDir=Number(snap.kickDir);
+    if(snap.kickBallX!=null) p.kickBallX=Number(snap.kickBallX);
+    if(snap.kickBallY!=null) p.kickBallY=Number(snap.kickBallY);
     p.tackle = !!snap.tackle;
   }
 }
@@ -483,6 +482,7 @@ function showOverlay(title, text){
 /* ── 킥 차징 / 태클 ── */
 let kickCharging = false, kickChargeStart = 0;
 let pendingKickAt = 0, pendingKickCharge = 0, pendingKickUntil = 0;
+let pendingKickX=0, pendingKickY=0, pendingKickDir=0, pendingKickBallX=0, pendingKickBallY=0;
 let tackleCooldownUntil = 0;
 let tackleActiveUntil = 0;
 const KICK_CHARGE_MS = 600;
@@ -510,6 +510,9 @@ function releaseKickCharge(){
   // Worker의 tg_state 전송 제한(약 40ms)과 위치 송신 주기(약 30ms)가 엇갈려
   // 한 프레임짜리 킥이 버려질 수 있으므로 같은 edge id를 잠깐 반복 전송한다.
   pendingKickUntil = pendingKickAt+240;
+  const kickBall=ball_or_netball();
+  pendingKickX=me.x; pendingKickY=me.y; pendingKickDir=me.dir;
+  pendingKickBallX=kickBall.x; pendingKickBallY=kickBall.y;
   // 내 상태는 applyRemotePlayers()에서 의도적으로 제외된다. 이전에는 이 값을
   // 네트워크에만 보내서, 게스트의 킥은 호스트가 받아 처리했지만 호스트 자신의
   // 킥은 호스트 players[mySid]에 기록되지 않았다. 그 결과 호스트는 충전 슛이
@@ -517,6 +520,8 @@ function releaseKickCharge(){
   // edge 값을 먼저 기록해 양쪽 모두 같은 호스트 권위 판정을 타게 한다.
   me.kickAt = pendingKickAt;
   me.kickCharge = pendingKickCharge;
+  me.kickX=pendingKickX; me.kickY=pendingKickY; me.kickDir=pendingKickDir;
+  me.kickBallX=pendingKickBallX; me.kickBallY=pendingKickBallY;
   me._kickPoseUntil = Date.now()+180;
   sfxSwing(pendingKickCharge); // 호스트 여부와 상관없이 내가 찬 순간 즉시 피드백
   // 게스트는 호스트 왕복을 기다리면 충격 효과가 늦거나 보간에 나뉘어 약해진다.
@@ -663,18 +668,21 @@ function updateBallHost(){
     // 위치 패킷에 덮여 한 프레임짜리 이벤트가 사라지지 않도록 sticky 필드로 옴).
     if (p.kickAt && p.kickAt !== p._lastKickAt){
       p._lastKickAt = p.kickAt;
-      if (d < KICK_RANGE){
-        let dir = Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx);
+      const kickPX=Number.isFinite(p.kickX)?p.kickX:p.x;
+      const kickPY=Number.isFinite(p.kickY)?p.kickY:p.y;
+      const requestBallDist=Math.hypot(Number(p.kickBallX)-kickPX,Number(p.kickBallY)-kickPY);
+      const reportedBallDrift=Math.hypot(ball.x-Number(p.kickBallX),ball.y-Number(p.kickBallY));
+      // 게스트가 찬 순간에는 공 옆이었어도 왕복 지연 뒤 호스트 좌표는 벌어질
+      // 수 있다. 현재 거리 또는 킥 순간 보고 좌표가 타당하면 슛을 인정한다.
+      const kickInRange=d<KICK_RANGE+10 ||
+        (Number.isFinite(requestBallDist) && requestBallDist<KICK_RANGE+7 && reportedBallDrift<64);
+      if (kickInRange){
+        const dir = Number.isFinite(p.kickDir) ? p.kickDir : (Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx));
         const charge=clamp(p.kickCharge||0,0,1);
-        // 상대 골문을 대략 바라보는 슛만 아주 약하게 중앙으로 보정한다.
-        // 조작 방향은 유지하면서 작은 화면에서도 골대를 겨냥하기 쉬워진다.
-        const goalX=p.team==='A'?FX+FW:FX, goalY=FY+FH/2;
-        const goalDir=Math.atan2(goalY-p.y,goalX-p.x);
-        let delta=Math.atan2(Math.sin(goalDir-dir),Math.cos(goalDir-dir));
-        if(Math.cos(delta)>.35) dir+=delta*(.08+charge*.10);
-        const power = 6.5 + charge*8.5;
-        ball.vx=ball.vx*.18+Math.cos(dir)*power+(p.vx||0)*.22;
-        ball.vy=ball.vy*.18+Math.sin(dir)*power+(p.vy||0)*.22;
+        // v7과 같은 파워 곡선/가산 방식으로 복원한다.
+        const power = 5 + charge*9;
+        ball.vx+=Math.cos(dir)*power;
+        ball.vy+=Math.sin(dir)*power;
         // 속도 변화로 이펙트를 추측하면 보간/프레임 속도에 따라 양쪽에서
         // 사라질 수 있다. 호스트가 확정한 킥 id를 공 스냅샷에 실어 전원이
         // 정확히 한 번씩 같은 이펙트를 재생하게 한다.
@@ -755,7 +763,7 @@ function updateBallTrail(){
   ballTrail = ballTrail.filter(t=>t.life>0);
 }
 function updateRings(){
-  for (const r of rings){ r.r += 2.15; r.alpha -= 0.026; }
+  for (const r of rings){ r.r += 2.4; r.alpha -= 0.045; }
   rings = rings.filter(r=>r.alpha>0);
 }
 
@@ -825,7 +833,9 @@ function netSends(){
     if(!kickActive && me.kickAt){ me.kickAt=0; me.kickCharge=0; }
     bridgeSend('sc_pos', {
       x:me.x, y:me.y, vx:me.vx, vy:me.vy, dir:me.dir,
-      kickAt, kickCharge, tackle: !!me.tackle,
+      kickAt, kickCharge, tackle:!!me.tackle,
+      kickX:pendingKickX, kickY:pendingKickY, kickDir:pendingKickDir,
+      kickBallX:pendingKickBallX, kickBallY:pendingKickBallY,
     });
   }
   if (isHost && now-lastBallSent >= 30){
@@ -1017,7 +1027,7 @@ function drawPlayer(p, mine, sid){
     ctx.fillRect(-Math.cos(dir)*19-15,-Math.sin(dir)*19-19,30,35); ctx.globalAlpha=1;
   }
 
-  // 작은 16×18 햄스터 마스코트. PX=2는 2배 backing canvas에서 실제 4px
+  // 작은 16×18 치비 소녀 축구선수. PX=2는 2배 backing canvas에서 실제 4px
   // 단위라 흐림 없이 또렷하고, 이전 PX=2.5보다 화면 점유 크기도 20% 작다.
   const PX=2, W=16, H=18;
   const baseX=-W*PX/2, baseY=-H*PX+13;
@@ -1030,33 +1040,32 @@ function drawPlayer(p, mine, sid){
   const WHITE=stunned?'#d1d1d1':'#f7f8f2';
   const SHOE='#172033', EYE='#18202d';
   const variant=Math.abs(Number(p.seat)||0)%4;
+  const HAIR=stunned?'#686d75':['#5a3828','#252c3b','#d49a42','#7b4d76'][variant];
+  const HAIR_HI=stunned?'#858a91':['#8b5a3c','#46516a','#f1c56b','#b071a9'][variant];
 
   ctx.save(); ctx.scale(facing,1); ctx.imageSmoothingEnabled=false;
   const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(baseX+x*PX),Math.round(baseY+(y+bob)*PX),Math.ceil(w*PX),Math.ceil(h*PX));};
 
-  // 동그란 귀와 볼, 큰 눈이 보이는 햄스터 얼굴. 팀 색은 얼굴 전체가 아니라
-  // 머리띠와 유니폼에 써서 표정이 어둡게 묻히지 않게 했다.
-  px(13,10,2,3,OUT); px(14,11,2,2,FACE); px(14,11,1,1,WHITE);
-  px(3,0,4,4,OUT); px(10,0,3,4,OUT);
-  px(4,1,2,2,FACE); px(10,1,2,2,FACE);
-  px(5,1,1,1,INNER); px(10,1,1,1,INNER);
+  // 작은 치비 소녀 축구선수: 머리카락 실루엣 → 얼굴 → 앞머리 순서.
+  // 좌석별로 갈색/남색/금발/보라 머리를 사용하고 팀 색은 머리핀과 유니폼에 둔다.
+  if(variant===0){ px(12,3,3,7,OUT); px(13,4,3,5,HAIR); }
+  else if(variant===1){ px(2,2,2,9,OUT); px(12,2,2,9,OUT); }
+  else if(variant===2){ px(12,3,3,4,OUT); px(13,4,3,3,HAIR); }
+  else { px(1,4,3,5,OUT); px(0,5,3,4,HAIR); }
 
-  px(3,2,10,1,OUT); px(2,3,12,6,OUT); px(3,9,10,2,OUT);
-  px(3,3,10,6,FACE); px(4,9,8,1,FACE);
-  px(4,3,8,1,teamColor); px(5,4,6,1,HI);
-  px(5,7,6,3,WHITE);
-  px(3,7,2,2,INNER); px(11,7,2,2,INNER);
+  px(3,1,10,2,OUT); px(2,3,12,7,OUT); px(3,10,10,1,OUT);
+  px(3,2,10,3,HAIR); px(3,4,10,5,FACE); px(4,9,8,1,FACE);
+  px(3,3,3,3,HAIR); px(6,3,2,2,HAIR_HI); px(10,3,3,3,HAIR);
+  px(3,8,2,2,HAIR); px(11,8,2,2,HAIR);
+  px(4,7,2,1,INNER); px(10,7,2,1,INNER);
   if (!stunned){
-    px(4,5,2,2,EYE); px(10,5,2,2,EYE);
-    px(4,5,1,1,'#fff'); px(10,5,1,1,'#fff');
-    px(7,7,2,1,OUT); px(7,8,1,1,INNER); px(8,8,1,1,INNER);
+    px(5,5,1,2,EYE); px(10,5,1,2,EYE);
+    px(5,5,1,1,'#fff'); px(10,5,1,1,'#fff');
+    px(7,8,2,1,INNER);
   } else { px(4,6,2,1,EYE); px(10,6,2,1,EYE); }
 
-  // 좌석별 작은 장식
-  if (variant===0){ px(3,3,2,1,'#ffe66d'); px(4,2,1,3,'#ffe66d'); }
-  else if (variant===1){ px(10,3,2,1,'#ffffff'); }
-  else if (variant===2){ px(3,4,1,2,'#8ee3ff'); px(4,3,1,1,'#8ee3ff'); }
-  else { px(11,3,2,2,'#ff9fc0'); px(12,2,1,3,'#ff9fc0'); }
+  // 팀색 머리핀
+  px(11,2,2,1,teamColor); px(12,1,1,3,HI);
 
   // 몸통/팔: 태클 중이면 앞팔과 몸을 길게 보여 동작을 읽기 쉽게 한다.
   px(3,10,10,5,OUT); px(4,10,8,4,teamColor); px(4,12,8,1,HI);

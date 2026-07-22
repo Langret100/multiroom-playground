@@ -391,6 +391,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-07-22-soccer-impact-v9";
+  window.__BUILD_ID = "2026-07-22-soccer-kick-lag-v10";
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();
