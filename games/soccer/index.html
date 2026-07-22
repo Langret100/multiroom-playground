@@ -631,8 +631,27 @@ function lerpRemote(){
 function updateNetBall(){
   if (isHost) return; // 호스트는 자기 물리 계산 결과(ball)를 그대로 그린다
   const now = Date.now();
-  const nxt = smoothToward(netBall, netBall.netX, netBall.netY, netBall.vx, netBall.vy, netBall.netT, now, 0.35);
+  const nxt = smoothToward(netBall, netBall.netX, netBall.netY, netBall.vx, netBall.vy, netBall.netT, now, 0.74);
   netBall.x = nxt.x; netBall.y = nxt.y;
+
+  // 게스트 로컬 드리블 예측: 호스트의 다음 공 스냅샷을 기다리는 동안에도
+  // 내 발 앞의 공만 같은 접촉 공식으로 짧게 움직인다. 득점/최종 물리는 여전히
+  // 호스트가 결정하고, 새 권위 스냅샷이 오면 위 보간이 자연스럽게 복귀시킨다.
+  if(me && gameActive && now>=kickoffUntil){
+    const mdx=netBall.x-me.x,mdy=netBall.y-me.y,md=Math.hypot(mdx,mdy)||.001;
+    const tdx=netBall.netX-me.x,tdy=netBall.netY-me.y,td=Math.hypot(tdx,tdy)||.001;
+    const speed=Math.hypot(me.vx||0,me.vy||0);
+    if(Math.min(md,td)<PR+BR+10 && speed>.12){
+      // 드리블 중에는 지연된 화면 공의 방향이 아니라 실제 이동 방향의 발 앞을
+      // 목표로 잡는다. 그렇지 않으면 왼쪽으로 달리는데 과거 공이 오른쪽에 남아
+      // 반대쪽으로 미는 현상이 생긴다.
+      const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
+      const tx=me.x+nx*(PR+BR),ty=me.y+ny*(PR+BR);
+      netBall.x=lerp(netBall.x,tx,.52); netBall.y=lerp(netBall.y,ty,.52);
+      netBall.vx=lerp(netBall.vx,(me.vx||0)*.82+nx*Math.min(4.8,.55+speed*.92),.18);
+      netBall.vy=lerp(netBall.vy,(me.vy||0)*.82+ny*Math.min(4.8,.55+speed*.92),.18);
+    }
+  }
 }
 
 /* 공은 호스트만 물리 계산을 하고(권위), 나머지는 sc_ball 수신값을 그대로
@@ -645,8 +664,17 @@ function updateBallHost(){
   const now = Date.now();
   if (now < kickoffUntil) return;
 
-  for (const p of Object.values(players)){
-    const dx = ball.x-p.x, dy = ball.y-p.y;
+  for (const [sid,p] of Object.entries(players)){
+    // 원격 선수는 화면에 그리는 보간 좌표보다 최신 net 좌표와 속도 외삽을
+    // 사용한다. 이 차이가 호스트/게스트 드리블 반응 차이의 핵심 원인이었다.
+    const age=clamp(now-(p.netT||now),0,120);
+    const remoteSpeed=Math.hypot(p.netVX||0,p.netVY||0);
+    // 전송 전에 이미 지나간 2~4프레임을 이동 중일 때만 보상한다. 정지 상태는
+    // 기본 1.4프레임만 사용해 공이 선수보다 앞서 움직이는 부작용을 막는다.
+    const lead=age*.06+1.4+clamp(remoteSpeed/3.75,0,1)*2.9;
+    const controlX=sid===mySid?p.x:clamp((p.netX??p.x)+(p.netVX||0)*lead,FX+PR,FX+FW-PR);
+    const controlY=sid===mySid?p.y:clamp((p.netY??p.y)+(p.netVY||0)*lead,FY+PR,FY+FH-PR);
+    const dx = ball.x-controlX, dy = ball.y-controlY;
     const d = Math.hypot(dx,dy) || 0.0001;
     const minD = PR+BR;
 
@@ -654,8 +682,8 @@ function updateBallHost(){
     // 공을 서서히 맞춘다. 그래서 천천히 움직이면 드리블, 충전 킥이면 아래의 슛이 된다.
     if (d < minD){
       const nx = dx/d, ny = dy/d;
-      ball.x = p.x + nx*minD;
-      ball.y = p.y + ny*minD;
+      ball.x = controlX + nx*minD;
+      ball.y = controlY + ny*minD;
       const speed = Math.hypot(p.vx||0, p.vy||0);
       const carry=Math.min(4.8,.55+speed*.92);
       const targetVX=(p.vx||0)*.82+nx*carry;
@@ -1000,7 +1028,7 @@ function drawPixelDigit(baseX, baseY, digit, px, color){
   }
 }
 
-function drawPlayer(p, mine, sid){
+function drawPlayerLegacy(p, mine, sid){
   const now = Date.now();
   const stunned = isStunned(sid, now);
   const dir = Number.isFinite(p.dir) ? p.dir : 0;
@@ -1105,6 +1133,111 @@ function drawPlayer(p, mine, sid){
   const label=String(p.nick||'Player').slice(0,8), labelW=Math.max(38,Math.min(70,label.length*7+14));
   ctx.fillStyle='rgba(5,14,28,.82)';ctx.fillRect(-labelW/2+3,-56,labelW-6,16);ctx.fillRect(-labelW/2,-53,labelW,10);
   ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,0,-48);
+  ctx.restore();
+}
+
+/* 24×30 오리지널 치비 축구선수 도트.
+ * 참고 이미지처럼 헤어/의상 실루엣을 여러 층으로 나누되 특정 캐릭터를 복제하지
+ * 않고, 축구 동작이 잘 읽히는 걷기·달리기·드리블·킥 프레임으로 구성한다. */
+function drawPlayer(p,mine,sid){
+  const now=Date.now(), stunned=isStunned(sid,now);
+  const dir=Number.isFinite(p.dir)?p.dir:0, spd=Math.hypot(p.vx||0,p.vy||0);
+  const moving=spd>.3, running=spd>4.15, facing=Math.cos(dir)<-.15?-1:1;
+  const b=ball_or_netball(), nearBall=!stunned&&Math.hypot(b.x-p.x,b.y-p.y)<KICK_RANGE+5;
+  const phase=moving?(Math.floor(now/(running?80:120))%2):0;
+  const bob=moving?(phase?1:0):0, sway=moving?(phase?1:-1):0;
+  const kicking=now<(p._kickPoseUntil||0), dribbling=nearBall&&moving&&!kicking;
+
+  ctx.save();
+  // 2배 backing canvas의 실제 픽셀 경계에 맞춰 캐릭터만 반 픽셀 단위로 스냅.
+  ctx.translate(Math.round(p.x*2)/2,Math.round(p.y*2)/2);
+  ctx.fillStyle='rgba(2,18,12,.18)';ctx.fillRect(-15,11,30,6);
+  ctx.fillStyle='rgba(2,18,12,.32)';ctx.fillRect(-10,14,20,4);
+
+  if(nearBall){
+    ctx.fillStyle='#ffe66d';
+    [[0,-25],[25,0],[0,25],[-25,0]].forEach(([x,y])=>ctx.fillRect(x-1.5,y-1.5,3,3));
+  }
+  if(now<tackleActiveUntil&&mine){
+    ctx.globalAlpha=.18;ctx.fillStyle=p.color;
+    ctx.fillRect(-Math.cos(dir)*17-13,-Math.sin(dir)*17-18,26,32);ctx.globalAlpha=1;
+  }
+
+  const PX=1.5,W=24,H=30,baseX=-W*PX/2,baseY=-H*PX+14;
+  const variant=Math.abs(Number(p.seat)||0)%4;
+  const team=stunned?'#818995':p.color;
+  const teamDark=stunned?'#5e6570':shadeColor(team,-.34);
+  const teamHi=stunned?'#aab0b8':shadeColor(team,.34);
+  const hair=stunned?'#686d75':['#296b91','#4d7140','#b56e31','#604c85'][variant];
+  const hairDark=stunned?'#454a51':['#17415e','#30492a','#75431f','#3d3159'][variant];
+  const hairHi=stunned?'#8d9299':['#63b6d8','#8fc77b','#efb36a','#a88fd0'][variant];
+  const skin=stunned?'#b9bbc0':'#f4c7a2',skinShade=stunned?'#96999f':'#dc987e';
+  const OUT='#182131',WHITE='#f7f8f2',EYE='#172033',SHOE='#111a2a';
+  const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(baseX+x*PX,baseY+(y+bob)*PX,w*PX,h*PX);};
+
+  ctx.save();ctx.scale(facing,1);ctx.imageSmoothingEnabled=false;
+  // 뒤쪽 머리와 좌석별 실루엣
+  if(variant===0){ // 양갈래 물결머리
+    px(1,7+sway,5,12,hairDark);px(0,10+sway,4,8,hair);px(18,7-sway,5,12,hairDark);px(20,10-sway,4,8,hair);
+    px(1,15+sway,3,3,hairHi);px(20,15-sway,3,3,hairHi);
+  }else if(variant===1){ // 긴 생머리
+    px(3,5,18,17,hairDark);px(2,10,5,13,hair);px(17,10,5,13,hair);px(4,18,3,5,hairHi);px(17,18,3,5,hairHi);
+  }else if(variant===2){ // 높은 포니테일
+    px(17,3,5,6,hairDark);px(20,5+sway,4,12,hair);px(21,14+sway,3,5,hairHi);
+  }else{ // 짧은 웨이브 보브
+    px(2,6,20,12,hairDark);px(1,11,5,8,hair);px(18,11,5,8,hair);px(2,16,3,3,hairHi);px(19,16,3,3,hairHi);
+  }
+
+  // 머리/앞머리/얼굴
+  px(5,2,14,2,OUT);px(3,4,18,10,OUT);px(5,14,14,2,OUT);
+  px(5,4,14,9,skin);px(6,13,12,2,skin);
+  px(4,4,16,4,hair);px(5,3,13,3,hair);px(5,5,5,4,hair);px(15,5,5,4,hair);
+  px(7,4,5,2,hairHi);
+  // 팀색 머리핀/꽃 장식
+  if(variant===1){px(5,2,2,2,WHITE);px(3,4,2,2,WHITE);px(7,4,2,2,WHITE);px(5,4,2,2,teamHi);}
+  else{px(17,4,3,2,team);px(18,3,1,4,teamHi);}
+  if(!stunned){
+    px(7,8,2,3,EYE);px(15,8,2,3,EYE);px(7,8,1,1,WHITE);px(15,8,1,1,WHITE);
+    px(5,11,2,1,skinShade);px(17,11,2,1,skinShade);px(11,12,2,1,'#d96d7d');
+  }else{px(7,9,3,1,EYE);px(14,9,3,1,EYE);}
+
+  // 목/유니폼/등번호
+  px(10,15,4,2,skin);px(6,16,12,2,OUT);px(5,18,14,7,OUT);
+  px(7,17,10,2,teamHi);px(6,19,12,5,team);px(7,22,10,2,teamDark);
+  px(4,18,3,6,OUT);px(3,19+(phase?1:0),2,5,skin);
+  px(17,18,3,6,OUT);px(19,19+(phase?0:1),2,5,skin);
+  px(7,24,10,2,OUT);px(8,24,8,2,WHITE);
+  drawPixelDigit(baseX+10.5*PX,baseY+(19.2+bob)*PX,jerseyNumberOf(p),1,WHITE);
+
+  // 걷기/달리기/드리블/킥 다리 프레임
+  if(kicking){
+    px(7,25,4,4,teamDark);px(7,28,4,2,SHOE);
+    px(14,24,4,3,teamDark);px(17,25,6,3,skin);px(21,26,3,2,SHOE);
+  }else if(dribbling){
+    px(7,25,4,4,teamDark);px(6,28,5,2,SHOE);
+    px(14,25,4,3,teamDark);px(16,27,5,2,skin);px(19,28,4,2,SHOE);
+  }else{
+    const step=phase?2:0;
+    px(7-step,25,4,4,teamDark);px(6-step,28,5,2,SHOE);
+    px(14+step,25,4,4,teamDark);px(14+step,28,5,2,SHOE);
+  }
+  ctx.restore();
+
+  if(mine&&kickCharging){
+    const pct=clamp((now-kickChargeStart)/KICK_CHARGE_MS,0,1);
+    ctx.beginPath();ctx.arc(0,0,28,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
+    ctx.strokeStyle='#ffe66d';ctx.lineWidth=3;ctx.stroke();
+    ctx.save();ctx.rotate(dir);const guide=25+Math.round(pct*31);
+    ctx.fillStyle=pct>.72?'#fff3a5':'rgba(255,230,109,.85)';
+    for(let gx=22;gx<guide;gx+=7)ctx.fillRect(gx,-1.5,4,3);
+    ctx.fillRect(guide,-4,3,8);ctx.restore();
+  }
+  if(mine){ctx.fillStyle='#ffe66d';ctx.fillRect(-4,-36,8,2);ctx.fillRect(-2,-39,4,3);}
+  if(stunned){ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff59d';ctx.fillText('💫',0,-38);}
+
+  const label=String(p.nick||'Player').slice(0,8),labelW=Math.max(34,Math.min(66,label.length*6.5+12));
+  ctx.fillStyle='rgba(5,14,28,.84)';ctx.fillRect(-labelW/2,-51,labelW,13);
+  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.font='bold 9px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,0,-44.5);
   ctx.restore();
 }
 
