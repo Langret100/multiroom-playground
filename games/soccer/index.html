@@ -284,6 +284,7 @@ let kickoffUntil = 0;         // 이 시각까지는 킥오프 카운트다운(�
 let kickoffSoundsDone = new Set();
 let scoreAnimA = 0, scoreAnimB = 0; // 골 넣었을 때 스코어보드 팝 애니메이션 타임스탬프
 let prevScoreA = 0, prevScoreB = 0;
+let lastImpactFxAt = '';      // 확정 킥 id별 이펙트 중복 방지
 
 function addShake(mag, durMs){
   shakeMag = Math.max(shakeMag, mag);
@@ -296,21 +297,28 @@ function spawnBurst(x, y, color, count, spread){
   }
 }
 function spawnRing(x, y, color){
-  rings.push({ x, y, r:6, alpha:0.55, color });
+  rings.push({ x, y, r:5, alpha:0.9, color });
 }
 function playKickImpact(x,y,power,dir){
   const p=clamp(power||.5,0,1);
   spawnRing(x,y,p>.72?'#fff2a8':'#ffd640');
-  if(p>.7) rings.push({x,y,r:11,alpha:.38,color:'#ffffff'});
-  spawnBurst(x,y,'#ffffff',5+Math.round(p*7),2.2+p*2.2);
+  rings.push({x,y,r:10,alpha:.68,color:'#ffffff'});
+  spawnBurst(x,y,'#ffffff',9+Math.round(p*9),3+p*2.8);
   // 공 진행방향 반대쪽으로 잔디 조각을 뿌려 발에 맞은 방향이 읽히게 한다.
   for(let i=0;i<4+Math.round(p*3);i++){
     const a=(Number.isFinite(dir)?dir:0)+Math.PI+(Math.random()-.5)*1.15;
     const sp=1.4+Math.random()*(2.6+p*2);
     particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:.72,color:'#a7e8ad',size:2+Math.random()*2});
   }
-  addShake(3.5+p*5.5,110+p*90);
+  addShake(4.5+p*6.5,170+p*110);
   sfxKick(p);
+}
+function playKickImpactOnce(impactAt,x,y,power,dir){
+  const id=String(impactAt||'');
+  if(!id || id===lastImpactFxAt) return false;
+  lastImpactFxAt=id;
+  playKickImpact(x,y,power,dir);
+  return true;
 }
 
 function updateKickoffCountdown(){
@@ -521,7 +529,7 @@ function releaseKickCharge(){
     const visibleDist=Math.hypot(b.x-me.x,b.y-me.y);
     const targetDist=Math.hypot((netBall.netX??b.x)-me.x,(netBall.netY??b.y)-me.y);
     if(Math.min(visibleDist,targetDist)<KICK_RANGE+3){
-      playKickImpact(b.x,b.y,pendingKickCharge,me.dir);
+      playKickImpactOnce(pendingKickAt,b.x,b.y,pendingKickCharge,me.dir);
       lastBallSpeedSeen=Math.max(lastBallSpeedSeen,5+pendingKickCharge*7);
     }
   }
@@ -667,8 +675,14 @@ function updateBallHost(){
         const power = 6.5 + charge*8.5;
         ball.vx=ball.vx*.18+Math.cos(dir)*power+(p.vx||0)*.22;
         ball.vy=ball.vy*.18+Math.sin(dir)*power+(p.vy||0)*.22;
+        // 속도 변화로 이펙트를 추측하면 보간/프레임 속도에 따라 양쪽에서
+        // 사라질 수 있다. 호스트가 확정한 킥 id를 공 스냅샷에 실어 전원이
+        // 정확히 한 번씩 같은 이펙트를 재생하게 한다.
+        ball.impactAt=String(p.kickAt||now);
+        ball.impactPower=charge;
+        ball.impactDir=dir;
         p._kickPoseUntil=now+180;
-        playKickImpact(ball.x,ball.y,charge,dir);
+        playKickImpactOnce(ball.impactAt,ball.x,ball.y,charge,dir);
         // 같은 프레임의 속도 변화 감지기가 이 효과를 한 번 더 재생하지 않게 기준 갱신.
         lastBallSpeedSeen=Math.hypot(ball.vx,ball.vy);
       }
@@ -741,7 +755,7 @@ function updateBallTrail(){
   ballTrail = ballTrail.filter(t=>t.life>0);
 }
 function updateRings(){
-  for (const r of rings){ r.r += 2.4; r.alpha -= 0.045; }
+  for (const r of rings){ r.r += 2.15; r.alpha -= 0.026; }
   rings = rings.filter(r=>r.alpha>0);
 }
 
@@ -816,7 +830,10 @@ function netSends(){
   }
   if (isHost && now-lastBallSent >= 30){
     lastBallSent = now;
-    bridgeSend('sc_ball', { x:ball.x, y:ball.y, vx:ball.vx, vy:ball.vy, owner:null });
+    bridgeSend('sc_ball', {
+      x:ball.x, y:ball.y, vx:ball.vx, vy:ball.vy, owner:null,
+      impactAt:ball.impactAt||'', impactPower:ball.impactPower||0, impactDir:ball.impactDir||0
+    });
   }
 }
 
@@ -987,9 +1004,9 @@ function drawPlayer(p, mine, sid){
   const bob=Math.round(moving?Math.sin(t*13):Math.sin(t*2.4)*.45);
 
   // 부드러운 타원 대신 3단 픽셀 그림자
-  ctx.fillStyle='rgba(2,20,12,.18)'; ctx.fillRect(-17,12,34,7);
-  ctx.fillStyle='rgba(2,20,12,.28)'; ctx.fillRect(-13,14,26,6);
-  ctx.fillStyle='rgba(2,20,12,.38)'; ctx.fillRect(-8,16,16,4);
+  ctx.fillStyle='rgba(2,20,12,.18)'; ctx.fillRect(-14,12,28,6);
+  ctx.fillStyle='rgba(2,20,12,.28)'; ctx.fillRect(-10,14,20,5);
+  ctx.fillStyle='rgba(2,20,12,.38)'; ctx.fillRect(-6,16,12,3);
 
   if (nearBall){
     ctx.fillStyle='#ffe66d'; const R=28;
@@ -1000,10 +1017,9 @@ function drawPlayer(p, mine, sid){
     ctx.fillRect(-Math.cos(dir)*19-15,-Math.sin(dir)*19-19,30,35); ctx.globalAlpha=1;
   }
 
-  // 투게스터의 16×18, 큰 머리/작은 몸 비율을 축구 마스코트에 맞게 재구성
-  // 2배 backing canvas에서 PX=2.5는 실제 5픽셀 단위가 되어 모든 모서리가
-  // 정수 픽셀에 정확히 걸린다. 이전 2.25는 반 픽셀 경계가 생겨 흐릿해졌다.
-  const PX=2.5, W=16, H=18;
+  // 작은 16×18 햄스터 마스코트. PX=2는 2배 backing canvas에서 실제 4px
+  // 단위라 흐림 없이 또렷하고, 이전 PX=2.5보다 화면 점유 크기도 20% 작다.
+  const PX=2, W=16, H=18;
   const baseX=-W*PX/2, baseY=-H*PX+13;
   const teamColor=stunned?'#838b94':p.color;
   const OUT=stunned?'#444b53':shadeColor(teamColor,-.48);
@@ -1018,24 +1034,29 @@ function drawPlayer(p, mine, sid){
   ctx.save(); ctx.scale(facing,1); ctx.imageSmoothingEnabled=false;
   const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(baseX+x*PX),Math.round(baseY+(y+bob)*PX),Math.ceil(w*PX),Math.ceil(h*PX));};
 
-  // 꼬리/귀 → 머리 → 유니폼 순서로 겹쳐 또렷한 실루엣을 만든다.
-  px(13,10,2,3,OUT); px(14,11,2,2,teamColor); px(14,11,1,1,HI);
+  // 동그란 귀와 볼, 큰 눈이 보이는 햄스터 얼굴. 팀 색은 얼굴 전체가 아니라
+  // 머리띠와 유니폼에 써서 표정이 어둡게 묻히지 않게 했다.
+  px(13,10,2,3,OUT); px(14,11,2,2,FACE); px(14,11,1,1,WHITE);
   px(3,0,4,4,OUT); px(10,0,3,4,OUT);
-  px(4,1,2,2,teamColor); px(10,1,2,2,teamColor);
+  px(4,1,2,2,FACE); px(10,1,2,2,FACE);
   px(5,1,1,1,INNER); px(10,1,1,1,INNER);
 
-  px(2,3,12,8,OUT); px(3,4,10,6,teamColor); px(4,5,8,4,FACE);
-  px(4,8,2,1,'rgba(242,143,173,.72)'); px(10,8,2,1,'rgba(242,143,173,.72)');
+  px(3,2,10,1,OUT); px(2,3,12,6,OUT); px(3,9,10,2,OUT);
+  px(3,3,10,6,FACE); px(4,9,8,1,FACE);
+  px(4,3,8,1,teamColor); px(5,4,6,1,HI);
+  px(5,7,6,3,WHITE);
+  px(3,7,2,2,INNER); px(11,7,2,2,INNER);
   if (!stunned){
-    px(5,6,1,2,EYE); px(10,6,1,2,EYE); px(5,6,1,1,'#fff'); px(10,6,1,1,'#fff');
-    px(7,8,2,1,INNER); px(8,9,1,1,OUT);
-  } else { px(5,6,2,1,EYE); px(9,6,2,1,EYE); }
+    px(4,5,2,2,EYE); px(10,5,2,2,EYE);
+    px(4,5,1,1,'#fff'); px(10,5,1,1,'#fff');
+    px(7,7,2,1,OUT); px(7,8,1,1,INNER); px(8,8,1,1,INNER);
+  } else { px(4,6,2,1,EYE); px(10,6,2,1,EYE); }
 
   // 좌석별 작은 장식
-  if (variant===0){ px(3,4,2,1,'#ffe66d'); px(4,3,1,3,'#ffe66d'); }
-  else if (variant===1){ px(10,3,3,1,WHITE); }
-  else if (variant===2){ px(3,4,1,3,'#8ee3ff'); px(4,3,1,1,'#8ee3ff'); }
-  else { px(11,4,2,2,'#ff9fc0'); px(12,3,1,4,'#ff9fc0'); }
+  if (variant===0){ px(3,3,2,1,'#ffe66d'); px(4,2,1,3,'#ffe66d'); }
+  else if (variant===1){ px(10,3,2,1,'#ffffff'); }
+  else if (variant===2){ px(3,4,1,2,'#8ee3ff'); px(4,3,1,1,'#8ee3ff'); }
+  else { px(11,3,2,2,'#ff9fc0'); px(12,2,1,3,'#ff9fc0'); }
 
   // 몸통/팔: 태클 중이면 앞팔과 몸을 길게 보여 동작을 읽기 쉽게 한다.
   px(3,10,10,5,OUT); px(4,10,8,4,teamColor); px(4,12,8,1,HI);
@@ -1323,6 +1344,13 @@ window.addEventListener('message', e=>{
     netBall.vx = Number(d.vx ?? 0);
     netBall.vy = Number(d.vy ?? 0);
     netBall.netT = Date.now();
+    if(d.impactAt){
+      netBall.impactAt=String(d.impactAt);
+      netBall.impactPower=Number(d.impactPower||0);
+      netBall.impactDir=Number(d.impactDir||0);
+      playKickImpactOnce(netBall.impactAt,netBall.netX,netBall.netY,netBall.impactPower,netBall.impactDir);
+      lastBallSpeedSeen=Math.hypot(netBall.vx,netBall.vy);
+    }
     return;
   }
 

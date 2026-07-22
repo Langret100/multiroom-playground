@@ -1368,7 +1368,10 @@ function updatePreview(modeId){
         __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost()
       }, coop.soccerLocalState || {});
       state.isHost = getMyIsHost();
-      state.ball = { x:d.x, y:d.y, vx:d.vx, vy:d.vy, owner:d.owner, at:soccerNow };
+      state.ball = {
+        x:d.x, y:d.y, vx:d.vx, vy:d.vy, owner:d.owner, at:soccerNow,
+        impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0
+      };
       coop.soccerLocalState = state;
       try{ room.send("tg_state", { state }); }catch(_){ }
       const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
@@ -3030,7 +3033,10 @@ try{
             postToMain({ type:"sc_players", players:soccerPlayers });
           }
           if (sharedBall){
-            postToMain({ type:"sc_ball", x:sharedBall.x, y:sharedBall.y, vx:sharedBall.vx, vy:sharedBall.vy, owner:sharedBall.owner });
+            postToMain({
+              type:"sc_ball", x:sharedBall.x, y:sharedBall.y, vx:sharedBall.vx, vy:sharedBall.vy, owner:sharedBall.owner,
+              impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0
+            });
           }
           for (const evt of sharedEvents){
             if (coop.soccerSeenEvents.has(String(evt.id))) continue;
@@ -3120,7 +3126,10 @@ try{
       });
       room.onMessage("sc_ball", (msg)=>{
         if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
-        postToMain({ type:"sc_ball", x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, owner: msg.owner });
+        postToMain({
+          type:"sc_ball", x:msg.x, y:msg.y, vx:msg.vx, vy:msg.vy, owner:msg.owner,
+          impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0
+        });
       });
       room.onMessage("sc_goal", (msg)=>{
         postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB });
