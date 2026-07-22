@@ -631,25 +631,34 @@ function lerpRemote(){
 function updateNetBall(){
   if (isHost) return; // 호스트는 자기 물리 계산 결과(ball)를 그대로 그린다
   const now = Date.now();
-  const nxt = smoothToward(netBall, netBall.netX, netBall.netY, netBall.vx, netBall.vy, netBall.netT, now, 0.74);
+  const localSpeed=me?Math.hypot(me.vx||0,me.vy||0):0;
+  const authDist=me?Math.hypot(netBall.netX-me.x,netBall.netY-me.y):Infinity;
+  const viewDist=me?Math.hypot(netBall.x-me.x,netBall.y-me.y):Infinity;
+  const localDribbling=!!(me&&gameActive&&now>=kickoffUntil&&localSpeed>.12&&Math.min(authDist,viewDist)<PR+BR+12);
+
+  // 로컬 드리블 중 매 프레임 '지연된 서버 공 → 내 발 앞'을 왕복 보간하면
+  // 공이 발에 비벼지며 뒤로 튀는 모습이 생긴다. 드리블 중에는 서버 좌표를
+  // 약하게만 반영하고 발 앞 목표를 우선한다. 드리블이 끝나면 즉시 일반 권위
+  // 보간으로 돌아가므로 득점/충돌의 최종 결정권은 계속 호스트에게 있다.
+  const nxt = smoothToward(netBall, netBall.netX, netBall.netY, netBall.vx, netBall.vy, netBall.netT, now, localDribbling?0.52:0.74);
   netBall.x = nxt.x; netBall.y = nxt.y;
 
   // 게스트 로컬 드리블 예측: 호스트의 다음 공 스냅샷을 기다리는 동안에도
   // 내 발 앞의 공만 같은 접촉 공식으로 짧게 움직인다. 득점/최종 물리는 여전히
   // 호스트가 결정하고, 새 권위 스냅샷이 오면 위 보간이 자연스럽게 복귀시킨다.
-  if(me && gameActive && now>=kickoffUntil){
+  if(localDribbling){
     const mdx=netBall.x-me.x,mdy=netBall.y-me.y,md=Math.hypot(mdx,mdy)||.001;
     const tdx=netBall.netX-me.x,tdy=netBall.netY-me.y,td=Math.hypot(tdx,tdy)||.001;
     const speed=Math.hypot(me.vx||0,me.vy||0);
-    if(Math.min(md,td)<PR+BR+10 && speed>.12){
+    if(Math.min(md,td)<PR+BR+12 && speed>.12){
       // 드리블 중에는 지연된 화면 공의 방향이 아니라 실제 이동 방향의 발 앞을
       // 목표로 잡는다. 그렇지 않으면 왼쪽으로 달리는데 과거 공이 오른쪽에 남아
       // 반대쪽으로 미는 현상이 생긴다.
       const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
       const tx=me.x+nx*(PR+BR),ty=me.y+ny*(PR+BR);
-      netBall.x=lerp(netBall.x,tx,.52); netBall.y=lerp(netBall.y,ty,.52);
-      netBall.vx=lerp(netBall.vx,(me.vx||0)*.82+nx*Math.min(4.8,.55+speed*.92),.18);
-      netBall.vy=lerp(netBall.vy,(me.vy||0)*.82+ny*Math.min(4.8,.55+speed*.92),.18);
+      netBall.x=lerp(netBall.x,tx,.54); netBall.y=lerp(netBall.y,ty,.54);
+      netBall.vx=lerp(netBall.vx,(me.vx||0)*.92+nx*Math.min(4.8,.45+speed*.82),.34);
+      netBall.vy=lerp(netBall.vy,(me.vy||0)*.92+ny*Math.min(4.8,.45+speed*.82),.34);
     }
   }
 }
@@ -668,10 +677,16 @@ function updateBallHost(){
     // 원격 선수는 화면에 그리는 보간 좌표보다 최신 net 좌표와 속도 외삽을
     // 사용한다. 이 차이가 호스트/게스트 드리블 반응 차이의 핵심 원인이었다.
     const age=clamp(now-(p.netT||now),0,120);
-    const remoteSpeed=Math.hypot(p.netVX||0,p.netVY||0);
-    // 전송 전에 이미 지나간 2~4프레임을 이동 중일 때만 보상한다. 정지 상태는
-    // 기본 1.4프레임만 사용해 공이 선수보다 앞서 움직이는 부작용을 막는다.
-    const lead=age*.06+1.4+clamp(remoteSpeed/3.75,0,1)*2.9;
+    // 원격 선수의 p.vx/p.vy는 화면 보간용 객체에 갱신되지 않는다. 이전에는
+    // 여기서 그 값을 사용해 게스트가 실제로 달려도 호스트 물리에는 정지한
+    // 선수처럼 보였다. 반드시 수신한 netVX/netVY를 물리에 사용한다.
+    const effectiveVX=sid===mySid?(p.vx||0):(p.netVX||0);
+    const effectiveVY=sid===mySid?(p.vy||0):(p.netVY||0);
+    const remoteSpeed=Math.hypot(effectiveVX,effectiveVY);
+    // v12의 고정 2~4프레임 선행값은 잘못된 p.vx를 가리기 위한 임시 보정이었다.
+    // 이제 실제 netVX를 쓰므로 고정 선행을 더하면 게스트 공만 과하게 나간다.
+    // 수신 뒤 경과한 시간만 최대 1프레임 보상해 호스트와 같은 이동량을 유지한다.
+    const lead=clamp(age*.02,0,1);
     const controlX=sid===mySid?p.x:clamp((p.netX??p.x)+(p.netVX||0)*lead,FX+PR,FX+FW-PR);
     const controlY=sid===mySid?p.y:clamp((p.netY??p.y)+(p.netVY||0)*lead,FY+PR,FY+FH-PR);
     const dx = ball.x-controlX, dy = ball.y-controlY;
@@ -681,15 +696,20 @@ function updateBallHost(){
     // 가까이 붙었을 때는 매 프레임 힘을 더하는 핀볼식 밀기가 아니라 선수 속도에
     // 공을 서서히 맞춘다. 그래서 천천히 움직이면 드리블, 충전 킥이면 아래의 슛이 된다.
     if (d < minD){
-      const nx = dx/d, ny = dy/d;
-      ball.x = controlX + nx*minD;
-      ball.y = controlY + ny*minD;
-      const speed = Math.hypot(p.vx||0, p.vy||0);
-      const carry=Math.min(4.8,.55+speed*.92);
-      const targetVX=(p.vx||0)*.82+nx*carry;
-      const targetVY=(p.vy||0)*.82+ny*carry;
-      ball.vx=lerp(ball.vx,targetVX,.23);
-      ball.vy=lerp(ball.vy,targetVY,.23);
+      const moving=remoteSpeed>.12;
+      // 이동 중에는 지연된 공의 상대 위치가 아니라 선수의 실제 진행 방향을
+      // 드리블 방향으로 사용한다. 보정된 선수 좌표가 공을 추월하더라도 nx가
+      // 반대로 뒤집히지 않으므로 공이 갑자기 발뒤꿈치 쪽으로 빠지지 않는다.
+      const nx=moving?effectiveVX/remoteSpeed:dx/d;
+      const ny=moving?effectiveVY/remoteSpeed:dy/d;
+      const footX=controlX+nx*minD, footY=controlY+ny*minD;
+      ball.x=lerp(ball.x,footX,moving ? .72 : 1);
+      ball.y=lerp(ball.y,footY,moving ? .72 : 1);
+      const carry=Math.min(4.8,.45+remoteSpeed*.82);
+      const targetVX=effectiveVX*.92+nx*carry;
+      const targetVY=effectiveVY*.92+ny*carry;
+      ball.vx=lerp(ball.vx,targetVX,moving ? .34 : .23);
+      ball.vy=lerp(ball.vy,targetVY,moving ? .34 : .23);
     }
 
     // 충전 슛: kickAt이 마지막으로 처리한 값과 다르면 "새 킥"으로 인식(간헐적
@@ -1136,9 +1156,11 @@ function drawPlayerLegacy(p, mine, sid){
   ctx.restore();
 }
 
-/* 24×30 오리지널 치비 축구선수 도트.
- * 참고 이미지처럼 헤어/의상 실루엣을 여러 층으로 나누되 특정 캐릭터를 복제하지
- * 않고, 축구 동작이 잘 읽히는 걷기·달리기·드리블·킥 프레임으로 구성한다. */
+/* 30×38 오리지널 치비 축구선수 도트(v13).
+ * 참고 이미지의 핵심 비율인 큰 머리, 머리와 분리되는 양팔, 짧은 몸통, 서로
+ * 확실히 갈라지는 두 다리를 반영했다. 특정 캐릭터를 복제하지 않고 축구복과
+ * 네 가지 머리 실루엣으로 새로 구성했으며, 1 논리픽셀 단위만 사용해 흐려지는
+ * 1.5배 픽셀을 없앴다. */
 function drawPlayer(p,mine,sid){
   const now=Date.now(), stunned=isStunned(sid,now);
   const dir=Number.isFinite(p.dir)?p.dir:0, spd=Math.hypot(p.vx||0,p.vy||0);
@@ -1149,10 +1171,9 @@ function drawPlayer(p,mine,sid){
   const kicking=now<(p._kickPoseUntil||0), dribbling=nearBall&&moving&&!kicking;
 
   ctx.save();
-  // 2배 backing canvas의 실제 픽셀 경계에 맞춰 캐릭터만 반 픽셀 단위로 스냅.
-  ctx.translate(Math.round(p.x*2)/2,Math.round(p.y*2)/2);
-  ctx.fillStyle='rgba(2,18,12,.18)';ctx.fillRect(-15,11,30,6);
-  ctx.fillStyle='rgba(2,18,12,.32)';ctx.fillRect(-10,14,20,4);
+  ctx.translate(Math.round(p.x),Math.round(p.y));
+  ctx.fillStyle='rgba(2,18,12,.18)';ctx.fillRect(-14,11,28,5);
+  ctx.fillStyle='rgba(2,18,12,.34)';ctx.fillRect(-9,13,18,4);
 
   if(nearBall){
     ctx.fillStyle='#ffe66d';
@@ -1163,7 +1184,8 @@ function drawPlayer(p,mine,sid){
     ctx.fillRect(-Math.cos(dir)*17-13,-Math.sin(dir)*17-18,26,32);ctx.globalAlpha=1;
   }
 
-  const PX=1.5,W=24,H=30,baseX=-W*PX/2,baseY=-H*PX+14;
+  // PX=1: 내부 2배 backing canvas에서 정확히 2×2 화면 픽셀이 되어 선명하다.
+  const PX=1,W=30,H=38,baseX=-W/2,baseY=-H+14;
   const variant=Math.abs(Number(p.seat)||0)%4;
   const team=stunned?'#818995':p.color;
   const teamDark=stunned?'#5e6570':shadeColor(team,-.34);
@@ -1173,53 +1195,63 @@ function drawPlayer(p,mine,sid){
   const hairHi=stunned?'#8d9299':['#63b6d8','#8fc77b','#efb36a','#a88fd0'][variant];
   const skin=stunned?'#b9bbc0':'#f4c7a2',skinShade=stunned?'#96999f':'#dc987e';
   const OUT='#182131',WHITE='#f7f8f2',EYE='#172033',SHOE='#111a2a';
-  const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(baseX+x*PX,baseY+(y+bob)*PX,w*PX,h*PX);};
+  const sock=stunned?'#d6d8dc':'#eef4ff';
+  const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(baseX+x),Math.round(baseY+y+bob),w,h);};
 
   ctx.save();ctx.scale(facing,1);ctx.imageSmoothingEnabled=false;
-  // 뒤쪽 머리와 좌석별 실루엣
-  if(variant===0){ // 양갈래 물결머리
-    px(1,7+sway,5,12,hairDark);px(0,10+sway,4,8,hair);px(18,7-sway,5,12,hairDark);px(20,10-sway,4,8,hair);
-    px(1,15+sway,3,3,hairHi);px(20,15-sway,3,3,hairHi);
-  }else if(variant===1){ // 긴 생머리
-    px(3,5,18,17,hairDark);px(2,10,5,13,hair);px(17,10,5,13,hair);px(4,18,3,5,hairHi);px(17,18,3,5,hairHi);
+  // 뒤쪽 머리: 머리 덩어리와 묶은 머리 끝을 분리해 실루엣부터 읽히게 한다.
+  if(variant===0){ // 긴 양갈래
+    px(2,7,5,14,hairDark);px(0,11+sway,4,12,hair);px(23,7,5,14,hairDark);px(26,11-sway,4,12,hair);
+    px(1,20+sway,3,4,hairHi);px(26,20-sway,3,4,hairHi);
+  }else if(variant===1){ // 꽃장식 긴 생머리
+    px(4,5,22,18,hairDark);px(3,10,5,15,hair);px(22,10,5,15,hair);px(4,21,3,5,hairHi);px(23,21,3,5,hairHi);
   }else if(variant===2){ // 높은 포니테일
-    px(17,3,5,6,hairDark);px(20,5+sway,4,12,hair);px(21,14+sway,3,5,hairHi);
-  }else{ // 짧은 웨이브 보브
-    px(2,6,20,12,hairDark);px(1,11,5,8,hair);px(18,11,5,8,hair);px(2,16,3,3,hairHi);px(19,16,3,3,hairHi);
+    px(21,3,6,7,hairDark);px(25,6+sway,5,13,hair);px(27,17+sway,3,6,hairHi);
+  }else{ // 둥근 보브컷
+    px(3,6,24,15,hairDark);px(2,12,5,10,hair);px(23,12,5,10,hair);px(3,19,3,4,hairHi);px(24,19,3,4,hairHi);
   }
 
-  // 머리/앞머리/얼굴
-  px(5,2,14,2,OUT);px(3,4,18,10,OUT);px(5,14,14,2,OUT);
-  px(5,4,14,9,skin);px(6,13,12,2,skin);
-  px(4,4,16,4,hair);px(5,3,13,3,hair);px(5,5,5,4,hair);px(15,5,5,4,hair);
-  px(7,4,5,2,hairHi);
-  // 팀색 머리핀/꽃 장식
-  if(variant===1){px(5,2,2,2,WHITE);px(3,4,2,2,WHITE);px(7,4,2,2,WHITE);px(5,4,2,2,teamHi);}
-  else{px(17,4,3,2,team);px(18,3,1,4,teamHi);}
+  // 큰 머리: 외곽선-얼굴-앞머리-표정 순으로 겹쳐 또렷한 치비 비율을 만든다.
+  px(8,1,14,2,OUT);px(5,3,20,3,OUT);px(4,6,22,10,OUT);px(6,16,18,3,OUT);
+  px(6,5,18,11,skin);px(8,16,14,2,skin);
+  px(6,3,18,4,hair);px(5,6,6,5,hair);px(19,6,6,5,hair);px(10,4,7,3,hairHi);
+  px(7,6,4,3,hair);px(13,5,4,3,hair);px(19,6,4,3,hair);
+  if(variant===1){ // 작은 꽃 장식
+    px(5,2,2,2,WHITE);px(3,4,2,2,WHITE);px(7,4,2,2,WHITE);px(5,6,2,2,WHITE);px(5,4,2,2,teamHi);
+  }else{px(21,4,4,2,team);px(22,3,2,4,teamHi);}
   if(!stunned){
-    px(7,8,2,3,EYE);px(15,8,2,3,EYE);px(7,8,1,1,WHITE);px(15,8,1,1,WHITE);
-    px(5,11,2,1,skinShade);px(17,11,2,1,skinShade);px(11,12,2,1,'#d96d7d');
-  }else{px(7,9,3,1,EYE);px(14,9,3,1,EYE);}
+    px(9,10,2,3,EYE);px(19,10,2,3,EYE);px(9,10,1,1,WHITE);px(19,10,1,1,WHITE);
+    px(7,14,2,1,skinShade);px(21,14,2,1,skinShade);px(14,15,2,1,'#d96d7d');
+  }else{px(8,11,4,1,EYE);px(18,11,4,1,EYE);}
 
-  // 목/유니폼/등번호
-  px(10,15,4,2,skin);px(6,16,12,2,OUT);px(5,18,14,7,OUT);
-  px(7,17,10,2,teamHi);px(6,19,12,5,team);px(7,22,10,2,teamDark);
-  px(4,18,3,6,OUT);px(3,19+(phase?1:0),2,5,skin);
-  px(17,18,3,6,OUT);px(19,19+(phase?0:1),2,5,skin);
-  px(7,24,10,2,OUT);px(8,24,8,2,WHITE);
-  drawPixelDigit(baseX+10.5*PX,baseY+(19.2+bob)*PX,jerseyNumberOf(p),1,WHITE);
+  // 목과 짧은 축구 유니폼 몸통.
+  px(13,18,4,2,skin);px(9,19,12,2,OUT);px(8,21,14,9,OUT);
+  px(10,20,10,2,teamHi);px(9,22,12,6,team);px(10,27,10,2,teamDark);
+  px(11,28,8,2,WHITE);
+  drawPixelDigit(baseX+13,baseY+22+bob,jerseyNumberOf(p),1,WHITE);
 
-  // 걷기/달리기/드리블/킥 다리 프레임
-  if(kicking){
-    px(7,25,4,4,teamDark);px(7,28,4,2,SHOE);
-    px(14,24,4,3,teamDark);px(17,25,6,3,skin);px(21,26,3,2,SHOE);
-  }else if(dribbling){
-    px(7,25,4,4,teamDark);px(6,28,5,2,SHOE);
-    px(14,25,4,3,teamDark);px(16,27,5,2,skin);px(19,28,4,2,SHOE);
+  // 팔은 몸통에서 한 칸 이상 띄워 어깨-팔꿈치-손이 각각 보이게 한다.
+  const armSwing=moving?(phase?1:-1):0;
+  if(p.tackle){
+    px(4,21,4,3,OUT);px(1,22,5,2,team);px(0,23,2,2,skin);
+    px(21,20,5,3,OUT);px(25,20,4,2,team);px(28,20,2,2,skin);
   }else{
-    const step=phase?2:0;
-    px(7-step,25,4,4,teamDark);px(6-step,28,5,2,SHOE);
-    px(14+step,25,4,4,teamDark);px(14+step,28,5,2,SHOE);
+    px(5,21+armSwing,3,6,OUT);px(6,22+armSwing,2,4,team);px(5,26+armSwing,3,3,skin);
+    px(22,21-armSwing,3,6,OUT);px(22,22-armSwing,2,4,team);px(22,26-armSwing,3,3,skin);
+  }
+
+  // 반바지와 완전히 분리된 두 다리. 발차기/드리블 때 무릎과 신발 방향도 바뀐다.
+  px(9,29,5,3,teamDark);px(16,29,5,3,teamDark);
+  if(kicking){
+    px(10,32,4,4,skin);px(10,35,4,2,sock);px(9,37,6,2,SHOE);
+    px(17,31,4,3,skin);px(20,32,5,3,skin);px(24,33,3,2,sock);px(26,33,4,2,SHOE);
+  }else if(dribbling){
+    px(10,32,4,4,skin);px(9,35,5,2,sock);px(8,37,7,2,SHOE);
+    px(17,31,4,4,skin);px(19,34,4,2,sock);px(21,36,6,2,SHOE);
+  }else{
+    const step=phase?1:0;
+    px(10-step,32,4,4,skin);px(10-step,35,4,2,sock);px(8-step,37,7,2,SHOE);
+    px(17+step,32,4,4,skin);px(17+step,35,4,2,sock);px(17+step,37,7,2,SHOE);
   }
   ctx.restore();
 
