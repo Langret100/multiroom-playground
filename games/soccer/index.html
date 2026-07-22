@@ -69,7 +69,9 @@ if (IS_MOBILE) document.body.classList.add('mobile');
 
 function bridgeSend(type, payload={}){
   if (!EMBED) return;
-  try{ parent.postMessage({ type, ...payload }, '*'); }catch(_){}
+  // gameId 태그는 room.js가 일부 모바일 WebView의 source=null postMessage도
+  // 현재 열려 있는 수학축구 iframe의 패킷으로 안전하게 식별하는 데 쓴다.
+  try{ parent.postMessage({ type, gameId:'soccer', ...payload }, '*'); }catch(_){}
 }
 
 /* ── 캔버스 / 필드 좌표계 (고정 논리좌표, CSS로만 스케일) ── */

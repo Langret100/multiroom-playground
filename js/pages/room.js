@@ -536,6 +536,9 @@ function updatePreview(modeId){
     meta: null,
     iframeReady: false,
     mxFrameWin: null,
+    soccerFrameWin: null,
+    soccerMovementProbeAt: 0,
+    soccerTgSeenAt: 0,
     iframeLoaded: false,
     startPayload: null,
     sentGameStart: false,
@@ -854,6 +857,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -863,6 +867,7 @@ function updatePreview(modeId){
     const fromCpu  = !!(cpuFrame.iframeEl && srcWin === cpuFrame.iframeEl.contentWindow);
     const isMxPacket = (d.type === "bridge_ready" || d.type === "mx_game_start_ack" || d.type === "mx_msg" || d.type === "mx_quit");
     const isBrPacket = (d.type === "bridge_ready" || d.type === "br_game_start_ack" || d.type === "br_msg" || d.type === "br_batch") && (!d.gameId || d.gameId === 'backrooms3d');
+    const isSoccerPacket = SOCCER_BRIDGE_TYPES.has(String(d.type||""));
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
     const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
     const fromStoredMxWin = !!(coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
@@ -871,8 +876,18 @@ function updatePreview(modeId){
     const fromMxCoopFallback = !!(isMxPacket && mxGameTagOk && !fromCpu && (fromMain || (mxModeLikely && srcWin)));
     const fromMainForMx = fromMain || fromStoredMxWin || fromMxCoopFallback;
     const brModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='backrooms3d') || (duel?.iframeEl && /embedGame=backrooms3d/.test(String(duel.iframeEl.src || ''))));
+    const soccerModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='soccer') || (duel?.iframeEl && /embedGame=soccer/.test(String(duel.iframeEl.src || ''))));
+    const soccerOriginOk = !e.origin || e.origin === location.origin;
+    const fromStoredSoccerWin = !!(coop && coop.soccerFrameWin && srcWin === coop.soccerFrameWin);
+    // 일부 모바일 WebView는 iframe postMessage의 e.source를 null로 넘긴다.
+    // 현재 게임/동일 출처/gameId 태그가 모두 맞는 축구 패킷만 보조 경로로 받는다.
+    const fromSoccerCoopFallback = !!(isSoccerPacket && d.gameId === 'soccer' && soccerModeLikely && soccerOriginOk && !fromCpu);
+    const fromMainForSoccer = fromMain || fromStoredSoccerWin || fromSoccerCoopFallback;
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
+    }
+    if (fromSoccerCoopFallback && srcWin){
+      try{ coop.soccerFrameWin = srcWin; }catch(_){ }
     }
 
     // Gestures inside an iframe do not propagate to the parent window.
@@ -924,7 +939,7 @@ function updatePreview(modeId){
 
     if (d.type === "bridge_ready"){
       // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
-      if (fromMain || fromMxCoopFallback){
+      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback){
         duel.iframeReady = true;
         coop.iframeReady = true;
       }
@@ -940,7 +955,7 @@ function updatePreview(modeId){
         sendCpuBridgeInit();
       }
       const isGkFrame = !!(coop.active && coop.meta && coop.meta.id === "geumchikeo" && fromMain);
-      if ((fromMainForMx || fromMain || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
+      if ((fromMainForMx || fromMainForSoccer || fromMain || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
@@ -985,6 +1000,9 @@ function updatePreview(modeId){
           coop.active = false;
           coop.meta = null;
           coop.mxFrameWin = null;
+          coop.soccerFrameWin = null;
+          coop.soccerMovementProbeAt = 0;
+          coop.soccerTgSeenAt = 0;
           coop.iframeLoaded = false;
           coop.iframeReady = false;
         }catch(_){ }
@@ -1097,6 +1115,10 @@ function updatePreview(modeId){
       forceLobbyUI = true;
       coop.active = false;
       coop.practice = false;
+      coop.mxFrameWin = null;
+      coop.soccerFrameWin = null;
+      coop.soccerMovementProbeAt = 0;
+      coop.soccerTgSeenAt = 0;
       coop.iframeLoaded = false;
       coop.iframeReady = false;
       try{ renderPlayers(); }catch(_){ }
@@ -1295,7 +1317,7 @@ function updatePreview(modeId){
     }
     // ── Soccer: iframe → server relays ─────────────────────────────
     if (d.type === "sc_pos"){
-      if (!fromMain) return;
+      if (!fromMainForSoccer) return;
       const isEvent = !!(d.kickAt || d.tackle); // 킥/태클 이벤트는 쓰로틀 예외 (지연 없이 즉시 전달)
       if (!isEvent){
         const _now = Date.now();
@@ -1303,31 +1325,51 @@ function updatePreview(modeId){
         if (_now - window.__scPosTs < 30) return; // 일반 위치 갱신만 최대 ~33fps로 제한
         window.__scPosTs = _now;
       }
-      try{ room.send("sc_pos", { x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy, kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle }); }catch(_){ }
+      const soccerState = {
+        __game: "soccer",
+        x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
+        kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
+        seat: getMySeat(), nick: myNick || "Player"
+      };
+      const soccerNow = Date.now();
+      if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
+
+      // 다른 게임에서 실제 사용 중인 검증된 집계 경로를 축구 이동의 주 경로로 쓴다.
+      // 축구 전용 sc_players와 동시에 좌표를 받으면 서로 다른 시점의 값이 덮어써져
+      // 상대가 멈추거나 튀는 현상이 생길 수 있으므로, 둘을 동시에 활성화하지 않는다.
+      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
+
+      // tg_players가 1.2초 안에 한 번도 돌아오지 않거나 도중에 1.5초 이상
+      // 끊긴 경우에만 기존 sc_pos 경로를 자동 보조 경로로 사용한다.
+      const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
+      const probeExpired = (soccerNow - coop.soccerMovementProbeAt) >= 1200;
+      if (!tgHealthy && probeExpired){
+        try{ room.send("sc_pos", soccerState); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_ball"){
-      if (!fromMain) return;
+      if (!fromMainForSoccer) return;
       try{ room.send("sc_ball", { x: d.x, y: d.y, vx: d.vx, vy: d.vy, owner: d.owner }); }catch(_){ }
       return;
     }
     if (d.type === "sc_goal"){
-      if (!fromMain) return;
+      if (!fromMainForSoccer) return;
       try{ room.send("sc_goal", { team: d.team, scoreA: d.scoreA, scoreB: d.scoreB }); }catch(_){ }
       return;
     }
     if (d.type === "sc_stun"){
-      if (!fromMain) return;
+      if (!fromMainForSoccer) return;
       try{ room.send("sc_stun", { sid: d.sid, dur: d.dur }); }catch(_){ }
       return;
     }
     if (d.type === "sc_over"){
-      if (!fromMain) return;
+      if (!fromMainForSoccer) return;
       try{ room.send("sc_over", { scoreA: d.scoreA, scoreB: d.scoreB, winner: d.winner }); }catch(_){ }
       return;
     }
     if (d.type === "sc_sync"){
-      if (!fromMain) return;
+      if (!fromMainForSoccer) return;
       try{ room.send("sc_sync", {}); }catch(_){ }
       return;
     }
@@ -2438,6 +2480,9 @@ function startCoopEmbed(meta){
   coop._mxGameStartAck = false;
   coop._brGameStartAck = false;
   coop.mxFrameWin = null;
+  coop.soccerFrameWin = null;
+  coop.soccerMovementProbeAt = 0;
+  coop.soccerTgSeenAt = 0;
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -2480,6 +2525,9 @@ function startCoopPractice(meta){
   coop.iframeReady = false;
   coop._mxGameStartAck = false;
   coop.mxFrameWin = null;
+  coop.soccerFrameWin = null;
+  coop.soccerMovementProbeAt = 0;
+  coop.soccerTgSeenAt = 0;
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -2911,6 +2959,21 @@ try{
       // Togester (coop) relay: server -> iframe
       room.onMessage("tg_players", (msg)=>{
         postToMain({ type:"tg_players", players: msg.players || {} });
+        // sc_players가 없는 구 Worker에서도, 위의 축구 태그가 붙은
+        // tg_players 스냅샷만 골라 수학축구 형식으로 전달한다.
+        if (String(room?.state?.mode||"") === "soccer"){
+          const soccerPlayers = {};
+          try{
+            for (const [sid, state] of Object.entries(msg.players || {})){
+              if (!state || state.__game !== "soccer") continue;
+              soccerPlayers[String(sid)] = state;
+            }
+          }catch(_){ }
+          if (Object.keys(soccerPlayers).length){
+            coop.soccerTgSeenAt = Date.now();
+            postToMain({ type:"sc_players", players:soccerPlayers });
+          }
+        }
       });
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
@@ -2984,6 +3047,9 @@ try{
       // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는
       // 전제가 있어 roster 타이밍 문제에 취약했다 — 이제는 그 전제가 없다.
       room.onMessage("sc_players", (msg)=>{
+        // tg_players 주 경로가 살아 있을 때는 더 오래된 sc_players 좌표가
+        // 최신 좌표를 덮어쓰지 못하게 한다. 주 경로가 끊겼을 때만 보조 수신.
+        if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({ type:"sc_players", players: msg.players || {} });
       });
       room.onMessage("sc_ball", (msg)=>{
@@ -3038,7 +3104,7 @@ try{
         hideResultOverlay();
         showDuelUI(false);
         duel.active=null; duel.meta=null;
-        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.iframeLoaded=false; coop.iframeReady=false;
+        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.soccerMovementProbeAt=0; coop.soccerTgSeenAt=0; coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
         // Notify iframes (best-effort) before clearing.
