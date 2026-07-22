@@ -391,6 +391,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-07-22-soccer-eight-real-sprites-v18";
+  window.__BUILD_ID = "2026-07-23-soccer-hires-sprites-v19";
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();

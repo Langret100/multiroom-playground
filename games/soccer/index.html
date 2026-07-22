@@ -109,12 +109,13 @@ const MAX_BALL_SPEED = 14;
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-// v18: 첨부된 팀별 4명 시트를 실제 8개의 독립 에셋으로 분리했다.
+// v19: 첨부된 팀별 4명 시트를 고해상도 8개 독립 에셋으로 분리했다.
 // 좌석 0/2/4/6은 A1~A4, 1/3/5/7은 B1~B4에 고정 대응한다.
 const soccerPlayerSprites={A:[],B:[]};
+const SOCCER_SPRITE_CELL=224;
 for(const team of ['A','B'])for(let i=0;i<4;i++){
   const img=new Image();
-  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v18.png?v=20260722-v18`;
+  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v19-hires.png?v=20260723-v19`;
   soccerPlayerSprites[team].push(img);
 }
 function resize(){
@@ -1274,7 +1275,7 @@ function drawPlayer(p,mine,sid){
 
   const variant=spriteVariantOf(p);
   const sprite=soccerPlayerSprites[p.team]?.[variant]||soccerPlayerSprites.A[0];
-  const spriteReady=sprite.complete&&sprite.naturalWidth>=576;
+  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*8;
   if(spriteReady){
     // 0 대기 / 1·2·3 걷기 / 4·5 달리기 / 6 드리블 / 7 슛.
     // 원격 선수도 netVX/netVY와 현재 시간으로 같은 순환을 계산하므로 한 자세로
@@ -1288,11 +1289,15 @@ function drawPlayer(p,mine,sid){
     const frame=kicking?(kickRemain>75?7:6):(dribbling?dribbleCycle:(running?runCycle:(moving?walkCycle:0)));
     ctx.save();
     ctx.scale(facing,1);
-    ctx.imageSmoothingEnabled=false;
+    // 원본 224px 셀을 고DPI 캔버스에 고품질 축소한다. 이전처럼 에셋 자체를
+    // 72px로 낮추지 않으므로 얼굴과 유니폼 세부 정보가 유지된다.
+    ctx.imageSmoothingEnabled=true;
+    ctx.imageSmoothingQuality='high';
     if(stunned)ctx.filter='grayscale(1) brightness(.78)';
-    // v18은 첨부 원본의 각 캐릭터를 72×72 네이티브 셀로 분리한 실제 에셋이다.
-    // 기본 높이와 발 기준선을 통일했고 과대했던 6번째 동작만 추가 보정했다.
-    ctx.drawImage(sprite,frame*72,0,72,72,-36,-60,72,72);
+    // 8명 모두 기본 높이와 발 기준선은 같고, 빨간 팀의 과대했던 6번째
+    // 달리기 동작만 별도로 미세 조정한 고해상도 프레임이다.
+    ctx.drawImage(sprite,frame*SOCCER_SPRITE_CELL,0,SOCCER_SPRITE_CELL,SOCCER_SPRITE_CELL,-36,-60,72,72);
+    ctx.imageSmoothingEnabled=false;
     ctx.filter='none';
     // 유니폼 원본색과 무관하게 발밑 팀 링으로 A/B를 즉시 구분한다.
     ctx.globalAlpha=.85;ctx.fillStyle=p.color;
