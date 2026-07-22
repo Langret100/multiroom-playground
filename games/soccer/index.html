@@ -10,7 +10,8 @@
   html,body { width:100%; height:100%; background:#0b1220; overflow:hidden;
       font-family:'Segoe UI',system-ui,sans-serif; }
   #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
-  #gc { background:#1f7a3d; display:block; touch-action:none; }
+  #gc { background:#163f2a; display:block; touch-action:none; image-rendering:pixelated;
+      border:3px solid #253653; box-shadow:0 18px 55px rgba(0,0,0,.55), inset 0 0 0 2px #07111d; }
   #overlay {
     position:fixed; inset:0; display:flex; flex-direction:column; align-items:center;
     justify-content:center; gap:14px; background:rgba(0,0,0,.72); color:#fff;
@@ -73,6 +74,26 @@ function bridgeSend(type, payload={}){
   // 현재 열려 있는 수학축구 iframe의 패킷으로 안전하게 식별하는 데 쓴다.
   try{ parent.postMessage({ type, gameId:'soccer', ...payload }, '*'); }catch(_){}
 }
+
+/* ── 멀티플레이 동기화 구조 / 2026-07 수정 이유 ────────────────────────
+ * [기존 증상]
+ * bridge_init의 players 명단은 정상 도착해서 양쪽 화면에 캐릭터는 모두
+ * 만들어졌지만, 실제 이동은 축구 전용 sc_pos → sc_players 경로에만
+ * 의존했다. 배포 환경에서 이 전용 위치 스냅샷이 되돌아오지 않자 각 iframe은
+ * 자기 me 좌표만 갱신했고, 상대 캐릭터는 시작 위치에 멈춘 채 남았다.
+ * 공 역시 별도 sc_ball 경로만 써서 같은 환경에서 화면끼리 공유되지 않았다.
+ *
+ * [현재 해결 방식]
+ * 이 파일은 계속 sc_pos/sc_ball 형식으로 room.js에 상태를 보낸다. room.js가
+ * 이를 다른 협동게임에서 실제 동작이 확인된 tg_state → tg_players 공용 집계
+ * 경로에 __game:'soccer' 태그를 붙여 전달한다. 위치뿐 아니라 호스트의 공과
+ * 골/스턴/종료 이벤트도 같은 스냅샷에 포함한다. 공용 경로가 일정 시간
+ * 응답하지 않을 때만 기존 sc_* 경로를 자동 보조 경로로 사용한다.
+ *
+ * 두 경로의 좌표를 동시에 적용하면 오래된 스냅샷이 새 좌표를 덮어써서
+ * 멈춤/튐이 재발할 수 있다. 따라서 room.js의 주 경로 선택과 __game 태그를
+ * 제거하거나, sc_pos와 tg_state를 무조건 동시에 적용하지 말 것.
+ */
 
 /* ── 캔버스 / 필드 좌표계 (고정 논리좌표, CSS로만 스케일) ── */
 const CW=900, CH=560;
@@ -734,36 +755,51 @@ function buildCrowdCanvas(){
   c.width = CW; c.height = CH;
   const g = c.getContext('2d');
   g.imageSmoothingEnabled = false;
-  // 하늘/조명 — 그라디언트 대신 픽셀아트 느낌의 평평한 색 밴드
-  const skyBandsTop = ['#0b1220','#121b30','#1a2740'];
-  const bandH1 = Math.ceil((FY+6)/skyBandsTop.length);
-  skyBandsTop.forEach((col,i)=>{ g.fillStyle=col; g.fillRect(0, i*bandH1, CW, bandH1+1); });
-  const skyBandsBot = ['#141d33','#101728','#0b1220'];
-  const bandH2 = Math.ceil((CH-(FY+FH-6))/skyBandsBot.length);
-  skyBandsBot.forEach((col,i)=>{ g.fillStyle=col; g.fillRect(0, FY+FH-6+i*bandH2, CW, bandH2+1); });
+  // 경기장 바깥: 투게스터처럼 굵은 외곽선과 명확한 명암 단계로 구성한다.
+  g.fillStyle = '#07111d'; g.fillRect(0,0,CW,CH);
+  g.fillStyle = '#101c31'; g.fillRect(0,0,CW,FY); g.fillRect(0,FY+FH,CW,CH-(FY+FH));
+  g.fillStyle = '#192943'; g.fillRect(0,FY-15,CW,11); g.fillRect(0,FY+FH+4,CW,12);
+  g.fillStyle = '#263a58'; g.fillRect(0,FY-8,CW,4); g.fillRect(0,FY+FH+4,CW,4);
 
-  // 관중석 — 픽셀 블록 그리드
-  const PXC = 4;
-  const rows = [ {y0:8, y1:FY-8}, {y0:FY+FH+8, y1:CH-8} ];
-  const palette = ['#d68a8a','#8a95d6','#d6c98a','#8ad6c9','#c98ad6','#a3d68a','#e0e0e0'];
-  for (const band of rows){
-    for (let y=band.y0; y<band.y1; y+=PXC){
-      for (let x=8; x<CW-8; x+=PXC){
-        if (Math.random() < 0.82){
-          g.fillStyle = palette[(Math.random()*palette.length)|0];
-          g.fillRect(x, y, PXC-1, PXC-1);
-        }
-      }
+  // 관중석 픽셀: 완전 무작위 점 대신 줄을 맞춰 도트게임 배경처럼 읽히게 한다.
+  const crowdCols = ['#ff7b7b','#66d9c8','#ffd166','#8eb6ff','#c990ff','#f2f5ff'];
+  for (const y of [10,22,34,FY+FH+16,FY+FH+28,FY+FH+40]){
+    for (let x=10; x<CW-10; x+=8){
+      const idx = Math.abs(((x/8)|0)+((y/6)|0)*3) % crowdCols.length;
+      g.fillStyle = crowdCols[idx];
+      g.fillRect(x, y, 4, 4);
+      if (((x/8+y)|0)%3!==0){ g.fillStyle='#0b1628'; g.fillRect(x+4,y+1,2,3); }
     }
   }
-  // 조명탑 스포트라이트(부드러운 원 대신 픽셀 마름모 블록)
-  for (const lx of [FX+40, FX+FW-40]){
-    g.fillStyle = 'rgba(255,255,255,.07)';
-    for (let ring=0; ring<8; ring++){
-      const w = 160-ring*18;
-      g.fillRect(lx-w/2, 4, w, 6);
+
+  // 사이드 보드/팀 배너
+  g.fillStyle='#12243a'; g.fillRect(0,FY,FX-5,FH); g.fillRect(FX+FW+5,FY,CW-(FX+FW+5),FH);
+  for (let y=FY+18, i=0; y<FY+FH-18; y+=54,i++){
+    g.fillStyle = i%2 ? '#25578d' : '#8b3046';
+    g.fillRect(5,y,29,32); g.fillRect(CW-34,y,29,32);
+    g.fillStyle='rgba(255,255,255,.78)';
+    g.fillRect(10,y+7,19,3); g.fillRect(10,y+14,13,3); g.fillRect(10,y+21,19,3);
+    g.fillRect(CW-29,y+7,19,3); g.fillRect(CW-23,y+14,13,3); g.fillRect(CW-29,y+21,19,3);
+  }
+
+  // 잔디: 넓은 세로 커팅 + 고정 픽셀 결. 매 프레임 랜덤 생성하지 않는다.
+  g.fillStyle='#23884b'; g.fillRect(FX,FY,FW,FH);
+  const stripeW = FW/10;
+  for (let i=0;i<10;i++){
+    g.fillStyle = i%2 ? '#2a9a55' : '#248b4c';
+    g.fillRect(Math.round(FX+i*stripeW),FY,Math.ceil(stripeW)+1,FH);
+  }
+  for (let y=FY+10;y<FY+FH-6;y+=18){
+    for (let x=FX+8;x<FX+FW-6;x+=24){
+      const phase = ((x+y)/6|0)%3;
+      g.fillStyle = phase===0 ? 'rgba(255,255,255,.045)' : 'rgba(5,57,29,.08)';
+      g.fillRect(x+(phase*3),y,6,2);
     }
   }
+
+  // 필드 바깥 두꺼운 픽셀 테두리/깊이
+  g.fillStyle='#0b4328'; g.fillRect(FX-6,FY-6,FW+12,6); g.fillRect(FX-6,FY+FH,FW+12,6);
+  g.fillRect(FX-6,FY,6,FH); g.fillRect(FX+FW,FY,6,FH);
   return c;
 }
 
@@ -771,30 +807,40 @@ function drawField(){
   if (!crowdCanvas) crowdCanvas = buildCrowdCanvas();
   ctx.drawImage(crowdCanvas, 0, 0);
 
-  // 잔디 — 픽셀 타일 체크무늬(스무스 그라디언트 대신)
-  const TILE = 20;
-  for (let ty=0, row=0; ty<FH; ty+=TILE, row++){
-    for (let tx=0, col=0; tx<FW; tx+=TILE, col++){
-      const dark = (row+col)%2===0;
-      ctx.fillStyle = dark ? '#1e7a41' : '#237f46';
-      ctx.fillRect(FX+tx, FY+ty, Math.min(TILE,FW-tx), Math.min(TILE,FH-ty));
-    }
-  }
-
-  ctx.strokeStyle = '#eef2ee'; ctx.lineWidth = 4;
+  // 라인은 밝은 본선+어두운 1px 그림자를 겹쳐 작은 화면에서도 또렷하게 보인다.
+  ctx.strokeStyle='rgba(7,55,31,.45)'; ctx.lineWidth=6;
+  ctx.strokeRect(FX,FY,FW,FH);
+  ctx.beginPath(); ctx.moveTo(FX+FW/2+1,FY); ctx.lineTo(FX+FW/2+1,FY+FH); ctx.stroke();
+  ctx.strokeStyle = '#eaffef'; ctx.lineWidth = 3;
   ctx.strokeRect(FX,FY,FW,FH);
   ctx.beginPath(); ctx.moveTo(FX+FW/2,FY); ctx.lineTo(FX+FW/2,FY+FH); ctx.stroke();
-  ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 52, 0, Math.PI*2); ctx.stroke();
-  ctx.fillStyle='#eef2ee'; ctx.fillRect(FX+FW/2-3, FY+FH/2-3, 6, 6);
+  ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 55, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#eaffef'; ctx.fillRect(FX+FW/2-3, FY+FH/2-3, 6, 6);
+
+  // 수학축구 테마의 낮은 대비 워터마크(경기 판독을 방해하지 않게 아주 옅게)
+  ctx.save(); ctx.globalAlpha=.10; ctx.fillStyle='#eaffef'; ctx.font='bold 25px monospace'; ctx.textAlign='center';
+  ctx.fillText('+',FX+FW*.25,FY+FH*.25); ctx.fillText('×',FX+FW*.75,FY+FH*.25);
+  ctx.fillText('÷',FX+FW*.25,FY+FH*.78); ctx.fillText('=',FX+FW*.75,FY+FH*.78); ctx.restore();
 
   // 코너 아크 + 페널티 박스(각진 픽셀 느낌으로 두껍게)
   ctx.lineWidth = 3; ctx.strokeStyle = '#dfe8df';
   const cornerR = 14;
   [[FX,FY,0,Math.PI/2],[FX+FW,FY,Math.PI/2,Math.PI],[FX,FY+FH,-Math.PI/2,0],[FX+FW,FY+FH,Math.PI,Math.PI*1.5]]
     .forEach(([cx,cy,s,e])=>{ ctx.beginPath(); ctx.arc(cx,cy,cornerR,s,e); ctx.stroke(); });
-  const boxW=70, boxH=210, boxY=FY+FH/2-boxH/2;
+  const boxW=88, boxH=218, boxY=FY+FH/2-boxH/2;
   ctx.strokeRect(FX, boxY, boxW, boxH);
   ctx.strokeRect(FX+FW-boxW, boxY, boxW, boxH);
+  const goalBoxW=34, goalBoxH=120, goalBoxY=FY+FH/2-goalBoxH/2;
+  ctx.strokeRect(FX,goalBoxY,goalBoxW,goalBoxH);
+  ctx.strokeRect(FX+FW-goalBoxW,goalBoxY,goalBoxW,goalBoxH);
+  ctx.fillStyle='#eaffef';
+  ctx.fillRect(FX+62,FY+FH/2-2,4,4); ctx.fillRect(FX+FW-66,FY+FH/2-2,4,4);
+
+  // 코너 플래그
+  for (const [cx,cy,sy] of [[FX,FY,1],[FX+FW,FY,1],[FX,FY+FH,-1],[FX+FW,FY+FH,-1]]){
+    ctx.fillStyle='#f8e36a'; ctx.fillRect(cx-1,cy,3,sy*12);
+    ctx.fillStyle='#ff6b6b'; ctx.fillRect(cx+(cx===FX?2:-10),cy+sy*2,8,6*sy);
+  }
 
   // 골대 — 두꺼운 픽셀 프레임 + 체크무늬 그물(대각선 헤치 대신 블록 격자)
   const netWobble = goalFlashTeam && Date.now()<goalFlashUntil
@@ -803,19 +849,13 @@ function drawField(){
     const gx = side==='L' ? FX-GOAL_W : FX+FW;
     const wobbleSign = side==='L' ? (goalFlashTeam==='B'?1:0) : (goalFlashTeam==='A'?1:0);
     const wob = wobbleSign ? (Math.sin(netWobble*Math.PI*3)*(1-netWobble)*4)|0 : 0;
-    ctx.fillStyle = '#eef2ee';
-    ctx.fillRect(gx, GOAL_Y1, GOAL_W, 4);
-    ctx.fillRect(gx, GOAL_Y2-4, GOAL_W, 4);
+    ctx.fillStyle='rgba(9,19,32,.58)'; ctx.fillRect(gx,GOAL_Y1,GOAL_W,GOAL_H);
+    ctx.strokeStyle='rgba(224,242,255,.42)'; ctx.lineWidth=1;
+    for (let ny=GOAL_Y1+6;ny<GOAL_Y2;ny+=8){ ctx.beginPath();ctx.moveTo(gx+wob,ny);ctx.lineTo(gx+GOAL_W+wob,ny);ctx.stroke(); }
+    for (let nx=gx+3;nx<gx+GOAL_W;nx+=5){ ctx.beginPath();ctx.moveTo(nx+wob,GOAL_Y1);ctx.lineTo(nx+wob,GOAL_Y2);ctx.stroke(); }
+    ctx.fillStyle = '#f7fbff';
+    ctx.fillRect(gx, GOAL_Y1, GOAL_W, 4); ctx.fillRect(gx, GOAL_Y2-4, GOAL_W, 4);
     ctx.fillRect(side==='L'?gx:gx+GOAL_W-4, GOAL_Y1, 4, GOAL_H);
-    const meshCell = 8;
-    for (let ny=GOAL_Y1+4; ny<GOAL_Y2-4; ny+=meshCell){
-      for (let nx=0; nx<GOAL_W-4; nx+=meshCell){
-        if (((nx/meshCell)+(ny/meshCell))%2===0) continue;
-        ctx.fillStyle = 'rgba(255,255,255,.35)';
-        const px = (side==='L'?gx+4:gx) + nx + wob;
-        ctx.fillRect(px, ny, meshCell-2, meshCell-2);
-      }
-    }
   }
 }
 
@@ -858,127 +898,97 @@ function drawPlayer(p, mine, sid){
   const nearBall = !stunned && Math.hypot(ball_or_netball().x-p.x, ball_or_netball().y-p.y) < KICK_RANGE+4;
   const facing = Math.cos(dir) < -0.15 ? -1 : 1;
 
-  ctx.save();
-  ctx.translate(p.x, p.y);
+  ctx.save(); ctx.translate(p.x,p.y);
+  const t=now/1000, walkPhase=moving?(Math.floor(t*10)%2):0;
+  const bob=Math.round(moving?Math.sin(t*13):Math.sin(t*2.4)*.45);
 
-  // 그림자
-  ctx.fillStyle='rgba(0,0,0,.30)';
-  ctx.fillRect(-PR*0.8, PR*0.7, PR*1.6, PR*0.5);
+  // 부드러운 타원 대신 3단 픽셀 그림자
+  ctx.fillStyle='rgba(2,20,12,.18)'; ctx.fillRect(-17,12,34,7);
+  ctx.fillStyle='rgba(2,20,12,.28)'; ctx.fillRect(-13,14,26,6);
+  ctx.fillStyle='rgba(2,20,12,.38)'; ctx.fillRect(-8,16,16,4);
 
-  // 돌진 태클 중 잔상
-  if (now < tackleActiveUntil && mine){
-    ctx.globalAlpha = 0.25;
-    ctx.fillStyle = p.color;
-    ctx.fillRect(-Math.cos(dir)*16-PR*0.7, -Math.sin(dir)*16-PR*0.9, PR*1.4, PR*1.5);
-    ctx.globalAlpha = 1;
-  }
-
-  // 소유(가까이 있는) 표시 — 픽셀 점선 다이아몬드
   if (nearBall){
-    ctx.fillStyle = '#ffd640';
-    const R = PR+10;
-    [[0,-R],[R,0],[0,R],[-R,0]].forEach(([dx,dy])=>{ ctx.fillRect(dx-1.5,dy-1.5,3,3); });
+    ctx.fillStyle='#ffe66d'; const R=28;
+    [[0,-R],[R,0],[0,R],[-R,0]].forEach(([dx,dy])=>ctx.fillRect(dx-2,dy-2,4,4));
+  }
+  if (now<tackleActiveUntil && mine){
+    ctx.globalAlpha=.22; ctx.fillStyle=p.color;
+    ctx.fillRect(-Math.cos(dir)*19-15,-Math.sin(dir)*19-19,30,35); ctx.globalAlpha=1;
   }
 
-  // ===== 픽셀 스프라이트 본체 =====
-  const PXS = 2.3;          // 1스프라이트픽셀 = 2.3 화면px
-  const W = 12, H = 16;      // 스프라이트 격자 크기
-  const drawW = W*PXS, drawH = H*PXS;
-  const baseX = Math.round(-drawW/2);
-  const baseY = Math.round(-drawH*0.62);
+  // 투게스터의 16×18, 큰 머리/작은 몸 비율을 축구 마스코트에 맞게 재구성
+  const PX=2.25, W=16, H=18;
+  const baseX=-W*PX/2, baseY=-H*PX+13;
+  const teamColor=stunned?'#838b94':p.color;
+  const OUT=stunned?'#444b53':shadeColor(teamColor,-.48);
+  const DARK=stunned?'#5d646d':shadeColor(teamColor,-.25);
+  const HI=stunned?'#aeb4ba':shadeColor(teamColor,.28);
+  const FACE=stunned?'#b9b9b9':'#f4caa1';
+  const INNER=stunned?'#999':'#f28fad';
+  const WHITE=stunned?'#d1d1d1':'#f7f8f2';
+  const SHOE='#172033', EYE='#18202d';
+  const variant=Math.abs(Number(p.seat)||0)%4;
 
-  const t = now/1000;
-  const walkPhase = moving ? (Math.floor(t*9)%2) : 0;
-  const legShift = moving ? (walkPhase ? 1 : -1) : 0;
+  ctx.save(); ctx.scale(facing,1); ctx.imageSmoothingEnabled=false;
+  const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(baseX+x*PX),Math.round(baseY+(y+bob)*PX),Math.ceil(w*PX),Math.ceil(h*PX));};
 
-  const bodyColor = stunned ? '#8a8a8a' : p.color;
-  const OUT = shadeColor(bodyColor, -0.35);
-  const HI = shadeColor(bodyColor, 0.22);
-  const SKIN = stunned ? '#b7b7b7' : '#ffd8ad';
-  const HAIR = stunned ? '#8a8a8a' : shadeColor(bodyColor, -0.55);
-  const SHORTS = stunned ? '#6d6d6d' : '#f4f4f4';
-  const SHOE = '#2b2b2b';
-  const EYE = '#3a2a1a';
+  // 꼬리/귀 → 머리 → 유니폼 순서로 겹쳐 또렷한 실루엣을 만든다.
+  px(13,10,2,3,OUT); px(14,11,2,2,teamColor); px(14,11,1,1,HI);
+  px(3,0,4,4,OUT); px(10,0,3,4,OUT);
+  px(4,1,2,2,teamColor); px(10,1,2,2,teamColor);
+  px(5,1,1,1,INNER); px(10,1,1,1,INNER);
 
-  ctx.save();
-  ctx.translate(-baseX-drawW/2, 0); // 중심 기준 좌우반전 위해 임시 보정
-  ctx.scale(facing,1);
-  ctx.translate(baseX+drawW/2, 0);
-
-  const px = (gx,gy,w,h,c)=>{ ctx.fillStyle=c; ctx.fillRect(Math.round(baseX+gx*PXS), Math.round(baseY+gy*PXS), Math.ceil(w*PXS), Math.ceil(h*PXS)); };
-
-  // 다리(2프레임 걷기)
-  px(3+legShift, 12, 2, 3, SKIN);
-  px(7-legShift, 12, 2, 3, SKIN);
-  px(3+legShift, 14, 2, 2, SHOE);
-  px(7-legShift, 14, 2, 2, SHOE);
-
-  // 반바지
-  px(2, 10, 8, 3, SHORTS);
-  px(2, 10, 8, 1, OUT);
-
-  // 유니폼 몸통
-  px(2, 6, 8, 4, bodyColor);
-  px(2, 8, 8, 1, '#ffffff');   // 가로 스트라이프
-  px(2, 6, 1, 4, OUT); px(9, 6, 1, 4, OUT); // 옆선
-
-  // 팔(피부색, 몸통 옆에)
-  px(1, 6, 1, 3, SKIN);
-  px(10, 6, 1, 3, SKIN);
-
-  // 등번호(가슴)
-  drawPixelDigit(Math.round(baseX+(4.3)*PXS), Math.round(baseY+6.4*PXS), jerseyNumberOf(p), PXS*0.62, 'rgba(255,255,255,.95)');
-
-  // 목
-  px(4.5, 5, 3, 1, SKIN);
-
-  // 머리
-  px(3, 1, 6, 4, SKIN);
-  // 헤어
-  px(3, 0, 6, 1, HAIR);
-  px(3, 1, 1, 2, HAIR);
-  px(8, 1, 1, 2, HAIR);
-  // 눈(정면 + 살짝 방향쪽으로)
+  px(2,3,12,8,OUT); px(3,4,10,6,teamColor); px(4,5,8,4,FACE);
+  px(4,8,2,1,'rgba(242,143,173,.72)'); px(10,8,2,1,'rgba(242,143,173,.72)');
   if (!stunned){
-    px(4.5, 2.5, 1, 1, EYE);
-    px(6.5, 2.5, 1, 1, EYE);
-  }
+    px(5,6,1,2,EYE); px(10,6,1,2,EYE); px(5,6,1,1,'#fff'); px(10,6,1,1,'#fff');
+    px(7,8,2,1,INNER); px(8,9,1,1,OUT);
+  } else { px(5,6,2,1,EYE); px(9,6,2,1,EYE); }
 
+  // 좌석별 작은 장식
+  if (variant===0){ px(3,4,2,1,'#ffe66d'); px(4,3,1,3,'#ffe66d'); }
+  else if (variant===1){ px(10,3,3,1,WHITE); }
+  else if (variant===2){ px(3,4,1,3,'#8ee3ff'); px(4,3,1,1,'#8ee3ff'); }
+  else { px(11,4,2,2,'#ff9fc0'); px(12,3,1,4,'#ff9fc0'); }
+
+  // 몸통/팔: 태클 중이면 앞팔과 몸을 길게 보여 동작을 읽기 쉽게 한다.
+  px(3,10,10,5,OUT); px(4,10,8,4,teamColor); px(4,12,8,1,HI);
+  if (p.tackle){ px(1,11,3,2,OUT); px(0,12,3,2,teamColor); px(12,10,3,2,OUT); }
+  else { px(2,11,2,3,OUT); px(3,11,1,2,FACE); px(12,11,2,3,OUT); px(12,11,1,2,FACE); }
+  px(4,14,8,2,OUT); px(5,14,6,2,WHITE);
+
+  const step=walkPhase?1:0;
+  px(5-step,16,2,2,OUT); px(9+step,16,2,2,OUT);
+  px(4-step,17,3,1,SHOE); px(9+step,17,3,1,SHOE);
+
+  drawPixelDigit(baseX+7*PX,baseY+(10.4+bob)*PX,jerseyNumberOf(p),PX*.48,'rgba(255,255,255,.96)');
   ctx.restore();
 
-  // 충전 중인 킥 게이지 링(본인만)
-  if (mine && kickCharging){
-    const pct = clamp((now-kickChargeStart)/KICK_CHARGE_MS,0,1);
-    ctx.beginPath();
-    ctx.arc(0,0, PR+13, -Math.PI/2, -Math.PI/2 + pct*Math.PI*2);
-    ctx.strokeStyle = '#ffd640'; ctx.lineWidth = 3; ctx.stroke();
+  if (mine&&kickCharging){
+    const pct=clamp((now-kickChargeStart)/KICK_CHARGE_MS,0,1);
+    ctx.beginPath();ctx.arc(0,0,31,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
+    ctx.strokeStyle='#ffe66d';ctx.lineWidth=4;ctx.stroke();
   }
-
-  // 내 캐릭터 표시(발밑 픽셀 화살표)
   if (mine){
-    ctx.fillStyle = '#ffd640';
-    ctx.fillRect(-3, PR*0.95, 6, 3);
-    ctx.fillRect(-5, PR*0.95-3, 10, 3);
+    ctx.fillStyle='#ffe66d';ctx.fillRect(-5,-38,10,3);ctx.fillRect(-3,-41,6,3);ctx.fillRect(-1,-44,2,3);
   }
+  if (stunned){ctx.font='14px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff59d';ctx.fillText('💫',0,-42);}
 
-  // 스턴 아이콘
-  if (stunned){
-    ctx.font = '13px sans-serif'; ctx.textAlign='center';
-    ctx.fillStyle = '#fff59d';
-    ctx.fillText('💫', 0, -PR-24);
-  }
-
-  ctx.fillStyle='#fff'; ctx.font='11px monospace'; ctx.textAlign='center';
-  ctx.fillText((p.nick||'').slice(0,8), 0, -PR-14);
+  const label=String(p.nick||'Player').slice(0,8), labelW=Math.max(38,Math.min(70,label.length*7+14));
+  ctx.fillStyle='rgba(5,14,28,.82)';ctx.fillRect(-labelW/2+3,-56,labelW-6,16);ctx.fillRect(-labelW/2,-53,labelW,10);
+  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,0,-48);
   ctx.restore();
 }
 
 function drawBallTrail(){
   for (const t of ballTrail){
     ctx.save();
-    ctx.globalAlpha = clamp(t.life,0,1)*0.35;
+    ctx.globalAlpha = clamp(t.life,0,1)*0.3;
+    const s = 3 + 5*clamp(t.life,0,1);
+    ctx.fillStyle = '#dff7ff';
+    ctx.fillRect(Math.round(t.x-s/2), Math.round(t.y-s/2), Math.round(s), Math.round(s));
     ctx.fillStyle = '#fff';
-    ctx.fillRect(t.x-BR*0.7, t.y-BR*0.7, BR*1.4, BR*1.4);
+    ctx.fillRect(Math.round(t.x-s/4), Math.round(t.y-s/4), Math.max(2,Math.round(s/2)), Math.max(2,Math.round(s/2)));
     ctx.restore();
   }
 }
@@ -993,30 +1003,52 @@ function drawRings(){
   }
 }
 
-// 8x8 픽셀 축구공(회전 위상 4프레임으로 검은 무늬 위치를 바꿔 살짝 굴러가는 느낌)
-const BALL_MASKS = [
-  ['..##....','.#..#...','#....#..','#....#..','..#..#..','...##...','........','........'],
-  ['........','..##....','.#..#...','#....#..','#....#..','..#..#..','...##...','........'],
-  ['........','........','..##....','.#..#...','#....#..','#....#..','..#..#..','...##...'],
-  ['...##...','........','........','..##....','.#..#...','#....#..','#....#..','..#..#..'],
+// 12x12 원형 픽셀 공. 물리 반지름(BR)은 그대로 두고 그림만 개선해 판정은 바뀌지 않는다.
+const BALL_SHAPE = [
+  '....####....','..########..','.##########.','############',
+  '############','############','############','############',
+  '############','.##########.','..########..','....####....'
+];
+const BALL_INNER = [
+  '............','....####....','..########..','.##########.',
+  '.##########.','.##########.','.##########.','.##########.',
+  '.##########.','..########..','....####....','............'
+];
+const BALL_PATCHES = [
+  [[5,3],[6,3],[4,4],[5,4],[6,4],[7,4],[5,5],[6,5],[2,7],[3,7],[8,8],[9,8]],
+  [[7,3],[8,3],[6,4],[7,4],[8,4],[9,4],[7,5],[8,5],[3,8],[4,8],[7,9]],
+  [[5,6],[6,6],[4,7],[5,7],[6,7],[7,7],[5,8],[6,8],[2,3],[3,3],[8,4],[9,4]],
+  [[3,4],[4,4],[2,5],[3,5],[4,5],[5,5],[3,6],[4,6],[7,8],[8,8],[8,9]]
 ];
 function drawBall(b){
   ctx.save();
-  ctx.fillStyle='rgba(0,0,0,.28)';
-  ctx.fillRect(b.x-BR*0.75, b.y+BR*0.45, BR*1.5, BR*0.5);
+  ctx.fillStyle='rgba(2,12,18,.32)';
+  ctx.fillRect(Math.round(b.x-10),Math.round(b.y+9),20,4);
+  ctx.fillStyle='rgba(2,12,18,.18)';
+  ctx.fillRect(Math.round(b.x-7),Math.round(b.y+13),14,2);
 
-  const BPX = (BR*2)/8;
-  const bx0 = b.x-BR, by0 = b.y-BR;
-  ctx.fillStyle = '#f4f4f4';
-  ctx.fillRect(bx0, by0, BR*2, BR*2);
-
-  const spinPhase = Math.floor((Date.now()/70) + Math.abs(b.vx||0)*3) % BALL_MASKS.length;
-  const mask = BALL_MASKS[spinPhase];
-  ctx.fillStyle = '#222';
-  for (let y=0;y<8;y++) for (let x=0;x<8;x++){
-    if (mask[y][x]==='#') ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
+  const BPX=2, bx0=Math.round(b.x-12), by0=Math.round(b.y-12);
+  for(let y=0;y<12;y++) for(let x=0;x<12;x++){
+    if(BALL_SHAPE[y][x]==='#'){
+      ctx.fillStyle='#101923';
+      ctx.fillRect(bx0+x*BPX,by0+y*BPX,BPX,BPX);
+    }
   }
-  ctx.strokeStyle='#222'; ctx.lineWidth=1.2; ctx.strokeRect(bx0,by0,BR*2,BR*2);
+  for(let y=0;y<12;y++) for(let x=0;x<12;x++){
+    if(BALL_INNER[y][x]==='#'){
+      ctx.fillStyle=y>7?'#cbd5dc':'#f7fbf7';
+      ctx.fillRect(bx0+x*BPX,by0+y*BPX,BPX,BPX);
+    }
+  }
+  const speed=Math.hypot(b.vx||0,b.vy||0);
+  const spinPhase=Math.floor(Date.now()/(speed>1?75:240)+Math.abs(b.x||0)/18)%BALL_PATCHES.length;
+  ctx.fillStyle='#263746';
+  for(const [x,y] of BALL_PATCHES[spinPhase]){
+    if(BALL_INNER[y]?.[x]==='#') ctx.fillRect(bx0+x*BPX,by0+y*BPX,BPX,BPX);
+  }
+  ctx.fillStyle='rgba(255,255,255,.9)';
+  ctx.fillRect(bx0+4*BPX,by0+2*BPX,2*BPX,BPX);
+  ctx.fillRect(bx0+3*BPX,by0+3*BPX,BPX,BPX);
   ctx.restore();
 }
 
@@ -1033,27 +1065,31 @@ function drawParticles(){
 
 function drawHUD(){
   const now = Date.now();
-  ctx.fillStyle='rgba(0,0,0,.55)';
-  ctx.fillRect(0,0,CW,FY-4);
+  ctx.fillStyle='#071827'; ctx.fillRect(0,0,CW,FY-4);
+  ctx.fillStyle='#123044'; ctx.fillRect(0,FY-8,CW,4);
+  ctx.fillStyle='#1c4b60'; ctx.fillRect(0,FY-8,CW,1);
+  ctx.fillStyle='#102638'; ctx.fillRect(12,8,120,32); ctx.fillRect(CW-132,8,120,32);
+  ctx.fillStyle='#020b12'; ctx.fillRect(CW/2-64,5,128,40);
+  ctx.fillStyle='#e8d36a'; ctx.fillRect(CW/2-64,5,128,2); ctx.fillRect(CW/2-64,43,128,2);
   ctx.textBaseline='middle';
 
   const popScale = (t)=> t>0 && now-t<300 ? 1+0.5*(1-(now-t)/300) : 1;
   ctx.save();
   ctx.translate(16,(FY-4)/2); ctx.scale(popScale(scoreAnimA), popScale(scoreAnimA));
-  ctx.font='bold 22px sans-serif'; ctx.fillStyle='#ff6b6b'; ctx.textAlign='left';
-  ctx.fillText('A '+score.A, 0, 0);
+  ctx.font='bold 21px monospace'; ctx.fillStyle='#ff7777'; ctx.textAlign='left';
+  ctx.fillText('RED '+score.A, 0, 0);
   ctx.restore();
 
   ctx.save();
   ctx.translate(CW-16,(FY-4)/2); ctx.scale(popScale(scoreAnimB), popScale(scoreAnimB));
-  ctx.font='bold 22px sans-serif'; ctx.fillStyle='#5b9dff'; ctx.textAlign='right';
-  ctx.fillText(score.B+' B', 0, 0);
+  ctx.font='bold 21px monospace'; ctx.fillStyle='#70a8ff'; ctx.textAlign='right';
+  ctx.fillText(score.B+' BLUE', 0, 0);
   ctx.restore();
 
   let sec = Math.max(0, Math.ceil((durationMs-(now-startTs))/1000));
   if (!startTs) sec = Math.ceil(durationMs/1000);
   const lowTime = sec<=10 && gameActive && !gameOver;
-  ctx.font='bold 22px sans-serif'; ctx.textAlign='center';
+  ctx.font='bold 21px monospace'; ctx.textAlign='center';
   ctx.fillStyle = lowTime ? (Math.floor(now/300)%2===0 ? '#ff4d4d' : '#fff') : '#fff';
   const mm = String(Math.floor(sec/60)).padStart(2,'0');
   const ss = String(sec%60).padStart(2,'0');

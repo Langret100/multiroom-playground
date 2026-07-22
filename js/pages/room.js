@@ -539,6 +539,8 @@ function updatePreview(modeId){
     soccerFrameWin: null,
     soccerMovementProbeAt: 0,
     soccerTgSeenAt: 0,
+    soccerLocalState: null,
+    soccerSeenEvents: new Set(),
     iframeLoaded: false,
     startPayload: null,
     sentGameStart: false,
@@ -1003,6 +1005,8 @@ function updatePreview(modeId){
           coop.soccerFrameWin = null;
           coop.soccerMovementProbeAt = 0;
           coop.soccerTgSeenAt = 0;
+          coop.soccerLocalState = null;
+          coop.soccerSeenEvents = new Set();
           coop.iframeLoaded = false;
           coop.iframeReady = false;
         }catch(_){ }
@@ -1119,6 +1123,8 @@ function updatePreview(modeId){
       coop.soccerFrameWin = null;
       coop.soccerMovementProbeAt = 0;
       coop.soccerTgSeenAt = 0;
+      coop.soccerLocalState = null;
+      coop.soccerSeenEvents = new Set();
       coop.iframeLoaded = false;
       coop.iframeReady = false;
       try{ renderPlayers(); }catch(_){ }
@@ -1329,8 +1335,14 @@ function updatePreview(modeId){
         __game: "soccer",
         x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
         kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
-        seat: getMySeat(), nick: myNick || "Player"
+        seat: getMySeat(), nick: myNick || "Player", isHost: getMyIsHost()
       };
+      // 호스트가 보낸 최신 공/이벤트를 위치 스냅샷에도 계속 싣는다.
+      // tg_state는 사용자별 최신 상태 하나를 저장하므로, 위치만 새 객체로
+      // 덮으면 직전에 실어 보낸 공이 사라진다.
+      if (coop.soccerLocalState?.ball) soccerState.ball = coop.soccerLocalState.ball;
+      if (coop.soccerLocalState?.event) soccerState.event = coop.soccerLocalState.event;
+      coop.soccerLocalState = soccerState;
       const soccerNow = Date.now();
       if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
 
@@ -1350,22 +1362,55 @@ function updatePreview(modeId){
     }
     if (d.type === "sc_ball"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_ball", { x: d.x, y: d.y, vx: d.vx, vy: d.vy, owner: d.owner }); }catch(_){ }
+      const soccerNow = Date.now();
+      if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
+      const state = Object.assign({
+        __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost()
+      }, coop.soccerLocalState || {});
+      state.isHost = getMyIsHost();
+      state.ball = { x:d.x, y:d.y, vx:d.vx, vy:d.vy, owner:d.owner, at:soccerNow };
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
+      if (!tgHealthy && (soccerNow - coop.soccerMovementProbeAt) >= 1200){
+        try{ room.send("sc_ball", state.ball); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_goal"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_goal", { team: d.team, scoreA: d.scoreA, scoreB: d.scoreB }); }catch(_){ }
+      const event = { kind:"goal", id:`${mySessionId}:goal:${Date.now()}`, team:d.team, scoreA:d.scoreA, scoreB:d.scoreB };
+      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
+      state.isHost = getMyIsHost();
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
+        try{ room.send("sc_goal", { team:d.team, scoreA:d.scoreA, scoreB:d.scoreB }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_stun"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_stun", { sid: d.sid, dur: d.dur }); }catch(_){ }
+      const event = { kind:"stun", id:`${mySessionId}:stun:${Date.now()}:${d.sid||''}`, sid:d.sid, dur:d.dur };
+      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
+      state.isHost = getMyIsHost();
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
+        try{ room.send("sc_stun", { sid:d.sid, dur:d.dur }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_over"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_over", { scoreA: d.scoreA, scoreB: d.scoreB, winner: d.winner }); }catch(_){ }
+      const event = { kind:"over", id:`${mySessionId}:over:${Date.now()}`, scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner };
+      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
+      state.isHost = getMyIsHost();
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
+        try{ room.send("sc_over", { scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_sync"){
@@ -2483,6 +2528,8 @@ function startCoopEmbed(meta){
   coop.soccerFrameWin = null;
   coop.soccerMovementProbeAt = 0;
   coop.soccerTgSeenAt = 0;
+  coop.soccerLocalState = null;
+  coop.soccerSeenEvents = new Set();
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -2528,6 +2575,8 @@ function startCoopPractice(meta){
   coop.soccerFrameWin = null;
   coop.soccerMovementProbeAt = 0;
   coop.soccerTgSeenAt = 0;
+  coop.soccerLocalState = null;
+  coop.soccerSeenEvents = new Set();
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -2963,15 +3012,32 @@ try{
         // tg_players 스냅샷만 골라 수학축구 형식으로 전달한다.
         if (String(room?.state?.mode||"") === "soccer"){
           const soccerPlayers = {};
+          let sharedBall = null;
+          const sharedEvents = [];
           try{
             for (const [sid, state] of Object.entries(msg.players || {})){
               if (!state || state.__game !== "soccer") continue;
               soccerPlayers[String(sid)] = state;
+              // 공/득점/스턴/종료는 호스트 상태만 권위값으로 인정한다.
+              if (state.isHost && state.ball){
+                if (!sharedBall || Number(state.ball.at||0) >= Number(sharedBall.at||0)) sharedBall = state.ball;
+              }
+              if (state.isHost && state.event?.id) sharedEvents.push(state.event);
             }
           }catch(_){ }
           if (Object.keys(soccerPlayers).length){
             coop.soccerTgSeenAt = Date.now();
             postToMain({ type:"sc_players", players:soccerPlayers });
+          }
+          if (sharedBall){
+            postToMain({ type:"sc_ball", x:sharedBall.x, y:sharedBall.y, vx:sharedBall.vx, vy:sharedBall.vy, owner:sharedBall.owner });
+          }
+          for (const evt of sharedEvents){
+            if (coop.soccerSeenEvents.has(String(evt.id))) continue;
+            coop.soccerSeenEvents.add(String(evt.id));
+            if (evt.kind === "goal") postToMain({ type:"sc_goal", eventId:evt.id, team:evt.team, scoreA:evt.scoreA, scoreB:evt.scoreB });
+            else if (evt.kind === "stun") postToMain({ type:"sc_stun", eventId:evt.id, sid:evt.sid, dur:evt.dur });
+            else if (evt.kind === "over") postToMain({ type:"sc_end", eventId:evt.id, scoreA:evt.scoreA, scoreB:evt.scoreB, winner:evt.winner });
           }
         }
       });
@@ -3053,6 +3119,7 @@ try{
         postToMain({ type:"sc_players", players: msg.players || {} });
       });
       room.onMessage("sc_ball", (msg)=>{
+        if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({ type:"sc_ball", x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, owner: msg.owner });
       });
       room.onMessage("sc_goal", (msg)=>{
@@ -3104,7 +3171,7 @@ try{
         hideResultOverlay();
         showDuelUI(false);
         duel.active=null; duel.meta=null;
-        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.soccerMovementProbeAt=0; coop.soccerTgSeenAt=0; coop.iframeLoaded=false; coop.iframeReady=false;
+        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.soccerMovementProbeAt=0; coop.soccerTgSeenAt=0; coop.soccerLocalState=null; coop.soccerSeenEvents=new Set(); coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
         // Notify iframes (best-effort) before clearing.
