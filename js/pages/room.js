@@ -1348,6 +1348,14 @@ function updatePreview(modeId){
       const soccerNow = Date.now();
       if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
 
+      // 킥은 위치와 달리 한 번의 edge 이벤트다. 공용 tg_state 집계 주기를
+      // 기다리면 게스트 슛이 늦게 보이므로 최초 kickAt은 축구 전용 경로로도
+      // 즉시 한 번 보낸다. 동일 id 반복 패킷은 아래 공용 경로만 사용한다.
+      if(d.kickAt && d.kickAt!==coop.soccerLastUrgentKickAt){
+        coop.soccerLastUrgentKickAt=d.kickAt;
+        try{ room.send("sc_pos", soccerState); }catch(_){ }
+      }
+
       // 다른 게임에서 실제 사용 중인 검증된 집계 경로를 축구 이동의 주 경로로 쓴다.
       // 축구 전용 sc_players와 동시에 좌표를 받으면 서로 다른 시점의 값이 덮어써져
       // 상대가 멈추거나 튀는 현상이 생길 수 있으므로, 둘을 동시에 활성화하지 않는다.

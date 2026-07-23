@@ -109,13 +109,16 @@ const MAX_BALL_SPEED = 14;
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-// v19: 첨부된 팀별 4명 시트를 고해상도 8개 독립 에셋으로 분리했다.
+// v23: 기존/추가 프레임의 자글거리는 외곽선과 서로 다른 화풍을 없애기 위해
+// 8명 각각의 12프레임을 한 시트에서 같은 선 굵기와 팔레트로 다시 제작했다.
+// 대기 0/10/11은 손·팔·발 위치를 유지하고 가슴·어깨·머리카락만 미세하게
+// 달라지며, 한 캐릭터의 모든 동작에는 하나의 공통 배율과 발 기준선을 쓴다.
 // 좌석 0/2/4/6은 A1~A4, 1/3/5/7은 B1~B4에 고정 대응한다.
 const soccerPlayerSprites={A:[],B:[]};
-const SOCCER_SPRITE_CELL=224;
+const SOCCER_SPRITE_CELL=384;
 for(const team of ['A','B'])for(let i=0;i<4;i++){
   const img=new Image();
-  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v19-hires.png?v=20260723-v19`;
+  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v23-unified-motion.png?v=20260723-v23`;
   soccerPlayerSprites[team].push(img);
 }
 function resize(){
@@ -495,6 +498,8 @@ function showOverlay(title, text){
 let kickCharging = false, kickChargeStart = 0;
 let pendingKickAt = 0, pendingKickCharge = 0, pendingKickUntil = 0;
 let pendingKickX=0, pendingKickY=0, pendingKickDir=0, pendingKickBallX=0, pendingKickBallY=0;
+// 게스트 화면의 짧은 슛 예측. 최종 공 판정은 계속 호스트가 담당한다.
+let localKickPredictAt=0, localKickPredictUntil=0, localKickPredictFrameAt=0;
 let tackleCooldownUntil = 0;
 let tackleActiveUntil = 0;
 const KICK_CHARGE_MS = 600;
@@ -535,6 +540,15 @@ function releaseKickCharge(){
   me.kickX=pendingKickX; me.kickY=pendingKickY; me.kickDir=pendingKickDir;
   me.kickBallX=pendingKickBallX; me.kickBallY=pendingKickBallY;
   me._kickPoseUntil = Date.now()+180;
+  const immediateKickPacket={
+    x:me.x,y:me.y,vx:me.vx,vy:me.vy,dir:me.dir,
+    kickAt:pendingKickAt,kickCharge:pendingKickCharge,tackle:!!me.tackle,
+    kickX:pendingKickX,kickY:pendingKickY,kickDir:pendingKickDir,
+    kickBallX:pendingKickBallX,kickBallY:pendingKickBallY,
+  };
+  // 이전에는 netSends()의 다음 30ms 주기까지 기다려 게스트 슛이 호스트보다
+  // 늦게 출발했다. 버튼을 놓은 같은 호출 스택에서 이벤트를 즉시 전달한다.
+  if(!isHost) bridgeSend('sc_pos',immediateKickPacket);
   sfxSwing(pendingKickCharge); // 호스트 여부와 상관없이 내가 찬 순간 즉시 피드백
   // 게스트는 호스트 왕복을 기다리면 충격 효과가 늦거나 보간에 나뉘어 약해진다.
   // 공이 실제 사거리 안일 때만 화면 효과를 먼저 재생하고, 공의 위치/속도 판정은
@@ -548,6 +562,16 @@ function releaseKickCharge(){
     if(Math.min(visibleDist,targetDist)<KICK_RANGE+3){
       playKickImpactOnce(pendingKickAt,b.x,b.y,pendingKickCharge,me.dir);
       lastBallSpeedSeen=Math.max(lastBallSpeedSeen,5+pendingKickCharge*7);
+      // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
+      // 전진시킨다. 그래서 이펙트 뒤 공이 멈춰 있다가 뒤늦게 출발하지 않는다.
+      const power=5+pendingKickCharge*9;
+      netBall.x=b.x;netBall.y=b.y;
+      netBall.vx=(netBall.vx||0)+Math.cos(me.dir)*power;
+      netBall.vy=(netBall.vy||0)+Math.sin(me.dir)*power;
+      netBall.owner=null;
+      localKickPredictAt=pendingKickAt;
+      localKickPredictUntil=pendingKickAt+180;
+      localKickPredictFrameAt=pendingKickAt;
     }
   }
 }
@@ -643,6 +667,21 @@ function lerpRemote(){
 function updateNetBall(){
   if (isHost) return; // 호스트는 자기 물리 계산 결과(ball)를 그대로 그린다
   const now = Date.now();
+  // 게스트가 방금 직접 찬 공은 호스트의 확정 impactAt이 돌아오기 전까지만
+  // 로컬에서 같은 속도/마찰로 전진시킨다. 오래된 공 스냅샷을 향해 보간하면
+  // 이펙트 뒤 공이 멈추거나 되감기므로 이 짧은 구간에는 권위 보간을 유예한다.
+  if(localKickPredictAt&&now<localKickPredictUntil){
+    const dt=clamp(now-(localKickPredictFrameAt||now),0,34);
+    localKickPredictFrameAt=now;
+    const steps=dt/(1000/60);
+    netBall.x+=netBall.vx*steps;netBall.y+=netBall.vy*steps;
+    const drag=Math.pow(.985,steps);
+    netBall.vx*=drag;netBall.vy*=drag;
+    return;
+  }
+  if(localKickPredictAt&&now>=localKickPredictUntil){
+    localKickPredictAt=0;localKickPredictUntil=0;localKickPredictFrameAt=0;
+  }
   const localSpeed=me?Math.hypot(me.vx||0,me.vy||0):0;
   const authDist=me?Math.hypot(netBall.netX-me.x,netBall.netY-me.y):Infinity;
   const viewDist=me?Math.hypot(netBall.x-me.x,netBall.y-me.y):Infinity;
@@ -1251,9 +1290,17 @@ function drawPlayer(p,mine,sid){
   const spd=Math.hypot(animVX,animVY);
   const moving=spd>.3, running=spd>4.15, facing=Math.cos(dir)<-.15?-1:1;
   const b=ball_or_netball(), nearBall=!stunned&&Math.hypot(b.x-p.x,b.y-p.y)<KICK_RANGE+5;
-  const animStep=Math.floor(now/(running?72:(moving?92:620)));
+  // 전역 시계로 프레임을 고르면 출발 순간 중간 동작으로 튄다. 선수별 누적
+  // 애니메이션 시계를 사용해 항상 접지 동작부터 자연스럽게 시작한다.
+  const animDt=clamp(now-(p._animAt||now),0,50);
+  p._animAt=now;
+  if(moving)p._animClock=(p._animClock||0)+animDt/(running?76:94);
+  else p._animClock=0;
+  const animStep=Math.floor(p._animClock||0);
   const phase=moving?(animStep%2):0;
-  const bob=moving?((animStep%4===1||animStep%4===3)?1:0):(animStep%2);
+  // 정지 상태에서 캐릭터 전체를 위아래로 옮기던 1px bob이 둥둥 떠 보이던
+  // 원인이었다. 상하 이동은 달리는 접지 순간에만 사용하고 대기 중에는 0이다.
+  const bob=moving?((animStep%4===1||animStep%4===3)?1:0):0;
   const sway=moving?(phase?1:-1):0;
   const kicking=now<(p._kickPoseUntil||0), dribbling=nearBall&&moving&&!kicking;
 
@@ -1275,18 +1322,24 @@ function drawPlayer(p,mine,sid){
 
   const variant=spriteVariantOf(p);
   const sprite=soccerPlayerSprites[p.team]?.[variant]||soccerPlayerSprites.A[0];
-  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*8;
+  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*12;
   if(spriteReady){
-    // 0 대기 / 1·2·3 걷기 / 4·5 달리기 / 6 드리블 / 7 슛.
+    // 0 대기 / 1·2·3 걷기 / 4·5 달리기 뻗기 / 6 드리블 / 7 슛 /
+    // 8·9 달리기 좌·우 접지 / 10 들숨 / 11 날숨.
     // 원격 선수도 netVX/netVY와 현재 시간으로 같은 순환을 계산하므로 한 자세로
     // 미끄러지지 않는다. 드리블은 걷기 접촉 프레임과 발터치 프레임을 교차한다.
-    const walkFrames=[1,2,3,2],runFrames=[4,5,4,2],dribbleFrames=[1,6,3,6];
+    const walkFrames=[1,2,3,2],runFrames=[8,4,9,5],dribbleFrames=[1,6,3,6];
+    // 0번 기본 자세를 사이에 끼우면 생성 시트별 2~3px 높이 차이가 호흡이
+    // 아니라 둥둥 뜨는 움직임으로 보인다. 손·발 위치가 같은 전용 들숨/날숨
+    // 두 장만 천천히 교차해 상체와 머리카락 변화만 보이게 한다.
+    const idleFrames=[10,11];
     const walkCycle=walkFrames[animStep%walkFrames.length];
     const runCycle=runFrames[animStep%runFrames.length];
     const dribbleCycle=dribbleFrames[animStep%dribbleFrames.length];
+    const idleCycle=idleFrames[Math.floor((now+(Number(p.seat)||0)*83)/850)%idleFrames.length];
     // 슛 직후에는 발로우스루(7) 뒤 접지(6)를 보여 한 프레임으로 끝나지 않는다.
     const kickRemain=(p._kickPoseUntil||0)-now;
-    const frame=kicking?(kickRemain>75?7:6):(dribbling?dribbleCycle:(running?runCycle:(moving?walkCycle:0)));
+    const frame=kicking?(kickRemain>75?7:6):(dribbling?dribbleCycle:(running?runCycle:(moving?walkCycle:idleCycle)));
     ctx.save();
     ctx.scale(facing,1);
     // 원본 224px 셀을 고DPI 캔버스에 고품질 축소한다. 이전처럼 에셋 자체를
@@ -1294,9 +1347,9 @@ function drawPlayer(p,mine,sid){
     ctx.imageSmoothingEnabled=true;
     ctx.imageSmoothingQuality='high';
     if(stunned)ctx.filter='grayscale(1) brightness(.78)';
-    // 8명 모두 기본 높이와 발 기준선은 같고, 빨간 팀의 과대했던 6번째
-    // 달리기 동작만 별도로 미세 조정한 고해상도 프레임이다.
-    ctx.drawImage(sprite,frame*SOCCER_SPRITE_CELL,0,SOCCER_SPRITE_CELL,SOCCER_SPRITE_CELL,-36,-60,72,72);
+    // 384px 원본을 88px 영역에 고품질 축소한다. 실제 인물 실루엣 비율을
+    // 조정해 화면상 키는 기존과 같고, 동작이 커져도 머리 크기는 변하지 않는다.
+    ctx.drawImage(sprite,frame*SOCCER_SPRITE_CELL,0,SOCCER_SPRITE_CELL,SOCCER_SPRITE_CELL,-44,-76,88,88);
     ctx.imageSmoothingEnabled=false;
     ctx.filter='none';
     // 유니폼 원본색과 무관하게 발밑 팀 링으로 A/B를 즉시 구분한다.
@@ -1640,12 +1693,22 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_ball'){
+    const now=Date.now();
+    const incomingImpact=d.impactAt?String(d.impactAt):'';
+    const confirmsLocalKick=!!(localKickPredictAt&&incomingImpact===String(localKickPredictAt));
+    const predictingLocalKick=!!(localKickPredictAt&&now<localKickPredictUntil&&!confirmsLocalKick);
     netBall.netX = Number(d.x ?? netBall.netX);
     netBall.netY = Number(d.y ?? netBall.netY);
-    netBall.vx = Number(d.vx ?? 0);
-    netBall.vy = Number(d.vy ?? 0);
+    // 예측 중 도착한 '킥 이전' 공 속도가 즉시 표시 공을 멈추지 않게 한다.
+    if(!predictingLocalKick){
+      netBall.vx = Number(d.vx ?? 0);
+      netBall.vy = Number(d.vy ?? 0);
+    }
     netBall.owner = d.owner ? String(d.owner) : null;
-    netBall.netT = Date.now();
+    netBall.netT = now;
+    if(confirmsLocalKick){
+      localKickPredictAt=0;localKickPredictUntil=0;localKickPredictFrameAt=0;
+    }
     if(d.impactAt){
       netBall.impactAt=String(d.impactAt);
       netBall.impactPower=Number(d.impactPower||0);

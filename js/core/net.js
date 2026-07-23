@@ -391,6 +391,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-07-23-soccer-hires-sprites-v19";
+  window.__BUILD_ID = "2026-07-23-soccer-unified-motion-v23";
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();
