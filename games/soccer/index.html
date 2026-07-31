@@ -112,6 +112,12 @@ const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR*2+8;
 const MAX_BALL_SPEED = 14;
+const BALL_GRAVITY = 0.38;       // 프레임당 공중 중력
+const BALL_BOUNCE = 0.46;        // 잔디 바운드 감쇠
+const BALL_AIR_DRAG = 0.994;     // 공중 수평 저항
+const BALL_GOAL_MAX_Z = 38;      // 골대 크로스바 높이(화면 논리 높이)
+const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
+const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
 
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
@@ -220,6 +226,19 @@ function sfxKick(power){
   noiseBurst(0.07, 0, 0.09+power*0.05, 1400+power*900, 2.2);
 }
 function sfxSwing(power){ tone(600+power*260, 0.05, 0, 'sine', 0.025+power*0.02); }
+function sfxHeader(){
+  tone(185,0.065,0,'triangle',0.055);
+  noiseBurst(0.055,0,0.075,720,1.8);
+}
+function sfxBounce(strength){
+  const k=clamp(Number(strength)||0,0,1);
+  tone(105+k*75,0.055,0,'triangle',0.022+k*.035);
+  noiseBurst(0.045,0,0.025+k*.045,420+k*380,1.5);
+}
+function sfxAirWhoosh(power){
+  const k=clamp(Number(power)||0,0,1);
+  noiseBurst(0.10,0.015,0.025+k*.035,1200+k*900,.8,'linear');
+}
 function sfxTackle(){
   tone(120, 0.12, 0, 'sawtooth', 0.05); tone(90, 0.1, 0.05, 'sawtooth', 0.04);
   noiseBurst(0.14, 0, 0.14, 350, 1.4);
@@ -308,8 +327,8 @@ tackleBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); 
 let mySid='', myNick='Player', mySeat=-1, isHost=false, roster=[];
 let players={};      // sid -> {x,y,netX,netY,netVX,netVY,netT, seat,team,nick,color,dir,kickAt,kickCharge,tackle,_lastKickAt}
 let me=null;
-let ball={x:FX+FW/2,y:FY+FH/2,vx:0,vy:0,owner:null,ownerUntil:0};
-let netBall={x:FX+FW/2,y:FY+FH/2,vx:0,vy:0,netX:FX+FW/2,netY:FY+FH/2,netT:0,owner:null};
+let ball={x:FX+FW/2,y:FY+FH/2,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0};
+let netBall={x:FX+FW/2,y:FY+FH/2,z:0,vx:0,vy:0,vz:0,netX:FX+FW/2,netY:FY+FH/2,netZ:0,netVX:0,netVY:0,netVZ:0,netT:0,owner:null,samples:[]};
 let localDribbleVisualUntil=0;
 let score={A:0,B:0};
 let startTs=0, durationMs=120000;
@@ -392,6 +411,7 @@ function makePlayer(seat, nick){
     dir: defaultDir(team), kickAt:0, kickCharge:0, headerAt:0, tackleAt:0,
     tackle:false, dribble:false, dribbleBallX:sp.x, dribbleBallY:sp.y,
     _lastKickAt:0, _lastHeaderAt:0,
+    netSamples:[],
   };
 }
 
@@ -401,9 +421,9 @@ function startKickoffCountdown(ms){
 }
 
 function resetKickoff(){
-  ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0, owner:null, ownerUntil:0 };
-  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y,
-    netVX:0,netVY:0,netT:Date.now(),visualAt:Date.now(),owner:null };
+  ball = { x:FX+FW/2, y:FY+FH/2, z:0, vx:0, vy:0, vz:0, owner:null, ownerUntil:0 };
+  netBall = { x:ball.x, y:ball.y, z:0, vx:0, vy:0, vz:0, netX:ball.x, netY:ball.y, netZ:0,
+    netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[] };
   ballTrail = [];
   lastBallSpeedSeen = 0;
   for(const p of Object.values(players)){
@@ -422,9 +442,9 @@ function initGame(){
   }
   me = players[mySid] || null;
   score = { A:0, B:0 }; prevScoreA=0; prevScoreB=0;
-  ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0, owner:null, ownerUntil:0 };
-  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y,
-    netVX:0,netVY:0,netT:Date.now(),visualAt:Date.now(),owner:null };
+  ball = { x:FX+FW/2, y:FY+FH/2, z:0, vx:0, vy:0, vz:0, owner:null, ownerUntil:0 };
+  netBall = { x:ball.x, y:ball.y, z:0, vx:0, vy:0, vz:0, netX:ball.x, netY:ball.y, netZ:0,
+    netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[] };
   gameOver = false;
   gameActive = true;
   hideOverlay();
@@ -502,6 +522,9 @@ function applyRemotePlayers(map){
     p.netVX = Number(snap.vx ?? 0);
     p.netVY = Number(snap.vy ?? 0);
     p.netT = now;
+    if(!Array.isArray(p.netSamples)) p.netSamples=[];
+    p.netSamples.push({t:now,x:p.netX,y:p.netY,vx:p.netVX,vy:p.netVY});
+    if(p.netSamples.length>12) p.netSamples.splice(0,p.netSamples.length-12);
     p.dribble=!!snap.dribble;
     if(snap.dribbleBallX!=null)p.dribbleBallX=Number(snap.dribbleBallX);
     if(snap.dribbleBallY!=null)p.dribbleBallY=Number(snap.dribbleBallY);
@@ -627,9 +650,12 @@ function releaseKickCharge(){
       // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
       // 전진시킨다. 그래서 이펙트 뒤 공이 멈춰 있다가 뒤늦게 출발하지 않는다.
       const power=5+pendingKickCharge*9;
-      netBall.x=b.x;netBall.y=b.y;
+      const loft=pendingKickCharge<.48?0:lerp(2.4,7.2,(pendingKickCharge-.48)/.52);
+      netBall.x=b.x;netBall.y=b.y;netBall.z=Math.max(0,b.z||0);
       netBall.vx=(netBall.vx||0)+Math.cos(me.dir)*power;
       netBall.vy=(netBall.vy||0)+Math.sin(me.dir)*power;
+      netBall.vz=Math.max(netBall.vz||0,loft);
+      if(loft>0)sfxAirWhoosh(pendingKickCharge);
       netBall.owner=null;
       localKickPredictAt=pendingKickAt;
       localKickPredictUntil=pendingKickAt+180;
@@ -661,7 +687,7 @@ function tryHeader(){
     headerDir:pendingHeaderDir,headerBallX:pendingHeaderBallX,headerBallY:pendingHeaderBallY,
     tackle:!!me.tackle,
   });
-  tone(520,.07,0,'triangle',.035);
+  // 실제 접촉 효과음은 호스트가 공중 공 접촉을 확정했을 때 재생한다.
 }
 function tryTackle(){
   if (!me || !gameActive || gameOver) return;
@@ -757,10 +783,26 @@ function smoothToward(cur, netX, netY, netVX, netVY, netT, now, factor){
 
 function lerpRemote(){
   const now = Date.now();
+  const renderAt = now - 72; // 지터를 흡수할 작은 재생 지연
   for (const [sid,p] of Object.entries(players)){
     if (sid===mySid) continue;
-    const nxt = smoothToward(p, p.netX, p.netY, p.netVX, p.netVY, p.netT, now, 0.35);
-    p.x = nxt.x; p.y = nxt.y;
+    const samples=Array.isArray(p.netSamples)?p.netSamples:[];
+    while(samples.length>2 && samples[1].t<=renderAt) samples.shift();
+    let tx=p.netX,ty=p.netY;
+    if(samples.length>=2 && samples[0].t<=renderAt && renderAt<=samples[1].t){
+      const a=samples[0],b=samples[1];
+      const u=clamp((renderAt-a.t)/Math.max(1,b.t-a.t),0,1);
+      tx=lerp(a.x,b.x,u); ty=lerp(a.y,b.y,u);
+    }else if(samples.length){
+      const a=samples[samples.length-1];
+      const age=clamp(renderAt-a.t,0,110);
+      tx=a.x+(a.vx||0)*age*.06; ty=a.y+(a.vy||0)*age*.06;
+    }
+    const err=Math.hypot(tx-p.x,ty-p.y);
+    if(err>180){ p.x=tx; p.y=ty; continue; }
+    const factor=err>70?.42:(err>25?.27:.18);
+    p.x=lerp(p.x,clamp(tx,FX+PR,FX+FW-PR),factor);
+    p.y=lerp(p.y,clamp(ty,FY+PR,FY+FH-PR),factor);
   }
 }
 
@@ -778,7 +820,10 @@ function updateNetBall(){
     localKickPredictFrameAt=now;
     const steps=dt/(1000/60);
     netBall.x+=netBall.vx*steps;netBall.y+=netBall.vy*steps;
-    const drag=Math.pow(.985,steps);
+    netBall.z=Math.max(0,(netBall.z||0)+(netBall.vz||0)*steps);
+    netBall.vz=(netBall.vz||0)-BALL_GRAVITY*steps;
+    if(netBall.z<=0&&netBall.vz<0){netBall.z=0;netBall.vz=0;}
+    const drag=Math.pow(netBall.z>0?BALL_AIR_DRAG:.985,steps);
     netBall.vx*=drag;netBall.vy*=drag;
     return;
   }
@@ -791,8 +836,8 @@ function updateNetBall(){
   const confirmedOwner=!!(mySid&&netBall.owner===mySid);
   const claimedByOther=!!(netBall.owner&&netBall.owner!==mySid);
   if(confirmedOwner)localDribbleVisualUntil=now+220;
-  const authContact=authDist<PR+BR+14;
-  const viewContact=viewDist<PR+BR+14;
+  const authContact=(netBall.netZ||0)<4&&authDist<PR+BR+14;
+  const viewContact=(netBall.z||0)<4&&viewDist<PR+BR+14;
   if(me&&gameActive&&now>=kickoffUntil&&localSpeed>.12&&(authContact||viewContact)){
     // 권위 좌표뿐 아니라 현재 화면 접촉도 의사로 인정한다. 게스트가 공에 처음
     // 닿은 바로 그 프레임부터 발앞 예측을 시작해야 왕복 지연 동안 몸에 끼지 않는다.
@@ -807,6 +852,7 @@ function updateNetBall(){
   // 직접 원인이었다. 드리블 중에는 한 번에 발 앞 목표로, 아닐 때만 권위 공으로
   // 이동한다. 득점·충돌·소유 확정은 계속 호스트가 담당한다.
   if(localDribbling){
+    netBall.z=0;netBall.vz=0;
     const speed=Math.hypot(me.vx||0,me.vy||0);
     const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
     const tx=me.x+nx*(PR+BR),ty=me.y+ny*(PR+BR);
@@ -835,16 +881,22 @@ function updateNetBall(){
     const steps=visualDt/(1000/60);
     netBall.x+=(netBall.vx||0)*steps;
     netBall.y+=(netBall.vy||0)*steps;
+    netBall.z=Math.max(0,(netBall.z||0)+(netBall.vz||0)*steps);
+    netBall.vz=(netBall.vz||0)-BALL_GRAVITY*steps;
+    if(netBall.z<=0&&netBall.vz<0){netBall.z=0;netBall.vz=0;}
     const age=clamp(now-(netBall.netT||now),0,120);
-    const authVX=Number(netBall.netVX||0),authVY=Number(netBall.netVY||0);
+    const authVX=Number(netBall.netVX||0),authVY=Number(netBall.netVY||0),authVZ=Number(netBall.netVZ||0);
     const tx=netBall.netX+authVX*age*.06;
     const ty=netBall.netY+authVY*age*.06;
+    const tz=Math.max(0,(netBall.netZ||0)+authVZ*age*.06-.5*BALL_GRAVITY*Math.pow(age*.06,2));
     const err=Math.hypot(tx-netBall.x,ty-netBall.y);
     const correction=err>120?.52:(err>55?.25:(err>20?.13:.06));
     netBall.x=lerp(netBall.x,tx,correction);
     netBall.y=lerp(netBall.y,ty,correction);
+    netBall.z=lerp(netBall.z||0,tz,err>55?.32:.16);
     netBall.vx=lerp(netBall.vx||0,authVX,.18);
     netBall.vy=lerp(netBall.vy||0,authVY,.18);
+    netBall.vz=lerp(netBall.vz||0,authVZ,.22);
   }
 
   // 키를 막 놓아 감속 중이어도 호스트가 아직 내 소유로 확인한 공은 몸 안으로
@@ -908,7 +960,8 @@ function updateBallHost(){
 
     // 가까이 붙었을 때는 매 프레임 힘을 더하는 핀볼식 밀기가 아니라 선수 속도에
     // 공을 서서히 맞춘다. 그래서 천천히 움직이면 드리블, 충전 킥이면 아래의 슛이 된다.
-    const carrying=ball.owner===sid&&now<(ball.ownerUntil||0)&&d<minD+24;
+    const groundBall=(ball.z||0)<4;
+    const carrying=groundBall&&ball.owner===sid&&now<(ball.ownerUntil||0)&&d<minD+24;
     // 게스트가 접촉한 순간 보낸 공/선수 좌표를 호스트가 함께 검증한다.
     // 현재 공은 왕복 지연 동안 이미 이동할 수 있으므로 현재 거리만 보면
     // 게스트만 접촉을 놓친다. 보고 당시 접촉이었고 공 변화도 합리적이면
@@ -920,7 +973,7 @@ function updateBallHost(){
       Number.isFinite(reportedBallX)&&Number.isFinite(reportedBallY)&&
       Math.hypot(reportedBallX-reportedPlayerX,reportedBallY-reportedPlayerY)<minD+18&&
       Math.hypot(ball.x-reportedBallX,ball.y-reportedBallY)<68);
-    if (d < minD+4||carrying||reportedContact){
+    if (groundBall&&(d < minD+4||carrying||reportedContact)){
       const moving=remoteSpeed>.12;
       // 이동 중에는 지연된 공의 상대 위치가 아니라 선수의 실제 진행 방향을
       // 드리블 방향으로 사용한다. 보정된 선수 좌표가 공을 추월하더라도 nx가
@@ -941,6 +994,7 @@ function updateBallHost(){
       // 호스트가 실제 접촉을 확인한 선수 id를 공 스냅샷에 실어 보낸다.
       // 게스트가 거리만으로 소유를 추측하다 잠금이 풀려 과거 좌표로 되감기던
       // 문제를 막는다. 접촉이 끊기면 180ms 뒤 자동으로 소유가 해제된다.
+      ball.z=0;ball.vz=0;
       ball.owner=sid;
       ball.ownerUntil=now+240;
     }
@@ -964,6 +1018,12 @@ function updateBallHost(){
         const power = 5 + charge*9;
         ball.vx+=Math.cos(dir)*power;
         ball.vy+=Math.sin(dir)*power;
+        // 탭/약슛은 낮게 굴러가고, 절반 이상 충전부터 실제 높이(vz)가 생긴다.
+        // 최대 충전은 포물선으로 충분히 떠서 점프 헤딩이 가능하다.
+        const loft=charge<.48?0:lerp(2.4,7.2,(charge-.48)/.52);
+        ball.vz=Math.max(ball.vz||0,loft);
+        ball.z=Math.max(0,ball.z||0);
+        if(loft>0)sfxAirWhoosh(charge);
         // 속도 변화로 이펙트를 추측하면 보간/프레임 속도에 따라 양쪽에서
         // 사라질 수 있다. 호스트가 확정한 킥 id를 공 스냅샷에 실어 전원이
         // 정확히 한 번씩 같은 이펙트를 재생하게 한다.
@@ -989,18 +1049,22 @@ function updateBallHost(){
       const headerPY=Number.isFinite(p.headerY)?p.headerY:controlY;
       const requestDist=Math.hypot(Number(p.headerBallX)-headerPX,Number(p.headerBallY)-headerPY);
       const reportedDrift=Math.hypot(ball.x-Number(p.headerBallX),ball.y-Number(p.headerBallY));
-      const headerInRange=d<HEADER_RANGE||
-        (Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+4&&reportedDrift<58);
+      const airborne=(ball.z||0)>=HEADER_MIN_Z&&(ball.z||0)<=HEADER_MAX_Z;
+      const headerInRange=airborne&&(d<HEADER_RANGE||
+        (Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+4&&reportedDrift<58));
       if(headerInRange){
         const dir=Number.isFinite(p.headerDir)?p.headerDir:(Number.isFinite(p.dir)?p.dir:0);
         const power=8.4;
-        ball.vx=Math.cos(dir)*power+(ball.vx||0)*.28;
-        ball.vy=Math.sin(dir)*power+(ball.vy||0)*.28;
+        ball.vx=Math.cos(dir)*power+(ball.vx||0)*.24;
+        ball.vy=Math.sin(dir)*power+(ball.vy||0)*.24;
+        // 헤딩은 수평 방향을 바꾸면서 공을 다시 살짝 띄운다.
+        ball.vz=Math.max(2.8,Math.abs(ball.vz||0)*.42+1.8);
         ball.owner=null;ball.ownerUntil=0;
         ball.impactAt=`h:${p.headerAt}`;
         ball.impactPower=.62;
         ball.impactDir=dir;
         playKickImpactOnce(ball.impactAt,ball.x,ball.y,.62,dir);
+        sfxHeader();
         lastBallSpeedSeen=Math.hypot(ball.vx,ball.vy);
       }
     }
@@ -1023,7 +1087,7 @@ function updateBallHost(){
           applyStun(qsid, STUN_MS, /*local broadcast now, plus tell server*/true);
           // 태클한 방향으로 공도 살짝 튕겨나가도록(뺏는 느낌)
           const bd = Math.hypot(ball.x-q.x, ball.y-q.y);
-          if (bd < KICK_RANGE){
+          if (bd < KICK_RANGE&&(ball.z||0)<5){
             ball.vx += Math.cos(p.dir)*3.5;
             ball.vy += Math.sin(p.dir)*3.5;
             ball.owner=null;
@@ -1037,7 +1101,19 @@ function updateBallHost(){
   if(ball.owner&&now>(ball.ownerUntil||0))ball.owner=null;
 
   ball.x += ball.vx; ball.y += ball.vy;
-  ball.vx *= 0.985; ball.vy *= 0.985;
+  ball.z = Math.max(0,(ball.z||0)+(ball.vz||0));
+  ball.vz = (ball.vz||0)-BALL_GRAVITY;
+  const airborne=(ball.z||0)>0.01;
+  const drag=airborne?BALL_AIR_DRAG:.985;
+  ball.vx *= drag; ball.vy *= drag;
+  if(ball.z<=0&&ball.vz<0){
+    const impact=Math.abs(ball.vz);
+    ball.z=0;
+    if(impact>1.25){
+      ball.vz=impact*BALL_BOUNCE;
+      if(impact>2.2)sfxBounce(clamp(impact/7,0,1));
+    }else ball.vz=0;
+  }
   const bs = Math.hypot(ball.vx, ball.vy);
   if (bs > MAX_BALL_SPEED){ ball.vx *= MAX_BALL_SPEED/bs; ball.vy *= MAX_BALL_SPEED/bs; }
 
@@ -1045,11 +1121,11 @@ function updateBallHost(){
   if (ball.y+BR > FY+FH){ ball.y = FY+FH-BR; ball.vy = -Math.abs(ball.vy)*0.6; }
 
   if (ball.x-BR < FX){
-    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2) scoreGoal('B');
+    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2 && (ball.z||0)<=BALL_GOAL_MAX_Z) scoreGoal('B');
     else { ball.x = FX+BR; ball.vx = Math.abs(ball.vx)*0.6; }
   }
   if (ball.x+BR > FX+FW){
-    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2) scoreGoal('A');
+    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2 && (ball.z||0)<=BALL_GOAL_MAX_Z) scoreGoal('A');
     else { ball.x = FX+FW-BR; ball.vx = -Math.abs(ball.vx)*0.6; }
   }
 }
@@ -1069,7 +1145,7 @@ function updateBallTrail(){
   const b = ball_or_netball();
   const spd = Math.hypot(b.vx||0, b.vy||0);
   if (spd > 3){
-    ballTrail.push({ x:b.x, y:b.y, life:1 });
+    ballTrail.push({ x:b.x, y:b.y, z:b.z||0, life:1 });
     if (ballTrail.length > 14) ballTrail.shift();
   }
   for (const t of ballTrail) t.life -= 0.09;
@@ -1142,7 +1218,7 @@ function netSends(){
     lastPosSent = now;
     const shownBall=ball_or_netball();
     const localSpeed=Math.hypot(me.vx||0,me.vy||0);
-    const dribble=now>=kickoffUntil&&!kickCharging&&localSpeed>.12&&
+    const dribble=now>=kickoffUntil&&!kickCharging&&localSpeed>.12&&(shownBall.z||0)<4&&
       Math.hypot(shownBall.x-me.x,shownBall.y-me.y)<PR+BR+20;
     const kickActive=now<pendingKickUntil;
     const headerActive=now<pendingHeaderUntil;
@@ -1167,7 +1243,7 @@ function netSends(){
   if (isHost && now-lastBallSent >= 30){
     lastBallSent = now;
     bridgeSend('sc_ball', {
-      x:ball.x, y:ball.y, vx:ball.vx, vy:ball.vy, owner:ball.owner||null,
+      x:ball.x, y:ball.y, z:ball.z||0, vx:ball.vx, vy:ball.vy, vz:ball.vz||0, owner:ball.owner||null,
       impactAt:ball.impactAt||'', impactPower:ball.impactPower||0, impactDir:ball.impactDir||0
     });
   }
@@ -1192,70 +1268,109 @@ function buildCrowdCanvas(){
   c.width = CW; c.height = CH;
   const g = c.getContext('2d');
   g.imageSmoothingEnabled = false;
-  // 경기장 바깥: 투게스터처럼 굵은 외곽선과 명확한 명암 단계로 구성한다.
-  g.fillStyle = '#07111d'; g.fillRect(0,0,CW,CH);
-  g.fillStyle = '#101c31'; g.fillRect(0,0,CW,FY); g.fillRect(0,FY+FH,CW,CH-(FY+FH));
-  g.fillStyle = '#192943'; g.fillRect(0,FY-15,CW,11); g.fillRect(0,FY+FH+4,CW,12);
-  g.fillStyle = '#263a58'; g.fillRect(0,FY-8,CW,4); g.fillRect(0,FY+FH+4,CW,4);
 
-  // 관중석 픽셀: 완전 무작위 점 대신 줄을 맞춰 도트게임 배경처럼 읽히게 한다.
-  const crowdCols = ['#ff7b7b','#66d9c8','#ffd166','#8eb6ff','#c990ff','#f2f5ff'];
-  for (const y of [10,22,34,FY+FH+16,FY+FH+28,FY+FH+40]){
+  // 2.5D 경기장 느낌: 바깥을 단순 평면이 아니라 관중석/통로/보드가 있는
+  // 작은 스타디움처럼 보이게 미리 그려 둔다.
+  g.fillStyle = '#07111d'; g.fillRect(0,0,CW,CH);
+
+  const sky = g.createLinearGradient(0,0,0,FY-8);
+  sky.addColorStop(0,'#162845');
+  sky.addColorStop(1,'#0d182a');
+  g.fillStyle = sky; g.fillRect(0,0,CW,FY+8);
+
+  const bowlTop = FY-42;
+  g.fillStyle='#0a1424'; g.fillRect(0,bowlTop,CW,32); g.fillRect(0,FY+FH+10,CW,32);
+  g.fillStyle='#13243a'; g.fillRect(0,bowlTop+7,CW,10); g.fillRect(0,FY+FH+17,CW,10);
+  g.fillStyle='#223856'; g.fillRect(0,bowlTop+17,CW,6); g.fillRect(0,FY+FH+27,CW,6);
+
+  // 조명 글로우
+  for (const lx of [80, CW-80]){
+    const glow = g.createRadialGradient(lx, 22, 6, lx, 22, 46);
+    glow.addColorStop(0,'rgba(255,244,199,.24)');
+    glow.addColorStop(.55,'rgba(255,244,199,.08)');
+    glow.addColorStop(1,'rgba(255,244,199,0)');
+    g.fillStyle = glow; g.fillRect(lx-46,0,92,72);
+    g.fillStyle='#d8e6ff'; g.fillRect(lx-20,9,40,3);
+    g.fillStyle='#90a8c9'; g.fillRect(lx-14,12,28,2);
+  }
+
+  // 상/하단 관중석 블록
+  const crowdCols = ['#ff8b7d','#67d9c7','#ffd166','#90b8ff','#caa1ff','#f3f6ff'];
+  for (const baseY of [10,22,34,FY+FH+16,FY+FH+28,FY+FH+40]){
     for (let x=10; x<CW-10; x+=8){
-      const idx = Math.abs(((x/8)|0)+((y/6)|0)*3) % crowdCols.length;
-      g.fillStyle = crowdCols[idx];
-      g.fillRect(x, y, 4, 4);
-      if (((x/8+y)|0)%3!==0){ g.fillStyle='#0b1628'; g.fillRect(x+4,y+1,2,3); }
+      const idx = Math.abs(((x/8)|0)+((baseY/6)|0)*3) % crowdCols.length;
+      g.fillStyle = crowdCols[idx]; g.fillRect(x, baseY, 4, 4);
+      if (((x/8 + baseY)|0)%3!==0){ g.fillStyle='#0b1628'; g.fillRect(x+4,baseY+1,2,3); }
     }
   }
 
-  // 사이드 보드/팀 배너
-  g.fillStyle='#12243a'; g.fillRect(0,FY,FX-5,FH); g.fillRect(FX+FW+5,FY,CW-(FX+FW+5),FH);
+  // 하단 통로 / 그늘
+  g.fillStyle='#0a1321'; g.fillRect(0,FY+FH+50,CW,CH-(FY+FH+50));
+  g.fillStyle='#121f31'; g.fillRect(0,FY+FH+50,CW,10);
+
+  // 좌우 광고보드/벤치 구역
+  g.fillStyle='#102136'; g.fillRect(0,FY,FX-7,FH); g.fillRect(FX+FW+7,FY,CW-(FX+FW+7),FH);
   for (let y=FY+18, i=0; y<FY+FH-18; y+=54,i++){
-    g.fillStyle = i%2 ? '#25578d' : '#8b3046';
-    g.fillRect(5,y,29,32); g.fillRect(CW-34,y,29,32);
+    const board = i%2 ? '#2a5d96' : '#9b3550';
+    g.fillStyle = board;
+    g.fillRect(7,y,27,32); g.fillRect(CW-34,y,27,32);
     g.fillStyle='rgba(255,255,255,.78)';
-    g.fillRect(10,y+7,19,3); g.fillRect(10,y+14,13,3); g.fillRect(10,y+21,19,3);
-    g.fillRect(CW-29,y+7,19,3); g.fillRect(CW-23,y+14,13,3); g.fillRect(CW-29,y+21,19,3);
+    g.fillRect(11,y+6,18,3); g.fillRect(11,y+13,12,3); g.fillRect(11,y+20,18,3);
+    g.fillRect(CW-30,y+6,18,3); g.fillRect(CW-24,y+13,12,3); g.fillRect(CW-30,y+20,18,3);
   }
+  g.fillStyle='#0c1a2a'; g.fillRect(34,FY+36,12,120); g.fillRect(CW-46,FY+FH-156,12,120);
+  g.fillStyle='#41566d'; g.fillRect(36,FY+42,8,7); g.fillRect(CW-44,FY+FH-150,8,7);
+  g.fillStyle='#1d3b2d'; g.fillRect(35,FY+50,10,24); g.fillRect(CW-45,FY+FH-143,10,24);
 
-  // 피치가 관중석 바닥보다 살짝 올라와 보이도록 오른쪽/아래쪽에 깊이 면을
-  // 먼저 깐다. 모바일 확대 카메라에서도 필드 경계와 높이가 바로 읽힌다.
-  g.fillStyle='#061c14';g.fillRect(FX+7,FY+8,FW+7,FH+8);
-  g.fillStyle='#123c29';g.fillRect(FX-7,FY-7,FW+14,7);
-  g.fillStyle='#0b2b1e';g.fillRect(FX+FW,FY,7,FH+8);
-  g.fillStyle='#09251a';g.fillRect(FX,FY+FH,FW+7,8);
+  // 피치 받침대: 오른쪽/아래쪽으로 깊이가 보이게 만든다.
+  g.fillStyle='rgba(0,0,0,.24)';
+  g.beginPath();
+  g.moveTo(FX+8,FY+8); g.lineTo(FX+FW+16,FY+8); g.lineTo(FX+FW+24,FY+FH+18); g.lineTo(FX+16,FY+FH+18);
+  g.closePath(); g.fill();
+  g.fillStyle='#143d2b'; g.fillRect(FX-9,FY-9,FW+18,9);
+  g.fillStyle='#0e3223'; g.fillRect(FX+FW,FY,9,FH+9);
+  g.fillStyle='#0a261b'; g.fillRect(FX,FY+FH,FW+9,10);
+  g.fillStyle='#1d6841'; g.fillRect(FX-7,FY-7,FW+14,4); g.fillRect(FX-7,FY,4,FH);
+  g.fillStyle='#07341f'; g.fillRect(FX-7,FY-3,FW+14,3); g.fillRect(FX-3,FY+FH,FW+10,7);
+  g.fillRect(FX-7,FY,4,FH); g.fillRect(FX+FW,FY,7,FH+7);
 
-  // 잔디: 넓은 세로 커팅 + 고정 픽셀 결. 매 프레임 랜덤 생성하지 않는다.
+  // 잔디: 큰 스트라이프 + 미세 결 + 가장자리 비네트
   g.fillStyle='#23884b'; g.fillRect(FX,FY,FW,FH);
-  const stripeW = FW/10;
-  for (let i=0;i<10;i++){
-    g.fillStyle = i%2 ? '#2a9a55' : '#248b4c';
+  const stripeW = FW/12;
+  for (let i=0;i<12;i++){
+    g.fillStyle = i%2 ? '#2ba55a' : '#248b4c';
     g.fillRect(Math.round(FX+i*stripeW),FY,Math.ceil(stripeW)+1,FH);
   }
   for (let y=FY+10;y<FY+FH-6;y+=18){
-    for (let x=FX+8;x<FX+FW-6;x+=24){
+    for (let x=FX+8;x<FX+FW-6;x+=22){
       const phase = ((x+y)/6|0)%3;
-      g.fillStyle = phase===0 ? 'rgba(255,255,255,.045)' : 'rgba(5,57,29,.08)';
+      g.fillStyle = phase===0 ? 'rgba(255,255,255,.046)' : 'rgba(5,57,29,.09)';
       g.fillRect(x+(phase*3),y,6,2);
     }
   }
-  // 위쪽 조명과 아래쪽 음영을 얹어 평면 잔디가 아니라 깊이가 있는 경기장
-  // 바닥처럼 보이게 한다. 선과 선수 판독을 해치지 않도록 대비는 낮게 둔다.
-  const pitchLight=g.createLinearGradient(0,FY,0,FY+FH);
-  pitchLight.addColorStop(0,'rgba(205,255,222,.10)');
-  pitchLight.addColorStop(.48,'rgba(255,255,255,0)');
-  pitchLight.addColorStop(1,'rgba(2,35,21,.16)');
-  g.fillStyle=pitchLight;g.fillRect(FX,FY,FW,FH);
+  const pitchLight=g.createLinearGradient(FX,FY,FX,FY+FH);
+  pitchLight.addColorStop(0,'rgba(223,255,233,.12)');
+  pitchLight.addColorStop(.42,'rgba(255,255,255,0)');
+  pitchLight.addColorStop(1,'rgba(2,35,21,.18)');
+  g.fillStyle=pitchLight; g.fillRect(FX,FY,FW,FH);
+  const sideShade = g.createLinearGradient(FX,FY,FX+FW,FY);
+  sideShade.addColorStop(0,'rgba(0,0,0,.10)');
+  sideShade.addColorStop(.2,'rgba(0,0,0,0)');
+  sideShade.addColorStop(.8,'rgba(0,0,0,0)');
+  sideShade.addColorStop(1,'rgba(255,255,255,.05)');
+  g.fillStyle=sideShade; g.fillRect(FX,FY,FW,FH);
   for(let y=FY+36;y<FY+FH;y+=56){
-    g.fillStyle='rgba(238,255,242,.028)';g.fillRect(FX,y,FW,2);
-    g.fillStyle='rgba(3,43,24,.045)';g.fillRect(FX,y+2,FW,2);
+    g.fillStyle='rgba(238,255,242,.03)'; g.fillRect(FX,y,FW,2);
+    g.fillStyle='rgba(3,43,24,.05)'; g.fillRect(FX,y+2,FW,2);
   }
 
-  // 필드 바깥 두꺼운 픽셀 테두리/깊이
-  g.fillStyle='#1d6841';g.fillRect(FX-6,FY-6,FW+12,3);g.fillRect(FX-6,FY,3,FH);
-  g.fillStyle='#07341f';g.fillRect(FX-6,FY-3,FW+12,3);g.fillRect(FX-3,FY+FH,FW+9,6);
-  g.fillRect(FX-6,FY,3,FH);g.fillRect(FX+FW,FY,6,FH+6);
+  // 경기장 주변 광고 LED 느낌 라인
+  g.fillStyle='#17344b'; g.fillRect(FX-22,FY-2,12,FH+6); g.fillRect(FX+FW+10,FY-2,12,FH+6);
+  for(let y=FY+8;y<FY+FH-8;y+=14){
+    g.fillStyle = ((y/14)|0)%2 ? '#5cd6ff' : '#ffcf66';
+    g.fillRect(FX-20,y,8,3); g.fillRect(FX+FW+12,y,8,3);
+  }
+
   return c;
 }
 
@@ -1263,23 +1378,32 @@ function drawField(){
   if (!crowdCanvas) crowdCanvas = buildCrowdCanvas();
   ctx.drawImage(crowdCanvas, 0, 0);
 
-  // 라인은 밝은 본선+어두운 1px 그림자를 겹쳐 작은 화면에서도 또렷하게 보인다.
-  ctx.strokeStyle='rgba(7,55,31,.45)'; ctx.lineWidth=6;
+  // 필드 전체 광택: 아주 옅은 스포트라이트로 평면감을 줄인다.
+  const gloss = ctx.createLinearGradient(FX,FY,FX,FY+FH);
+  gloss.addColorStop(0,'rgba(255,255,255,.04)');
+  gloss.addColorStop(.55,'rgba(255,255,255,0)');
+  gloss.addColorStop(1,'rgba(0,0,0,.05)');
+  ctx.fillStyle = gloss; ctx.fillRect(FX,FY,FW,FH);
+
+  // 라인은 밝은 본선+어두운 그림자를 겹쳐 작은 화면에서도 또렷하게 보인다.
+  ctx.strokeStyle='rgba(7,55,31,.48)'; ctx.lineWidth=6;
   ctx.strokeRect(FX,FY,FW,FH);
   ctx.beginPath(); ctx.moveTo(FX+FW/2+1,FY); ctx.lineTo(FX+FW/2+1,FY+FH); ctx.stroke();
-  ctx.strokeStyle = '#eaffef'; ctx.lineWidth = 3;
+  ctx.strokeStyle = '#effff2'; ctx.lineWidth = 3;
   ctx.strokeRect(FX,FY,FW,FH);
   ctx.beginPath(); ctx.moveTo(FX+FW/2,FY); ctx.lineTo(FX+FW/2,FY+FH); ctx.stroke();
   ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2, 55, 0, Math.PI*2); ctx.stroke();
-  ctx.fillStyle='#eaffef'; ctx.fillRect(FX+FW/2-3, FY+FH/2-3, 6, 6);
+  ctx.strokeStyle='rgba(7,55,31,.34)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(FX+FW/2, FY+FH/2+2, 55, 0, Math.PI*2); ctx.stroke();
+  ctx.fillStyle='#effff2'; ctx.fillRect(FX+FW/2-3, FY+FH/2-3, 6, 6);
 
-  // 수학축구 테마의 낮은 대비 워터마크(경기 판독을 방해하지 않게 아주 옅게)
-  ctx.save(); ctx.globalAlpha=.10; ctx.fillStyle='#eaffef'; ctx.font='bold 25px monospace'; ctx.textAlign='center';
+  // 워터마크는 유지하되 더 옅게 깔아 경기장 테마만 느껴지게 한다.
+  ctx.save(); ctx.globalAlpha=.085; ctx.fillStyle='#f5fff7'; ctx.font='bold 25px monospace'; ctx.textAlign='center';
   ctx.fillText('+',FX+FW*.25,FY+FH*.25); ctx.fillText('×',FX+FW*.75,FY+FH*.25);
   ctx.fillText('÷',FX+FW*.25,FY+FH*.78); ctx.fillText('=',FX+FW*.75,FY+FH*.78); ctx.restore();
 
-  // 코너 아크 + 페널티 박스(각진 픽셀 느낌으로 두껍게)
-  ctx.lineWidth = 3; ctx.strokeStyle = '#dfe8df';
+  // 박스/아크/마커
+  ctx.lineWidth = 3; ctx.strokeStyle = '#e6f3e8';
   const cornerR = 14;
   [[FX,FY,0,Math.PI/2],[FX+FW,FY,Math.PI/2,Math.PI],[FX,FY+FH,-Math.PI/2,0],[FX+FW,FY+FH,Math.PI,Math.PI*1.5]]
     .forEach(([cx,cy,s,e])=>{ ctx.beginPath(); ctx.arc(cx,cy,cornerR,s,e); ctx.stroke(); });
@@ -1289,37 +1413,74 @@ function drawField(){
   const goalBoxW=34, goalBoxH=120, goalBoxY=FY+FH/2-goalBoxH/2;
   ctx.strokeRect(FX,goalBoxY,goalBoxW,goalBoxH);
   ctx.strokeRect(FX+FW-goalBoxW,goalBoxY,goalBoxW,goalBoxH);
-  ctx.fillStyle='#eaffef';
+  ctx.fillStyle='#effff2';
   ctx.fillRect(FX+62,FY+FH/2-2,4,4); ctx.fillRect(FX+FW-66,FY+FH/2-2,4,4);
+
+  // 페널티 아크와 하프웨이 보조 음영
+  ctx.strokeStyle='rgba(239,255,242,.78)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(FX+62, FY+FH/2, 34, -1.03, 1.03); ctx.stroke();
+  ctx.beginPath(); ctx.arc(FX+FW-62, FY+FH/2, 34, Math.PI-1.03, Math.PI+1.03); ctx.stroke();
+  ctx.strokeStyle='rgba(7,55,31,.26)';
+  ctx.beginPath(); ctx.arc(FX+62, FY+FH/2+1, 34, -1.03, 1.03); ctx.stroke();
+  ctx.beginPath(); ctx.arc(FX+FW-62, FY+FH/2+1, 34, Math.PI-1.03, Math.PI+1.03); ctx.stroke();
 
   // 코너 플래그
   for (const [cx,cy,sy] of [[FX,FY,1],[FX+FW,FY,1],[FX,FY+FH,-1],[FX+FW,FY+FH,-1]]){
+    ctx.fillStyle='rgba(0,0,0,.18)'; ctx.fillRect(cx+3,cy+sy*3,8,Math.abs(8*sy));
     ctx.fillStyle='#f8e36a'; ctx.fillRect(cx-1,cy,3,sy*12);
     ctx.fillStyle='#ff6b6b'; ctx.fillRect(cx+(cx===FX?2:-10),cy+sy*2,8,6*sy);
   }
 
-  // 골대 — 두꺼운 픽셀 프레임 + 체크무늬 그물(대각선 헤치 대신 블록 격자)
+  // 터치라인 바깥의 LED 광고보드 전면과 그림자
+  ctx.fillStyle='rgba(0,0,0,.18)';
+  ctx.fillRect(FX-22,FY-1,12,FH+4); ctx.fillRect(FX+FW+10,FY-1,12,FH+4);
+  ctx.fillStyle='#1f4e6b';
+  ctx.fillRect(FX-20,FY,8,FH+2); ctx.fillRect(FX+FW+12,FY,8,FH+2);
+
+  // 골대 — 전면 프레임 + 안쪽 그물 + 지면 그림자. 위에서 보되 약간의 깊이를 준다.
   const netWobble = goalFlashTeam && Date.now()<goalFlashUntil
     ? (1-((goalFlashUntil-Date.now())/900)) : 0;
   for (const side of ['L','R']){
     const gx = side==='L' ? FX-GOAL_W : FX+FW;
+    const frontX = side==='L' ? gx : gx+2;
     const wobbleSign = side==='L' ? (goalFlashTeam==='B'?1:0) : (goalFlashTeam==='A'?1:0);
     const wob = wobbleSign ? (Math.sin(netWobble*Math.PI*3)*(1-netWobble)*4)|0 : 0;
-    // 골대/그물의 지면 그림자를 비스듬히 내려 입체감을 준다.
+    const depth = side==='L' ? -8 : 8;
+
     ctx.fillStyle='rgba(3,18,12,.24)';
     ctx.beginPath();
-    if(side==='L'){ctx.moveTo(gx,GOAL_Y2);ctx.lineTo(gx+GOAL_W,GOAL_Y2);ctx.lineTo(gx+GOAL_W+9,GOAL_Y2+8);ctx.lineTo(gx+4,GOAL_Y2+8);}
-    else{ctx.moveTo(gx,GOAL_Y2);ctx.lineTo(gx+GOAL_W,GOAL_Y2);ctx.lineTo(gx+GOAL_W+7,GOAL_Y2+8);ctx.lineTo(gx+8,GOAL_Y2+8);}
-    ctx.closePath();ctx.fill();
-    ctx.fillStyle='rgba(9,19,32,.58)'; ctx.fillRect(gx,GOAL_Y1,GOAL_W,GOAL_H);
+    ctx.moveTo(frontX,GOAL_Y2);
+    ctx.lineTo(frontX+GOAL_W,GOAL_Y2);
+    ctx.lineTo(frontX+GOAL_W+depth,GOAL_Y2+10);
+    ctx.lineTo(frontX+depth,GOAL_Y2+10);
+    ctx.closePath(); ctx.fill();
+
+    ctx.fillStyle='rgba(11,24,38,.58)';
+    ctx.fillRect(frontX,GOAL_Y1,GOAL_W,GOAL_H);
+    ctx.fillStyle='rgba(255,255,255,.06)';
+    ctx.fillRect(frontX+2,GOAL_Y1+2,GOAL_W-4,6);
+
     ctx.strokeStyle='rgba(224,242,255,.42)'; ctx.lineWidth=1;
-    for (let ny=GOAL_Y1+6;ny<GOAL_Y2;ny+=8){ ctx.beginPath();ctx.moveTo(gx+wob,ny);ctx.lineTo(gx+GOAL_W+wob,ny);ctx.stroke(); }
-    for (let nx=gx+3;nx<gx+GOAL_W;nx+=5){ ctx.beginPath();ctx.moveTo(nx+wob,GOAL_Y1);ctx.lineTo(nx+wob,GOAL_Y2);ctx.stroke(); }
+    for (let ny=GOAL_Y1+6;ny<GOAL_Y2;ny+=8){ ctx.beginPath();ctx.moveTo(frontX+wob,ny);ctx.lineTo(frontX+GOAL_W+wob,ny);ctx.stroke(); }
+    for (let nx=frontX+3;nx<frontX+GOAL_W;nx+=5){ ctx.beginPath();ctx.moveTo(nx+wob,GOAL_Y1);ctx.lineTo(nx+wob,GOAL_Y2);ctx.stroke(); }
+
+    ctx.strokeStyle='rgba(235,248,255,.55)';
+    for (let ny=GOAL_Y1+6;ny<GOAL_Y2;ny+=8){
+      ctx.beginPath();
+      if(side==='L'){ ctx.moveTo(frontX+GOAL_W,ny); ctx.lineTo(frontX+GOAL_W+depth,ny+10); }
+      else { ctx.moveTo(frontX,ny); ctx.lineTo(frontX+depth,ny+10); }
+      ctx.stroke();
+    }
+
     ctx.fillStyle = '#f7fbff';
-    ctx.fillRect(gx, GOAL_Y1, GOAL_W, 4); ctx.fillRect(gx, GOAL_Y2-4, GOAL_W, 4);
-    ctx.fillRect(side==='L'?gx:gx+GOAL_W-4, GOAL_Y1, 4, GOAL_H);
+    ctx.fillRect(frontX, GOAL_Y1, GOAL_W, 4); ctx.fillRect(frontX, GOAL_Y2-4, GOAL_W, 4);
+    ctx.fillRect(side==='L'?frontX:frontX+GOAL_W-4, GOAL_Y1, 4, GOAL_H);
+    ctx.fillStyle='rgba(255,255,255,.68)';
+    if(side==='L') ctx.fillRect(frontX+GOAL_W-4,GOAL_Y1,2,GOAL_H);
+    else ctx.fillRect(frontX+2,GOAL_Y1,2,GOAL_H);
   }
 }
+
 
 function shadeColor(hex, amt){
   const c = hex.replace('#','');
@@ -1333,6 +1494,20 @@ function shadeColor(hex, amt){
 function jerseyNumberOf(p){ return Math.floor((Number(p.seat)||0)/2)+1; }
 
 function ball_or_netball(){ return isHost ? ball : netBall; }
+
+function depthTFromY(y){ return clamp((y-FY)/FH,0,1); }
+function spriteScaleForY(y){ return lerp(.90,1.08,depthTFromY(y)); }
+function shadowSpecForY(y){
+  const t=depthTFromY(y);
+  return {
+    offX: Math.round(lerp(-1,2,t)),
+    offY: Math.round(lerp(10,14,t)),
+    w: Math.round(lerp(12,17,t)),
+    h: Math.round(lerp(4,6,t)),
+    alphaA: lerp(.14,.22,t),
+    alphaB: lerp(.24,.34,t)
+  };
+}
 
 // 3x5 픽셀 비트맵 숫자(1~4만 필요 — 팀당 최대 4명)
 const PIXEL_DIGITS = {
@@ -1489,19 +1664,22 @@ function drawPlayer(p,mine,sid){
   const tackling=now<(p._tacklePoseUntil||0)||p.tackle;
   const headerStart=p._headerPoseStart||now;
   const headerProgress=heading?clamp((now-headerStart)/HEADER_DUR_MS,0,1):0;
-  const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*13):0;
+  const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*10):0;
   const dribbling=nearBall&&moving&&!kicking&&!heading&&!tackling;
+  const depthScale=spriteScaleForY(p.y);
+  const shadow=shadowSpecForY(p.y);
 
   ctx.save();
   ctx.translate(Math.round(p.x),Math.round(p.y));
-  // 그림자는 지면에 고정하고 선수만 헤딩 점프 높이만큼 올라간다.
-  ctx.fillStyle='rgba(2,18,12,.18)';ctx.fillRect(-14,11,28,5);
-  ctx.fillStyle='rgba(2,18,12,.34)';ctx.fillRect(-9,13,18,4);
+  // 그림자는 발 바로 아래에 붙이고, 화면 아래쪽 선수일수록 조금 더 크고 짙게 준다.
+  ctx.fillStyle=`rgba(2,18,12,${shadow.alphaA.toFixed(3)})`;
+  ctx.fillRect(-shadow.w+shadow.offX,shadow.offY,shadow.w*2,shadow.h);
+  ctx.fillStyle=`rgba(2,18,12,${shadow.alphaB.toFixed(3)})`;
+  ctx.fillRect(-Math.round(shadow.w*.65)+shadow.offX,shadow.offY+2,Math.round(shadow.w*1.3),Math.max(2,shadow.h-1));
   // 팀 표시는 캐릭터 이미지/좌우 반전/점프 변환 바깥의 물리 중심에 그린다.
-  // 예전에는 스프라이트를 그린 뒤 변환 안에서 그려 헤딩 시 함께 떠오르고,
-  // 프레임별 머리카락 폭 때문에 중앙이 어긋난 것처럼 보였다.
   ctx.globalAlpha=.85;ctx.fillStyle=p.color;
-  ctx.fillRect(-11,18,22,2);ctx.fillRect(-7,20,14,1);
+  ctx.fillRect(Math.round(-10*depthScale),shadow.offY+8,Math.round(20*depthScale),2);
+  ctx.fillRect(Math.round(-6*depthScale),shadow.offY+10,Math.round(12*depthScale),1);
   ctx.globalAlpha=1;
   ctx.translate(0,Math.round(bob-actionLift));
 
@@ -1533,7 +1711,7 @@ function drawPlayer(p,mine,sid){
     const frame=actionFrame>=0?actionFrame:
       (kicking?kickFrame:(dribbling?dribbleCycle:(moving?moveCycle:idleCycle)));
     ctx.save();
-    ctx.scale(facing,1);
+    ctx.scale(facing*depthScale,depthScale);
     // 원본 224px 셀을 고DPI 캔버스에 고품질 축소한다. 이전처럼 에셋 자체를
     // 72px로 낮추지 않으므로 얼굴과 유니폼 세부 정보가 유지된다.
     ctx.imageSmoothingEnabled=true;
@@ -1560,7 +1738,7 @@ function drawPlayer(p,mine,sid){
   const sock=stunned?'#d6d8dc':'#eef4ff';
   const px=(x,y,w,h,c)=>{ctx.fillStyle=c;ctx.fillRect(Math.round(baseX+x),Math.round(baseY+y+bob),w,h);};
 
-  ctx.save();ctx.scale(facing,1);ctx.imageSmoothingEnabled=false;
+  ctx.save();ctx.scale(facing*depthScale,depthScale);ctx.imageSmoothingEnabled=false;
   // 뒤쪽 머리: 머리 덩어리와 묶은 머리 끝을 분리해 실루엣부터 읽히게 한다.
   if(variant===0){ // 긴 양갈래
     px(2,7,5,14,hairDark);px(0,11+sway,4,12,hair);px(23,7,5,14,hairDark);px(26,11-sway,4,12,hair);
@@ -1634,9 +1812,10 @@ function drawPlayer(p,mine,sid){
   const nick=String(p.nick||'Player').slice(0,10);
   const label=(mine?'나 · ':'')+nick;
   ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
-  ctx.lineWidth=2;ctx.strokeStyle='rgba(4,12,20,.9)';ctx.strokeText(label,0,-68);
-  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.fillText(label,0,-68);
-  if(mine){ctx.fillStyle='#ffe66d';ctx.fillRect(-3,-75,6,2);ctx.fillRect(-1,-77,2,2);}
+  const labelY=Math.round(-70*depthScale);
+  ctx.lineWidth=2;ctx.strokeStyle='rgba(4,12,20,.9)';ctx.strokeText(label,0,labelY);
+  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.fillText(label,0,labelY);
+  if(mine){ctx.fillStyle='#ffe66d';ctx.fillRect(-3,labelY-7,6,2);ctx.fillRect(-1,labelY-9,2,2);}
   ctx.restore();
 }
 
@@ -1646,9 +1825,9 @@ function drawBallTrail(){
     ctx.globalAlpha = clamp(t.life,0,1)*0.3;
     const s = 3 + 5*clamp(t.life,0,1);
     ctx.fillStyle = '#dff7ff';
-    ctx.fillRect(Math.round(t.x-s/2), Math.round(t.y-s/2), Math.round(s), Math.round(s));
+    ctx.fillRect(Math.round(t.x-s/2), Math.round(t.y-(t.z||0)-s/2), Math.round(s), Math.round(s));
     ctx.fillStyle = '#fff';
-    ctx.fillRect(Math.round(t.x-s/4), Math.round(t.y-s/4), Math.max(2,Math.round(s/2)), Math.max(2,Math.round(s/2)));
+    ctx.fillRect(Math.round(t.x-s/4), Math.round(t.y-(t.z||0)-s/4), Math.max(2,Math.round(s/2)), Math.max(2,Math.round(s/2)));
     ctx.restore();
   }
 }
@@ -1663,52 +1842,78 @@ function drawRings(){
   }
 }
 
-// 12x12 원형 픽셀 공. 물리 반지름(BR)은 그대로 두고 그림만 개선해 판정은 바뀌지 않는다.
-const BALL_SHAPE = [
-  '....####....','..########..','.##########.','############',
-  '############','############','############','############',
-  '############','.##########.','..########..','....####....'
+// 공 렌더링은 판정 반지름(BR)은 그대로 두고 그래픽만 3D 느낌으로 개선한다.
+const BALL_PATCH_FRAMES = [
+  [[7,4],[8,4],[6,5],[7,5],[8,5],[9,5],[5,6],[6,6],[7,6],[8,6],[9,6],[6,7],[7,7],[8,7],[7,8]],
+  [[9,4],[10,4],[8,5],[9,5],[10,5],[11,5],[7,6],[8,6],[9,6],[10,6],[11,6],[8,7],[9,7],[10,7],[9,8]],
+  [[7,6],[8,6],[6,7],[7,7],[8,7],[9,7],[5,8],[6,8],[7,8],[8,8],[9,8],[6,9],[7,9],[8,9],[7,10]],
+  [[5,5],[6,5],[4,6],[5,6],[6,6],[7,6],[3,7],[4,7],[5,7],[6,7],[7,7],[4,8],[5,8],[6,8],[5,9]]
 ];
-const BALL_INNER = [
-  '............','....####....','..########..','.##########.',
-  '.##########.','.##########.','.##########.','.##########.',
-  '.##########.','..########..','....####....','............'
-];
-const BALL_PATCHES = [
-  [[5,3],[6,3],[4,4],[5,4],[6,4],[7,4],[5,5],[6,5],[2,7],[3,7],[8,8],[9,8]],
-  [[7,3],[8,3],[6,4],[7,4],[8,4],[9,4],[7,5],[8,5],[3,8],[4,8],[7,9]],
-  [[5,6],[6,6],[4,7],[5,7],[6,7],[7,7],[5,8],[6,8],[2,3],[3,3],[8,4],[9,4]],
-  [[3,4],[4,4],[2,5],[3,5],[4,5],[5,5],[3,6],[4,6],[7,8],[8,8],[8,9]]
+const BALL_SIDE_PATCHES = [
+  [[4,4],[4,5],[3,5],[4,6]],
+  [[11,5],[12,5],[11,6],[12,6]],
+  [[4,9],[5,9],[5,10]],
+  [[10,9],[11,9],[10,10]]
 ];
 function drawBall(b){
+  const depthScale=spriteScaleForY(b.y);
+  const shadow=shadowSpecForY(b.y);
   ctx.save();
-  ctx.fillStyle='rgba(2,12,18,.32)';
-  ctx.fillRect(Math.round(b.x-10),Math.round(b.y+9),20,4);
-  ctx.fillStyle='rgba(2,12,18,.18)';
-  ctx.fillRect(Math.round(b.x-7),Math.round(b.y+13),14,2);
+  ctx.translate(Math.round(b.x),Math.round(b.y));
 
-  const BPX=2, bx0=Math.round(b.x-12), by0=Math.round(b.y-12);
-  for(let y=0;y<12;y++) for(let x=0;x<12;x++){
-    if(BALL_SHAPE[y][x]==='#'){
-      ctx.fillStyle='#101923';
-      ctx.fillRect(bx0+x*BPX,by0+y*BPX,BPX,BPX);
+  // 지면 그림자는 공 바로 아래에 붙여 뜬 느낌을 줄인다.
+  ctx.fillStyle=`rgba(2,12,18,${(shadow.alphaA+.04).toFixed(3)})`;
+  ctx.fillRect(-Math.round(9*depthScale)+shadow.offX,shadow.offY-1,Math.round(18*depthScale),Math.max(3,shadow.h-1));
+  ctx.fillStyle='rgba(2,12,18,.14)';
+  ctx.fillRect(-Math.round(6*depthScale)+shadow.offX,shadow.offY+2,Math.round(12*depthScale),2);
+
+  // z는 화면 위쪽 오프셋으로 투영한다. 그림자는 지면 좌표에 남는다.
+  ctx.translate(0,-Math.round((b.z||0)*depthScale));
+  ctx.scale(depthScale,depthScale);
+
+  const BPX = 2;
+  const size = 16;
+  const bx0 = -Math.round((size*BPX)/2);
+  const by0 = -Math.round((size*BPX)/2);
+
+  // 공 몸체: 왼쪽 위 조명 + 오른쪽 아래 음영으로 입체감을 준다.
+  for (let y=0; y<size; y++){
+    for (let x=0; x<size; x++){
+      const dx = x-7.5, dy = y-7.5;
+      const dist = Math.hypot(dx*1.02, dy*0.98);
+      if (dist > 7.55) continue;
+      let col = '#f7fbff';
+      if (dist > 6.8) col = '#111d2a';
+      else {
+        const light = 0.25 + (-dx*0.075) + (-dy*0.095);
+        if (dist > 5.9) col = light > 0.32 ? '#d6e0e7' : '#c2cdd6';
+        else if (light > 0.58) col = '#ffffff';
+        else if (light > 0.34) col = '#edf3f7';
+        else if (light > 0.14) col = '#dde5eb';
+        else col = '#c6d0d8';
+      }
+      ctx.fillStyle = col;
+      ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
     }
   }
-  for(let y=0;y<12;y++) for(let x=0;x<12;x++){
-    if(BALL_INNER[y][x]==='#'){
-      ctx.fillStyle=y>7?'#cbd5dc':'#f7fbf7';
-      ctx.fillRect(bx0+x*BPX,by0+y*BPX,BPX,BPX);
-    }
-  }
+
+  // 회전하는 중심 패치
   const speed=Math.hypot(b.vx||0,b.vy||0);
-  const spinPhase=Math.floor(Date.now()/(speed>1?75:240)+Math.abs(b.x||0)/18)%BALL_PATCHES.length;
-  ctx.fillStyle='#263746';
-  for(const [x,y] of BALL_PATCHES[spinPhase]){
-    if(BALL_INNER[y]?.[x]==='#') ctx.fillRect(bx0+x*BPX,by0+y*BPX,BPX,BPX);
-  }
-  ctx.fillStyle='rgba(255,255,255,.9)';
-  ctx.fillRect(bx0+4*BPX,by0+2*BPX,2*BPX,BPX);
-  ctx.fillRect(bx0+3*BPX,by0+3*BPX,BPX,BPX);
+  const frame=Math.floor(Date.now()/(speed>1?70:210)+Math.abs((b.x||0)+(b.y||0))/24)%BALL_PATCH_FRAMES.length;
+  ctx.fillStyle='#2a3946';
+  for (const [x,y] of BALL_PATCH_FRAMES[frame]) ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
+  ctx.fillStyle='#4b5e6b';
+  for (const [x,y] of BALL_SIDE_PATCHES[frame]) ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
+
+  // 하단 우측 추가 음영과 상단 하이라이트
+  ctx.fillStyle='rgba(0,0,0,.14)';
+  ctx.fillRect(bx0+10*BPX,by0+11*BPX,4*BPX,BPX);
+  ctx.fillRect(bx0+11*BPX,by0+12*BPX,2*BPX,BPX);
+  ctx.fillStyle='rgba(255,255,255,.92)';
+  ctx.fillRect(bx0+4*BPX,by0+3*BPX,2*BPX,BPX);
+  ctx.fillRect(bx0+3*BPX,by0+4*BPX,BPX,BPX);
+  ctx.fillRect(bx0+5*BPX,by0+4*BPX,BPX,BPX);
+
   ctx.restore();
 }
 
@@ -1863,7 +2068,7 @@ window.addEventListener('message', e=>{
     if (isHost && !prevHost){
       // 막 방장이 됐다면, 기존에 보던 netBall 위치/속도를 그대로 물려받아
       // 공이 순간이동하듯 튀지 않게 하고, 즉시 공 계산을 이어받는다.
-      ball = { x:netBall.x, y:netBall.y, vx:netBall.vx||0, vy:netBall.vy||0,
+      ball = { x:netBall.x, y:netBall.y, z:netBall.z||0, vx:netBall.vx||0, vy:netBall.vy||0, vz:netBall.vz||0,
         owner:netBall.owner||null, ownerUntil:Date.now()+120 };
       lastBallSpeedSeen = Math.hypot(ball.vx, ball.vy);
     }
@@ -1896,8 +2101,10 @@ window.addEventListener('message', e=>{
     const predictingLocalKick=!!(localKickPredictAt&&now<localKickPredictUntil&&!confirmsLocalKick);
     netBall.netX = Number(d.x ?? netBall.netX);
     netBall.netY = Number(d.y ?? netBall.netY);
+    netBall.netZ = Math.max(0,Number(d.z ?? netBall.netZ ?? 0));
     netBall.netVX=Number(d.vx??0);
     netBall.netVY=Number(d.vy??0);
+    netBall.netVZ=Number(d.vz??0);
     // 표시 속도와 수신 속도를 분리한다. 매 패킷마다 표시 속도까지 교체하면
     // 게스트 화면에서 공이 30ms 단위로 가다 서다를 반복한다. 새 타격은 즉시
     // 반영하고, 일반 이동은 updateNetBall()의 연속 보간으로 따라간다.
@@ -1905,13 +2112,19 @@ window.addEventListener('message', e=>{
       if(newImpact){
         netBall.vx=netBall.netVX;
         netBall.vy=netBall.netVY;
+        netBall.vz=netBall.netVZ;
+        netBall.z=netBall.netZ;
       }else{
         netBall.vx=lerp(netBall.vx||0,netBall.netVX,.22);
         netBall.vy=lerp(netBall.vy||0,netBall.netVY,.22);
+        netBall.vz=lerp(netBall.vz||0,netBall.netVZ,.26);
       }
     }
     netBall.owner = d.owner ? String(d.owner) : null;
     netBall.netT = now;
+    if(!Array.isArray(netBall.samples)) netBall.samples=[];
+    netBall.samples.push({t:now,x:netBall.netX,y:netBall.netY,z:netBall.netZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
+    if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
     if(confirmsLocalKick){
       localKickPredictAt=0;localKickPredictUntil=0;localKickPredictFrameAt=0;
     }
@@ -1919,7 +2132,8 @@ window.addEventListener('message', e=>{
       netBall.impactAt=String(d.impactAt);
       netBall.impactPower=Number(d.impactPower||0);
       netBall.impactDir=Number(d.impactDir||0);
-      playKickImpactOnce(netBall.impactAt,netBall.netX,netBall.netY,netBall.impactPower,netBall.impactDir);
+      const played=playKickImpactOnce(netBall.impactAt,netBall.netX,netBall.netY,netBall.impactPower,netBall.impactDir);
+      if(played&&netBall.impactAt.startsWith('h:'))sfxHeader();
       lastBallSpeedSeen=Math.hypot(netBall.vx,netBall.vy);
     }
     return;

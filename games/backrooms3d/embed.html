@@ -3474,7 +3474,7 @@ if(monsterReleaseLeft>0){
       obj.position.set(px, py, pz);
       obj.rotation.y = pry;
       obj.visible = !!initialState;
-      r = { sid, role, obj, state:(initialState ? Object.assign({}, initialState, { role }) : null), lastSeq:-1, targetX:px, targetY:py, targetZ:pz, targetYaw:pry, lastAt:performance.now() };
+      r = { sid, role, obj, state:(initialState ? Object.assign({}, initialState, { role }) : null), lastSeq:-1, targetX:px, targetY:py, targetZ:pz, targetYaw:pry, lastAt:performance.now(), samples:[] };
       bridge.remotes.set(sid, r);
     } else if (initialState){
       r.obj.position.set(Number(initialState.x)||0, Number(initialState.y)||0, Number(initialState.z)||0);
@@ -3779,7 +3779,7 @@ if(monsterReleaseLeft>0){
       bridgeStateCache.ghost !== snap.ghost ||
       bridgeStateCache.trapped !== snap.trapped
     );
-    const minGap = moving ? 16 : 80; // [FIX] 이동 중 전송 빈도 증가로 끊김 감소
+    const minGap = moving ? 32 : 90; // 서버 25fps 제한과 맞춰 패킷 뭉침·폐기 감소
     if(!force && !changed && (now - (bridgeStateCache.sentAt||0) < minGap)) return;
     Object.assign(bridgeStateCache, snap, { sentAt: now });
     relay('state', { seq:(++bridge.stateSeq), role:playerRole, seat:Number(bridge.selfSeat ?? -1), sentAt: Date.now(), ...snap });
@@ -3911,6 +3911,9 @@ if(monsterReleaseLeft>0){
         r.vx = Number(m.vx)||0;
         r.vz = Number(m.vz)||0;
         r.lastAt = performance.now();
+        if(!Array.isArray(r.samples)) r.samples=[];
+        r.samples.push({t:r.lastAt,x:r.targetX,y:r.targetY,z:r.targetZ,yaw:r.targetYaw,vx:r.vx,vz:r.vz});
+        if(r.samples.length>12) r.samples.splice(0,r.samples.length-12);
         return;
       }
       if(kind==='world'){ if(!bridge.isHost && sid!==bridge.sid) applyWorld(m); return; }
@@ -3993,20 +3996,28 @@ if(monsterReleaseLeft>0){
         if(playerRole==='monster' && !!st.ghost){ r.obj.visible=false; continue; }
         r.obj.visible=true;
         setAvatarGhostVisual(r.obj, !!st.ghost, 0.38);
-        // [FIX] 부드러운 위치 보간: 패킷 간격 기반 예측 + 완만한 lerp
-        const packetAge = Math.min(0.050, Math.max(0.016, (performance.now() - Number(r.lastAt||performance.now()))/1000));
-        const predX = (Number(r.targetX ?? st.x) || 0) + (Number(r.vx)||0) * packetAge;
-        const predY = Number(r.targetY ?? st.y) || 0;
-        const predZ = (Number(r.targetZ ?? st.z) || 0) + (Number(r.vz)||0) * packetAge;
-        // 거리가 너무 멀면(3m+) 빠르게 따라가고, 가까우면 부드럽게 보간
+        // 스냅샷 버퍼를 약간 늦춰 재생해 네트워크 지터를 흡수한다.
+        const renderAt=performance.now()-85;
+        const samples=Array.isArray(r.samples)?r.samples:[];
+        while(samples.length>2 && samples[1].t<=renderAt) samples.shift();
+        let predX=Number(r.targetX ?? st.x)||0, predY=Number(r.targetY ?? st.y)||0, predZ=Number(r.targetZ ?? st.z)||0;
+        let targetYaw=Number(r.targetYaw ?? st.yaw)||0;
+        if(samples.length>=2 && samples[0].t<=renderAt && renderAt<=samples[1].t){
+          const a=samples[0],b=samples[1],u=Math.max(0,Math.min(1,(renderAt-a.t)/Math.max(1,b.t-a.t)));
+          predX=a.x+(b.x-a.x)*u; predY=a.y+(b.y-a.y)*u; predZ=a.z+(b.z-a.z)*u;
+          let dy=b.yaw-a.yaw; while(dy>Math.PI)dy-=Math.PI*2; while(dy<-Math.PI)dy+=Math.PI*2;
+          targetYaw=a.yaw+dy*u;
+        }else if(samples.length){
+          const a=samples[samples.length-1],age=Math.max(0,Math.min(0.12,(renderAt-a.t)/1000));
+          predX=a.x+(a.vx||0)*age; predY=a.y; predZ=a.z+(a.vz||0)*age; targetYaw=a.yaw;
+        }
         const snapDist = Math.hypot(predX - r.obj.position.x, predZ - r.obj.position.z);
-        // lerpSpeed 상향: 뒤처짐 줄여서 끊김 감소
-        const lerpSpeed = snapDist > 3.0 ? 60.0 : (snapDist > 1.2 ? 40.0 : 28.0);
+        if(snapDist>8){ r.obj.position.set(predX,predY,predZ); }
+        const lerpSpeed = snapDist > 3.0 ? 26.0 : (snapDist > 1.2 ? 18.0 : 12.0);
         const lerpA = 1 - Math.exp(-bridgeDt * lerpSpeed);
         r.obj.position.x += (predX - r.obj.position.x) * lerpA;
         r.obj.position.y += (predY - r.obj.position.y) * lerpA;
         r.obj.position.z += (predZ - r.obj.position.z) * lerpA;
-        const targetYaw = Number(r.targetYaw ?? st.yaw) || 0;
         let yawDiff = targetYaw - r.obj.rotation.y;
         while(yawDiff > Math.PI) yawDiff -= Math.PI*2;
         while(yawDiff < -Math.PI) yawDiff += Math.PI*2;

@@ -1247,7 +1247,7 @@ export class RoomDO{
           const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0, mxWorldTs:0, brTs:0, brWorldTs:0 };
           const n = now();
           if (kind === "state") {
-            if (n - (lim.brTs||0) < 60) return;
+            if (n - (lim.brTs||0) < 40) return;
             lim.brTs = n;
           } else {
             if (n - (lim.brWorldTs||0) < 90) return;
@@ -1774,7 +1774,7 @@ export class RoomDO{
         // 서버 권한 기준이 어긋날 때(좌석 0이 방장이 아닌 경우) 공 물리를
         // 아무도 계산하지 못해 공이 완전히 멈춰버리는 치명적 버그가 된다.
         if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
-        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), owner: d.owner ?? null };
+        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), z: Math.max(0, Number(d.z ?? 0)), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), vz: Number(d.vz ?? 0), owner: d.owner ?? null, impactAt: String(d.impactAt||''), impactPower: Number(d.impactPower||0), impactDir: Number(d.impactDir||0) };
         // broadcast to everyone except the sender (host already has authoritative local state)
         for (const [sock, sUid] of this.sockets.entries()){
           if (sUid && sUid !== uid) this._send(sock, "sc_ball", this.sc.ball);

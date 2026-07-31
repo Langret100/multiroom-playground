@@ -1386,7 +1386,7 @@ function updatePreview(modeId){
       }, coop.soccerLocalState || {});
       state.isHost = getMyIsHost();
       state.ball = {
-        x:d.x, y:d.y, vx:d.vx, vy:d.vy, owner:d.owner, at:soccerNow,
+        x:d.x, y:d.y, z:d.z||0, vx:d.vx, vy:d.vy, vz:d.vz||0, owner:d.owner, at:soccerNow,
         impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0
       };
       coop.soccerLocalState = state;
@@ -3051,7 +3051,7 @@ try{
           }
           if (sharedBall){
             postToMain({
-              type:"sc_ball", x:sharedBall.x, y:sharedBall.y, vx:sharedBall.vx, vy:sharedBall.vy, owner:sharedBall.owner,
+              type:"sc_ball", x:sharedBall.x, y:sharedBall.y, z:sharedBall.z||0, vx:sharedBall.vx, vy:sharedBall.vy, vz:sharedBall.vz||0, owner:sharedBall.owner,
               impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0
             });
           }
@@ -3144,7 +3144,7 @@ try{
       room.onMessage("sc_ball", (msg)=>{
         if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({
-          type:"sc_ball", x:msg.x, y:msg.y, vx:msg.vx, vy:msg.vy, owner:msg.owner,
+          type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0, vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
           impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0
         });
       });
