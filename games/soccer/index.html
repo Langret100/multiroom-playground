@@ -346,6 +346,7 @@ let kickoffSoundsDone = new Set();
 let scoreAnimA = 0, scoreAnimB = 0; // 골 넣었을 때 스코어보드 팝 애니메이션 타임스탬프
 let prevScoreA = 0, prevScoreB = 0;
 let lastImpactFxAt = '';      // 확정 킥 id별 이펙트 중복 방지
+let lastExplicitImpactMs = 0;   // 속도 추정 이펙트와 확정 이펙트 중복 방지
 
 function addShake(mag, durMs){
   shakeMag = Math.max(shakeMag, mag);
@@ -372,6 +373,7 @@ function playKickImpactOnce(impactAt,x,y,power,dir){
   const id=String(impactAt||'');
   if(!id || id===lastImpactFxAt) return false;
   lastImpactFxAt=id;
+  lastExplicitImpactMs=Date.now();
   playKickImpact(x,y,power,dir);
   return true;
 }
@@ -585,7 +587,7 @@ let headerCooldownUntil=0;
 let tackleCooldownUntil = 0;
 let tackleActiveUntil = 0;
 const KICK_CHARGE_MS = 600;
-const HEADER_COOLDOWN_MS=1500;
+const HEADER_COOLDOWN_MS=800;
 const HEADER_DUR_MS=520;
 const HEADER_CONTACT_DELAY_MS=210;
 const HEADER_RANGE=KICK_RANGE+13;
@@ -665,7 +667,7 @@ function releaseKickCharge(){
       netBall.netX=netBall.x; netBall.netY=netBall.y; netBall.netZ=netBall.z;
       netBall.samples=[];
       localKickPredictAt=pendingKickAt;
-      localKickPredictUntil=pendingKickAt+320;
+      localKickPredictUntil=pendingKickAt+900;
       localKickPredictFrameAt=pendingKickAt;
     }
   }
@@ -1114,14 +1116,29 @@ function updateBallHost(){
   if (ball.y-BR < FY){ ball.y = FY+BR; ball.vy = Math.abs(ball.vy)*0.18; }
   if (ball.y+BR > FY+FH){ ball.y = FY+FH-BR; ball.vy = -Math.abs(ball.vy)*0.18; }
 
-  if (ball.x-BR < FX){
-    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2 && (ball.z||0)<=BALL_GOAL_MAX_Z) scoreGoal('B');
-    else { ball.x = FX+BR; ball.vx = Math.abs(ball.vx)*0.18; }
+  // 골문에서는 공 반지름이 끝선에 닿았다고 바로 튕기지 않는다. 공 중심이
+  // 골라인을 지나 실제 골대 안쪽 깊이까지 들어가도록 통로를 열고, 그 뒤 득점
+  // 처리한다. 이전 방식은 x±BR 기준 충돌이 먼저 발생해 골문 앞에서 막혔다.
+  const inGoalMouth=ball.y>GOAL_Y1+BR*.15&&ball.y<GOAL_Y2-BR*.15&&
+    (ball.z||0)<=BALL_GOAL_MAX_Z;
+  const goalDepth=Math.max(7,GOAL_W*.55);
+  if(ball.x<FX){
+    if(inGoalMouth){
+      if(ball.x<=FX-goalDepth)scoreGoal('B');
+    }else if(ball.x-BR<FX){
+      ball.x=FX+BR;ball.vx=Math.abs(ball.vx)*.18;
+    }
   }
-  if (ball.x+BR > FX+FW){
-    if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2 && (ball.z||0)<=BALL_GOAL_MAX_Z) scoreGoal('A');
-    else { ball.x = FX+FW-BR; ball.vx = -Math.abs(ball.vx)*0.18; }
+  if(ball.x>FX+FW){
+    if(inGoalMouth){
+      if(ball.x>=FX+FW+goalDepth)scoreGoal('A');
+    }else if(ball.x+BR>FX+FW){
+      ball.x=FX+FW-BR;ball.vx=-Math.abs(ball.vx)*.18;
+    }
   }
+  // 골문 바깥 벽을 통과하지 못하도록 안전 제한. 골 판정 전 한두 프레임 동안만
+  // 네트 안쪽 깊이를 허용한다.
+  ball.x=clamp(ball.x,FX-GOAL_W-BR,FX+FW+GOAL_W+BR);
 }
 
 let lastBallSpeedSeen = 0;
@@ -1129,7 +1146,9 @@ function updateBallImpactFx(){
   const b = ball_or_netball();
   const spd = Math.hypot(b.vx||0, b.vy||0);
   const jump = spd - lastBallSpeedSeen;
-  if (jump > 3.2){
+  // 킥/헤딩은 impactAt으로 정확히 한 번 재생한다. 확정 이펙트 직후의 속도
+  // 변화까지 다시 추정 이펙트로 잡으면 게스트에서 링이 두 번 뜬다.
+  if (jump > 3.2 && Date.now()-lastExplicitImpactMs>500){
     const dir=Math.atan2(b.vy||0,b.vx||0);
     playKickImpact(b.x,b.y,clamp(jump/9,0,1),dir);
   }
@@ -2050,9 +2069,17 @@ window.addEventListener('message', e=>{
     netBall.samples.push({t:now,x:netBall.netX,y:netBall.netY,z:netBall.netZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
     if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
     if(confirmsLocalKick){
+      // 호스트 확정값이 도착했을 때 로컬 예측보다 뒤쪽이면 되감지 않는다.
+      // 진행 방향 기준 더 앞선 위치를 유지한 채 권위 속도로 자연스럽게 합류한다.
+      const idir=Number(d.impactDir||0);
+      const nx=Math.cos(idir),ny=Math.sin(idir);
+      const authAhead=netBall.netX*nx+netBall.netY*ny;
+      const visualAhead=netBall.x*nx+netBall.y*ny;
+      if(authAhead>visualAhead){netBall.x=netBall.netX;netBall.y=netBall.netY;}
+      netBall.vx=netBall.netVX;netBall.vy=netBall.netVY;netBall.vz=netBall.netVZ;
       localKickPredictAt=0;localKickPredictUntil=0;localKickPredictFrameAt=0;
-      kickReconcileDir=Number(d.impactDir||0);
-      kickReconcileUntil=now+160;
+      kickReconcileDir=idir;
+      kickReconcileUntil=now+220;
       netBall.samples=netBall.samples.slice(-1);
     }
     if(d.impactAt){
