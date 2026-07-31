@@ -116,18 +116,18 @@ const MAX_BALL_SPEED = 14;
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-// v25: 달리기·헤딩·태클·대기·드리블·슛을 모두 같은 384px 원본, 같은 머리
-// 크기·전신 배율·팔레트·발 기준선으로 다시 묶었다. 예전에는 기본 이동만
-// 저해상도 구 프레임(1~3)을 사용해 점프/태클보다 흐렸고, 기본 이동 속도
-// 3.75가 '달리기' 임계값 4.15보다 낮아 새 달리기 프레임이 아예 선택되지
-// 않았다. 이제 걷기/달리기/드리블 모두 새 4단계 접지 순환을 사용한다.
+// v26: 달리기를 4장이 아닌 8장(왼발 접지·지지·통과·공중 →
+// 오른발 접지·지지·통과·공중)으로 다시 그렸다. 모든 캐릭터의 원래 머리,
+// 유니폼, 양말, 축구화 색은 유지하고 각 프레임을 같은 270px 전신 높이와
+// y=378 발 기준선으로 정렬했다. 예전 4장은 보폭만 좁혔다 넓히며 같은 발이
+// 계속 앞에 보여 달리는 대신 미끄러지는 것처럼 보였던 것이 원인이다.
 // 공은 어떤 캐릭터 프레임에도 포함하지 않는다.
 // 좌석 0/2/4/6은 A1~A4, 1/3/5/7은 B1~B4에 고정 대응한다.
 const soccerPlayerSprites={A:[],B:[]};
 const SOCCER_SPRITE_CELL=384;
 for(const team of ['A','B'])for(let i=0;i<4;i++){
   const img=new Image();
-  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v25-unified-crisp.png?v=20260731-v25`;
+  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v26-run8-crisp.png?v=20260731-v26`;
   soccerPlayerSprites[team].push(img);
 }
 function resize(){
@@ -402,7 +402,8 @@ function startKickoffCountdown(ms){
 
 function resetKickoff(){
   ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0, owner:null, ownerUntil:0 };
-  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y, netT:Date.now(), owner:null };
+  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y,
+    netVX:0,netVY:0,netT:Date.now(),visualAt:Date.now(),owner:null };
   ballTrail = [];
   lastBallSpeedSeen = 0;
   for(const p of Object.values(players)){
@@ -422,7 +423,8 @@ function initGame(){
   me = players[mySid] || null;
   score = { A:0, B:0 }; prevScoreA=0; prevScoreB=0;
   ball = { x:FX+FW/2, y:FY+FH/2, vx:0, vy:0, owner:null, ownerUntil:0 };
-  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y, netT:Date.now(), owner:null };
+  netBall = { x:ball.x, y:ball.y, vx:0, vy:0, netX:ball.x, netY:ball.y,
+    netVX:0,netVY:0,netT:Date.now(),visualAt:Date.now(),owner:null };
   gameOver = false;
   gameActive = true;
   hideOverlay();
@@ -765,6 +767,9 @@ function lerpRemote(){
 function updateNetBall(){
   if (isHost) return; // 호스트는 자기 물리 계산 결과(ball)를 그대로 그린다
   const now = Date.now();
+  const visualDt=clamp(now-(netBall.visualAt||now),0,34);
+  netBall.visualAt=now;
+  const previousVisualX=netBall.x,previousVisualY=netBall.y;
   // 게스트가 방금 직접 찬 공은 호스트의 확정 impactAt이 돌아오기 전까지만
   // 로컬에서 같은 속도/마찰로 전진시킨다. 오래된 공 스냅샷을 향해 보간하면
   // 이펙트 뒤 공이 멈추거나 되감기므로 이 짧은 구간에는 권위 보간을 유예한다.
@@ -815,9 +820,31 @@ function updateNetBall(){
     if(rx*nx+ry*ny<PR+BR-2||Math.hypot(rx,ry)<PR+BR-2){
       netBall.x=tx;netBall.y=ty;
     }
+    // 권위 패킷이 늦게 와도 내 드리블 표시 공이 진행 반대 방향으로 한 프레임
+    // 되감기지 않게 한다. 옆 방향 보정은 유지하고 전진 성분만 0 이상으로 제한한다.
+    const forwardDelta=(netBall.x-previousVisualX)*nx+(netBall.y-previousVisualY)*ny;
+    if(forwardDelta<0){
+      netBall.x-=nx*forwardDelta;
+      netBall.y-=ny*forwardDelta;
+    }
   }else{
-    const nxt=smoothToward(netBall,netBall.netX,netBall.netY,netBall.vx,netBall.vy,netBall.netT,now,.74);
-    netBall.x=nxt.x;netBall.y=nxt.y;
+    // 게스트 공 끊김의 원인은 30ms마다 온 새 좌표로 화면 공을 매 프레임
+    // 74%씩 순간 이동시키던 데 있었다. 이제 수신 속도로 프레임 사이를 직접
+    // 진행시키고, 외삽한 권위 위치와의 오차만 작은 스프링으로 보정한다.
+    // 큰 오차만 빠르게 복구하고 정상 패킷 간격에서는 위치를 스냅하지 않는다.
+    const steps=visualDt/(1000/60);
+    netBall.x+=(netBall.vx||0)*steps;
+    netBall.y+=(netBall.vy||0)*steps;
+    const age=clamp(now-(netBall.netT||now),0,120);
+    const authVX=Number(netBall.netVX||0),authVY=Number(netBall.netVY||0);
+    const tx=netBall.netX+authVX*age*.06;
+    const ty=netBall.netY+authVY*age*.06;
+    const err=Math.hypot(tx-netBall.x,ty-netBall.y);
+    const correction=err>120?.52:(err>55?.25:(err>20?.13:.06));
+    netBall.x=lerp(netBall.x,tx,correction);
+    netBall.y=lerp(netBall.y,ty,correction);
+    netBall.vx=lerp(netBall.vx||0,authVX,.18);
+    netBall.vy=lerp(netBall.vy||0,authVY,.18);
   }
 
   // 키를 막 놓아 감속 중이어도 호스트가 아직 내 소유로 확인한 공은 몸 안으로
@@ -1452,7 +1479,10 @@ function drawPlayer(p,mine,sid){
   const phase=moving?(animStep%2):0;
   // 정지 상태에서 캐릭터 전체를 위아래로 옮기던 1px bob이 둥둥 떠 보이던
   // 원인이었다. 상하 이동은 달리는 접지 순간에만 사용하고 대기 중에는 0이다.
-  const bob=moving?((animStep%4===1||animStep%4===3)?1:0):0;
+  // 8프레임 달리기와 같은 순서로 지지 때 1px 내려가고 공중 때 1px 오른다.
+  // 단순히 홀수 프레임마다 내려가던 방식보다 발 접지와 몸통 높이가 맞는다.
+  const runBob=[0,1,0,-1,0,1,0,-1];
+  const bob=moving?runBob[animStep%runBob.length]:0;
   const sway=moving?(phase?1:-1):0;
   const kicking=now<(p._kickPoseUntil||0);
   const heading=now<(p._headerPoseUntil||0);
@@ -1482,14 +1512,15 @@ function drawPlayer(p,mine,sid){
 
   const variant=spriteVariantOf(p);
   const sprite=soccerPlayerSprites[p.team]?.[variant]||soccerPlayerSprites.A[0];
-  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*16;
+  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*20;
   if(spriteReady){
-    // 0~3 달리기 접지/통과 4단계 / 4~5 헤딩 / 6~7 태클 /
-    // 8~10 손발을 고정한 대기 호흡 / 11~12 드리블 / 13~15 슛.
+    // 0~7 좌우 다리를 완전히 교대한 달리기 8단계 / 8~9 헤딩 /
+    // 10~11 태클 / 12~14 대기 호흡 / 15~16 드리블 / 17~19 슛.
     // 원격 선수도 netVX/netVY와 현재 시간으로 같은 순환을 계산하므로 한 자세로
-    // 미끄러지지 않는다. 기본 속도에서도 반드시 새 4프레임 달리기를 쓴다.
-    const moveFrames=[0,1,2,3],dribbleFrames=[0,11,2,12];
-    const idleFrames=[8,9,10,9];
+    // 미끄러지지 않는다. 기본 속도에서도 반드시 새 8프레임 달리기를 쓴다.
+    const moveFrames=[0,1,2,3,4,5,6,7];
+    const dribbleFrames=[0,15,2,3,4,16,6,7];
+    const idleFrames=[12,13,14,13];
     const moveCycle=moveFrames[animStep%moveFrames.length];
     const dribbleCycle=dribbleFrames[animStep%dribbleFrames.length];
     const idleCycle=idleFrames[Math.floor((now+(Number(p.seat)||0)*83)/620)%idleFrames.length];
@@ -1497,8 +1528,8 @@ function drawPlayer(p,mine,sid){
     const kickProgress=kicking?clamp(1-((p._kickPoseUntil||0)-now)/180,0,1):0;
     const tackleStart=p._tacklePoseStart||now;
     const tackleProgress=tackling?clamp((now-tackleStart)/TACKLE_DUR_MS,0,1):0;
-    const actionFrame=heading?(headerProgress<.48?4:5):(tackling?(tackleProgress<.45?6:7):-1);
-    const kickFrame=kickProgress<.34?13:(kickProgress<.68?14:15);
+    const actionFrame=heading?(headerProgress<.48?8:9):(tackling?(tackleProgress<.45?10:11):-1);
+    const kickFrame=kickProgress<.34?17:(kickProgress<.68?18:19);
     const frame=actionFrame>=0?actionFrame:
       (kicking?kickFrame:(dribbling?dribbleCycle:(moving?moveCycle:idleCycle)));
     ctx.save();
@@ -1847,21 +1878,37 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_players'){
+    const hasUrgentAction=Object.values(d.players||{}).some(s=>s&&(s.kickAt||s.headerAt||s.tackleAt));
     applyRemotePlayers(d.players);
+    // 게스트 액션이 도착했는데 다음 requestAnimationFrame까지 기다리면 네트워크
+    // 왕복 뒤 최대 16ms가 더 붙는다. 액션 edge가 든 패킷만 호스트 판정을
+    // 같은 메시지 호출 안에서 한 번 진행한다. 각 edge id의 _last* 검사 때문에
+    // 다음 일반 프레임에서 힘이 중복 적용되지는 않는다.
+    if(isHost&&hasUrgentAction)updateBallHost();
     return;
   }
 
   if (d.type === 'sc_ball'){
     const now=Date.now();
     const incomingImpact=d.impactAt?String(d.impactAt):'';
+    const newImpact=!!(incomingImpact&&incomingImpact!==String(netBall.impactAt||''));
     const confirmsLocalKick=!!(localKickPredictAt&&incomingImpact===String(localKickPredictAt));
     const predictingLocalKick=!!(localKickPredictAt&&now<localKickPredictUntil&&!confirmsLocalKick);
     netBall.netX = Number(d.x ?? netBall.netX);
     netBall.netY = Number(d.y ?? netBall.netY);
-    // 예측 중 도착한 '킥 이전' 공 속도가 즉시 표시 공을 멈추지 않게 한다.
+    netBall.netVX=Number(d.vx??0);
+    netBall.netVY=Number(d.vy??0);
+    // 표시 속도와 수신 속도를 분리한다. 매 패킷마다 표시 속도까지 교체하면
+    // 게스트 화면에서 공이 30ms 단위로 가다 서다를 반복한다. 새 타격은 즉시
+    // 반영하고, 일반 이동은 updateNetBall()의 연속 보간으로 따라간다.
     if(!predictingLocalKick){
-      netBall.vx = Number(d.vx ?? 0);
-      netBall.vy = Number(d.vy ?? 0);
+      if(newImpact){
+        netBall.vx=netBall.netVX;
+        netBall.vy=netBall.netVY;
+      }else{
+        netBall.vx=lerp(netBall.vx||0,netBall.netVX,.22);
+        netBall.vy=lerp(netBall.vy||0,netBall.netVY,.22);
+      }
     }
     netBall.owner = d.owner ? String(d.owner) : null;
     netBall.netT = now;
