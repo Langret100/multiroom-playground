@@ -110,11 +110,12 @@ const GOAL_W=14, GOAL_H=130;
 const GOAL_Y1 = FY+FH/2-GOAL_H/2, GOAL_Y2 = FY+FH/2+GOAL_H/2;
 const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
-const TACKLE_RANGE = PR*2+8;
-const MAX_BALL_SPEED = 8.8;
-const BALL_GRAVITY = 0.38;       // 프레임당 공중 중력
-const BALL_BOUNCE = 0.46;        // 잔디 바운드 감쇠
-const BALL_AIR_DRAG = 0.990;     // 공중 수평 저항
+const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
+const DRIBBLE_DISTANCE = PR+BR-5; // 호스트/게스트 공의 동일한 발앞 거리
+const MAX_BALL_SPEED = 3.8;       // 화면에서 공이 사라지지 않는 상한
+const BALL_GRAVITY = 0.30;        // 낮아진 속도에 맞춘 완만한 포물선
+const BALL_BOUNCE = 0.22;         // 잔디 바운드는 작게
+const BALL_AIR_DRAG = 0.985;      // 공중 감속
 const BALL_GOAL_MAX_Z = 38;      // 골대 크로스바 높이(화면 논리 높이)
 const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
 const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
@@ -562,6 +563,7 @@ let pendingHeaderX=0,pendingHeaderY=0,pendingHeaderDir=0,pendingHeaderBallX=0,pe
 let pendingTackleAt=0,pendingTackleUntil=0;
 // 게스트 화면의 짧은 슛 예측. 최종 공 판정은 계속 호스트가 담당한다.
 let localKickPredictAt=0, localKickPredictUntil=0, localKickPredictFrameAt=0;
+let kickReconcileUntil=0,kickReconcileDir=0;
 let headerCooldownUntil=0;
 let tackleCooldownUntil = 0;
 let tackleActiveUntil = 0;
@@ -571,7 +573,7 @@ const HEADER_DUR_MS=520;
 const HEADER_CONTACT_DELAY_MS=210;
 const HEADER_RANGE=KICK_RANGE+13;
 const TACKLE_COOLDOWN_MS = 3000;
-const TACKLE_DUR_MS = 380;
+const TACKLE_DUR_MS = 230;
 const STUN_MS = 550;
 
 function isStunned(sid, now){ return (stunUntilMap[sid]||0) > (now||Date.now()); }
@@ -630,14 +632,14 @@ function releaseKickCharge(){
     const targetDist=Math.hypot((netBall.netX??b.x)-me.x,(netBall.netY??b.y)-me.y);
     if(Math.min(visibleDist,targetDist)<KICK_RANGE+3){
       playKickImpactOnce(pendingKickAt,b.x,b.y,pendingKickCharge,me.dir);
-      lastBallSpeedSeen=Math.max(lastBallSpeedSeen,3.8+pendingKickCharge*4.8);
+      lastBallSpeedSeen=Math.max(lastBallSpeedSeen,1.15+pendingKickCharge*1.65);
       // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
       // 전진시킨다. 그래서 이펙트 뒤 공이 멈춰 있다가 뒤늦게 출발하지 않는다.
-      const power=3.5+pendingKickCharge*4.8;
-      const loft=pendingKickCharge<.48?0:lerp(2.4,7.2,(pendingKickCharge-.48)/.52);
+      const power=1.15+pendingKickCharge*1.65;
+      const loft=pendingKickCharge<.52?0:lerp(1.7,4.6,(pendingKickCharge-.52)/.48);
       netBall.x=b.x;netBall.y=b.y;netBall.z=Math.max(0,b.z||0);
-      netBall.vx=(netBall.vx||0)+Math.cos(me.dir)*power;
-      netBall.vy=(netBall.vy||0)+Math.sin(me.dir)*power;
+      netBall.vx=Math.cos(me.dir)*power;
+      netBall.vy=Math.sin(me.dir)*power;
       netBall.vz=Math.max(netBall.vz||0,loft);
       if(loft>0)sfxAirWhoosh(pendingKickCharge);
       netBall.owner=null;
@@ -714,7 +716,7 @@ function updateMe(){
   const tackling = now < tackleActiveUntil;
   const heading=now<(me._headerPoseUntil||0);
   const sprinting = !kickCharging && !tackling && !heading && ((keys['KeyE']) || (IS_MOBILE && rawLen>.88));
-  const SPD = tackling ? 6.4 : (heading?3.05:(sprinting ? 4.8 : (kickCharging ? 2.45 : 3.75)));
+  const SPD = tackling ? 4.0 : (heading?2.25:(sprinting ? 3.35 : (kickCharging ? 1.85 : 2.70)));
   const targetVX=dx*SPD, targetVY=dy*SPD;
   // 즉시 최고속도로 바뀌던 이동을 가속/감속 방식으로 바꿔 출발, 방향 전환,
   // 급정지가 구분된다. 차징 중에는 속도가 낮아져 슛 타이밍에도 선택이 생긴다.
@@ -807,7 +809,7 @@ function updateNetBall(){
     netBall.z=Math.max(0,(netBall.z||0)+(netBall.vz||0)*steps);
     netBall.vz=(netBall.vz||0)-BALL_GRAVITY*steps;
     if(netBall.z<=0&&netBall.vz<0){netBall.z=0;netBall.vz=0;}
-    const drag=Math.pow(netBall.z>0?BALL_AIR_DRAG:.978,steps);
+    const drag=Math.pow(netBall.z>0?BALL_AIR_DRAG:.955,steps);
     netBall.vx*=drag;netBall.vy*=drag;
     return;
   }
@@ -839,15 +841,14 @@ function updateNetBall(){
     netBall.z=0;netBall.vz=0;
     const speed=Math.hypot(me.vx||0,me.vy||0);
     const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
-    const tx=me.x+nx*(PR+BR),ty=me.y+ny*(PR+BR);
+    const tx=me.x+nx*DRIBBLE_DISTANCE,ty=me.y+ny*DRIBBLE_DISTANCE;
     const footBlend=confirmedOwner?.76:.68;
     netBall.x=lerp(netBall.x,tx,footBlend);
     netBall.y=lerp(netBall.y,ty,footBlend);
-    const carry=Math.min(4.8,.45+speed*.82);
-    netBall.vx=lerp(netBall.vx,(me.vx||0)*.92+nx*carry,.34);
-    netBall.vy=lerp(netBall.vy,(me.vy||0)*.92+ny*carry,.34);
+    netBall.vx=lerp(netBall.vx,(me.vx||0)*.94,.58);
+    netBall.vy=lerp(netBall.vy,(me.vy||0)*.94,.58);
     const rx=netBall.x-me.x,ry=netBall.y-me.y;
-    if(rx*nx+ry*ny<PR+BR-2||Math.hypot(rx,ry)<PR+BR-2){
+    if(rx*nx+ry*ny<DRIBBLE_DISTANCE-1||Math.hypot(rx,ry)<DRIBBLE_DISTANCE-1){
       netBall.x=tx;netBall.y=ty;
     }
     // 권위 패킷이 늦게 와도 내 드리블 표시 공이 진행 반대 방향으로 한 프레임
@@ -893,6 +894,11 @@ function updateNetBall(){
     netBall.vx=lerp(netBall.vx||0,tvx,.18);
     netBall.vy=lerp(netBall.vy||0,tvy,.18);
     netBall.vz=lerp(netBall.vz||0,tvz,.22);
+    if(now<kickReconcileUntil){
+      const nx=Math.cos(kickReconcileDir),ny=Math.sin(kickReconcileDir);
+      const back=(netBall.x-previousVisualX)*nx+(netBall.y-previousVisualY)*ny;
+      if(back<0){ netBall.x-=nx*back; netBall.y-=ny*back; }
+    }
   }
 
   // 키를 막 놓아 감속 중이어도 호스트가 아직 내 소유로 확인한 공은 몸 안으로
@@ -900,9 +906,9 @@ function updateNetBall(){
   if(confirmedOwner&&me){
     const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
     const rx=netBall.x-me.x,ry=netBall.y-me.y;
-    if(rx*nx+ry*ny<PR+BR-2||Math.hypot(rx,ry)<PR+BR-2){
-      netBall.x=me.x+nx*(PR+BR);
-      netBall.y=me.y+ny*(PR+BR);
+    if(rx*nx+ry*ny<DRIBBLE_DISTANCE-1||Math.hypot(rx,ry)<DRIBBLE_DISTANCE-1){
+      netBall.x=me.x+nx*DRIBBLE_DISTANCE;
+      netBall.y=me.y+ny*DRIBBLE_DISTANCE;
     }
   }
 
@@ -911,12 +917,12 @@ function updateNetBall(){
   // 적용하며, 움직이는 중이면 항상 진행 방향 앞쪽으로 밀어낸다.
   if(me){
     const rx=netBall.x-me.x,ry=netBall.y-me.y,d=Math.hypot(rx,ry);
-    if(d<PR+BR-2){
+    if(d<DRIBBLE_DISTANCE-1){
       const moving=localSpeed>.12;
       const nx=moving?Math.cos(me.dir):(d>.001?rx/d:Math.cos(me.dir));
       const ny=moving?Math.sin(me.dir):(d>.001?ry/d:Math.sin(me.dir));
-      netBall.x=me.x+nx*(PR+BR);
-      netBall.y=me.y+ny*(PR+BR);
+      netBall.x=me.x+nx*DRIBBLE_DISTANCE;
+      netBall.y=me.y+ny*DRIBBLE_DISTANCE;
     }
   }
 }
@@ -976,17 +982,16 @@ function updateBallHost(){
       // 반대로 뒤집히지 않으므로 공이 갑자기 발뒤꿈치 쪽으로 빠지지 않는다.
       const nx=moving?effectiveVX/remoteSpeed:dx/d;
       const ny=moving?effectiveVY/remoteSpeed:dy/d;
-      const footX=controlX+nx*minD, footY=controlY+ny*minD;
+      const footX=controlX+nx*DRIBBLE_DISTANCE, footY=controlY+ny*DRIBBLE_DISTANCE;
       // 소유가 확인된 동안에는 패킷 사이에도 접촉을 연속 유지한다. 단발성
       // d<minD 판정만 쓰던 때처럼 공을 놓쳤다가 다시 잡으며 튀지 않는다.
-      const positionBlend=carrying&&moving ? .62 : (moving ? .72 : 1);
+      const positionBlend=carrying&&moving ? .78 : (moving ? .84 : 1);
       ball.x=lerp(ball.x,footX,positionBlend);
       ball.y=lerp(ball.y,footY,positionBlend);
-      const carry=Math.min(4.8,.45+remoteSpeed*.82);
-      const targetVX=effectiveVX*.92+nx*carry;
-      const targetVY=effectiveVY*.92+ny*carry;
-      ball.vx=lerp(ball.vx,targetVX,moving ? .34 : .23);
-      ball.vy=lerp(ball.vy,targetVY,moving ? .34 : .23);
+      const targetVX=effectiveVX*.94;
+      const targetVY=effectiveVY*.94;
+      ball.vx=lerp(ball.vx,targetVX,moving ? .58 : .32);
+      ball.vy=lerp(ball.vy,targetVY,moving ? .58 : .32);
       // 호스트가 실제 접촉을 확인한 선수 id를 공 스냅샷에 실어 보낸다.
       // 게스트가 거리만으로 소유를 추측하다 잠금이 풀려 과거 좌표로 되감기던
       // 문제를 막는다. 접촉이 끊기면 180ms 뒤 자동으로 소유가 해제된다.
@@ -1011,12 +1016,16 @@ function updateBallHost(){
         const dir = Number.isFinite(p.kickDir) ? p.kickDir : (Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx));
         const charge=clamp(p.kickCharge||0,0,1);
         // v7과 같은 파워 곡선/가산 방식으로 복원한다.
-        const power = 3.5 + charge*4.8;
-        ball.vx+=Math.cos(dir)*power;
-        ball.vy+=Math.sin(dir)*power;
+        const power = 1.15 + charge*1.65;
+        if(Number.isFinite(p.kickBallX)&&Number.isFinite(p.kickBallY)&&reportedBallDrift<52){
+          ball.x=clamp(Number(p.kickBallX),FX+BR,FX+FW-BR);
+          ball.y=clamp(Number(p.kickBallY),FY+BR,FY+FH-BR);
+        }
+        ball.vx=Math.cos(dir)*power;
+        ball.vy=Math.sin(dir)*power;
         // 탭/약슛은 낮게 굴러가고, 절반 이상 충전부터 실제 높이(vz)가 생긴다.
         // 최대 충전은 포물선으로 충분히 떠서 점프 헤딩이 가능하다.
-        const loft=charge<.48?0:lerp(2.4,7.2,(charge-.48)/.52);
+        const loft=charge<.52?0:lerp(1.7,4.6,(charge-.52)/.48);
         ball.vz=Math.max(ball.vz||0,loft);
         ball.z=Math.max(0,ball.z||0);
         if(loft>0)sfxAirWhoosh(charge);
@@ -1050,7 +1059,7 @@ function updateBallHost(){
         (Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+4&&reportedDrift<58));
       if(headerInRange){
         const dir=Number.isFinite(p.headerDir)?p.headerDir:(Number.isFinite(p.dir)?p.dir:0);
-        const power=5.4;
+        const power=2.35;
         ball.vx=Math.cos(dir)*power+(ball.vx||0)*.24;
         ball.vy=Math.sin(dir)*power+(ball.vy||0)*.24;
         // 헤딩은 수평 방향을 바꾸면서 공을 다시 살짝 띄운다.
@@ -1084,8 +1093,8 @@ function updateBallHost(){
           // 태클한 방향으로 공도 살짝 튕겨나가도록(뺏는 느낌)
           const bd = Math.hypot(ball.x-q.x, ball.y-q.y);
           if (bd < KICK_RANGE&&(ball.z||0)<5){
-            ball.vx += Math.cos(p.dir)*3.5;
-            ball.vy += Math.sin(p.dir)*3.5;
+            ball.vx = Math.cos(p.dir)*0.90;
+            ball.vy = Math.sin(p.dir)*0.90;
             ball.owner=null;
             ball.ownerUntil=0;
           }
@@ -1100,7 +1109,7 @@ function updateBallHost(){
   ball.z = Math.max(0,(ball.z||0)+(ball.vz||0));
   ball.vz = (ball.vz||0)-BALL_GRAVITY;
   const airborne=(ball.z||0)>0.01;
-  const drag=airborne?BALL_AIR_DRAG:.978;
+  const drag=airborne?BALL_AIR_DRAG:.955;
   ball.vx *= drag; ball.vy *= drag;
   if(ball.z<=0&&ball.vz<0){
     const impact=Math.abs(ball.vz);
@@ -1113,16 +1122,16 @@ function updateBallHost(){
   const bs = Math.hypot(ball.vx, ball.vy);
   if (bs > MAX_BALL_SPEED){ ball.vx *= MAX_BALL_SPEED/bs; ball.vy *= MAX_BALL_SPEED/bs; }
 
-  if (ball.y-BR < FY){ ball.y = FY+BR; ball.vy = Math.abs(ball.vy)*0.6; }
-  if (ball.y+BR > FY+FH){ ball.y = FY+FH-BR; ball.vy = -Math.abs(ball.vy)*0.6; }
+  if (ball.y-BR < FY){ ball.y = FY+BR; ball.vy = Math.abs(ball.vy)*0.18; }
+  if (ball.y+BR > FY+FH){ ball.y = FY+FH-BR; ball.vy = -Math.abs(ball.vy)*0.18; }
 
   if (ball.x-BR < FX){
     if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2 && (ball.z||0)<=BALL_GOAL_MAX_Z) scoreGoal('B');
-    else { ball.x = FX+BR; ball.vx = Math.abs(ball.vx)*0.6; }
+    else { ball.x = FX+BR; ball.vx = Math.abs(ball.vx)*0.18; }
   }
   if (ball.x+BR > FX+FW){
     if (ball.y > GOAL_Y1 && ball.y < GOAL_Y2 && (ball.z||0)<=BALL_GOAL_MAX_Z) scoreGoal('A');
-    else { ball.x = FX+FW-BR; ball.vx = -Math.abs(ball.vx)*0.6; }
+    else { ball.x = FX+FW-BR; ball.vx = -Math.abs(ball.vx)*0.18; }
   }
 }
 
@@ -1418,11 +1427,14 @@ function jerseyNumberOf(p){ return Math.floor((Number(p.seat)||0)/2)+1; }
 
 function ball_or_netball(){ return isHost ? ball : netBall; }
 
-const PROJ_TOP_Y=124, PROJ_BOTTOM_Y=506;
-const PROJ_TOP_L=182, PROJ_TOP_R=718;
-const PROJ_BOTTOM_L=8, PROJ_BOTTOM_R=892;
-const PROJ_FAR_SCALE=.56, PROJ_NEAR_SCALE=1.22;
-const PROJ_HEIGHT_SCALE=18;
+// 배경 에셋의 실제 잔디 경계와 일치하는 투영값.
+const PROJ_TOP_Y=173, PROJ_BOTTOM_Y=421;
+const PROJ_TOP_L=116, PROJ_TOP_R=784;
+const PROJ_BOTTOM_L=22, PROJ_BOTTOM_R=878;
+// 캐릭터의 앞뒤 크기 차이는 크게 줄인다.
+const PROJ_FAR_SCALE=.82, PROJ_NEAR_SCALE=1.00;
+// z는 물리 높이이므로 화면 픽셀과 직접 대응시키지 않는다.
+const PROJ_HEIGHT_SCALE=2.35;
 function depthTFromY(y){ return clamp((y-FY)/FH,0,1); }
 function projectWorld(x,y,z=0){
   const t=depthTFromY(y);
@@ -1435,6 +1447,7 @@ function projectWorld(x,y,z=0){
   return { x:groundX, y:groundY-(z||0)*PROJ_HEIGHT_SCALE*scale, groundY, scale, t, left, right };
 }
 function spriteScaleForY(y){ return projectWorld(FX+FW/2,y,0).scale; }
+function ballScaleForY(y){ return lerp(.88,.98,depthTFromY(y)); }
 function shadowSpecForY(y){
   const t=depthTFromY(y);
   return {
@@ -1812,7 +1825,7 @@ function drawRings(){
 function drawBall(b){
   const ground=projectWorld(b.x,b.y,0);
   const proj=projectWorld(b.x,b.y,b.z||0);
-  const depthScale=proj.scale;
+  const depthScale=ballScaleForY(b.y);
   const shadow=shadowSpecForY(b.y);
   ctx.save();
   ctx.fillStyle=`rgba(2,12,18,${(shadow.alphaA+.05).toFixed(3)})`;
@@ -1823,17 +1836,14 @@ function drawBall(b){
 
   const speed=Math.hypot(b.vx||0,b.vy||0);
   const frame=Math.floor(Date.now()/(speed>1?80:220)+Math.abs((b.x||0)+(b.y||0))/28)%4;
-  const px=Math.max(1,Math.round(2*depthScale));
-  const w=16*px, h=16*px;
+  const w=Math.round(17*depthScale), h=Math.round(17*depthScale);
   const dx=Math.round(proj.x-w/2), dy=Math.round(proj.y-h/2);
   ctx.imageSmoothingEnabled=false;
   if(BALL_SHEET.complete && BALL_SHEET.naturalWidth){
     ctx.drawImage(BALL_SHEET, frame*16, 0, 16, 16, dx, dy, w, h);
   }else{
-    ctx.fillStyle='#ffffff'; ctx.fillRect(dx+3*px,dy+2*px,6*px,6*px);
-    ctx.fillStyle='#1f2b36'; ctx.fillRect(dx+5*px,dy+5*px,3*px,3*px);
-    ctx.fillStyle='#cfd9e1'; ctx.fillRect(dx+2*px,dy+5*px,2*px,2*px);
-    ctx.fillRect(dx+8*px,dy+4*px,2*px,2*px);
+    ctx.fillStyle='#f7f7f2'; ctx.fillRect(dx+3,dy+2,Math.max(6,w-6),Math.max(6,h-5));
+    ctx.fillStyle='#1f2b36'; ctx.fillRect(dx+Math.floor(w*.42),dy+Math.floor(h*.38),Math.max(3,Math.floor(w*.22)),Math.max(3,Math.floor(h*.22)));
   }
 }
 
@@ -2052,6 +2062,9 @@ window.addEventListener('message', e=>{
     if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
     if(confirmsLocalKick){
       localKickPredictAt=0;localKickPredictUntil=0;localKickPredictFrameAt=0;
+      kickReconcileDir=Number(d.impactDir||0);
+      kickReconcileUntil=now+160;
+      netBall.samples=netBall.samples.slice(-1);
     }
     if(d.impactAt){
       netBall.impactAt=String(d.impactAt);
