@@ -540,6 +540,7 @@ function updatePreview(modeId){
     soccerMovementProbeAt: 0,
     soccerTgSeenAt: 0,
     soccerLocalState: null,
+    soccerLastUrgentActionId: "",
     soccerSeenEvents: new Set(),
     iframeLoaded: false,
     startPayload: null,
@@ -1324,7 +1325,8 @@ function updatePreview(modeId){
     // ── Soccer: iframe → server relays ─────────────────────────────
     if (d.type === "sc_pos"){
       if (!fromMainForSoccer) return;
-      const isEvent = !!(d.kickAt || d.tackle); // 킥/태클 이벤트는 쓰로틀 예외 (지연 없이 즉시 전달)
+      const isEvent = !!(d.kickAt || d.headerAt || d.tackleAt);
+      // 킥/헤딩/태클의 최초 edge 패킷은 위치 쓰로틀을 기다리지 않는다.
       if (!isEvent){
         const _now = Date.now();
         if (!window.__scPosTs) window.__scPosTs = 0;
@@ -1337,6 +1339,8 @@ function updatePreview(modeId){
         kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
         kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
         kickBallX:d.kickBallX, kickBallY:d.kickBallY,
+        headerAt:d.headerAt,headerX:d.headerX,headerY:d.headerY,headerDir:d.headerDir,
+        headerBallX:d.headerBallX,headerBallY:d.headerBallY,tackleAt:d.tackleAt,
         seat: getMySeat(), nick: myNick || "Player", isHost: getMyIsHost()
       };
       // 호스트가 보낸 최신 공/이벤트를 위치 스냅샷에도 계속 싣는다.
@@ -1348,11 +1352,13 @@ function updatePreview(modeId){
       const soccerNow = Date.now();
       if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
 
-      // 킥은 위치와 달리 한 번의 edge 이벤트다. 공용 tg_state 집계 주기를
-      // 기다리면 게스트 슛이 늦게 보이므로 최초 kickAt은 축구 전용 경로로도
-      // 즉시 한 번 보낸다. 동일 id 반복 패킷은 아래 공용 경로만 사용한다.
-      if(d.kickAt && d.kickAt!==coop.soccerLastUrgentKickAt){
-        coop.soccerLastUrgentKickAt=d.kickAt;
+      // 세 액션은 모두 위치와 달리 한 번의 edge 이벤트다. 공용 tg_state
+      // 집계 주기를 기다리면 게스트 판정이 늦으므로 새로운 id는 축구 전용
+      // 경로로도 즉시 한 번 보내고, 반복 패킷은 아래 공용 경로만 사용한다.
+      const urgentActionId=d.kickAt?`k:${d.kickAt}`:
+        (d.headerAt?`h:${d.headerAt}`:(d.tackleAt?`t:${d.tackleAt}`:""));
+      if(urgentActionId&&urgentActionId!==coop.soccerLastUrgentActionId){
+        coop.soccerLastUrgentActionId=urgentActionId;
         try{ room.send("sc_pos", soccerState); }catch(_){ }
       }
 

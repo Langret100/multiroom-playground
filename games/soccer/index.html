@@ -31,11 +31,11 @@
   }
   body.mobile #joy { display:block; }
   #actionBtns { position:fixed; right:18px; bottom:22px; z-index:15; display:none;
-      flex-direction:row; gap:14px; align-items:flex-end; }
+      flex-direction:row; gap:10px; align-items:flex-end; }
   body.mobile #actionBtns { display:flex; }
   .actBtn {
-    width:76px; height:76px; border-radius:50%; display:flex; align-items:center; justify-content:center;
-    font-size:13px; font-weight:700; color:#fff; text-align:center; line-height:1.2;
+    width:68px; height:68px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:700; color:#fff; text-align:center; line-height:1.2;
     background:rgba(255,255,255,.14); border:2px solid rgba(255,255,255,.35); position:relative;
     overflow:hidden;
   }
@@ -43,15 +43,22 @@
   .actBtn.cooling { opacity:.4; }
   .actBtn span{ position:relative; z-index:1; }
   #kickBtn { background:rgba(231,76,60,.22); }
+  #jumpBtn { background:rgba(245,158,11,.22); }
   #tackleBtn { background:rgba(59,130,246,.22); }
+  @media (max-width:430px) {
+    #joy { left:14px; bottom:16px; width:108px; height:108px; }
+    #actionBtns { right:12px; bottom:16px; gap:7px; }
+    .actBtn { width:61px; height:61px; font-size:11px; }
+  }
 </style>
 </head>
 <body>
 <div id="wrap"><canvas id="gc"></canvas></div>
 <div id="joy"><div id="joyStick"></div></div>
 <div id="actionBtns">
-  <div id="tackleBtn" class="actBtn"><span>돌진<br>태클</span></div>
-  <div id="kickBtn" class="actBtn"><div class="chargeFill" id="kickChargeFill"></div><span>킥<br>(누르기)</span></div>
+  <div id="tackleBtn" class="actBtn"><span>태클<br>C</span></div>
+  <div id="jumpBtn" class="actBtn"><span>헤딩<br>X</span></div>
+  <div id="kickBtn" class="actBtn"><div class="chargeFill" id="kickChargeFill"></div><span>킥<br>Z</span></div>
 </div>
 <div id="overlay"><h2 id="ovTitle">연결 대기 중...</h2><p id="ovText">잠시만 기다려주세요.</p></div>
 
@@ -109,8 +116,9 @@ const MAX_BALL_SPEED = 14;
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-// v23: 기존/추가 프레임의 자글거리는 외곽선과 서로 다른 화풍을 없애기 위해
-// 8명 각각의 12프레임을 한 시트에서 같은 선 굵기와 팔레트로 다시 제작했다.
+// v24: v23의 통일된 12프레임 뒤에 새로 그린 달리기 좌/우 접지 4프레임,
+// 헤딩 2프레임, 태클 2프레임을 붙였다. 모든 프레임은 한 캐릭터 안에서 같은
+// 머리 크기·전신 배율·팔레트를 쓰고 공은 캐릭터 에셋에 포함하지 않는다.
 // 대기 0/10/11은 손·팔·발 위치를 유지하고 가슴·어깨·머리카락만 미세하게
 // 달라지며, 한 캐릭터의 모든 동작에는 하나의 공통 배율과 발 기준선을 쓴다.
 // 좌석 0/2/4/6은 A1~A4, 1/3/5/7은 B1~B4에 고정 대응한다.
@@ -118,7 +126,7 @@ const soccerPlayerSprites={A:[],B:[]};
 const SOCCER_SPRITE_CELL=384;
 for(const team of ['A','B'])for(let i=0;i<4;i++){
   const img=new Image();
-  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v23-unified-motion.png?v=20260723-v23`;
+  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v24-action-motion.png?v=20260731-v24`;
   soccerPlayerSprites[team].push(img);
 }
 function resize(){
@@ -139,6 +147,27 @@ function resize(){
 }
 window.addEventListener('resize', resize, { passive:true });
 resize();
+
+// 모바일은 전체 900×560 필드를 한 번에 축소하지 않고 로컬 선수를 따라가는
+// 확대 카메라를 쓴다. 카메라 중심은 부드럽게 보간하며 필드/화면 가장자리에서
+// clamp되므로, 끝선 근처에서는 선수가 자연스럽게 화면 중앙에서 벗어난다.
+const camera={x:CW/2,y:CH/2,zoom:IS_MOBILE?1.48:1};
+function updateCamera(){
+  const zoom=IS_MOBILE?1.48:1;
+  camera.zoom=zoom;
+  if(!IS_MOBILE||!me){camera.x=CW/2;camera.y=CH/2;return;}
+  const halfW=CW/(2*zoom),halfH=CH/(2*zoom);
+  const targetX=clamp(me.x,halfW,CW-halfW);
+  const targetY=clamp(me.y,halfH,CH-halfH);
+  camera.x=lerp(camera.x,targetX,.12);
+  camera.y=lerp(camera.y,targetY,.12);
+}
+function applyWorldCamera(){
+  if(camera.zoom===1)return;
+  ctx.translate(CW/2,CH/2);
+  ctx.scale(camera.zoom,camera.zoom);
+  ctx.translate(-camera.x,-camera.y);
+}
 
 /* ── 아주 작은 자체 SFX (부모 window.SFX는 iframe이라 접근 불가라서 자체 구현) ── */
 let sfxCtx = null;
@@ -239,13 +268,16 @@ function startAmbientCrowd(){
 const keys = {};
 window.addEventListener('keydown', e=>{
   keys[e.code]=true; primeSfx();
-  if (e.code === 'Space') beginKickCharge();
-  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') tryTackle();
-}, { passive:true });
+  if (e.code === 'KeyZ' || e.code === 'Space') beginKickCharge();
+  if (e.code === 'KeyX') tryHeader();
+  if (e.code === 'KeyC' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') tryTackle();
+  if (['KeyZ','KeyX','KeyC','Space','ShiftLeft','ShiftRight'].includes(e.code)) e.preventDefault();
+}, { passive:false });
 window.addEventListener('keyup', e=>{
   keys[e.code]=false;
-  if (e.code === 'Space') releaseKickCharge();
-}, { passive:true });
+  if (e.code === 'KeyZ' || e.code === 'Space') releaseKickCharge();
+  if (e.code === 'KeyZ' || e.code === 'Space') e.preventDefault();
+}, { passive:false });
 
 let joyDX=0, joyDY=0, joyTouchId=null;
 const joyEl = document.getElementById('joy'), joyStickEl = document.getElementById('joyStick');
@@ -270,13 +302,15 @@ window.addEventListener('touchend', e=>{
 }, { passive:true });
 window.addEventListener('touchcancel', e=>{ joyTouchId=null; joyReset(); }, { passive:true });
 
-// 모바일 킥/태클 버튼
+// 모바일 킥/헤딩/태클 버튼
 const kickBtnEl = document.getElementById('kickBtn');
+const jumpBtnEl = document.getElementById('jumpBtn');
 const tackleBtnEl = document.getElementById('tackleBtn');
 const kickChargeFillEl = document.getElementById('kickChargeFill');
 kickBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); beginKickCharge(); }, { passive:false });
 kickBtnEl.addEventListener('touchend',   e=>{ e.preventDefault(); releaseKickCharge(); }, { passive:false });
 kickBtnEl.addEventListener('touchcancel',e=>{ e.preventDefault(); releaseKickCharge(); }, { passive:false });
+jumpBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); tryHeader(); }, { passive:false });
 tackleBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); tryTackle(); }, { passive:false });
 
 /* ── 게임 상태 ── */
@@ -364,7 +398,8 @@ function makePlayer(seat, nick){
     x:sp.x, y:sp.y, vx:0, vy:0,
     netX:sp.x, netY:sp.y, netVX:0, netVY:0, netT:Date.now(),
     seat, team, nick: nick||'Player', color: colorOf(team),
-    dir: defaultDir(team), kickAt:0, kickCharge:0, tackle:false, _lastKickAt:0,
+    dir: defaultDir(team), kickAt:0, kickCharge:0, headerAt:0, tackleAt:0,
+    tackle:false, _lastKickAt:0, _lastHeaderAt:0,
   };
 }
 
@@ -483,6 +518,26 @@ function applyRemotePlayers(map){
     if(snap.kickDir!=null) p.kickDir=Number(snap.kickDir);
     if(snap.kickBallX!=null) p.kickBallX=Number(snap.kickBallX);
     if(snap.kickBallY!=null) p.kickBallY=Number(snap.kickBallY);
+    const incomingHeaderAt=Number(snap.headerAt||0);
+    if(incomingHeaderAt && incomingHeaderAt!==p.headerAt){
+      p._headerPoseStart=now;
+      p._headerPoseUntil=now+HEADER_DUR_MS;
+      // 이미 네트워크 왕복 일부를 소비했으므로 원격 판정은 남은 준비 동작만
+      // 기다린다. 호스트 로컬과 게스트의 실제 버튼→접촉 체감 차이를 줄인다.
+      p._headerContactAt=now+90;
+    }
+    p.headerAt=Number(snap.headerAt??p.headerAt??0);
+    if(snap.headerX!=null)p.headerX=Number(snap.headerX);
+    if(snap.headerY!=null)p.headerY=Number(snap.headerY);
+    if(snap.headerDir!=null)p.headerDir=Number(snap.headerDir);
+    if(snap.headerBallX!=null)p.headerBallX=Number(snap.headerBallX);
+    if(snap.headerBallY!=null)p.headerBallY=Number(snap.headerBallY);
+    const incomingTackleAt=Number(snap.tackleAt||0);
+    if(incomingTackleAt&&incomingTackleAt!==p.tackleAt){
+      p._tacklePoseStart=now;
+      p._tacklePoseUntil=now+TACKLE_DUR_MS;
+    }
+    p.tackleAt=Number(snap.tackleAt??p.tackleAt??0);
     p.tackle = !!snap.tackle;
   }
 }
@@ -494,17 +549,25 @@ function showOverlay(title, text){
   document.getElementById('overlay').classList.remove('hidden');
 }
 
-/* ── 킥 차징 / 태클 ── */
+/* ── 킥 차징 / 헤딩 / 태클 ── */
 let kickCharging = false, kickChargeStart = 0;
 let pendingKickAt = 0, pendingKickCharge = 0, pendingKickUntil = 0;
 let pendingKickX=0, pendingKickY=0, pendingKickDir=0, pendingKickBallX=0, pendingKickBallY=0;
+let pendingHeaderAt=0,pendingHeaderUntil=0;
+let pendingHeaderX=0,pendingHeaderY=0,pendingHeaderDir=0,pendingHeaderBallX=0,pendingHeaderBallY=0;
+let pendingTackleAt=0,pendingTackleUntil=0;
 // 게스트 화면의 짧은 슛 예측. 최종 공 판정은 계속 호스트가 담당한다.
 let localKickPredictAt=0, localKickPredictUntil=0, localKickPredictFrameAt=0;
+let headerCooldownUntil=0;
 let tackleCooldownUntil = 0;
 let tackleActiveUntil = 0;
 const KICK_CHARGE_MS = 600;
-const TACKLE_COOLDOWN_MS = 900;
-const TACKLE_DUR_MS = 220;
+const HEADER_COOLDOWN_MS=1500;
+const HEADER_DUR_MS=520;
+const HEADER_CONTACT_DELAY_MS=210;
+const HEADER_RANGE=KICK_RANGE+13;
+const TACKLE_COOLDOWN_MS = 3000;
+const TACKLE_DUR_MS = 380;
 const STUN_MS = 550;
 
 function isStunned(sid, now){ return (stunUntilMap[sid]||0) > (now||Date.now()); }
@@ -512,6 +575,8 @@ function isStunned(sid, now){ return (stunUntilMap[sid]||0) > (now||Date.now());
 function beginKickCharge(){
   if (!me || !gameActive || gameOver) return;
   if (isStunned(mySid)) return;
+  const now=Date.now();
+  if(now<tackleActiveUntil||now<(me._headerPoseUntil||0))return;
   if (kickCharging) return;
   kickCharging = true;
   kickChargeStart = Date.now();
@@ -575,19 +640,57 @@ function releaseKickCharge(){
     }
   }
 }
+function tryHeader(){
+  if(!me||!gameActive||gameOver||isStunned(mySid))return;
+  const now=Date.now();
+  if(now<headerCooldownUntil||now<tackleActiveUntil||kickCharging)return;
+  headerCooldownUntil=now+HEADER_COOLDOWN_MS;
+  pendingHeaderAt=now;
+  pendingHeaderUntil=now+280;
+  const b=ball_or_netball();
+  pendingHeaderX=me.x;pendingHeaderY=me.y;pendingHeaderDir=me.dir;
+  pendingHeaderBallX=b.x;pendingHeaderBallY=b.y;
+  me.headerAt=now;
+  me.headerX=me.x;me.headerY=me.y;me.headerDir=me.dir;
+  me.headerBallX=b.x;me.headerBallY=b.y;
+  me._headerPoseStart=now;
+  me._headerPoseUntil=now+HEADER_DUR_MS;
+  me._headerContactAt=now+HEADER_CONTACT_DELAY_MS;
+  // 킥과 마찬가지로 버튼을 누른 호출 스택에서 엣지 id를 보낸다. 위치 송신
+  // 주기만 기다리면 게스트 헤딩이 호스트 판정보다 한 박자 늦어질 수 있다.
+  bridgeSend('sc_pos',{
+    x:me.x,y:me.y,vx:me.vx,vy:me.vy,dir:me.dir,
+    headerAt:pendingHeaderAt,headerX:pendingHeaderX,headerY:pendingHeaderY,
+    headerDir:pendingHeaderDir,headerBallX:pendingHeaderBallX,headerBallY:pendingHeaderBallY,
+    tackle:!!me.tackle,
+  });
+  tone(520,.07,0,'triangle',.035);
+}
 function tryTackle(){
   if (!me || !gameActive || gameOver) return;
   if (isStunned(mySid)) return;
   const now = Date.now();
-  if (now < tackleCooldownUntil) return;
+  if (now < tackleCooldownUntil||now<(me._headerPoseUntil||0)||kickCharging) return;
   tackleActiveUntil = now + TACKLE_DUR_MS;
   tackleCooldownUntil = now + TACKLE_COOLDOWN_MS;
+  pendingTackleAt=now;
+  pendingTackleUntil=now+260;
+  me.tackleAt=now;
+  me._tacklePoseStart=now;
+  me._tacklePoseUntil=now+TACKLE_DUR_MS;
+  bridgeSend('sc_pos',{
+    x:me.x,y:me.y,vx:me.vx,vy:me.vy,dir:me.dir,
+    tackle:true,tackleAt:pendingTackleAt,
+  });
+  sfxTackle();
 }
 
 /* ── 매 프레임 갱신 ── */
 function updateMe(){
   if (!me || !gameActive || gameOver) return;
   const now = Date.now();
+  jumpBtnEl.classList.toggle('cooling',now<headerCooldownUntil);
+  tackleBtnEl.classList.toggle('cooling',now<tackleCooldownUntil);
   if (now < kickoffUntil){ me.vx=0; me.vy=0; me.tackle=false; return; }
   if (isStunned(mySid, now)){ me.vx=0; me.vy=0; me.tackle=false; return; }
 
@@ -602,8 +705,9 @@ function updateMe(){
   if (len>0){ dx/=len; dy/=len; me.dir = Math.atan2(dy,dx); }
 
   const tackling = now < tackleActiveUntil;
-  const sprinting = !kickCharging && !tackling && ((keys['KeyE']) || (IS_MOBILE && rawLen>.88));
-  const SPD = tackling ? 6.4 : (sprinting ? 4.8 : (kickCharging ? 2.45 : 3.75));
+  const heading=now<(me._headerPoseUntil||0);
+  const sprinting = !kickCharging && !tackling && !heading && ((keys['KeyE']) || (IS_MOBILE && rawLen>.88));
+  const SPD = tackling ? 6.4 : (heading?3.05:(sprinting ? 4.8 : (kickCharging ? 2.45 : 3.75)));
   const targetVX=dx*SPD, targetVY=dy*SPD;
   // 즉시 최고속도로 바뀌던 이동을 가속/감속 방식으로 바꿔 출발, 방향 전환,
   // 급정지가 구분된다. 차징 중에는 속도가 낮아져 슛 타이밍에도 선택이 생긴다.
@@ -640,7 +744,6 @@ function updateMe(){
   } else {
     kickChargeFillEl.style.height = '0%';
   }
-  tackleBtnEl.classList.toggle('cooling', now < tackleCooldownUntil);
 }
 
 /* 원격 플레이어 보간: 마지막 스냅샷 시각(netT)로부터 경과한 시간만큼 속도로
@@ -859,6 +962,32 @@ function updateBallHost(){
       }
     }
 
+    // 헤딩도 킥과 같은 edge id 방식으로 호스트가 한 번만 판정한다. 단순한
+    // header=true 상태를 여러 프레임 처리하면 공에 힘이 누적되므로 반드시
+    // headerAt과 _lastHeaderAt을 비교한다. 게스트는 버튼 순간의 공 좌표도
+    // 함께 보내 왕복 지연 중 공이 조금 이동해도 유효한 접촉을 잃지 않는다.
+    if(p.headerAt&&p.headerAt!==p._lastHeaderAt&&now>=(p._headerContactAt||0)){
+      p._lastHeaderAt=p.headerAt;
+      const headerPX=Number.isFinite(p.headerX)?p.headerX:controlX;
+      const headerPY=Number.isFinite(p.headerY)?p.headerY:controlY;
+      const requestDist=Math.hypot(Number(p.headerBallX)-headerPX,Number(p.headerBallY)-headerPY);
+      const reportedDrift=Math.hypot(ball.x-Number(p.headerBallX),ball.y-Number(p.headerBallY));
+      const headerInRange=d<HEADER_RANGE||
+        (Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+4&&reportedDrift<58);
+      if(headerInRange){
+        const dir=Number.isFinite(p.headerDir)?p.headerDir:(Number.isFinite(p.dir)?p.dir:0);
+        const power=8.4;
+        ball.vx=Math.cos(dir)*power+(ball.vx||0)*.28;
+        ball.vy=Math.sin(dir)*power+(ball.vy||0)*.28;
+        ball.owner=null;ball.ownerUntil=0;
+        ball.impactAt=`h:${p.headerAt}`;
+        ball.impactPower=.62;
+        ball.impactDir=dir;
+        playKickImpactOnce(ball.impactAt,ball.x,ball.y,.62,dir);
+        lastBallSpeedSeen=Math.hypot(ball.vx,ball.vy);
+      }
+    }
+
     // 돌진 태클: 상대 팀 선수와 부딪히면 스턴시키고 공을 살짝 튕겨낸다.
     // 서버는 sc_stun을 seat 0(호스트)만 보낼 수 있게 막아뒀으므로, 태클
     // "판정" 자체는 반드시 호스트 쪽에서 해야 한다 — 그래서 각 클라이언트는
@@ -995,14 +1124,22 @@ function netSends(){
   if (me && now-lastPosSent >= 30){
     lastPosSent = now;
     const kickActive=now<pendingKickUntil;
+    const headerActive=now<pendingHeaderUntil;
+    const tackleEdgeActive=now<pendingTackleUntil;
     const kickAt = kickActive ? pendingKickAt : 0;
     const kickCharge = kickActive ? pendingKickCharge : 0;
     if(!kickActive && me.kickAt){ me.kickAt=0; me.kickCharge=0; }
+    if(!headerActive&&me.headerAt)me.headerAt=0;
+    if(!tackleEdgeActive&&me.tackleAt)me.tackleAt=0;
     bridgeSend('sc_pos', {
       x:me.x, y:me.y, vx:me.vx, vy:me.vy, dir:me.dir,
-      kickAt, kickCharge, tackle:!!me.tackle,
+      kickAt, kickCharge,
       kickX:pendingKickX, kickY:pendingKickY, kickDir:pendingKickDir,
       kickBallX:pendingKickBallX, kickBallY:pendingKickBallY,
+      headerAt:headerActive?pendingHeaderAt:0,
+      headerX:pendingHeaderX,headerY:pendingHeaderY,headerDir:pendingHeaderDir,
+      headerBallX:pendingHeaderBallX,headerBallY:pendingHeaderBallY,
+      tackle:!!me.tackle,tackleAt:tackleEdgeActive?pendingTackleAt:0,
     });
   }
   if (isHost && now-lastBallSent >= 30){
@@ -1060,6 +1197,13 @@ function buildCrowdCanvas(){
     g.fillRect(CW-29,y+7,19,3); g.fillRect(CW-23,y+14,13,3); g.fillRect(CW-29,y+21,19,3);
   }
 
+  // 피치가 관중석 바닥보다 살짝 올라와 보이도록 오른쪽/아래쪽에 깊이 면을
+  // 먼저 깐다. 모바일 확대 카메라에서도 필드 경계와 높이가 바로 읽힌다.
+  g.fillStyle='#061c14';g.fillRect(FX+7,FY+8,FW+7,FH+8);
+  g.fillStyle='#123c29';g.fillRect(FX-7,FY-7,FW+14,7);
+  g.fillStyle='#0b2b1e';g.fillRect(FX+FW,FY,7,FH+8);
+  g.fillStyle='#09251a';g.fillRect(FX,FY+FH,FW+7,8);
+
   // 잔디: 넓은 세로 커팅 + 고정 픽셀 결. 매 프레임 랜덤 생성하지 않는다.
   g.fillStyle='#23884b'; g.fillRect(FX,FY,FW,FH);
   const stripeW = FW/10;
@@ -1074,10 +1218,22 @@ function buildCrowdCanvas(){
       g.fillRect(x+(phase*3),y,6,2);
     }
   }
+  // 위쪽 조명과 아래쪽 음영을 얹어 평면 잔디가 아니라 깊이가 있는 경기장
+  // 바닥처럼 보이게 한다. 선과 선수 판독을 해치지 않도록 대비는 낮게 둔다.
+  const pitchLight=g.createLinearGradient(0,FY,0,FY+FH);
+  pitchLight.addColorStop(0,'rgba(205,255,222,.10)');
+  pitchLight.addColorStop(.48,'rgba(255,255,255,0)');
+  pitchLight.addColorStop(1,'rgba(2,35,21,.16)');
+  g.fillStyle=pitchLight;g.fillRect(FX,FY,FW,FH);
+  for(let y=FY+36;y<FY+FH;y+=56){
+    g.fillStyle='rgba(238,255,242,.028)';g.fillRect(FX,y,FW,2);
+    g.fillStyle='rgba(3,43,24,.045)';g.fillRect(FX,y+2,FW,2);
+  }
 
   // 필드 바깥 두꺼운 픽셀 테두리/깊이
-  g.fillStyle='#0b4328'; g.fillRect(FX-6,FY-6,FW+12,6); g.fillRect(FX-6,FY+FH,FW+12,6);
-  g.fillRect(FX-6,FY,6,FH); g.fillRect(FX+FW,FY,6,FH);
+  g.fillStyle='#1d6841';g.fillRect(FX-6,FY-6,FW+12,3);g.fillRect(FX-6,FY,3,FH);
+  g.fillStyle='#07341f';g.fillRect(FX-6,FY-3,FW+12,3);g.fillRect(FX-3,FY+FH,FW+9,6);
+  g.fillRect(FX-6,FY,3,FH);g.fillRect(FX+FW,FY,6,FH+6);
   return c;
 }
 
@@ -1127,6 +1283,12 @@ function drawField(){
     const gx = side==='L' ? FX-GOAL_W : FX+FW;
     const wobbleSign = side==='L' ? (goalFlashTeam==='B'?1:0) : (goalFlashTeam==='A'?1:0);
     const wob = wobbleSign ? (Math.sin(netWobble*Math.PI*3)*(1-netWobble)*4)|0 : 0;
+    // 골대/그물의 지면 그림자를 비스듬히 내려 입체감을 준다.
+    ctx.fillStyle='rgba(3,18,12,.24)';
+    ctx.beginPath();
+    if(side==='L'){ctx.moveTo(gx,GOAL_Y2);ctx.lineTo(gx+GOAL_W,GOAL_Y2);ctx.lineTo(gx+GOAL_W+9,GOAL_Y2+8);ctx.lineTo(gx+4,GOAL_Y2+8);}
+    else{ctx.moveTo(gx,GOAL_Y2);ctx.lineTo(gx+GOAL_W,GOAL_Y2);ctx.lineTo(gx+GOAL_W+7,GOAL_Y2+8);ctx.lineTo(gx+8,GOAL_Y2+8);}
+    ctx.closePath();ctx.fill();
     ctx.fillStyle='rgba(9,19,32,.58)'; ctx.fillRect(gx,GOAL_Y1,GOAL_W,GOAL_H);
     ctx.strokeStyle='rgba(224,242,255,.42)'; ctx.lineWidth=1;
     for (let ny=GOAL_Y1+6;ny<GOAL_Y2;ny+=8){ ctx.beginPath();ctx.moveTo(gx+wob,ny);ctx.lineTo(gx+GOAL_W+wob,ny);ctx.stroke(); }
@@ -1185,10 +1347,6 @@ function drawPlayerLegacy(p, mine, sid){
   ctx.fillStyle='rgba(2,20,12,.28)'; ctx.fillRect(-10,14,20,5);
   ctx.fillStyle='rgba(2,20,12,.38)'; ctx.fillRect(-6,16,12,3);
 
-  if (nearBall){
-    ctx.fillStyle='#ffe66d'; const R=28;
-    [[0,-R],[R,0],[0,R],[-R,0]].forEach(([dx,dy])=>ctx.fillRect(dx-2,dy-2,4,4));
-  }
   if (now<tackleActiveUntil && mine){
     ctx.globalAlpha=.22; ctx.fillStyle=p.color;
     ctx.fillRect(-Math.cos(dir)*19-15,-Math.sin(dir)*19-19,30,35); ctx.globalAlpha=1;
@@ -1254,8 +1412,6 @@ function drawPlayerLegacy(p, mine, sid){
 
   if (mine&&kickCharging){
     const pct=clamp((now-kickChargeStart)/KICK_CHARGE_MS,0,1);
-    ctx.beginPath();ctx.arc(0,0,31,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
-    ctx.strokeStyle='#ffe66d';ctx.lineWidth=4;ctx.stroke();
     // 슛 방향/파워 가이드: 차징 중에만 보여 화면을 어지럽히지 않는다.
     ctx.save(); ctx.rotate(dir);
     const guide=28+Math.round(pct*34);
@@ -1269,9 +1425,10 @@ function drawPlayerLegacy(p, mine, sid){
   }
   if (stunned){ctx.font='14px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff59d';ctx.fillText('💫',0,-42);}
 
-  const label=String(p.nick||'Player').slice(0,8), labelW=Math.max(38,Math.min(70,label.length*7+14));
-  ctx.fillStyle='rgba(5,14,28,.82)';ctx.fillRect(-labelW/2+3,-56,labelW-6,16);ctx.fillRect(-labelW/2,-53,labelW,10);
-  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,0,-48);
+  const label=String(p.nick||'Player').slice(0,8);
+  ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.lineWidth=2;ctx.strokeStyle='rgba(4,12,20,.9)';ctx.strokeText(label,0,-48);
+  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.fillText(label,0,-48);
   ctx.restore();
 }
 
@@ -1302,19 +1459,21 @@ function drawPlayer(p,mine,sid){
   // 원인이었다. 상하 이동은 달리는 접지 순간에만 사용하고 대기 중에는 0이다.
   const bob=moving?((animStep%4===1||animStep%4===3)?1:0):0;
   const sway=moving?(phase?1:-1):0;
-  const kicking=now<(p._kickPoseUntil||0), dribbling=nearBall&&moving&&!kicking;
+  const kicking=now<(p._kickPoseUntil||0);
+  const heading=now<(p._headerPoseUntil||0);
+  const tackling=now<(p._tacklePoseUntil||0)||p.tackle;
+  const headerStart=p._headerPoseStart||now;
+  const headerProgress=heading?clamp((now-headerStart)/HEADER_DUR_MS,0,1):0;
+  const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*13):0;
+  const dribbling=nearBall&&moving&&!kicking&&!heading&&!tackling;
 
   ctx.save();
-  // 대기 호흡(1px), 걷기 접지, 달리기 상하동작을 프레임과 함께 적용한다.
-  // 회전/비정수 확대는 도트를 흐리게 하므로 위치는 항상 정수 픽셀만 쓴다.
-  ctx.translate(Math.round(p.x),Math.round(p.y+bob));
+  ctx.translate(Math.round(p.x),Math.round(p.y));
+  // 그림자는 지면에 고정하고 선수만 헤딩 점프 높이만큼 올라간다.
   ctx.fillStyle='rgba(2,18,12,.18)';ctx.fillRect(-14,11,28,5);
   ctx.fillStyle='rgba(2,18,12,.34)';ctx.fillRect(-9,13,18,4);
+  ctx.translate(0,Math.round(bob-actionLift));
 
-  if(nearBall){
-    ctx.fillStyle='#ffe66d';
-    [[0,-25],[25,0],[0,25],[-25,0]].forEach(([x,y])=>ctx.fillRect(x-1.5,y-1.5,3,3));
-  }
   if(now<tackleActiveUntil&&mine){
     ctx.globalAlpha=.18;ctx.fillStyle=p.color;
     ctx.fillRect(-Math.cos(dir)*17-13,-Math.sin(dir)*17-18,26,32);ctx.globalAlpha=1;
@@ -1322,13 +1481,14 @@ function drawPlayer(p,mine,sid){
 
   const variant=spriteVariantOf(p);
   const sprite=soccerPlayerSprites[p.team]?.[variant]||soccerPlayerSprites.A[0];
-  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*12;
+  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*20;
   if(spriteReady){
     // 0 대기 / 1·2·3 걷기 / 4·5 달리기 뻗기 / 6 드리블 / 7 슛 /
-    // 8·9 달리기 좌·우 접지 / 10 들숨 / 11 날숨.
+    // 8·9 구 달리기 / 10 들숨 / 11 날숨 / 12~15 새 좌우 교차 달리기 /
+    // 16~17 헤딩 / 18~19 태클.
     // 원격 선수도 netVX/netVY와 현재 시간으로 같은 순환을 계산하므로 한 자세로
     // 미끄러지지 않는다. 드리블은 걷기 접촉 프레임과 발터치 프레임을 교차한다.
-    const walkFrames=[1,2,3,2],runFrames=[8,4,9,5],dribbleFrames=[1,6,3,6];
+    const walkFrames=[1,2,3,2],runFrames=[12,13,14,15],dribbleFrames=[1,6,3,6];
     // 0번 기본 자세를 사이에 끼우면 생성 시트별 2~3px 높이 차이가 호흡이
     // 아니라 둥둥 뜨는 움직임으로 보인다. 손·발 위치가 같은 전용 들숨/날숨
     // 두 장만 천천히 교차해 상체와 머리카락 변화만 보이게 한다.
@@ -1339,7 +1499,11 @@ function drawPlayer(p,mine,sid){
     const idleCycle=idleFrames[Math.floor((now+(Number(p.seat)||0)*83)/850)%idleFrames.length];
     // 슛 직후에는 발로우스루(7) 뒤 접지(6)를 보여 한 프레임으로 끝나지 않는다.
     const kickRemain=(p._kickPoseUntil||0)-now;
-    const frame=kicking?(kickRemain>75?7:6):(dribbling?dribbleCycle:(running?runCycle:(moving?walkCycle:idleCycle)));
+    const tackleStart=p._tacklePoseStart||now;
+    const tackleProgress=tackling?clamp((now-tackleStart)/TACKLE_DUR_MS,0,1):0;
+    const actionFrame=heading?(headerProgress<.48?16:17):(tackling?(tackleProgress<.45?18:19):-1);
+    const frame=actionFrame>=0?actionFrame:
+      (kicking?(kickRemain>75?7:6):(dribbling?dribbleCycle:(running?runCycle:(moving?walkCycle:idleCycle))));
     ctx.save();
     ctx.scale(facing,1);
     // 원본 224px 셀을 고DPI 캔버스에 고품질 축소한다. 이전처럼 에셋 자체를
@@ -1431,8 +1595,8 @@ function drawPlayer(p,mine,sid){
 
   if(mine&&kickCharging){
     const pct=clamp((now-kickChargeStart)/KICK_CHARGE_MS,0,1);
-    ctx.beginPath();ctx.arc(0,0,28,-Math.PI/2,-Math.PI/2+pct*Math.PI*2);
-    ctx.strokeStyle='#ffe66d';ctx.lineWidth=3;ctx.stroke();
+    // 캐릭터를 두르는 원형 게이지는 제거하고, 방향 점선의 길이만 충전량에
+    // 따라 늘어난다. 모바일 버튼 안의 채움 게이지는 손가락 아래에서도 보인다.
     ctx.save();ctx.rotate(dir);const guide=25+Math.round(pct*31);
     ctx.fillStyle=pct>.72?'#fff3a5':'rgba(255,230,109,.85)';
     for(let gx=22;gx<guide;gx+=7)ctx.fillRect(gx,-1.5,4,3);
@@ -1440,15 +1604,14 @@ function drawPlayer(p,mine,sid){
   }
   if(stunned){ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff59d';ctx.fillText('💫',0,-55);}
 
-  // 기존 닉네임 박스는 y=-51~-38에서 머리와 겹쳐 캐릭터가 흐리고 어둡게
-  // 보였다. 머리 위로 완전히 올리고 팀 내 번호와 내 캐릭터 여부를 함께 표시한다.
-  const teamNo=p.team+String(jerseyNumberOf(p));
+  // 작은 닉네임 텍스트만 남긴다. 배경 오버레이가 머리카락을 덮지 않으며,
+  // 얇은 외곽선은 잔디 위 가독성만 확보한다.
   const nick=String(p.nick||'Player').slice(0,10);
-  const label=(mine?'나 · ':'')+teamNo+' '+nick;
-  const labelW=Math.max(48,Math.min(104,label.length*6.4+12));
-  ctx.fillStyle=mine?'rgba(82,61,8,.94)':'rgba(5,14,28,.88)';ctx.fillRect(-labelW/2,-73,labelW,14);
-  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.font='bold 9px monospace';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(label,0,-66);
-  if(mine){ctx.fillStyle='#ffe66d';ctx.fillRect(-5,-78,10,2);ctx.fillRect(-3,-76,6,2);ctx.fillRect(-1,-74,2,2);}
+  const label=(mine?'나 · ':'')+nick;
+  ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.lineWidth=2;ctx.strokeStyle='rgba(4,12,20,.9)';ctx.strokeText(label,0,-68);
+  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.fillText(label,0,-68);
+  if(mine){ctx.fillStyle='#ffe66d';ctx.fillRect(-3,-75,6,2);ctx.fillRect(-1,-77,2,2);}
   ctx.restore();
 }
 
@@ -1594,6 +1757,7 @@ function drawGoalFlash(){
 }
 
 function draw(){
+  updateCamera();
   ctx.save();
   const now = Date.now();
   if (now < shakeUntil){
@@ -1603,6 +1767,7 @@ function draw(){
   } else {
     shakeMag = 0;
   }
+  applyWorldCamera();
   drawField();
   drawBallTrail();
   for (const [sid,p] of Object.entries(players)) if (sid!==mySid) drawPlayer(p, false, sid);
@@ -1610,8 +1775,8 @@ function draw(){
   drawBall(ball_or_netball());
   drawRings();
   drawParticles();
-  drawKickoffCountdown();
   ctx.restore();
+  drawKickoffCountdown();
   drawHUD();
   drawGoalFlash();
 }
