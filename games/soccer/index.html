@@ -345,7 +345,8 @@ let kickoffUntil = 0;         // 이 시각까지는 킥오프 카운트다운(�
 let kickoffSoundsDone = new Set();
 let scoreAnimA = 0, scoreAnimB = 0; // 골 넣었을 때 스코어보드 팝 애니메이션 타임스탬프
 let prevScoreA = 0, prevScoreB = 0;
-let lastImpactFxAt = '';      // 확정 킥 id별 이펙트 중복 방지
+const recentImpactFxIds = new Map(); // 로컬 예측/호스트 확정이 같은 킥을 두 번 재생하지 않게 id별 기록
+const recentHeaderJumpFxIds = new Map();
 let lastExplicitImpactMs = 0;   // 속도 추정 이펙트와 확정 이펙트 중복 방지
 
 function addShake(mag, durMs){
@@ -369,12 +370,33 @@ function playKickImpact(x,y,power,dir){
   addShake(Math.min(7,(5+p*9)*.72),130);
   sfxKick(p);
 }
+function cleanupRecentFx(map,now){
+  for(const [id,at] of map){ if(now-at>2500) map.delete(id); }
+}
 function playKickImpactOnce(impactAt,x,y,power,dir){
   const id=String(impactAt||'');
-  if(!id || id===lastImpactFxAt) return false;
-  lastImpactFxAt=id;
-  lastExplicitImpactMs=Date.now();
+  if(!id) return false;
+  const now=Date.now();
+  cleanupRecentFx(recentImpactFxIds,now);
+  if(recentImpactFxIds.has(id)) return false;
+  recentImpactFxIds.set(id,now);
+  lastExplicitImpactMs=now;
   playKickImpact(x,y,power,dir);
+  return true;
+}
+function playHeaderJumpFxOnce(headerAt,x,y,color){
+  const id='jump:'+String(headerAt||'');
+  if(id==='jump:') return false;
+  const now=Date.now();
+  cleanupRecentFx(recentHeaderJumpFxIds,now);
+  if(recentHeaderJumpFxIds.has(id)) return false;
+  recentHeaderJumpFxIds.set(id,now);
+  rings.push({x,y,r:5,alpha:.46,color:color||'#dff7ff',squash:.46});
+  for(let i=0;i<7;i++){
+    const a=Math.PI+(i/6)*Math.PI;
+    const sp=.55+Math.random()*.65;
+    particles.push({x:x+(Math.random()*8-4),y:y+8,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp*.45,life:.7,color:'#e7fff2',size:1.5+Math.random()*1.5});
+  }
   return true;
 }
 
@@ -546,6 +568,7 @@ function applyRemotePlayers(map){
     if(incomingHeaderAt && incomingHeaderAt!==p.headerAt){
       p._headerPoseStart=now;
       p._headerPoseUntil=now+HEADER_DUR_MS;
+      playHeaderJumpFxOnce(incomingHeaderAt,p.x,p.y,p.color);
       // 이미 네트워크 왕복 일부를 소비했으므로 원격 판정은 남은 준비 동작만
       // 기다린다. 호스트 로컬과 게스트의 실제 버튼→접촉 체감 차이를 줄인다.
       p._headerContactAt=now+90;
@@ -688,6 +711,7 @@ function tryHeader(){
   me._headerPoseStart=now;
   me._headerPoseUntil=now+HEADER_DUR_MS;
   me._headerContactAt=now+HEADER_CONTACT_DELAY_MS;
+  playHeaderJumpFxOnce(now,me.x,me.y,me.color);
   // 킥과 마찬가지로 버튼을 누른 호출 스택에서 엣지 id를 보낸다. 위치 송신
   // 주기만 기다리면 게스트 헤딩이 호스트 판정보다 한 박자 늦어질 수 있다.
   bridgeSend('sc_pos',{
@@ -1143,16 +1167,11 @@ function updateBallHost(){
 
 let lastBallSpeedSeen = 0;
 function updateBallImpactFx(){
-  const b = ball_or_netball();
-  const spd = Math.hypot(b.vx||0, b.vy||0);
-  const jump = spd - lastBallSpeedSeen;
-  // 킥/헤딩은 impactAt으로 정확히 한 번 재생한다. 확정 이펙트 직후의 속도
-  // 변화까지 다시 추정 이펙트로 잡으면 게스트에서 링이 두 번 뜬다.
-  if (jump > 3.2 && Date.now()-lastExplicitImpactMs>500){
-    const dir=Math.atan2(b.vy||0,b.vx||0);
-    playKickImpact(b.x,b.y,clamp(jump/9,0,1),dir);
-  }
-  lastBallSpeedSeen = spd;
+  // 모든 킥/헤딩 이펙트는 호스트가 확정한 impactAt 또는 같은 id의 로컬 예측으로만
+  // 재생한다. 속도 변화 추정 방식은 게스트 로컬 예측 뒤 호스트 확정 시 두 번째
+  // 이펙트를 만들 수 있으므로 완전히 제거한다.
+  const b=ball_or_netball();
+  lastBallSpeedSeen=Math.hypot(b.vx||0,b.vy||0);
 }
 function updateBallTrail(){
   const b = ball_or_netball();
@@ -1644,7 +1663,7 @@ function drawPlayer(p,mine,sid){
   const tackling=now<(p._tacklePoseUntil||0)||p.tackle;
   const headerStart=p._headerPoseStart||now;
   const headerProgress=heading?clamp((now-headerStart)/HEADER_DUR_MS,0,1):0;
-  const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*10):0;
+  const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*14):0;
   const dribbling=nearBall&&moving&&!kicking&&!heading&&!tackling;
   const proj=projectWorld(p.x,p.y,0);
   const depthScale=proj.scale;
