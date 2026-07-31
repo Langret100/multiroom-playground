@@ -860,7 +860,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync"]);
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -1336,6 +1336,7 @@ function updatePreview(modeId){
       const soccerState = {
         __game: "soccer",
         x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
+        dribble:!!d.dribble,dribbleBallX:d.dribbleBallX,dribbleBallY:d.dribbleBallY,
         kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
         kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
         kickBallX:d.kickBallX, kickBallY:d.kickBallY,

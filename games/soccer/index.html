@@ -116,17 +116,18 @@ const MAX_BALL_SPEED = 14;
 const canvas = document.getElementById('gc');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
-// v24: v23의 통일된 12프레임 뒤에 새로 그린 달리기 좌/우 접지 4프레임,
-// 헤딩 2프레임, 태클 2프레임을 붙였다. 모든 프레임은 한 캐릭터 안에서 같은
-// 머리 크기·전신 배율·팔레트를 쓰고 공은 캐릭터 에셋에 포함하지 않는다.
-// 대기 0/10/11은 손·팔·발 위치를 유지하고 가슴·어깨·머리카락만 미세하게
-// 달라지며, 한 캐릭터의 모든 동작에는 하나의 공통 배율과 발 기준선을 쓴다.
+// v25: 달리기·헤딩·태클·대기·드리블·슛을 모두 같은 384px 원본, 같은 머리
+// 크기·전신 배율·팔레트·발 기준선으로 다시 묶었다. 예전에는 기본 이동만
+// 저해상도 구 프레임(1~3)을 사용해 점프/태클보다 흐렸고, 기본 이동 속도
+// 3.75가 '달리기' 임계값 4.15보다 낮아 새 달리기 프레임이 아예 선택되지
+// 않았다. 이제 걷기/달리기/드리블 모두 새 4단계 접지 순환을 사용한다.
+// 공은 어떤 캐릭터 프레임에도 포함하지 않는다.
 // 좌석 0/2/4/6은 A1~A4, 1/3/5/7은 B1~B4에 고정 대응한다.
 const soccerPlayerSprites={A:[],B:[]};
 const SOCCER_SPRITE_CELL=384;
 for(const team of ['A','B'])for(let i=0;i<4;i++){
   const img=new Image();
-  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v24-action-motion.png?v=20260731-v24`;
+  img.src=`./assets/player-${team.toLowerCase()}${i+1}-v25-unified-crisp.png?v=20260731-v25`;
   soccerPlayerSprites[team].push(img);
 }
 function resize(){
@@ -228,9 +229,11 @@ function sfxGoal(){
   sfxCheer();
 }
 function sfxCheer(){
-  // 관중 함성: 대역이 서서히 열리는 노이즈 스웰
-  noiseBurst(1.6, 0, 0.11, 1000, 0.7, 'linear');
-  noiseBurst(1.9, 0.05, 0.09, 1800, 0.6, 'linear');
+  // 긴 백색소음은 일부 모바일 오디오 장치에서 '지이익'으로 들린다.
+  // 짧은 음정 스웰만 사용해 득점 효과와 실제 BGM을 분리한다.
+  tone(520,0.18,0,'triangle',0.035);
+  tone(700,0.20,0.08,'triangle',0.04);
+  tone(920,0.24,0.16,'triangle',0.045);
 }
 function sfxStun(){ tone(300,0.08,0,'sine',0.04); tone(220,0.08,0.06,'sine',0.03); }
 function sfxTick(){ tone(880, 0.05, 0, 'square', 0.05); }
@@ -240,28 +243,16 @@ function sfxWhistle(long){
   tone(2380, dur, 0.02, 'sine', 0.04);
   if (long){ tone(2400, 0.3, dur+0.12, 'sine', 0.06); }
 }
+let lastGesturePing=0;
 function primeSfx(){
   try{ const c=getSfxCtx(); if (c && c.state==='suspended') c.resume(); }catch(_){}
-  startAmbientCrowd();
-}
-
-// 은은한 관중 웅성거림(경기 내내 배경에 낮게 깔림)
-let ambientStarted = false;
-function startAmbientCrowd(){
-  if (ambientStarted) return;
-  const c = getSfxCtx(); if (!c) return;
-  ambientStarted = true;
-  try{
-    const bufLen = c.sampleRate*2;
-    const buf = c.createBuffer(1, bufLen, c.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i=0;i<bufLen;i++) data[i] = (Math.random()*2-1)*0.6;
-    const src = c.createBufferSource(); src.buffer = buf; src.loop = true;
-    const bp = c.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=500; bp.Q.value=0.6;
-    const gain = c.createGain(); gain.gain.value = 0.018;
-    src.connect(bp); bp.connect(gain); gain.connect(c.destination);
-    src.start();
-  }catch(_){}
+  // iframe 안의 키/터치 제스처는 부모 문서로 전파되지 않는다. 부모에게
+  // 명시적으로 알려 autoplay 잠금이 걸린 실제 축구 BGM을 해제한다.
+  const now=Date.now();
+  if(now-lastGesturePing>500){
+    lastGesturePing=now;
+    bridgeSend('gesture');
+  }
 }
 
 /* ── 입력 ── */
@@ -399,7 +390,8 @@ function makePlayer(seat, nick){
     netX:sp.x, netY:sp.y, netVX:0, netVY:0, netT:Date.now(),
     seat, team, nick: nick||'Player', color: colorOf(team),
     dir: defaultDir(team), kickAt:0, kickCharge:0, headerAt:0, tackleAt:0,
-    tackle:false, _lastKickAt:0, _lastHeaderAt:0,
+    tackle:false, dribble:false, dribbleBallX:sp.x, dribbleBallY:sp.y,
+    _lastKickAt:0, _lastHeaderAt:0,
   };
 }
 
@@ -508,6 +500,9 @@ function applyRemotePlayers(map){
     p.netVX = Number(snap.vx ?? 0);
     p.netVY = Number(snap.vy ?? 0);
     p.netT = now;
+    p.dribble=!!snap.dribble;
+    if(snap.dribbleBallX!=null)p.dribbleBallX=Number(snap.dribbleBallX);
+    if(snap.dribbleBallY!=null)p.dribbleBallY=Number(snap.dribbleBallY);
     if (snap.dir != null) p.dir = Number(snap.dir);
     const incomingKickAt=Number(snap.kickAt||0);
     if(incomingKickAt && incomingKickAt!==p.kickAt) p._kickPoseUntil=now+180;
@@ -792,49 +787,37 @@ function updateNetBall(){
   const claimedByOther=!!(netBall.owner&&netBall.owner!==mySid);
   if(confirmedOwner)localDribbleVisualUntil=now+220;
   const authContact=authDist<PR+BR+14;
-  if(me&&gameActive&&now>=kickoffUntil&&localSpeed>.12&&authContact){
-    // 짧은 패킷 간격 동안만 로컬 발앞 표시를 유지한다. 서버 공이 실제로
-    // 멀어졌는데도 계속 내 공처럼 붙잡는 잘못된 예측은 160ms 뒤 자동 해제된다.
-    localDribbleVisualUntil=now+160;
+  const viewContact=viewDist<PR+BR+14;
+  if(me&&gameActive&&now>=kickoffUntil&&localSpeed>.12&&(authContact||viewContact)){
+    // 권위 좌표뿐 아니라 현재 화면 접촉도 의사로 인정한다. 게스트가 공에 처음
+    // 닿은 바로 그 프레임부터 발앞 예측을 시작해야 왕복 지연 동안 몸에 끼지 않는다.
+    localDribbleVisualUntil=now+220;
   }
   if(claimedByOther)localDribbleVisualUntil=0;
   const localDribbling=!!(me&&gameActive&&now>=kickoffUntil&&localSpeed>.12&&!claimedByOther&&
-    (confirmedOwner||(now<localDribbleVisualUntil&&viewDist<PR+BR+18)));
+    (confirmedOwner||(now<localDribbleVisualUntil&&(authDist<PR+BR+24||viewDist<PR+BR+24))));
 
-  // 로컬 드리블 중 매 프레임 '지연된 서버 공 → 내 발 앞'을 왕복 보간하면
-  // 공이 발에 비벼지며 뒤로 튀는 모습이 생긴다. 드리블 중에는 서버 좌표를
-  // 약하게만 반영하고 발 앞 목표를 우선한다. 드리블이 끝나면 즉시 일반 권위
-  // 보간으로 돌아가므로 득점/충돌의 최종 결정권은 계속 호스트에게 있다.
-  const authFollow=confirmedOwner ? .82 : (localDribbling ? .45 : .74);
-  const nxt = smoothToward(netBall, netBall.netX, netBall.netY, netBall.vx, netBall.vy, netBall.netT, now, authFollow);
-  netBall.x = nxt.x; netBall.y = nxt.y;
-
-  // 게스트 로컬 드리블 예측: 호스트의 다음 공 스냅샷을 기다리는 동안에도
-  // 내 발 앞의 공만 같은 접촉 공식으로 짧게 움직인다. 득점/최종 물리는 여전히
-  // 호스트가 결정하고, 새 권위 스냅샷이 오면 위 보간이 자연스럽게 복귀시킨다.
+  // 게스트 로컬 드리블 중에는 지연된 권위 공을 먼저 향했다가 다시 발 앞으로
+  // 당기는 두 번의 보간을 하지 않는다. 그 구조가 공이 몸에 끼고 뒤로 되감기는
+  // 직접 원인이었다. 드리블 중에는 한 번에 발 앞 목표로, 아닐 때만 권위 공으로
+  // 이동한다. 득점·충돌·소유 확정은 계속 호스트가 담당한다.
   if(localDribbling){
-    const mdx=netBall.x-me.x,mdy=netBall.y-me.y,md=Math.hypot(mdx,mdy)||.001;
-    const tdx=netBall.netX-me.x,tdy=netBall.netY-me.y,td=Math.hypot(tdx,tdy)||.001;
     const speed=Math.hypot(me.vx||0,me.vy||0);
-    if((confirmedOwner||Math.min(md,td)<PR+BR+12) && speed>.12){
-      // 드리블 중에는 지연된 화면 공의 방향이 아니라 실제 이동 방향의 발 앞을
-      // 목표로 잡는다. 그렇지 않으면 왼쪽으로 달리는데 과거 공이 오른쪽에 남아
-      // 반대쪽으로 미는 현상이 생긴다.
-      const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
-      const tx=me.x+nx*(PR+BR),ty=me.y+ny*(PR+BR);
-      const footBlend=confirmedOwner ? .15 : .54;
-      netBall.x=lerp(netBall.x,tx,footBlend); netBall.y=lerp(netBall.y,ty,footBlend);
-      netBall.vx=lerp(netBall.vx,(me.vx||0)*.92+nx*Math.min(4.8,.45+speed*.82),.34);
-      netBall.vy=lerp(netBall.vy,(me.vy||0)*.92+ny*Math.min(4.8,.45+speed*.82),.34);
-      // 권위 스냅샷이 한두 프레임 늦어 캐릭터 중심 쪽을 가리키더라도, 게스트
-      // 본인 화면에서 표시되는 공만큼은 물리 반지름 안으로 들어가지 않게 한다.
-      // 이 안전선은 화면 표시 전용이며 호스트의 실제 공 좌표는 바꾸지 않는다.
-      const rx=netBall.x-me.x,ry=netBall.y-me.y;
-      const forward=rx*nx+ry*ny,visualD=Math.hypot(rx,ry);
-      if(forward<PR+BR-2||visualD<PR+BR-2){
-        netBall.x=tx; netBall.y=ty;
-      }
+    const nx=Math.cos(me.dir),ny=Math.sin(me.dir);
+    const tx=me.x+nx*(PR+BR),ty=me.y+ny*(PR+BR);
+    const footBlend=confirmedOwner?.76:.68;
+    netBall.x=lerp(netBall.x,tx,footBlend);
+    netBall.y=lerp(netBall.y,ty,footBlend);
+    const carry=Math.min(4.8,.45+speed*.82);
+    netBall.vx=lerp(netBall.vx,(me.vx||0)*.92+nx*carry,.34);
+    netBall.vy=lerp(netBall.vy,(me.vy||0)*.92+ny*carry,.34);
+    const rx=netBall.x-me.x,ry=netBall.y-me.y;
+    if(rx*nx+ry*ny<PR+BR-2||Math.hypot(rx,ry)<PR+BR-2){
+      netBall.x=tx;netBall.y=ty;
     }
+  }else{
+    const nxt=smoothToward(netBall,netBall.netX,netBall.netY,netBall.vx,netBall.vy,netBall.netT,now,.74);
+    netBall.x=nxt.x;netBall.y=nxt.y;
   }
 
   // 키를 막 놓아 감속 중이어도 호스트가 아직 내 소유로 확인한 공은 몸 안으로
@@ -886,24 +869,31 @@ function updateBallHost(){
     const effectiveVX=(sid===mySid?(p.vx||0):(p.netVX||0))*remoteVelocityScale;
     const effectiveVY=(sid===mySid?(p.vy||0):(p.netVY||0))*remoteVelocityScale;
     const remoteSpeed=Math.hypot(effectiveVX,effectiveVY);
-    // 충돌 중심까지 계단식 netX/netY를 직접 쓰면 패킷 도착 순간마다 공이
-    // 한 번 더 밀린다. 위치는 부드럽게 보간된 p.x/p.y, 속도만 netVX/netVY를
-    // 사용해야 호스트 로컬 선수와 같은 연속적인 드리블이 된다.
-    const age=sid===mySid?0:clamp(now-(p.netT||now),0,100);
-    const predictedX=sid===mySid?p.x:(p.netX??p.x)+(p.netVX||0)*age*.03;
-    const predictedY=sid===mySid?p.y:(p.netY??p.y)+(p.netVY||0)*age*.03;
-    // p.x에서 최신 예측점까지의 차이만 최대 10px, 그중 70%만 반영한다.
-    // 패킷 점프를 그대로 공에 적용하지 않으면서 실제 Worker 지연은 보상한다.
-    const controlX=clamp(p.x+clamp(predictedX-p.x,-10,10)*.55,FX+PR,FX+FW-PR);
-    const controlY=clamp(p.y+clamp(predictedY-p.y,-10,10)*.55,FY+PR,FY+FH-PR);
+    // 호스트 로컬은 현재 좌표, 게스트는 최신 수신 좌표를 최대 80ms만 외삽한
+    // 좌표를 똑같은 충돌 중심으로 쓴다. 예전의 '화면 보간 좌표에서 최대
+    // 10px의 55%만 이동' 제한은 게스트 판정을 항상 뒤에 남겨 놓았다.
+    const age=sid===mySid?0:clamp(now-(p.netT||now),0,80);
+    const controlX=clamp(sid===mySid?p.x:(p.netX??p.x)+(p.netVX||0)*age*.03,FX+PR,FX+FW-PR);
+    const controlY=clamp(sid===mySid?p.y:(p.netY??p.y)+(p.netVY||0)*age*.03,FY+PR,FY+FH-PR);
     const dx = ball.x-controlX, dy = ball.y-controlY;
     const d = Math.hypot(dx,dy) || 0.0001;
     const minD = PR+BR;
 
     // 가까이 붙었을 때는 매 프레임 힘을 더하는 핀볼식 밀기가 아니라 선수 속도에
     // 공을 서서히 맞춘다. 그래서 천천히 움직이면 드리블, 충전 킥이면 아래의 슛이 된다.
-    const carrying=ball.owner===sid&&now<(ball.ownerUntil||0)&&d<minD+22;
-    if (d < minD||carrying){
+    const carrying=ball.owner===sid&&now<(ball.ownerUntil||0)&&d<minD+24;
+    // 게스트가 접촉한 순간 보낸 공/선수 좌표를 호스트가 함께 검증한다.
+    // 현재 공은 왕복 지연 동안 이미 이동할 수 있으므로 현재 거리만 보면
+    // 게스트만 접촉을 놓친다. 보고 당시 접촉이었고 공 변화도 합리적이면
+    // 호스트 로컬과 동일한 드리블 공식을 바로 적용한다.
+    const reportedPlayerX=Number(p.netX),reportedPlayerY=Number(p.netY);
+    const reportedBallX=Number(p.dribbleBallX),reportedBallY=Number(p.dribbleBallY);
+    const reportedContact=!!(sid!==mySid&&p.dribble&&
+      Number.isFinite(reportedPlayerX)&&Number.isFinite(reportedPlayerY)&&
+      Number.isFinite(reportedBallX)&&Number.isFinite(reportedBallY)&&
+      Math.hypot(reportedBallX-reportedPlayerX,reportedBallY-reportedPlayerY)<minD+18&&
+      Math.hypot(ball.x-reportedBallX,ball.y-reportedBallY)<68);
+    if (d < minD+4||carrying||reportedContact){
       const moving=remoteSpeed>.12;
       // 이동 중에는 지연된 공의 상대 위치가 아니라 선수의 실제 진행 방향을
       // 드리블 방향으로 사용한다. 보정된 선수 좌표가 공을 추월하더라도 nx가
@@ -913,7 +903,7 @@ function updateBallHost(){
       const footX=controlX+nx*minD, footY=controlY+ny*minD;
       // 소유가 확인된 동안에는 패킷 사이에도 접촉을 연속 유지한다. 단발성
       // d<minD 판정만 쓰던 때처럼 공을 놓쳤다가 다시 잡으며 튀지 않는다.
-      const positionBlend=carrying&&moving ? .48 : (moving ? .72 : 1);
+      const positionBlend=carrying&&moving ? .62 : (moving ? .72 : 1);
       ball.x=lerp(ball.x,footX,positionBlend);
       ball.y=lerp(ball.y,footY,positionBlend);
       const carry=Math.min(4.8,.45+remoteSpeed*.82);
@@ -925,7 +915,7 @@ function updateBallHost(){
       // 게스트가 거리만으로 소유를 추측하다 잠금이 풀려 과거 좌표로 되감기던
       // 문제를 막는다. 접촉이 끊기면 180ms 뒤 자동으로 소유가 해제된다.
       ball.owner=sid;
-      ball.ownerUntil=now+180;
+      ball.ownerUntil=now+240;
     }
 
     // 충전 슛: kickAt이 마지막으로 처리한 값과 다르면 "새 킥"으로 인식(간헐적
@@ -1123,6 +1113,10 @@ function netSends(){
   const now = Date.now();
   if (me && now-lastPosSent >= 30){
     lastPosSent = now;
+    const shownBall=ball_or_netball();
+    const localSpeed=Math.hypot(me.vx||0,me.vy||0);
+    const dribble=now>=kickoffUntil&&!kickCharging&&localSpeed>.12&&
+      Math.hypot(shownBall.x-me.x,shownBall.y-me.y)<PR+BR+20;
     const kickActive=now<pendingKickUntil;
     const headerActive=now<pendingHeaderUntil;
     const tackleEdgeActive=now<pendingTackleUntil;
@@ -1133,6 +1127,7 @@ function netSends(){
     if(!tackleEdgeActive&&me.tackleAt)me.tackleAt=0;
     bridgeSend('sc_pos', {
       x:me.x, y:me.y, vx:me.vx, vy:me.vy, dir:me.dir,
+      dribble,dribbleBallX:shownBall.x,dribbleBallY:shownBall.y,
       kickAt, kickCharge,
       kickX:pendingKickX, kickY:pendingKickY, kickDir:pendingKickDir,
       kickBallX:pendingKickBallX, kickBallY:pendingKickBallY,
@@ -1445,13 +1440,13 @@ function drawPlayer(p,mine,sid){
   // 상대가 이동해도 계속 대기 자세였으므로 원격 애니메이션은 수신 속도를 쓴다.
   const animVX=mine?(p.vx||0):(p.netVX||0),animVY=mine?(p.vy||0):(p.netVY||0);
   const spd=Math.hypot(animVX,animVY);
-  const moving=spd>.3, running=spd>4.15, facing=Math.cos(dir)<-.15?-1:1;
+  const moving=spd>.3, running=spd>3.35, facing=Math.cos(dir)<-.15?-1:1;
   const b=ball_or_netball(), nearBall=!stunned&&Math.hypot(b.x-p.x,b.y-p.y)<KICK_RANGE+5;
   // 전역 시계로 프레임을 고르면 출발 순간 중간 동작으로 튄다. 선수별 누적
   // 애니메이션 시계를 사용해 항상 접지 동작부터 자연스럽게 시작한다.
   const animDt=clamp(now-(p._animAt||now),0,50);
   p._animAt=now;
-  if(moving)p._animClock=(p._animClock||0)+animDt/(running?76:94);
+  if(moving)p._animClock=(p._animClock||0)+animDt/(running?78:98);
   else p._animClock=0;
   const animStep=Math.floor(p._animClock||0);
   const phase=moving?(animStep%2):0;
@@ -1472,6 +1467,12 @@ function drawPlayer(p,mine,sid){
   // 그림자는 지면에 고정하고 선수만 헤딩 점프 높이만큼 올라간다.
   ctx.fillStyle='rgba(2,18,12,.18)';ctx.fillRect(-14,11,28,5);
   ctx.fillStyle='rgba(2,18,12,.34)';ctx.fillRect(-9,13,18,4);
+  // 팀 표시는 캐릭터 이미지/좌우 반전/점프 변환 바깥의 물리 중심에 그린다.
+  // 예전에는 스프라이트를 그린 뒤 변환 안에서 그려 헤딩 시 함께 떠오르고,
+  // 프레임별 머리카락 폭 때문에 중앙이 어긋난 것처럼 보였다.
+  ctx.globalAlpha=.85;ctx.fillStyle=p.color;
+  ctx.fillRect(-11,18,22,2);ctx.fillRect(-7,20,14,1);
+  ctx.globalAlpha=1;
   ctx.translate(0,Math.round(bob-actionLift));
 
   if(now<tackleActiveUntil&&mine){
@@ -1481,29 +1482,25 @@ function drawPlayer(p,mine,sid){
 
   const variant=spriteVariantOf(p);
   const sprite=soccerPlayerSprites[p.team]?.[variant]||soccerPlayerSprites.A[0];
-  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*20;
+  const spriteReady=sprite.complete&&sprite.naturalWidth>=SOCCER_SPRITE_CELL*16;
   if(spriteReady){
-    // 0 대기 / 1·2·3 걷기 / 4·5 달리기 뻗기 / 6 드리블 / 7 슛 /
-    // 8·9 구 달리기 / 10 들숨 / 11 날숨 / 12~15 새 좌우 교차 달리기 /
-    // 16~17 헤딩 / 18~19 태클.
+    // 0~3 달리기 접지/통과 4단계 / 4~5 헤딩 / 6~7 태클 /
+    // 8~10 손발을 고정한 대기 호흡 / 11~12 드리블 / 13~15 슛.
     // 원격 선수도 netVX/netVY와 현재 시간으로 같은 순환을 계산하므로 한 자세로
-    // 미끄러지지 않는다. 드리블은 걷기 접촉 프레임과 발터치 프레임을 교차한다.
-    const walkFrames=[1,2,3,2],runFrames=[12,13,14,15],dribbleFrames=[1,6,3,6];
-    // 0번 기본 자세를 사이에 끼우면 생성 시트별 2~3px 높이 차이가 호흡이
-    // 아니라 둥둥 뜨는 움직임으로 보인다. 손·발 위치가 같은 전용 들숨/날숨
-    // 두 장만 천천히 교차해 상체와 머리카락 변화만 보이게 한다.
-    const idleFrames=[10,11];
-    const walkCycle=walkFrames[animStep%walkFrames.length];
-    const runCycle=runFrames[animStep%runFrames.length];
+    // 미끄러지지 않는다. 기본 속도에서도 반드시 새 4프레임 달리기를 쓴다.
+    const moveFrames=[0,1,2,3],dribbleFrames=[0,11,2,12];
+    const idleFrames=[8,9,10,9];
+    const moveCycle=moveFrames[animStep%moveFrames.length];
     const dribbleCycle=dribbleFrames[animStep%dribbleFrames.length];
-    const idleCycle=idleFrames[Math.floor((now+(Number(p.seat)||0)*83)/850)%idleFrames.length];
-    // 슛 직후에는 발로우스루(7) 뒤 접지(6)를 보여 한 프레임으로 끝나지 않는다.
-    const kickRemain=(p._kickPoseUntil||0)-now;
+    const idleCycle=idleFrames[Math.floor((now+(Number(p.seat)||0)*83)/620)%idleFrames.length];
+    // 슛은 준비→접촉→팔로스루 3단계를 모두 보여 한 장으로 끝나지 않는다.
+    const kickProgress=kicking?clamp(1-((p._kickPoseUntil||0)-now)/180,0,1):0;
     const tackleStart=p._tacklePoseStart||now;
     const tackleProgress=tackling?clamp((now-tackleStart)/TACKLE_DUR_MS,0,1):0;
-    const actionFrame=heading?(headerProgress<.48?16:17):(tackling?(tackleProgress<.45?18:19):-1);
+    const actionFrame=heading?(headerProgress<.48?4:5):(tackling?(tackleProgress<.45?6:7):-1);
+    const kickFrame=kickProgress<.34?13:(kickProgress<.68?14:15);
     const frame=actionFrame>=0?actionFrame:
-      (kicking?(kickRemain>75?7:6):(dribbling?dribbleCycle:(running?runCycle:(moving?walkCycle:idleCycle))));
+      (kicking?kickFrame:(dribbling?dribbleCycle:(moving?moveCycle:idleCycle)));
     ctx.save();
     ctx.scale(facing,1);
     // 원본 224px 셀을 고DPI 캔버스에 고품질 축소한다. 이전처럼 에셋 자체를
@@ -1516,9 +1513,6 @@ function drawPlayer(p,mine,sid){
     ctx.drawImage(sprite,frame*SOCCER_SPRITE_CELL,0,SOCCER_SPRITE_CELL,SOCCER_SPRITE_CELL,-44,-76,88,88);
     ctx.imageSmoothingEnabled=false;
     ctx.filter='none';
-    // 유니폼 원본색과 무관하게 발밑 팀 링으로 A/B를 즉시 구분한다.
-    ctx.globalAlpha=.85;ctx.fillStyle=p.color;
-    ctx.fillRect(-11,12,22,2);ctx.fillRect(-7,14,14,1);
     ctx.restore();
   }else{
   // PX=1: 내부 2배 backing canvas에서 정확히 2×2 화면 픽셀이 되어 선명하다.
