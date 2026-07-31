@@ -605,7 +605,7 @@ let pendingHeaderX=0,pendingHeaderY=0,pendingHeaderDir=0,pendingHeaderBallX=0,pe
 let pendingTackleAt=0,pendingTackleUntil=0;
 // 게스트 화면의 짧은 슛 예측. 최종 공 판정은 계속 호스트가 담당한다.
 let localKickPredictAt=0, localKickPredictUntil=0, localKickPredictFrameAt=0;
-let kickReconcileUntil=0,kickReconcileDir=0;
+let kickReconcileUntil=0,kickReconcileDir=0,kickReconcileLeadMs=0;
 let headerCooldownUntil=0;
 let tackleCooldownUntil = 0;
 let tackleActiveUntil = 0;
@@ -934,6 +934,10 @@ function updateNetBall(){
       const nx=Math.cos(kickReconcileDir),ny=Math.sin(kickReconcileDir);
       const back=(netBall.x-previousVisualX)*nx+(netBall.y-previousVisualY)*ny;
       if(back<0){ netBall.x-=nx*back; netBall.y-=ny*back; }
+      // 보정 리드는 갑자기 0으로 끊지 않고 서서히 줄여 권위 궤도에 합류한다.
+      kickReconcileLeadMs*=.985;
+    }else if(kickReconcileLeadMs){
+      kickReconcileLeadMs=0;
     }
   }
 
@@ -2084,23 +2088,29 @@ window.addEventListener('message', e=>{
     }
     netBall.owner = d.owner ? String(d.owner) : null;
     netBall.netT = now;
-    if(!Array.isArray(netBall.samples)) netBall.samples=[];
-    netBall.samples.push({t:now,x:netBall.netX,y:netBall.netY,z:netBall.netZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
-    if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
     if(confirmsLocalKick){
-      // 호스트 확정값이 도착했을 때 로컬 예측보다 뒤쪽이면 되감지 않는다.
-      // 진행 방향 기준 더 앞선 위치를 유지한 채 권위 속도로 자연스럽게 합류한다.
+      // 게스트의 로컬 예측은 kickAt부터 즉시 시작하지만, 호스트 물리는 패킷이
+      // 도착한 뒤에 시작한다. 따라서 호스트 확정 좌표를 그대로 재생하면 왕복 지연의
+      // 절반만큼 뒤처진 지점을 향해 공이 끌리며 잠깐 멈춘다. 왕복시간의 절반을
+      // 추정해 권위 좌표를 진행 방향으로 외삽하고, 그 보정값을 잠시 유지한다.
       const idir=Number(d.impactDir||0);
-      const nx=Math.cos(idir),ny=Math.sin(idir);
-      const authAhead=netBall.netX*nx+netBall.netY*ny;
-      const visualAhead=netBall.x*nx+netBall.y*ny;
-      if(authAhead>visualAhead){netBall.x=netBall.netX;netBall.y=netBall.netY;}
+      kickReconcileDir=idir;
+      kickReconcileLeadMs=clamp((now-Number(localKickPredictAt||now))*.5,0,170);
+      kickReconcileUntil=now+650;
       netBall.vx=netBall.netVX;netBall.vy=netBall.netVY;netBall.vz=netBall.netVZ;
       localKickPredictAt=0;localKickPredictUntil=0;localKickPredictFrameAt=0;
-      kickReconcileDir=idir;
-      kickReconcileUntil=now+220;
-      netBall.samples=netBall.samples.slice(-1);
+      netBall.samples=[];
     }
+    if(!Array.isArray(netBall.samples)) netBall.samples=[];
+    let sampleX=netBall.netX,sampleY=netBall.netY,sampleZ=netBall.netZ;
+    if(now<kickReconcileUntil&&kickReconcileLeadMs>0){
+      const leadSteps=kickReconcileLeadMs/(1000/60);
+      sampleX+=netBall.netVX*leadSteps;
+      sampleY+=netBall.netVY*leadSteps;
+      sampleZ=Math.max(0,sampleZ+netBall.netVZ*leadSteps-.5*BALL_GRAVITY*leadSteps*leadSteps);
+    }
+    netBall.samples.push({t:now,x:sampleX,y:sampleY,z:sampleZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
+    if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
     if(d.impactAt){
       netBall.impactAt=String(d.impactAt);
       netBall.impactPower=Number(d.impactPower||0);
