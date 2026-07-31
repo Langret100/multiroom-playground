@@ -111,10 +111,10 @@ const GOAL_Y1 = FY+FH/2-GOAL_H/2, GOAL_Y2 = FY+FH/2+GOAL_H/2;
 const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR*2+8;
-const MAX_BALL_SPEED = 10.6;
+const MAX_BALL_SPEED = 8.8;
 const BALL_GRAVITY = 0.38;       // 프레임당 공중 중력
 const BALL_BOUNCE = 0.46;        // 잔디 바운드 감쇠
-const BALL_AIR_DRAG = 0.994;     // 공중 수평 저항
+const BALL_AIR_DRAG = 0.990;     // 공중 수평 저항
 const BALL_GOAL_MAX_Z = 38;      // 골대 크로스바 높이(화면 논리 높이)
 const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
 const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
@@ -630,10 +630,10 @@ function releaseKickCharge(){
     const targetDist=Math.hypot((netBall.netX??b.x)-me.x,(netBall.netY??b.y)-me.y);
     if(Math.min(visibleDist,targetDist)<KICK_RANGE+3){
       playKickImpactOnce(pendingKickAt,b.x,b.y,pendingKickCharge,me.dir);
-      lastBallSpeedSeen=Math.max(lastBallSpeedSeen,4.2+pendingKickCharge*5.9);
+      lastBallSpeedSeen=Math.max(lastBallSpeedSeen,3.8+pendingKickCharge*4.8);
       // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
       // 전진시킨다. 그래서 이펙트 뒤 공이 멈춰 있다가 뒤늦게 출발하지 않는다.
-      const power=4.2+pendingKickCharge*7.2;
+      const power=3.5+pendingKickCharge*4.8;
       const loft=pendingKickCharge<.48?0:lerp(2.4,7.2,(pendingKickCharge-.48)/.52);
       netBall.x=b.x;netBall.y=b.y;netBall.z=Math.max(0,b.z||0);
       netBall.vx=(netBall.vx||0)+Math.cos(me.dir)*power;
@@ -807,7 +807,7 @@ function updateNetBall(){
     netBall.z=Math.max(0,(netBall.z||0)+(netBall.vz||0)*steps);
     netBall.vz=(netBall.vz||0)-BALL_GRAVITY*steps;
     if(netBall.z<=0&&netBall.vz<0){netBall.z=0;netBall.vz=0;}
-    const drag=Math.pow(netBall.z>0?BALL_AIR_DRAG:.985,steps);
+    const drag=Math.pow(netBall.z>0?BALL_AIR_DRAG:.978,steps);
     netBall.vx*=drag;netBall.vy*=drag;
     return;
   }
@@ -1011,7 +1011,7 @@ function updateBallHost(){
         const dir = Number.isFinite(p.kickDir) ? p.kickDir : (Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx));
         const charge=clamp(p.kickCharge||0,0,1);
         // v7과 같은 파워 곡선/가산 방식으로 복원한다.
-        const power = 4.2 + charge*7.2;
+        const power = 3.5 + charge*4.8;
         ball.vx+=Math.cos(dir)*power;
         ball.vy+=Math.sin(dir)*power;
         // 탭/약슛은 낮게 굴러가고, 절반 이상 충전부터 실제 높이(vz)가 생긴다.
@@ -1050,7 +1050,7 @@ function updateBallHost(){
         (Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+4&&reportedDrift<58));
       if(headerInRange){
         const dir=Number.isFinite(p.headerDir)?p.headerDir:(Number.isFinite(p.dir)?p.dir:0);
-        const power=7.0;
+        const power=5.4;
         ball.vx=Math.cos(dir)*power+(ball.vx||0)*.24;
         ball.vy=Math.sin(dir)*power+(ball.vy||0)*.24;
         // 헤딩은 수평 방향을 바꾸면서 공을 다시 살짝 띄운다.
@@ -1100,7 +1100,7 @@ function updateBallHost(){
   ball.z = Math.max(0,(ball.z||0)+(ball.vz||0));
   ball.vz = (ball.vz||0)-BALL_GRAVITY;
   const airborne=(ball.z||0)>0.01;
-  const drag=airborne?BALL_AIR_DRAG:.985;
+  const drag=airborne?BALL_AIR_DRAG:.978;
   ball.vx *= drag; ball.vy *= drag;
   if(ball.z<=0&&ball.vz<0){
     const impact=Math.abs(ball.vz);
@@ -1370,94 +1370,39 @@ function buildCrowdCanvas(){
   return c;
 }
 
+const STADIUM_BG = new Image();
+STADIUM_BG.src = './assets/stadium_25d_bg.webp?v=20260731-small';
+const BALL_SHEET = new Image();
+BALL_SHEET.src = './assets/ball_sheet.png';
+let stadiumCanvas = null;
+
+// 픽셀풍 임시 배경 캔버스. 외부 배경 에셋이 로드되기 전만 사용한다.
+function buildStadiumCanvas(){
+  const c=document.createElement('canvas'); c.width=CW; c.height=CH;
+  const g=c.getContext('2d'); g.imageSmoothingEnabled=false;
+  const sky=g.createLinearGradient(0,0,0,CH);
+  sky.addColorStop(0,'#2e4a6a'); sky.addColorStop(.45,'#31595b'); sky.addColorStop(1,'#243123');
+  g.fillStyle=sky; g.fillRect(0,0,CW,CH);
+  fillWorldPolygon([[FX-52,FY-14],[FX+FW+52,FY-14],[FX+FW+68,FY+FH+24],[FX-68,FY+FH+24]], '#71593c');
+  fillWorldPolygon([[FX-36,FY-7],[FX+FW+36,FY-7],[FX+FW+48,FY+FH+12],[FX-48,FY+FH+12]], '#8c7049');
+  fillWorldPolygon([[FX,FY],[FX+FW,FY],[FX+FW,FY+FH],[FX,FY+FH]], '#2b6b37');
+  for(let i=0;i<14;i++){
+    const x0=FX+i*(FW/14), x1=FX+(i+1)*(FW/14);
+    fillWorldPolygon([[x0,FY],[x1,FY],[x1,FY+FH],[x0,FY+FH]], i%2 ? 'rgba(95,171,92,.30)' : 'rgba(10,62,25,.14)');
+  }
+  strokeWorldLine([[FX,FY],[FX+FW,FY],[FX+FW,FY+FH],[FX,FY+FH],[FX,FY]], '#eef8e8', 3);
+  strokeWorldLine([[FX+FW/2,FY],[FX+FW/2,FY+FH]], '#eef8e8', 2.4);
+  strokeWorldEllipse(FX+FW/2,FY+FH/2,54,54,'#eef8e8',2.2,48);
+  return c;
+}
 function drawField(){
-  const sky=ctx.createLinearGradient(0,0,0,CH);
-  sky.addColorStop(0,'#20344d');
-  sky.addColorStop(.45,'#2d4b52');
-  sky.addColorStop(1,'#1e261e');
-  ctx.fillStyle=sky; ctx.fillRect(0,0,CW,CH);
-  const haze=ctx.createRadialGradient(CW*.24,118,20,CW*.24,118,210);
-  haze.addColorStop(0,'rgba(255,237,180,.38)');
-  haze.addColorStop(.55,'rgba(255,237,180,.10)');
-  haze.addColorStop(1,'rgba(255,237,180,0)');
-  ctx.fillStyle=haze; ctx.fillRect(0,0,CW,CH);
-
-  ctx.fillStyle='#152419';
-  for(let x=-20;x<CW+30;x+=28){
-    const h=60+((x*7)%36);
-    ctx.beginPath();
-    ctx.moveTo(x,PROJ_TOP_Y+18);
-    ctx.lineTo(x+14,PROJ_TOP_Y-h);
-    ctx.lineTo(x+28,PROJ_TOP_Y+18);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle='#1b3321'; ctx.fillRect(x+10,PROJ_TOP_Y-8,8,20);
-    ctx.fillStyle='#152419';
+  if(STADIUM_BG.complete && STADIUM_BG.naturalWidth){
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(STADIUM_BG,0,0,CW,CH);
+    return;
   }
-
-  ctx.fillStyle='#5c4633'; ctx.fillRect(112,64,102,72);
-  ctx.fillStyle='#c56a4a'; ctx.fillRect(104,46,118,28);
-  ctx.fillStyle='#dbd4c7'; ctx.fillRect(120,84,78,38);
-  ctx.fillStyle='#815941'; ctx.fillRect(128,93,22,17); ctx.fillRect(168,93,22,17);
-  ctx.fillStyle='rgba(255,228,169,.78)'; ctx.fillRect(131,96,16,11); ctx.fillRect(171,96,16,11);
-  ctx.fillStyle='#efe3b0'; ctx.fillRect(90,82,3,58); ctx.fillRect(250,82,3,58);
-  ctx.fillStyle='rgba(255,221,142,.75)'; ctx.fillRect(87,84,9,5); ctx.fillRect(247,84,9,5);
-  for(let i=0;i<21;i++){
-    const x=252+i*28;
-    ctx.fillStyle='#d9cfbf'; ctx.fillRect(x,PROJ_TOP_Y+5,4,18);
-    ctx.fillStyle='#bba98d'; ctx.fillRect(x-8,PROJ_TOP_Y+15,20,3);
-  }
-  ctx.fillStyle='#f6d9a4'; ctx.fillRect(280,86,6,10); ctx.fillRect(336,90,6,10);
-
-  fillWorldPolygon([[FX-22,FY-12],[FX+FW+22,FY-12],[FX+FW+28,FY+FH+10],[FX-28,FY+FH+10]], '#6e5a3f');
-  fillWorldPolygon([[FX-12,FY-5],[FX+FW+12,FY-5],[FX+FW+18,FY+FH+4],[FX-18,FY+FH+4]], '#7f6c4b');
-  fillWorldPolygon([[FX,FY],[FX+FW,FY],[FX+FW,FY+FH],[FX,FY+FH]], '#2b6a33');
-  for(let i=0;i<10;i++){
-    const x0=FX+i*(FW/10), x1=FX+(i+1)*(FW/10);
-    fillWorldPolygon([[x0,FY],[x1,FY],[x1,FY+FH],[x0,FY+FH]], i%2 ? 'rgba(72,132,68,.34)' : 'rgba(23,82,35,.16)');
-  }
-
-  strokeWorldLine([[FX,FY],[FX+FW,FY],[FX+FW,FY+FH],[FX,FY+FH],[FX,FY]], '#f2f7e7', 3);
-  strokeWorldLine([[FX+FW/2,FY],[FX+FW/2,FY+FH]], '#f2f7e7', 2.5);
-  strokeWorldEllipse(FX+FW/2,FY+FH/2,54,54,'#f2f7e7',2.2,50);
-  const boxW=88, boxH=218, boxY=FY+FH/2-boxH/2;
-  strokeWorldLine([[FX,boxY],[FX+boxW,boxY],[FX+boxW,boxY+boxH],[FX,boxY+boxH]], '#eef4df', 2.1);
-  strokeWorldLine([[FX+FW-boxW,boxY],[FX+FW,boxY],[FX+FW,boxY+boxH],[FX+FW-boxW,boxY+boxH]], '#eef4df', 2.1);
-  const goalBoxW=34, goalBoxH=120, goalBoxY=FY+FH/2-goalBoxH/2;
-  strokeWorldLine([[FX,goalBoxY],[FX+goalBoxW,goalBoxY],[FX+goalBoxW,goalBoxY+goalBoxH],[FX,goalBoxY+goalBoxH]], '#eef4df', 1.8);
-  strokeWorldLine([[FX+FW-goalBoxW,goalBoxY],[FX+FW,goalBoxY],[FX+FW,goalBoxY+goalBoxH],[FX+FW-goalBoxW,goalBoxY+goalBoxH]], '#eef4df', 1.8);
-  strokeWorldEllipse(FX+62,FY+FH/2,34,34,'rgba(242,247,231,.9)',1.8,28);
-  strokeWorldEllipse(FX+FW-62,FY+FH/2,34,34,'rgba(242,247,231,.9)',1.8,28);
-  const centerSpot=projectWorld(FX+FW/2,FY+FH/2,0); ctx.fillStyle='#f5fbef'; ctx.fillRect(centerSpot.x-2,centerSpot.y-2,4,4);
-  const penL=projectWorld(FX+62,FY+FH/2,0), penR=projectWorld(FX+FW-62,FY+FH/2,0);
-  ctx.fillRect(penL.x-2,penL.y-2,4,4); ctx.fillRect(penR.x-2,penR.y-2,4,4);
-
-  for(let i=0;i<10;i++){
-    const y0=FY+18+i*42, y1=y0+28;
-    fillWorldPolygon([[FX-22,y0],[FX-10,y0],[FX-10,y1],[FX-22,y1]], i%2?'#365f93':'#913954');
-    fillWorldPolygon([[FX+FW+10,y0],[FX+FW+22,y0],[FX+FW+22,y1],[FX+FW+10,y1]], i%2?'#913954':'#365f93');
-  }
-
-  for(const side of ['L','R']){
-    const frontX=side==='L'?FX-14:FX+FW+14;
-    const innerX=side==='L'?FX:FX+FW;
-    const topA=projectWorld(innerX,GOAL_Y1,0), botA=projectWorld(innerX,GOAL_Y2,0);
-    const topB=projectWorld(frontX,GOAL_Y1,0), botB=projectWorld(frontX,GOAL_Y2,0);
-    const topBack=projectWorld(frontX,GOAL_Y1,16), botBack=projectWorld(frontX,GOAL_Y2,16);
-    ctx.strokeStyle='#f4f8ff'; ctx.lineWidth=2;
-    ctx.beginPath();
-    ctx.moveTo(topA.x,topA.y); ctx.lineTo(botA.x,botA.y); ctx.lineTo(botB.x,botB.y); ctx.lineTo(topB.x,topB.y); ctx.closePath(); ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(topB.x,topB.y); ctx.lineTo(topBack.x,topBack.y); ctx.lineTo(botBack.x,botBack.y); ctx.lineTo(botB.x,botB.y); ctx.stroke();
-    for(let i=1;i<6;i++){
-      const yy=GOAL_Y1+(GOAL_H/6)*i;
-      const a=projectWorld(frontX,yy,0), b=projectWorld(frontX,yy,16);
-      ctx.strokeStyle='rgba(231,241,255,.42)'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
-    }
-  }
-
-  ctx.fillStyle='rgba(6,9,8,.28)'; ctx.fillRect(0,CH-40,CW,40);
-  ctx.fillStyle='rgba(10,15,12,.18)'; ctx.fillRect(0,0,64,CH);
+  if(!stadiumCanvas) stadiumCanvas = buildStadiumCanvas();
+  ctx.drawImage(stadiumCanvas,0,0);
 }
 
 function shadeColor(hex, amt){
@@ -1473,10 +1418,10 @@ function jerseyNumberOf(p){ return Math.floor((Number(p.seat)||0)/2)+1; }
 
 function ball_or_netball(){ return isHost ? ball : netBall; }
 
-const PROJ_TOP_Y=132, PROJ_BOTTOM_Y=500;
-const PROJ_TOP_L=248, PROJ_TOP_R=652;
-const PROJ_BOTTOM_L=64, PROJ_BOTTOM_R=836;
-const PROJ_FAR_SCALE=.54, PROJ_NEAR_SCALE=1.18;
+const PROJ_TOP_Y=124, PROJ_BOTTOM_Y=506;
+const PROJ_TOP_L=182, PROJ_TOP_R=718;
+const PROJ_BOTTOM_L=8, PROJ_BOTTOM_R=892;
+const PROJ_FAR_SCALE=.56, PROJ_NEAR_SCALE=1.22;
 const PROJ_HEIGHT_SCALE=18;
 function depthTFromY(y){ return clamp((y-FY)/FH,0,1); }
 function projectWorld(x,y,z=0){
@@ -1864,71 +1809,32 @@ function drawRings(){
 }
 
 // 공 렌더링은 판정 반지름(BR)은 그대로 두고 그래픽만 3D 느낌으로 개선한다.
-const BALL_PATCH_FRAMES = [
-  [[7,4],[8,4],[6,5],[7,5],[8,5],[9,5],[5,6],[6,6],[7,6],[8,6],[9,6],[6,7],[7,7],[8,7],[7,8]],
-  [[9,4],[10,4],[8,5],[9,5],[10,5],[11,5],[7,6],[8,6],[9,6],[10,6],[11,6],[8,7],[9,7],[10,7],[9,8]],
-  [[7,6],[8,6],[6,7],[7,7],[8,7],[9,7],[5,8],[6,8],[7,8],[8,8],[9,8],[6,9],[7,9],[8,9],[7,10]],
-  [[5,5],[6,5],[4,6],[5,6],[6,6],[7,6],[3,7],[4,7],[5,7],[6,7],[7,7],[4,8],[5,8],[6,8],[5,9]]
-];
-const BALL_SIDE_PATCHES = [
-  [[4,4],[4,5],[3,5],[4,6]],
-  [[11,5],[12,5],[11,6],[12,6]],
-  [[4,9],[5,9],[5,10]],
-  [[10,9],[11,9],[10,10]]
-];
 function drawBall(b){
   const ground=projectWorld(b.x,b.y,0);
   const proj=projectWorld(b.x,b.y,b.z||0);
   const depthScale=proj.scale;
   const shadow=shadowSpecForY(b.y);
-
   ctx.save();
   ctx.fillStyle=`rgba(2,12,18,${(shadow.alphaA+.05).toFixed(3)})`;
-  ctx.fillRect(Math.round(ground.x-Math.round(10*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY-1),Math.round(20*depthScale),Math.max(3,shadow.h));
-  ctx.fillStyle='rgba(2,12,18,.14)';
+  ctx.fillRect(Math.round(ground.x-Math.round(10*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY),Math.round(20*depthScale),Math.max(3,shadow.h));
+  ctx.fillStyle='rgba(2,12,18,.13)';
   ctx.fillRect(Math.round(ground.x-Math.round(7*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY+2),Math.round(14*depthScale),2);
   ctx.restore();
 
-  ctx.save();
-  ctx.translate(Math.round(proj.x),Math.round(proj.y));
-  ctx.scale(depthScale,depthScale);
-  const BPX = 2;
-  const size = 16;
-  const bx0 = -Math.round((size*BPX)/2);
-  const by0 = -Math.round((size*BPX)/2);
-  for (let y=0; y<size; y++){
-    for (let x=0; x<size; x++){
-      const dx = x-7.5, dy = y-7.5;
-      const dist = Math.hypot(dx*1.02, dy*0.98);
-      if (dist > 7.55) continue;
-      let col = '#f7fbff';
-      if (dist > 6.8) col = '#111d2a';
-      else {
-        const light = 0.25 + (-dx*0.075) + (-dy*0.095);
-        if (dist > 5.9) col = light > 0.32 ? '#d6e0e7' : '#c2cdd6';
-        else if (light > 0.58) col = '#ffffff';
-        else if (light > 0.34) col = '#edf3f7';
-        else if (light > 0.14) col = '#dde5eb';
-        else col = '#c6d0d8';
-      }
-      ctx.fillStyle = col;
-      ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
-    }
-  }
   const speed=Math.hypot(b.vx||0,b.vy||0);
-  const frame=Math.floor(Date.now()/(speed>1?70:210)+Math.abs((b.x||0)+(b.y||0))/24)%BALL_PATCH_FRAMES.length;
-  ctx.fillStyle='#2a3946';
-  for (const [x,y] of BALL_PATCH_FRAMES[frame]) ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
-  ctx.fillStyle='#4b5e6b';
-  for (const [x,y] of BALL_SIDE_PATCHES[frame]) ctx.fillRect(bx0+x*BPX, by0+y*BPX, BPX, BPX);
-  ctx.fillStyle='rgba(0,0,0,.14)';
-  ctx.fillRect(bx0+10*BPX,by0+11*BPX,4*BPX,BPX);
-  ctx.fillRect(bx0+11*BPX,by0+12*BPX,2*BPX,BPX);
-  ctx.fillStyle='rgba(255,255,255,.92)';
-  ctx.fillRect(bx0+4*BPX,by0+3*BPX,2*BPX,BPX);
-  ctx.fillRect(bx0+3*BPX,by0+4*BPX,BPX,BPX);
-  ctx.fillRect(bx0+5*BPX,by0+4*BPX,BPX,BPX);
-  ctx.restore();
+  const frame=Math.floor(Date.now()/(speed>1?80:220)+Math.abs((b.x||0)+(b.y||0))/28)%4;
+  const px=Math.max(1,Math.round(2*depthScale));
+  const w=16*px, h=16*px;
+  const dx=Math.round(proj.x-w/2), dy=Math.round(proj.y-h/2);
+  ctx.imageSmoothingEnabled=false;
+  if(BALL_SHEET.complete && BALL_SHEET.naturalWidth){
+    ctx.drawImage(BALL_SHEET, frame*16, 0, 16, 16, dx, dy, w, h);
+  }else{
+    ctx.fillStyle='#ffffff'; ctx.fillRect(dx+3*px,dy+2*px,6*px,6*px);
+    ctx.fillStyle='#1f2b36'; ctx.fillRect(dx+5*px,dy+5*px,3*px,3*px);
+    ctx.fillStyle='#cfd9e1'; ctx.fillRect(dx+2*px,dy+5*px,2*px,2*px);
+    ctx.fillRect(dx+8*px,dy+4*px,2*px,2*px);
+  }
 }
 
 function drawParticles(){
