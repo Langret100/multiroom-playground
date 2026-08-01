@@ -45,6 +45,46 @@
   #kickBtn { background:rgba(231,76,60,.22); }
   #jumpBtn { background:rgba(245,158,11,.22); }
   #tackleBtn { background:rgba(59,130,246,.22); }
+
+  #scoreHud {
+    position:fixed; left:50%; top:max(9px, env(safe-area-inset-top)); transform:translateX(-50%);
+    z-index:18; display:flex; align-items:center; height:40px; min-width:244px;
+    border:3px solid #5f452f; border-radius:6px; overflow:hidden;
+    background:#d9c99f; box-shadow:0 3px 0 #2c221a, 0 6px 12px rgba(0,0,0,.25);
+    color:#fff7dc; font-weight:900; pointer-events:none;
+    image-rendering:pixelated;
+  }
+  #scoreHud::before,
+  #scoreHud::after {
+    content:''; position:absolute; top:3px; bottom:3px; width:2px; background:rgba(255,255,255,.28);
+    pointer-events:none;
+  }
+  #scoreHud::before { left:4px; }
+  #scoreHud::after { right:4px; }
+  #scoreHud .team {
+    flex:1; min-width:82px; height:100%; display:flex; align-items:center; justify-content:center;
+    gap:7px; font-size:13px; letter-spacing:.5px; text-shadow:0 2px 0 rgba(0,0,0,.35);
+  }
+  #scoreHud .red { background:#b84e49; border-right:2px solid #5f452f; }
+  #scoreHud .blue { background:#4d73ad; border-left:2px solid #5f452f; }
+  #scoreHud .score {
+    min-width:24px; font-size:21px; line-height:1; color:#fff6d9;
+    font-family:ui-monospace,Consolas,monospace; text-align:center;
+  }
+  #scoreHud .clock {
+    width:78px; height:100%; display:flex; align-items:center; justify-content:center;
+    color:#4b3526; background:#e7d8ad; font:900 16px ui-monospace,Consolas,monospace;
+    text-shadow:0 1px 0 rgba(255,255,255,.55);
+  }
+  #scoreHud.low .clock { color:#a9342f; animation:scorePulse .6s steps(2,end) infinite; }
+  @keyframes scorePulse { 50% { opacity:.58; } }
+  body.mobile #scoreHud {
+    top:max(6px, env(safe-area-inset-top)); min-width:210px; height:34px;
+    border-width:2px; border-radius:5px; box-shadow:0 2px 0 #2c221a,0 4px 8px rgba(0,0,0,.22);
+  }
+  body.mobile #scoreHud .team { min-width:67px; font-size:11px; gap:4px; }
+  body.mobile #scoreHud .score { min-width:20px; font-size:18px; }
+  body.mobile #scoreHud .clock { width:62px; font-size:13px; }
   @media (max-width:430px) {
     #joy { left:14px; bottom:16px; width:108px; height:108px; }
     #actionBtns { right:12px; bottom:16px; gap:7px; }
@@ -54,6 +94,7 @@
 </head>
 <body>
 <div id="wrap"><canvas id="gc"></canvas></div>
+<div id="scoreHud"><div class="team red"><span>RED</span><span id="scoreA" class="score">0</span></div><div id="scoreClock" class="clock">02:00</div><div class="team blue"><span id="scoreB" class="score">0</span><span>BLUE</span></div></div>
 <div id="joy"><div id="joyStick"></div></div>
 <div id="actionBtns">
   <div id="tackleBtn" class="actBtn"><span>태클<br>C</span></div>
@@ -112,10 +153,10 @@ const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
 const DRIBBLE_DISTANCE = PR+BR+2; // 모든 화면에서 같은 발앞 거리
-const MAX_BALL_SPEED = 5.2;      // 반응 가능한 화면상 최고 속도
-const BALL_GRAVITY = 0.075;        // 공중 체공 시간을 늘린 완만한 중력
+const MAX_BALL_SPEED = 4.25;      // 반응 가능한 화면상 최고 속도
+const BALL_GRAVITY = 0.058;        // 공중 체공 시간을 늘린 완만한 중력
 const BALL_BOUNCE = 0.22;         // 잔디 바운드는 작게
-const BALL_AIR_DRAG = 0.9985;      // 공중에서는 속도를 오래 유지해 사거리 확보
+const BALL_AIR_DRAG = 0.9990;      // 공중에서는 속도를 오래 유지해 사거리 확보
 const BALL_GOAL_MAX_Z = 38;      // 골대 크로스바 높이(화면 논리 높이)
 const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
 const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
@@ -124,8 +165,8 @@ const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
 // 킥 물리의 단일 기준. 호스트 판정과 게스트 즉시 표시가 반드시 같은 값을 쓴다.
 function makeKickSpec(charge, dir){
   const c=clamp(Number(charge)||0,0,1);
-  const power=2.20+c*2.80;
-  const loft=c<.42?0:lerp(.95,2.30,(c-.42)/.58);
+  const power=1.85+c*2.35;
+  const loft=c<.42?0:lerp(1.00,2.35,(c-.42)/.58);
   let vx=Math.cos(dir)*power, vy=Math.sin(dir)*power;
   const speed=Math.hypot(vx,vy);
   if(speed>MAX_BALL_SPEED){ vx*=MAX_BALL_SPEED/speed; vy*=MAX_BALL_SPEED/speed; }
@@ -144,7 +185,7 @@ function stepFreeBallState(state, steps=1){
     state.z=0;
     state.vz=impact>1.25?impact*BALL_BOUNCE:0;
   }
-  const drag=Math.pow(state.z>0?BALL_AIR_DRAG:.991,count);
+  const drag=Math.pow(state.z>0?BALL_AIR_DRAG:.993,count);
   state.vx*=drag; state.vy*=drag;
   const speed=Math.hypot(state.vx,state.vy);
   if(speed>MAX_BALL_SPEED){ state.vx*=MAX_BALL_SPEED/speed; state.vy*=MAX_BALL_SPEED/speed; }
@@ -893,20 +934,16 @@ function updateNetBall(){
     const steps=dt/(1000/60);
     stepFreeBallState(netBall,steps);
 
-    if(track.confirmed){
-      const authSteps=clamp((now-track.authAt)/(1000/60),0,12);
-      const auth={x:track.authX,y:track.authY,z:track.authZ,vx:track.authVX,vy:track.authVY,vz:track.authVZ};
-      stepFreeBallState(auth,authSteps);
-      const posErr=Math.hypot(auth.x-netBall.x,auth.y-netBall.y);
-      const velErr=Math.hypot(auth.vx-(netBall.vx||0),auth.vy-(netBall.vy||0));
-      // 같은 공통 물리식이므로 위치를 끌어당기지 않는다. 차이가 충분히 작을 때만
-      // 권위 상태로 넘겨, 멈춤/되감기/재가속이 생기는 전환점을 없앤다.
-      if(posErr<5&&velErr<.18&&Math.abs(auth.z-(netBall.z||0))<3){
-        netBall.x=auth.x; netBall.y=auth.y; netBall.z=auth.z;
-        netBall.vx=auth.vx; netBall.vy=auth.vy; netBall.vz=auth.vz;
-        localKickTrack=null;
-        netBall.samples=[];
-      }
+    // 같은 킥의 호스트 확인이 와도 진행 중인 표시 공의 위치나 속도를 교체하지 않는다.
+    // 이전에는 두 궤도가 가까워지는 순간 권위 속도로 갈아타면서 잠깐 감속했다가
+    // 다시 움직이는 느낌이 생겼다. 새 타격·소유권·득점 전까지 한 궤도를 유지한다.
+    const localSpeed=Math.hypot(netBall.vx||0,netBall.vy||0);
+    if(track.confirmed && localSpeed<.08 && (netBall.z||0)<=.2){
+      // 공이 완전히 멈춘 뒤에만 최신 권위 정지 위치를 받아들인다.
+      netBall.x=track.authX; netBall.y=track.authY; netBall.z=Math.max(0,track.authZ||0);
+      netBall.vx=0; netBall.vy=0; netBall.vz=0;
+      localKickTrack=null;
+      netBall.samples=[];
     }
     if(localKickTrack)return;
   }
@@ -1916,23 +1953,14 @@ function drawHUD(){
   const lowTime=sec<=10&&gameActive&&!gameOver;
   const mm=String(Math.floor(sec/60)).padStart(2,'0');
   const ss=String(sec%60).padStart(2,'0');
-
-  // 경기 화면 안에 들어가는 작은 통합 점수판. 별도 상단 띠를 차지하지 않는다.
-  const panelW=238,panelH=38,panelX=CW/2-panelW/2,panelY=10;
-  ctx.save();
-  ctx.fillStyle='rgba(4,13,20,.78)';
-  ctx.beginPath(); ctx.roundRect(panelX,panelY,panelW,panelH,10); ctx.fill();
-  ctx.strokeStyle='rgba(255,255,255,.22)';ctx.lineWidth=1.5;ctx.stroke();
-  ctx.fillStyle='rgba(231,76,60,.92)';ctx.fillRect(panelX+8,panelY+7,67,panelH-14);
-  ctx.fillStyle='rgba(59,130,246,.92)';ctx.fillRect(panelX+panelW-75,panelY+7,67,panelH-14);
-  ctx.textBaseline='middle';ctx.font='bold 16px monospace';
-  ctx.textAlign='center';ctx.fillStyle='#fff';
-  ctx.fillText('RED '+score.A,panelX+41.5,panelY+panelH/2);
-  ctx.fillText(score.B+' BLUE',panelX+panelW-41.5,panelY+panelH/2);
-  ctx.font='bold 18px monospace';
-  ctx.fillStyle=lowTime?(Math.floor(now/300)%2===0?'#ff625f':'#fff'):'#ffe9a8';
-  ctx.fillText(mm+':'+ss,CW/2,panelY+panelH/2);
-  ctx.restore();
+  const hud=document.getElementById('scoreHud');
+  const scoreAEl=document.getElementById('scoreA');
+  const scoreBEl=document.getElementById('scoreB');
+  const clockEl=document.getElementById('scoreClock');
+  if(scoreAEl) scoreAEl.textContent=String(score.A);
+  if(scoreBEl) scoreBEl.textContent=String(score.B);
+  if(clockEl) clockEl.textContent=mm+':'+ss;
+  if(hud) hud.classList.toggle('low',lowTime);
 }
 
 function drawKickoffCountdown(){
