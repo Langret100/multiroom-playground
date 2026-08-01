@@ -47,44 +47,48 @@
   #tackleBtn { background:rgba(59,130,246,.22); }
 
   #scoreHud {
-    position:fixed; left:50%; top:max(9px, env(safe-area-inset-top)); transform:translateX(-50%);
-    z-index:18; display:flex; align-items:center; height:40px; min-width:244px;
-    border:3px solid #5f452f; border-radius:6px; overflow:hidden;
-    background:#d9c99f; box-shadow:0 3px 0 #2c221a, 0 6px 12px rgba(0,0,0,.25);
-    color:#fff7dc; font-weight:900; pointer-events:none;
+    position:fixed; left:50%; top:max(8px, env(safe-area-inset-top)); transform:translateX(-50%);
+    z-index:18; display:grid; grid-template-columns:88px 72px 88px; align-items:stretch;
+    height:38px; padding:4px; gap:4px; pointer-events:none;
+    color:#fff; background:#20252a; border:0;
+    clip-path:polygon(4px 0, calc(100% - 4px) 0, calc(100% - 4px) 4px, 100% 4px, 100% calc(100% - 4px), calc(100% - 4px) calc(100% - 4px), calc(100% - 4px) 100%, 4px 100%, 4px calc(100% - 4px), 0 calc(100% - 4px), 0 4px, 4px 4px);
+    box-shadow:0 4px 0 #0e1114, 0 8px 0 rgba(0,0,0,.28);
     image-rendering:pixelated;
+    font-family:"Courier New",ui-monospace,monospace;
   }
-  #scoreHud::before,
-  #scoreHud::after {
-    content:''; position:absolute; top:3px; bottom:3px; width:2px; background:rgba(255,255,255,.28);
-    pointer-events:none;
+  #scoreHud::before {
+    content:''; position:absolute; inset:4px; pointer-events:none;
+    border:2px solid #778086; opacity:.72;
   }
-  #scoreHud::before { left:4px; }
-  #scoreHud::after { right:4px; }
-  #scoreHud .team {
-    flex:1; min-width:82px; height:100%; display:flex; align-items:center; justify-content:center;
-    gap:7px; font-size:13px; letter-spacing:.5px; text-shadow:0 2px 0 rgba(0,0,0,.35);
+  #scoreHud .team,
+  #scoreHud .clock {
+    position:relative; height:30px; display:flex; align-items:center; justify-content:center;
+    box-sizing:border-box; border:2px solid #11161a;
+    box-shadow:inset 0 2px 0 rgba(255,255,255,.18), inset 0 -2px 0 rgba(0,0,0,.28);
+    text-shadow:2px 2px 0 #11161a;
   }
-  #scoreHud .red { background:#b84e49; border-right:2px solid #5f452f; }
-  #scoreHud .blue { background:#4d73ad; border-left:2px solid #5f452f; }
+  #scoreHud .team { gap:7px; font-size:11px; font-weight:900; letter-spacing:1px; }
+  #scoreHud .red { background:#9f3e42; color:#ffe9da; }
+  #scoreHud .blue { background:#3c6097; color:#e2efff; }
   #scoreHud .score {
-    min-width:24px; font-size:21px; line-height:1; color:#fff6d9;
-    font-family:ui-monospace,Consolas,monospace; text-align:center;
+    min-width:20px; font-size:20px; line-height:1; color:#fffbe6; text-align:center;
+    font-weight:900; letter-spacing:0; text-shadow:2px 0 #11161a,-2px 0 #11161a,0 2px #11161a,0 -2px #11161a;
   }
   #scoreHud .clock {
-    width:78px; height:100%; display:flex; align-items:center; justify-content:center;
-    color:#4b3526; background:#e7d8ad; font:900 16px ui-monospace,Consolas,monospace;
-    text-shadow:0 1px 0 rgba(255,255,255,.55);
+    width:auto; background:#e3cf8d; color:#2c2921; font-size:14px; font-weight:900;
+    letter-spacing:1px; text-shadow:1px 1px 0 #fff0b5;
   }
-  #scoreHud.low .clock { color:#a9342f; animation:scorePulse .6s steps(2,end) infinite; }
-  @keyframes scorePulse { 50% { opacity:.58; } }
+  #scoreHud.low .clock { color:#a52f31; animation:scorePulse .6s steps(2,end) infinite; }
+  @keyframes scorePulse { 50% { filter:brightness(1.22); } }
   body.mobile #scoreHud {
-    top:max(6px, env(safe-area-inset-top)); min-width:210px; height:34px;
-    border-width:2px; border-radius:5px; box-shadow:0 2px 0 #2c221a,0 4px 8px rgba(0,0,0,.22);
+    top:max(5px, env(safe-area-inset-top)); grid-template-columns:70px 58px 70px;
+    height:34px; padding:3px; gap:3px; box-shadow:0 3px 0 #0e1114,0 6px 0 rgba(0,0,0,.24);
   }
-  body.mobile #scoreHud .team { min-width:67px; font-size:11px; gap:4px; }
-  body.mobile #scoreHud .score { min-width:20px; font-size:18px; }
-  body.mobile #scoreHud .clock { width:62px; font-size:13px; }
+  body.mobile #scoreHud::before { inset:3px; }
+  body.mobile #scoreHud .team, body.mobile #scoreHud .clock { height:28px; border-width:2px; }
+  body.mobile #scoreHud .team { font-size:9px; gap:4px; letter-spacing:.5px; }
+  body.mobile #scoreHud .score { min-width:17px; font-size:17px; }
+  body.mobile #scoreHud .clock { font-size:11px; }
   @media (max-width:430px) {
     #joy { left:14px; bottom:16px; width:108px; height:108px; }
     #actionBtns { right:12px; bottom:16px; gap:7px; }
@@ -752,7 +756,7 @@ function releaseKickCharge(){
     // 빠른 공은 화면 표시가 목표보다 몇 프레임 뒤라 실제로 맞은 슛을 놓칠 수 있다.
     const visibleDist=Math.hypot(b.x-me.x,b.y-me.y);
     const targetDist=Math.hypot((netBall.netX??b.x)-me.x,(netBall.netY??b.y)-me.y);
-    if(Math.min(visibleDist,targetDist)<KICK_RANGE+3){
+    if(Math.min(visibleDist,targetDist,Math.hypot(pendingKickBallX-me.x,pendingKickBallY-me.y))<KICK_RANGE+10){
       playKickImpactOnce(pendingKickAt,b.x,b.y,pendingKickCharge,me.dir);
       lastBallSpeedSeen=Math.max(lastBallSpeedSeen,1.10+pendingKickCharge*1.30);
       // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
@@ -769,7 +773,7 @@ function releaseKickCharge(){
       netBall.netX=netBall.x; netBall.netY=netBall.y; netBall.netZ=netBall.z;
       netBall.samples=[];
       localKickTrack={
-        id:String(pendingKickAt), lastAt:Date.now(), confirmed:false,
+        id:String(pendingKickAt), createdAt:Date.now(), lastAt:Date.now(), confirmed:false,
         authAt:0, authX:netBall.x, authY:netBall.y, authZ:netBall.z,
         authVX:netBall.vx, authVY:netBall.vy, authVZ:netBall.vz
       };
@@ -2147,8 +2151,14 @@ window.addEventListener('message', e=>{
     }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)){
       // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
       localKickTrack=null;
-    }else if(localKickTrack&&netBall.owner){
+    }else if(localKickTrack&&netBall.owner&&netBall.owner!==mySid){
+      // 다른 선수의 소유권이 확정된 경우에만 내 로컬 킥 궤도를 종료한다.
+      // 내 킥 직후 먼저 도착하는 오래된 '내 드리블 소유권' 패킷은 무시한다.
       localKickTrack=null;
+    }else if(localKickTrack&&netBall.owner===mySid){
+      // 호스트가 킥 요청을 처리하기 직전에 보낸 이전 드리블 스냅샷이다.
+      // 이것으로 로컬 즉시 출발을 취소하면 공이 잠깐 멈춘 뒤 출발한다.
+      netBall.owner=null;
     }
     if(!Array.isArray(netBall.samples)) netBall.samples=[];
     let sampleX=netBall.netX,sampleY=netBall.netY,sampleZ=netBall.netZ;
