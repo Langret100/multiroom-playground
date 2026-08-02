@@ -1325,7 +1325,7 @@ function updatePreview(modeId){
     // ── Soccer: iframe → server relays ─────────────────────────────
     if (d.type === "sc_pos"){
       if (!fromMainForSoccer) return;
-      const isEvent = !!(d.kickAt || d.headerAt || d.tackleAt);
+      const isEvent = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
       // 킥/헤딩/태클의 최초 edge 패킷은 위치 쓰로틀을 기다리지 않는다.
       if (!isEvent){
         const _now = Date.now();
@@ -1335,8 +1335,10 @@ function updatePreview(modeId){
       }
       const soccerState = {
         __game: "soccer",
+        stateSeq: d.stateSeq,
         x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
-        dribble:!!d.dribble,dribbleBallX:d.dribbleBallX,dribbleBallY:d.dribbleBallY,
+        dribble:d.dribble==null?undefined:!!d.dribble,dribbleBallX:d.dribbleBallX,dribbleBallY:d.dribbleBallY,
+        claimAt:d.claimAt,claimBallX:d.claimBallX,claimBallY:d.claimBallY,
         kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
         kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
         kickBallX:d.kickBallX, kickBallY:d.kickBallY,
@@ -1353,19 +1355,16 @@ function updatePreview(modeId){
       const soccerNow = Date.now();
       if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
 
-      // 세 액션은 모두 위치와 달리 한 번의 edge 이벤트다. 공용 tg_state
-      // 집계 주기를 기다리면 게스트 판정이 늦으므로 새로운 id는 축구 전용
-      // 경로로도 즉시 한 번 보내고, 반복 패킷은 아래 공용 경로만 사용한다.
-      const urgentActionId=d.kickAt?`k:${d.kickAt}`:
-        (d.headerAt?`h:${d.headerAt}`:(d.tackleAt?`t:${d.tackleAt}`:""));
-      if(urgentActionId&&urgentActionId!==coop.soccerLastUrgentActionId){
-        coop.soccerLastUrgentActionId=urgentActionId;
+      // 액션 edge는 sc_pos 한 경로로만 보낸다. 같은 stateSeq를 sc_pos와
+      // tg_state에 동시에 보내면 도착 순서에 따라 액션 필드가 없는 상태가 먼저
+      // 적용되어 킥/claim이 유실될 수 있다. 반복 edge도 같은 전용 경로를 사용하고,
+      // 게임 쪽 kickAt/headerAt/claimAt id가 중복 물리 적용을 막는다.
+      if(isEvent){
         try{ room.send("sc_pos", soccerState); }catch(_){ }
+        return;
       }
 
-      // 다른 게임에서 실제 사용 중인 검증된 집계 경로를 축구 이동의 주 경로로 쓴다.
-      // 축구 전용 sc_players와 동시에 좌표를 받으면 서로 다른 시점의 값이 덮어써져
-      // 상대가 멈추거나 튀는 현상이 생길 수 있으므로, 둘을 동시에 활성화하지 않는다.
+      // 일반 이동만 검증된 tg_state 집계 경로를 사용한다.
       try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
 
       // tg_players가 1.2초 안에 한 번도 돌아오지 않거나 도중에 1.5초 이상
@@ -1386,7 +1385,8 @@ function updatePreview(modeId){
       }, coop.soccerLocalState || {});
       state.isHost = getMyIsHost();
       state.ball = {
-        x:d.x, y:d.y, z:d.z||0, vx:d.vx, vy:d.vy, vz:d.vz||0, owner:d.owner, at:soccerNow,
+        x:d.x, y:d.y, z:d.z||0, vx:d.vx, vy:d.vy, vz:d.vz||0, owner:d.owner,
+        sentAt:Number(d.sentAt||soccerNow), at:Number(d.sentAt||soccerNow), ballSeq:Number(d.ballSeq||0),
         impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0
       };
       coop.soccerLocalState = state;
@@ -3052,6 +3052,7 @@ try{
           if (sharedBall){
             postToMain({
               type:"sc_ball", x:sharedBall.x, y:sharedBall.y, z:sharedBall.z||0, vx:sharedBall.vx, vy:sharedBall.vy, vz:sharedBall.vz||0, owner:sharedBall.owner,
+              sentAt:Number(sharedBall.sentAt||sharedBall.at||0), ballSeq:Number(sharedBall.ballSeq||0),
               impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0
             });
           }
@@ -3145,6 +3146,7 @@ try{
         if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({
           type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0, vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
+          sentAt:Number(msg.sentAt||msg.at||0), ballSeq:Number(msg.ballSeq||0),
           impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0
         });
       });
