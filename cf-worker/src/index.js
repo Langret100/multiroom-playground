@@ -1769,6 +1769,8 @@ export class RoomDO{
           p.kickX = Number(d.kickX ?? p.kickX ?? p.x);
           p.kickY = Number(d.kickY ?? p.kickY ?? p.y);
           p.kickDir = Number(d.kickDir ?? p.kickDir ?? p.dir);
+          p.kickVX = Number(d.kickVX ?? p.kickVX ?? p.vx ?? 0);
+          p.kickVY = Number(d.kickVY ?? p.kickVY ?? p.vy ?? 0);
           p.kickBallX = Number(d.kickBallX ?? p.kickBallX ?? 0);
           p.kickBallY = Number(d.kickBallY ?? p.kickBallY ?? 0);
         }

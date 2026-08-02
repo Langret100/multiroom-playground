@@ -1341,6 +1341,7 @@ function updatePreview(modeId){
         claimAt:d.claimAt,claimBallX:d.claimBallX,claimBallY:d.claimBallY,
         kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
         kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
+        kickVX:d.kickVX, kickVY:d.kickVY,
         kickBallX:d.kickBallX, kickBallY:d.kickBallY,
         headerAt:d.headerAt,headerX:d.headerX,headerY:d.headerY,headerDir:d.headerDir,
         headerBallX:d.headerBallX,headerBallY:d.headerBallY,tackleAt:d.tackleAt,

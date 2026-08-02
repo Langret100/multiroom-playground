@@ -108,6 +108,25 @@
 <div id="overlay"><h2 id="ovTitle">연결 대기 중...</h2><p id="ovText">잠시만 기다려주세요.</p></div>
 
 <script>
+/*
+===============================================================================
+수학축구 핵심 수정 주의사항 — 문제 발생 시 먼저 읽을 것
+===============================================================================
+1) 연결이 확인된 통신 골격(tg_state/tg_players 주 경로 + sc_* 보조 경로)을
+   임의로 단일화하거나 역할을 뒤바꾸지 않는다. room.js와 Worker를 반드시 함께 본다.
+2) 공의 실제 위치·소유권·골 판정은 호스트만 결정한다. 게스트 예측은 화면 반응용이다.
+3) 게스트 킥/재획득 문제를 시간 제한이나 강제 스냅 조건으로 덮지 않는다.
+   localKickTrack, netBall.owner, claim 처리의 우선순위를 먼저 확인한다.
+4) 게스트가 권위상 공 소유자가 되면 남아 있는 킥 예측/보정 상태를 즉시 폐기하고
+   드리블 표시로 전환해야 한다. 그렇지 않으면 공이 찬 자리에 고정돼 보인다.
+5) 이동 중 킥은 버튼을 놓은 순간의 속도(kickVX/kickVY)를 이벤트에 고정해 보낸다.
+   이후 프레임의 감속된 vx/vy로 다시 계산하면 약한 이동 킥이 드리블처럼 보인다.
+6) 호스트 확정과 게스트 예측은 반드시 동일한 makeKickSpec/stepFreeBallState를 쓴다.
+7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
+8) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
+   동시 claim, 헤딩, 태클, 골 판정, 방장 승계, 세 파일 node --check.
+===============================================================================
+*/
 'use strict';
 
 /* ── 임베드/브릿지 (투게스터와 동일한 방식) ─────────────────────────────
@@ -157,7 +176,7 @@ const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
 const DRIBBLE_DISTANCE = PR+BR-1; // 몸에 붙이지 않고 발끝에서 한 박자씩 굴리는 기본 거리
-const MAX_BALL_SPEED = 5.10;      // 강슛의 첫 속도는 살리되 지상 구름 저항으로 비거리를 제어
+const MAX_BALL_SPEED = 5.70;      // 강슛의 첫 속도는 살리되 지상 구름 저항으로 비거리를 제어
 const BALL_GRAVITY = 0.061;       // 로프트가 떠 있기만 하지 않고 자연스럽게 내려오게 조정
 const BALL_BOUNCE = 0.18;         // 잔디 바운드는 낮고 빠르게 안정됨
 const BALL_AIR_DRAG = 0.9965;     // 공중 슛도 지나치게 멀리 뻗지 않게 감쇠
@@ -184,7 +203,7 @@ function makeKickSpec(charge, dir, playerVX=0, playerVY=0){
   const runCarry=Math.min(1.45,forwardRun*.34);
   // 달리면서 차는 경우 공이 선수보다 최소 1.05px/step 빠르게 출발하도록 한다.
   // 송신 속도가 보간 때문에 약간 낮게 잡혀도 실제 전력질주보다 앞서도록 하한을 둔다.
-  const separationSpeed=forwardRun>.45 ? Math.max(forwardRun+1.05+.18*c,4.75+.20*c) : 0;
+  const separationSpeed=forwardRun>.45 ? Math.max(forwardRun+1.30+.20*c,5.20+.18*c) : 0;
   const launchSpeed=Math.min(MAX_BALL_SPEED,Math.max(power+runCarry,separationSpeed));
   const loft=c<.48?0:lerp(.90,2.18,(c-.48)/.52);
   return {
@@ -693,6 +712,8 @@ function applyRemotePlayers(map){
         if(snap.kickX!=null)p.kickX=Number(snap.kickX);
         if(snap.kickY!=null)p.kickY=Number(snap.kickY);
         if(snap.kickDir!=null)p.kickDir=Number(snap.kickDir);
+        if(snap.kickVX!=null)p.kickVX=Number(snap.kickVX);
+        if(snap.kickVY!=null)p.kickVY=Number(snap.kickVY);
         if(snap.kickBallX!=null)p.kickBallX=Number(snap.kickBallX);
         if(snap.kickBallY!=null)p.kickBallY=Number(snap.kickBallY);
         p._pendingKickAt=incomingKickAt;
@@ -761,6 +782,8 @@ function applyRemotePlayers(map){
     if(snap.kickX!=null) p.kickX=Number(snap.kickX);
     if(snap.kickY!=null) p.kickY=Number(snap.kickY);
     if(snap.kickDir!=null) p.kickDir=Number(snap.kickDir);
+    if(snap.kickVX!=null) p.kickVX=Number(snap.kickVX);
+    if(snap.kickVY!=null) p.kickVY=Number(snap.kickVY);
     if(snap.kickBallX!=null) p.kickBallX=Number(snap.kickBallX);
     if(snap.kickBallY!=null) p.kickBallY=Number(snap.kickBallY);
     const incomingHeaderAt=Number(snap.headerAt||0);
@@ -797,6 +820,7 @@ function showOverlay(title, text){
 let kickCharging = false, kickChargeStart = 0;
 let pendingKickAt = 0, pendingKickCharge = 0, pendingKickUntil = 0;
 let pendingKickX=0, pendingKickY=0, pendingKickDir=0, pendingKickBallX=0, pendingKickBallY=0;
+let pendingKickVX=0, pendingKickVY=0;
 let pendingHeaderAt=0,pendingHeaderUntil=0;
 let pendingHeaderX=0,pendingHeaderY=0,pendingHeaderDir=0,pendingHeaderBallX=0,pendingHeaderBallY=0;
 let pendingTackleAt=0,pendingTackleUntil=0;
@@ -847,6 +871,8 @@ function releaseKickCharge(){
   pendingKickUntil = pendingKickAt+650;
   const kickBall=ball_or_netball();
   pendingKickX=me.x; pendingKickY=me.y; pendingKickDir=me.dir;
+  // 버튼을 놓은 바로 이 순간의 이동속도를 킥 이벤트에 고정한다.
+  pendingKickVX=Number(me.vx||0); pendingKickVY=Number(me.vy||0);
   const ownsKickBall=(kickBall.owner===mySid);
   // 소유 중 킥은 양쪽 모두 선수 발앞의 동일한 결정론적 시작점을 사용한다.
   // 자유공 킥만 현재 공 좌표를 유지한다.
@@ -860,6 +886,7 @@ function releaseKickCharge(){
   me.kickAt = pendingKickAt;
   me.kickCharge = pendingKickCharge;
   me.kickX=pendingKickX; me.kickY=pendingKickY; me.kickDir=pendingKickDir;
+  me.kickVX=pendingKickVX; me.kickVY=pendingKickVY;
   me.kickBallX=pendingKickBallX; me.kickBallY=pendingKickBallY;
   me._kickPoseUntil = Date.now()+180;
   me._kickReceivedAt=pendingKickAt;
@@ -868,6 +895,7 @@ function releaseKickCharge(){
     x:me.x,y:me.y,vx:me.vx,vy:me.vy,dir:me.dir,
     kickAt:pendingKickAt,kickCharge:pendingKickCharge,tackle:!!me.tackle,
     kickX:pendingKickX,kickY:pendingKickY,kickDir:pendingKickDir,
+    kickVX:pendingKickVX,kickVY:pendingKickVY,
     kickBallX:pendingKickBallX,kickBallY:pendingKickBallY,
   };
   // 이전에는 netSends()의 다음 30ms 주기까지 기다려 게스트 슛이 호스트보다
@@ -891,7 +919,7 @@ function releaseKickCharge(){
       lastBallSpeedSeen=Math.max(lastBallSpeedSeen,1.10+pendingKickCharge*1.30);
       // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
       // 전진시킨다. 그래서 이펙트 뒤 공이 멈춰 있다가 뒤늦게 출발하지 않는다.
-      const spec=makeKickSpec(pendingKickCharge,me.dir,me.vx||0,me.vy||0);
+      const spec=makeKickSpec(pendingKickCharge,me.dir,pendingKickVX,pendingKickVY);
       netBall.x=ownedLocally?pendingKickBallX:b.x;
       netBall.y=ownedLocally?pendingKickBallY:b.y;
       netBall.z=Math.max(0,b.z||0);
@@ -1133,6 +1161,25 @@ function updateNetBall(){
   if(isHost)return;
   const now=Date.now();
   netBall.visualAt=now;
+
+  // 권위상 내가 공 소유자가 된 순간에는 이전 킥 예측/보정을 즉시 끝낸다.
+  // 이 우선순위가 localKickTrack보다 뒤에 있으면, 호스트 화면은 재드리블 중인데
+  // 게스트 화면만 공이 마지막 킥 위치에 남아 있는 현상이 생긴다.
+  if(netBall.owner===mySid&&me&&(netBall.netZ||0)<5){
+    localKickTrack=null;
+    netBall.kickReconcile=null;
+    netBall.samples=[];
+    netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
+    netBall.renderOffsetUntil=0;
+    localDribbleVisualUntil=now+260;
+    const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
+    netBall.x=lerp(Number(netBall.x||target.x),target.x,.97);
+    netBall.y=lerp(Number(netBall.y||target.y),target.y,.97);
+    netBall.z=lerp(Number(netBall.z||0),0,.86);netBall.vz=0;
+    netBall.vx=lerp(Number(netBall.vx||0),(me.vx||0)*.78,.58);
+    netBall.vy=lerp(Number(netBall.vy||0),(me.vy||0)*.78,.58);
+    return;
+  }
 
   // 호스트 확정 전까지만 로컬 예측을 사용한다. 확정되면 실제 판정 좌표는
   // 즉시 권위 공으로 전환하고, 화면 위치만 짧은 오프셋으로 이어 붙인다.
@@ -1389,7 +1436,9 @@ function updateBallHost(advancePhysics=true){
         p._pendingKickAt = 0;
         const dir = Number.isFinite(p.kickDir) ? p.kickDir : (Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx));
         const charge=clamp(p.kickCharge||0,0,1);
-        const spec=makeKickSpec(charge,dir,effectiveVX,effectiveVY);
+        const kickVX=Number.isFinite(p.kickVX)?p.kickVX:effectiveVX;
+        const kickVY=Number.isFinite(p.kickVY)?p.kickVY:effectiveVY;
+        const spec=makeKickSpec(charge,dir,kickVX,kickVY);
         // 소유 중 킥은 게스트와 호스트가 같은 선수 발앞 시작점을 사용한다.
         // 자유공은 권위 공 좌표를 그대로 사용하며, 보고 좌표로 임의 보정하지 않는다.
         if(ownedByShooter){
@@ -1647,6 +1696,7 @@ function netSends(){
       claimBallX:pendingClaimBallX,claimBallY:pendingClaimBallY,
       kickAt, kickCharge,
       kickX:pendingKickX, kickY:pendingKickY, kickDir:pendingKickDir,
+      kickVX:pendingKickVX, kickVY:pendingKickVY,
       kickBallX:pendingKickBallX, kickBallY:pendingKickBallY,
       headerAt:headerActive?pendingHeaderAt:0,
       headerX:pendingHeaderX,headerY:pendingHeaderY,headerDir:pendingHeaderDir,
