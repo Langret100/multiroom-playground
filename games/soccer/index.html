@@ -176,7 +176,7 @@ const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
 const DRIBBLE_DISTANCE = PR+BR-1; // 몸에 붙이지 않고 발끝에서 한 박자씩 굴리는 기본 거리
-const MAX_BALL_SPEED = 5.70;      // 강슛의 첫 속도는 살리되 지상 구름 저항으로 비거리를 제어
+const MAX_BALL_SPEED = 6.35;      // 이동 중 킥이 선수보다 확실히 앞서도록 허용하되 마찰/중력으로 비거리를 제어
 const BALL_GRAVITY = 0.061;       // 로프트가 떠 있기만 하지 않고 자연스럽게 내려오게 조정
 const BALL_BOUNCE = 0.18;         // 잔디 바운드는 낮고 빠르게 안정됨
 const BALL_AIR_DRAG = 0.9965;     // 공중 슛도 지나치게 멀리 뻗지 않게 감쇠
@@ -200,15 +200,18 @@ function makeKickSpec(charge, dir, playerVX=0, playerVY=0){
   // 반드시 선수의 전진 속도보다 빨라야 하므로, 단순 가산 뒤 낮은 상한으로
   // 잘라 버리지 않고 "선수 속도 + 분리 여유"를 최저값으로 보장한다.
   const power=1.62+1.28*Math.pow(c,1.72);
-  const runCarry=Math.min(1.45,forwardRun*.34);
-  // 달리면서 차는 경우 공이 선수보다 최소 1.05px/step 빠르게 출발하도록 한다.
-  // 송신 속도가 보간 때문에 약간 낮게 잡혀도 실제 전력질주보다 앞서도록 하한을 둔다.
-  const separationSpeed=forwardRun>.45 ? Math.max(forwardRun+1.30+.20*c,5.20+.18*c) : 0;
+  const runningKick=forwardRun>.45;
+  const runCarry=runningKick?Math.min(1.70,forwardRun*.40):0;
+  // 이동 중 킥은 충전량이 작아도 드리블 속도와 분명히 분리돼야 한다.
+  // 선수의 전진속도보다 최소 1.65px/step 빠르게 하고, 낮은 로프트를 항상 준다.
+  const separationSpeed=runningKick ? Math.max(forwardRun+1.65+.25*c,5.65+.28*c) : 0;
   const launchSpeed=Math.min(MAX_BALL_SPEED,Math.max(power+runCarry,separationSpeed));
-  const loft=c<.48?0:lerp(.90,2.18,(c-.48)/.52);
+  const loft=runningKick
+    ? lerp(1.18,2.05,c)
+    : (c<.48?0:lerp(.90,2.18,(c-.48)/.52));
   return {
-    charge:c,dir,power,runCarry,forwardRun,launchSpeed,
-    startLead:DRIBBLE_DISTANCE+Math.min(11.0,forwardRun*2.15),
+    charge:c,dir,power,runCarry,forwardRun,runningKick,launchSpeed,
+    startLead:DRIBBLE_DISTANCE+Math.min(14.0,forwardRun*2.55),
     loft,vx:fx*launchSpeed,vy:fy*launchSpeed,vz:loft
   };
 }
@@ -1173,11 +1176,14 @@ function updateNetBall(){
     netBall.renderOffsetUntil=0;
     localDribbleVisualUntil=now+260;
     const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
-    netBall.x=lerp(Number(netBall.x||target.x),target.x,.97);
-    netBall.y=lerp(Number(netBall.y||target.y),target.y,.97);
-    netBall.z=lerp(Number(netBall.z||0),0,.86);netBall.vz=0;
-    netBall.vx=lerp(Number(netBall.vx||0),(me.vx||0)*.78,.58);
-    netBall.vy=lerp(Number(netBall.vy||0),(me.vy||0)*.78,.58);
+    // 자기 소유 공은 네트워크 스냅샷을 보간해 따라오게 하지 않는다.
+    // 호스트가 owner=mySid로 승인한 뒤에는 매 틱 동일한 발앞 목표를 직접 사용한다.
+    // 여기서 lerp를 쓰면 이전 킥 위치의 x축이 오래 남아 위아래만 따라오는 것처럼 보인다.
+    netBall.x=target.x;
+    netBall.y=target.y;
+    netBall.z=0;netBall.vz=0;
+    netBall.vx=(me.vx||0)*.78;
+    netBall.vy=(me.vy||0)*.78;
     return;
   }
 
@@ -1459,7 +1465,7 @@ function updateBallHost(advancePhysics=true){
         ball.owner=null;
         ball.ownerUntil=0;
         ball.lastKicker=sid;
-        ball.noPickupUntil=now+420;
+        ball.noPickupUntil=now+(spec.runningKick?560:420);
         p._kickPoseUntil=now+180;
         playKickImpactOnce(ball.impactAt,ball.x,ball.y,charge,dir);
         // 같은 프레임의 속도 변화 감지기가 이 효과를 한 번 더 재생하지 않게 기준 갱신.
