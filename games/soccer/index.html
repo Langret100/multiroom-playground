@@ -2565,13 +2565,25 @@ window.addEventListener('message', e=>{
       }
     }
     netBall.owner = d.owner ? String(d.owner) : null;
+    const localOwnerConfirmed=netBall.owner===mySid;
     if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
-    if(netBall.owner===mySid){
+    if(localOwnerConfirmed){
+      // [중요] 호스트가 owner=mySid를 보냈다면 재획득이 최종 확정된 것이다.
+      // 이전 킥 예측(localKickTrack)이 남아 있더라도 owner를 null로 되돌리면 안 된다.
+      // 그렇게 하면 호스트 화면만 드리블되고 게스트 화면 공은 마지막 킥 위치에 멈춘다.
       pendingClaimAt=0; pendingClaimUntil=0;
       localDribbleVisualUntil=now+420;
+      localKickTrack=null;
+      netBall.kickReconcile=null;
+      netBall.samples=[];
+      netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
+      netBall.renderOffsetUntil=0;
     }
     netBall.netT = now;
-    if(confirmsLocalKick){
+    if(localOwnerConfirmed){
+      // 소유권 확정은 킥 예측 확정보다 항상 우선한다. updateNetBall()이 다음 고정 틱에서
+      // 자기 발앞 목표로 즉시 배치하므로 여기서는 권위 owner를 그대로 보존한다.
+    }else if(confirmsLocalKick){
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
         vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
@@ -2587,7 +2599,8 @@ window.addEventListener('message', e=>{
       // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
       localKickTrack=null;
     }else if(localKickTrack&&netBall.owner){
-      // 확정 전 도착한 소유권은 킥 이전 스냅샷일 수 있으므로 예측을 취소하지 않는다.
+      // 다른 선수의 소유권이 킥 이전 스냅샷으로 늦게 도착한 경우에만 예측을 유지한다.
+      // 내 소유권(owner===mySid)은 위 localOwnerConfirmed 분기에서 절대 지우지 않는다.
       netBall.owner=null;
     }
     if(!Array.isArray(netBall.samples)) netBall.samples=[];
