@@ -125,6 +125,9 @@
 7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
 8) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
    동시 claim, 헤딩, 태클, 골 판정, 방장 승계, 세 파일 node --check.
+   - 재획득 직후 공 위치를 이전 자유공 좌표에서 발앞으로 lerp하지 않는다. 최초 소유권 확정은
+     즉시 발앞 목표로 스냅하고, 이미 소유 중인 연속 드리블에서만 보간한다. 이 원칙을 어기면
+     호스트와 게스트 모두 재드리블 시작 위치가 옆/뒤로 어긋난다.
 ===============================================================================
 */
 'use strict';
@@ -1396,12 +1399,22 @@ function updateBallHost(advancePhysics=true){
     const moving=speed>.08;
     const target=dribbleTargetForPlayer(p,effectiveVX,effectiveVY,now);
     const wasOwner=ball.owner===sid&&now<(ball.ownerUntil||0);
-    const blend=wasOwner?(moving?.72:.82):(claimValid?.82:.68);
-    ball.x=lerp(ball.x,target.x,blend);
-    ball.y=lerp(ball.y,target.y,blend);
+    // 새 소유권이 확정되는 순간에는 이전 자유공/킥 위치에서 발앞까지 보간하지 않는다.
+    // 그 보간이 재드리블 시작 시 공이 옆이나 뒤에 남아 있다가 뒤늦게 붙는 공통 원인이었다.
+    // 최초 획득은 결정론적인 발앞 목표로 즉시 스냅하고, 이미 소유 중일 때만 부드럽게 추종한다.
+    if(!wasOwner){
+      ball.x=target.x;
+      ball.y=target.y;
+      ball.vx=effectiveVX*.78;
+      ball.vy=effectiveVY*.78;
+    }else{
+      const blend=moving?.82:.90;
+      ball.x=lerp(ball.x,target.x,blend);
+      ball.y=lerp(ball.y,target.y,blend);
+      ball.vx=lerp(ball.vx,effectiveVX*.78,moving?.38:.30);
+      ball.vy=lerp(ball.vy,effectiveVY*.78,moving?.38:.30);
+    }
     ball.z=0;ball.vz=0;
-    ball.vx=lerp(ball.vx,effectiveVX*.78,moving?.30:.24);
-    ball.vy=lerp(ball.vy,effectiveVY*.78,moving?.30:.24);
     ball.owner=sid;
     ball.ownerUntil=now+260;
     if(claimValid){
