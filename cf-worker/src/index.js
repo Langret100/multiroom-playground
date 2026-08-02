@@ -1753,13 +1753,45 @@ export class RoomDO{
         p.dir = Number(d.dir ?? p.dir);
         p.vx  = Number(d.vx  ?? 0);
         p.vy  = Number(d.vy  ?? 0);
-        p.tackle = !!d.tackle;
+        if (d.stateSeq != null) p.stateSeq = Number(d.stateSeq) || p.stateSeq || 0;
+        if (d.dribble != null) p.dribble = !!d.dribble;
+        if (d.dribbleBallX != null) p.dribbleBallX = Number(d.dribbleBallX);
+        if (d.dribbleBallY != null) p.dribbleBallY = Number(d.dribbleBallY);
+
+        const isAction = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
         if (d.kickAt){
           p.kickAt = Number(d.kickAt) || p.kickAt;
           p.kickCharge = Number(d.kickCharge ?? p.kickCharge ?? 0);
+          if (d.kickX != null) p.kickX = Number(d.kickX);
+          if (d.kickY != null) p.kickY = Number(d.kickY);
+          if (d.kickDir != null) p.kickDir = Number(d.kickDir);
+          if (d.kickBallX != null) p.kickBallX = Number(d.kickBallX);
+          if (d.kickBallY != null) p.kickBallY = Number(d.kickBallY);
         }
+        if (d.headerAt){
+          p.headerAt = Number(d.headerAt) || p.headerAt || 0;
+          if (d.headerX != null) p.headerX = Number(d.headerX);
+          if (d.headerY != null) p.headerY = Number(d.headerY);
+          if (d.headerDir != null) p.headerDir = Number(d.headerDir);
+          if (d.headerBallX != null) p.headerBallX = Number(d.headerBallX);
+          if (d.headerBallY != null) p.headerBallY = Number(d.headerBallY);
+        }
+        if (d.tackleAt){
+          p.tackleAt = Number(d.tackleAt) || p.tackleAt || 0;
+          p.tackle = !!d.tackle;
+        } else if (d.tackle != null){
+          p.tackle = !!d.tackle;
+        }
+        if (d.claimAt){
+          p.claimAt = Number(d.claimAt) || p.claimAt || 0;
+          if (d.claimBallX != null) p.claimBallX = Number(d.claimBallX);
+          if (d.claimBallY != null) p.claimBallY = Number(d.claimBallY);
+        }
+
         const n = now();
-        if (n - (this.sc.lastPosBroadcastAt || 0) < 33) return; // ~30Hz (was ~20Hz; tighter for smoother sync)
+        // 액션 edge는 33ms 위치 방송 제한을 적용하면 안 된다. 제한 구간에 걸린 뒤
+        // tg_state 경로만 계속 사용되면 해당 sc_pos edge가 영원히 방송되지 않는다.
+        if (!isAction && n - (this.sc.lastPosBroadcastAt || 0) < 33) return;
         this.sc.lastPosBroadcastAt = n;
         this._broadcast("sc_players", { players: this.sc.players });
         return;

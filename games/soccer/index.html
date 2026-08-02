@@ -166,7 +166,7 @@ const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
 const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
 const FIXED_STEP_MS = 1000/60;   // 물리/소유권 판정은 화면 주사율과 무관하게 60Hz 고정
 const MAX_FIXED_STEPS = 5;        // 긴 프레임 뒤 과도한 따라잡기 방지
-const BALL_PREDICTION_MAX_MS = 260; // 게스트 시각 예측 최대 시간
+const BALL_PREDICTION_MAX_MS = 600; // 직접 액션 릴레이/호스트 확정을 기다리는 게스트 시각 예측 최대 시간
 
 
 // 킥 물리의 단일 기준. 호스트 판정과 게스트 즉시 표시가 반드시 같은 값을 쓴다.
@@ -524,7 +524,7 @@ function makePlayer(seat, nick){
     tackle:false, dribble:false, dribbleBallX:sp.x, dribbleBallY:sp.y,
     _lastStateSeq:0, _dribbleReceivedAt:0,
     claimAt:0, claimBallX:sp.x, claimBallY:sp.y, _lastClaimAt:0, _claimReceivedAt:0,
-    _lastKickAt:0, _lastHeaderAt:0,
+    _lastKickAt:0, _lastHeaderAt:0, _lastTackleAt:0,
     netSamples:[],
   };
 }
@@ -625,6 +625,14 @@ function applyRoster(list){
 function applyRemotePlayers(map){
   if (!map) return;
   const now = Date.now();
+  const ACTION_EDGE_MAX_AGE_MS = 1800;
+  const actionIdIsUsable=(id)=>{
+    id=Number(id||0);
+    if(!id)return false;
+    // 액션 id는 Date.now() 기반이다. 오래 저장된 sc_players 스냅샷이나
+    // 비정상적으로 먼 미래값이 새 접속자에게 재생되지 않도록 제한한다.
+    return id >= now-ACTION_EDGE_MAX_AGE_MS && id <= now+5000;
+  };
   for (const [sid, snap] of Object.entries(map)){
     if (sid === mySid) continue;
     let p = players[sid];
@@ -634,10 +642,51 @@ function applyRemotePlayers(map){
       p = players[sid] = makePlayer(seat, snap.nick);
     }
     const incomingStateSeq=Number(snap.stateSeq||0);
-    // 순서 번호를 사용하기 시작한 플레이어에게서 번호 없는 과거/구형 패킷이
-    // 늦게 도착하면 최신 소유권과 액션을 되돌릴 수 있으므로 거부한다.
-    if(Number(p._lastStateSeq||0)>0&&incomingStateSeq<=0)continue;
-    if(incomingStateSeq>0&&incomingStateSeq<=Number(p._lastStateSeq||0))continue;
+    const staleState=(Number(p._lastStateSeq||0)>0&&incomingStateSeq<=0)||
+      (incomingStateSeq>0&&incomingStateSeq<=Number(p._lastStateSeq||0));
+    const actionOnly=!!snap.__actionOnly;
+
+    // sc_pos 보조 경로의 액션 패킷은 좌표 스냅샷이 아니다. tg_players보다
+    // stateSeq가 새롭더라도 위치/속도를 덮지 않고 아직 처리하지 않은 edge만 병합한다.
+    if(staleState||actionOnly){
+      const incomingKickAt=Number(snap.kickAt||0);
+      if(actionIdIsUsable(incomingKickAt)&&incomingKickAt!==p.kickAt&&incomingKickAt!==p._lastKickAt){
+        p.kickAt=incomingKickAt;
+        p.kickCharge=Number(snap.kickCharge||0);
+        if(snap.kickX!=null)p.kickX=Number(snap.kickX);
+        if(snap.kickY!=null)p.kickY=Number(snap.kickY);
+        if(snap.kickDir!=null)p.kickDir=Number(snap.kickDir);
+        if(snap.kickBallX!=null)p.kickBallX=Number(snap.kickBallX);
+        if(snap.kickBallY!=null)p.kickBallY=Number(snap.kickBallY);
+        p._pendingKickAt=incomingKickAt;
+        p._kickReceivedAt=now;
+        p._kickPoseUntil=now+180;
+      }
+      const incomingHeaderAt=Number(snap.headerAt||0);
+      if(actionIdIsUsable(incomingHeaderAt)&&incomingHeaderAt!==p.headerAt&&incomingHeaderAt!==p._lastHeaderAt){
+        p.headerAt=incomingHeaderAt;
+        if(snap.headerX!=null)p.headerX=Number(snap.headerX);
+        if(snap.headerY!=null)p.headerY=Number(snap.headerY);
+        if(snap.headerDir!=null)p.headerDir=Number(snap.headerDir);
+        if(snap.headerBallX!=null)p.headerBallX=Number(snap.headerBallX);
+        if(snap.headerBallY!=null)p.headerBallY=Number(snap.headerBallY);
+        p._headerPoseStart=now;p._headerPoseUntil=now+HEADER_DUR_MS;p._headerContactAt=now+90;
+        playHeaderJumpFxOnce(incomingHeaderAt,p.x,p.y,p.color);
+      }
+      const incomingTackleAt=Number(snap.tackleAt||0);
+      if(actionIdIsUsable(incomingTackleAt)&&incomingTackleAt!==p.tackleAt&&incomingTackleAt!==p._lastTackleAt){
+        p.tackleAt=incomingTackleAt;p.tackle=!!snap.tackle;
+        p._tacklePoseStart=now;p._tacklePoseUntil=now+TACKLE_DUR_MS;
+      }
+      const incomingClaimAt=Number(snap.claimAt||0);
+      if(actionIdIsUsable(incomingClaimAt)&&incomingClaimAt!==p.claimAt&&incomingClaimAt!==p._lastClaimAt){
+        p.claimAt=incomingClaimAt;
+        if(snap.claimBallX!=null)p.claimBallX=Number(snap.claimBallX);
+        if(snap.claimBallY!=null)p.claimBallY=Number(snap.claimBallY);
+        p._claimReceivedAt=now;p._claimAttempts=0;
+      }
+      continue;
+    }
     if(incomingStateSeq>0)p._lastStateSeq=incomingStateSeq;
     p.netX = Number(snap.x ?? p.netX);
     p.netY = Number(snap.y ?? p.netY);
@@ -655,22 +704,22 @@ function applyRemotePlayers(map){
     if(snap.dribbleBallY!=null)p.dribbleBallY=Number(snap.dribbleBallY);
     if (snap.dir != null) p.dir = Number(snap.dir);
     const incomingClaimAt=Number(snap.claimAt||0);
-    if(incomingClaimAt && incomingClaimAt!==p.claimAt){
+    if(actionIdIsUsable(incomingClaimAt) && incomingClaimAt!==p.claimAt){
       p._claimReceivedAt=now;
       p._claimAttempts=0;
     }
-    p.claimAt=Number(snap.claimAt??p.claimAt??0);
+    if(actionIdIsUsable(incomingClaimAt))p.claimAt=incomingClaimAt;
     if(snap.claimBallX!=null)p.claimBallX=Number(snap.claimBallX);
     if(snap.claimBallY!=null)p.claimBallY=Number(snap.claimBallY);
     const incomingKickAt=Number(snap.kickAt||0);
-    if(incomingKickAt && incomingKickAt!==p.kickAt){
+    if(actionIdIsUsable(incomingKickAt) && incomingKickAt!==p.kickAt){
       p._kickPoseUntil=now+180;
       if(incomingKickAt!==p._lastKickAt && incomingKickAt!==p._pendingKickAt){
         p._pendingKickAt=incomingKickAt;
         p._kickReceivedAt=now;
       }
     }
-    p.kickAt = Number(snap.kickAt ?? p.kickAt ?? 0);
+    if(actionIdIsUsable(incomingKickAt))p.kickAt=incomingKickAt;
     p.kickCharge = Number(snap.kickCharge ?? p.kickCharge ?? 0);
     if(snap.kickX!=null) p.kickX=Number(snap.kickX);
     if(snap.kickY!=null) p.kickY=Number(snap.kickY);
@@ -678,26 +727,24 @@ function applyRemotePlayers(map){
     if(snap.kickBallX!=null) p.kickBallX=Number(snap.kickBallX);
     if(snap.kickBallY!=null) p.kickBallY=Number(snap.kickBallY);
     const incomingHeaderAt=Number(snap.headerAt||0);
-    if(incomingHeaderAt && incomingHeaderAt!==p.headerAt){
+    if(actionIdIsUsable(incomingHeaderAt) && incomingHeaderAt!==p.headerAt){
       p._headerPoseStart=now;
       p._headerPoseUntil=now+HEADER_DUR_MS;
       playHeaderJumpFxOnce(incomingHeaderAt,p.x,p.y,p.color);
-      // 이미 네트워크 왕복 일부를 소비했으므로 원격 판정은 남은 준비 동작만
-      // 기다린다. 호스트 로컬과 게스트의 실제 버튼→접촉 체감 차이를 줄인다.
       p._headerContactAt=now+90;
     }
-    p.headerAt=Number(snap.headerAt??p.headerAt??0);
+    if(actionIdIsUsable(incomingHeaderAt))p.headerAt=incomingHeaderAt;
     if(snap.headerX!=null)p.headerX=Number(snap.headerX);
     if(snap.headerY!=null)p.headerY=Number(snap.headerY);
     if(snap.headerDir!=null)p.headerDir=Number(snap.headerDir);
     if(snap.headerBallX!=null)p.headerBallX=Number(snap.headerBallX);
     if(snap.headerBallY!=null)p.headerBallY=Number(snap.headerBallY);
     const incomingTackleAt=Number(snap.tackleAt||0);
-    if(incomingTackleAt&&incomingTackleAt!==p.tackleAt){
+    if(actionIdIsUsable(incomingTackleAt)&&incomingTackleAt!==p.tackleAt){
       p._tacklePoseStart=now;
       p._tacklePoseUntil=now+TACKLE_DUR_MS;
     }
-    p.tackleAt=Number(snap.tackleAt??p.tackleAt??0);
+    if(actionIdIsUsable(incomingTackleAt))p.tackleAt=incomingTackleAt;
     p.tackle = !!snap.tackle;
   }
 }
@@ -901,7 +948,12 @@ function updateMe(){
   const tackling = now < tackleActiveUntil;
   const heading=now<(me._headerPoseUntil||0);
   const sprinting = !kickCharging && !tackling && !heading && ((keys['KeyE']) || (IS_MOBILE && rawLen>.88));
-  const SPD = tackling ? 4.0 : (heading?2.25:(sprinting ? 3.35 : (kickCharging ? 1.85 : 2.70)));
+  // 고정 60Hz 전환 뒤 느려진 체감을 보정한다. 일반 이동뿐 아니라 달리기,
+  // 킥 충전 중 이동, 헤딩/태클 이동도 같은 비율로 올려 상태 전환 때 속도가
+  // 갑자기 꺾이지 않게 한다.
+  const PLAYER_SPEED_MULTIPLIER = 1.25;
+  const baseSpeed = tackling ? 4.0 : (heading?2.25:(sprinting ? 3.35 : (kickCharging ? 1.85 : 2.70)));
+  const SPD = baseSpeed * PLAYER_SPEED_MULTIPLIER;
   const targetVX=dx*SPD, targetVY=dy*SPD;
   // 즉시 최고속도로 바뀌던 이동을 가속/감속 방식으로 바꿔 출발, 방향 전환,
   // 급정지가 구분된다. 차징 중에는 속도가 낮아져 슛 타이밍에도 선택이 생긴다.
