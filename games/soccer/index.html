@@ -166,7 +166,9 @@ const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
 const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
 const FIXED_STEP_MS = 1000/60;   // 물리/소유권 판정은 화면 주사율과 무관하게 60Hz 고정
 const MAX_FIXED_STEPS = 5;        // 긴 프레임 뒤 과도한 따라잡기 방지
-const BALL_PREDICTION_MAX_MS = 600; // 직접 액션 릴레이/호스트 확정을 기다리는 게스트 시각 예측 최대 시간
+const BALL_PREDICTION_MIN_WAIT_MS = 700; // 정상 왕복 지연 중에는 예측을 강제로 되감지 않는다
+const BALL_PREDICTION_HARD_MAX_MS = 1200; // 응답 유실 시에도 예측이 무한 유지되지는 않게 한다
+const BALL_PREDICTION_REJECT_SNAPSHOTS = 4; // 킥 이후 권위 스냅샷이 충분히 왔는데도 확정이 없을 때만 거부로 판단
 
 
 // 킥 물리의 단일 기준. 호스트 판정과 게스트 즉시 표시가 반드시 같은 값을 쓴다.
@@ -625,13 +627,11 @@ function applyRoster(list){
 function applyRemotePlayers(map){
   if (!map) return;
   const now = Date.now();
-  const ACTION_EDGE_MAX_AGE_MS = 1800;
   const actionIdIsUsable=(id)=>{
-    id=Number(id||0);
-    if(!id)return false;
-    // 액션 id는 Date.now() 기반이다. 오래 저장된 sc_players 스냅샷이나
-    // 비정상적으로 먼 미래값이 새 접속자에게 재생되지 않도록 제한한다.
-    return id >= now-ACTION_EDGE_MAX_AGE_MS && id <= now+5000;
+    // 액션 id는 생성 기기의 Date.now()를 식별자로만 쓴다. 서로 다른 PC/모바일의
+    // 시계가 몇 초 이상 어긋날 수 있으므로 호스트 현재 시각과 비교해 폐기하지 않는다.
+    // 중복 실행은 각 선수의 _lastKickAt/_lastHeaderAt/_lastTackleAt/_lastClaimAt으로 막는다.
+    return Number(id||0)>0;
   };
   for (const [sid, snap] of Object.entries(map)){
     if (sid === mySid) continue;
@@ -870,6 +870,10 @@ function releaseKickCharge(){
       localKickTrack={
         id:String(pendingKickAt), createdAt:Date.now(), lastAt:Date.now(), confirmed:false,
         separated:false, reacquireAfter:Date.now()+300,
+        // 킥 직전까지 수신한 호스트 공 순번을 기준으로, 그 이후 권위 스냅샷이
+        // 몇 개나 도착했는지 센다. 단순 시간 초과만으로 정상 킥을 되감지 않는다.
+        baselineBallSeq:Number(netBall.lastAcceptedBallSeq||netBall.netBallSeq||0),
+        authoritySnapshots:0,
         authAt:0, authX:netBall.x, authY:netBall.y, authZ:netBall.z,
         authVX:netBall.vx, authVY:netBall.vy, authVZ:netBall.vz
       };
@@ -1074,9 +1078,16 @@ function updateNetBall(){
     track.lastAt=now;
     stepFreeBallState(netBall,dt/(1000/60));
 
-    // 확정 전 예측 공은 소유권 판정에 사용하지 않는다. 호스트가 킥을 거부하거나
-    // 응답이 유실된 경우에도 무한히 별도 물리를 돌리지 않고 권위 공으로 복귀한다.
-    if(now-Number(track.createdAt||now)>BALL_PREDICTION_MAX_MS){
+    // 확정 전 예측 공은 소유권 판정에 사용하지 않는다. 예전에는 260ms가 지나면
+    // 호스트 응답 상태를 보지 않고 무조건 권위 공으로 복귀해, 정상 왕복 지연도
+    // 킥 거부로 오판하고 공이 요요처럼 돌아왔다. 이제는 최소 대기시간이 지난 뒤
+    // 킥 이후의 새 권위 스냅샷이 여러 개 도착했는데도 impactAt 확정이 없을 때만
+    // 거부로 판단한다. 패킷 유실 상황은 hard max에서만 안전하게 복귀한다.
+    const predictionAge=now-Number(track.createdAt||now);
+    const rejectedByAuthority=predictionAge>BALL_PREDICTION_MIN_WAIT_MS&&
+      Number(track.authoritySnapshots||0)>=BALL_PREDICTION_REJECT_SNAPSHOTS;
+    const hardExpired=predictionAge>BALL_PREDICTION_HARD_MAX_MS;
+    if(rejectedByAuthority||hardExpired){
       beginBallAuthorityHandoff({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
         vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
@@ -2331,6 +2342,11 @@ window.addEventListener('message', e=>{
     const incomingImpact=d.impactAt?String(d.impactAt):'';
     const newImpact=!!(incomingImpact&&incomingImpact!==String(netBall.impactAt||''));
     const confirmsLocalKick=!!(localKickTrack&&incomingImpact===String(localKickTrack.id));
+    // 로컬 킥이 시작된 뒤 생성된 호스트 공 스냅샷만 거부 판단에 사용한다.
+    // 킥 전에 이미 전송돼 늦게 도착한 스냅샷은 baselineBallSeq 이하라 세지 않는다.
+    if(localKickTrack&&incomingBallSeq>Number(localKickTrack.baselineBallSeq||0)){
+      localKickTrack.authoritySnapshots=Number(localKickTrack.authoritySnapshots||0)+1;
+    }
     const preservingLocalKick=!!localKickTrack;
     netBall.netX = Number(d.x ?? netBall.netX);
     netBall.netY = Number(d.y ?? netBall.netY);

@@ -1759,8 +1759,10 @@ export class RoomDO{
         if (d.dribbleBallY != null) p.dribbleBallY = Number(d.dribbleBallY);
 
         const isAction = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
+        if (d.kickAt != null){
+          p.kickAt = Number(d.kickAt) || 0;
+        }
         if (d.kickAt){
-          p.kickAt = Number(d.kickAt) || p.kickAt;
           p.kickCharge = Number(d.kickCharge ?? p.kickCharge ?? 0);
           if (d.kickX != null) p.kickX = Number(d.kickX);
           if (d.kickY != null) p.kickY = Number(d.kickY);
@@ -1768,22 +1770,28 @@ export class RoomDO{
           if (d.kickBallX != null) p.kickBallX = Number(d.kickBallX);
           if (d.kickBallY != null) p.kickBallY = Number(d.kickBallY);
         }
+        if (d.headerAt != null){
+          p.headerAt = Number(d.headerAt) || 0;
+        }
         if (d.headerAt){
-          p.headerAt = Number(d.headerAt) || p.headerAt || 0;
           if (d.headerX != null) p.headerX = Number(d.headerX);
           if (d.headerY != null) p.headerY = Number(d.headerY);
           if (d.headerDir != null) p.headerDir = Number(d.headerDir);
           if (d.headerBallX != null) p.headerBallX = Number(d.headerBallX);
           if (d.headerBallY != null) p.headerBallY = Number(d.headerBallY);
         }
+        if (d.tackleAt != null){
+          p.tackleAt = Number(d.tackleAt) || 0;
+        }
         if (d.tackleAt){
-          p.tackleAt = Number(d.tackleAt) || p.tackleAt || 0;
           p.tackle = !!d.tackle;
         } else if (d.tackle != null){
           p.tackle = !!d.tackle;
         }
+        if (d.claimAt != null){
+          p.claimAt = Number(d.claimAt) || 0;
+        }
         if (d.claimAt){
-          p.claimAt = Number(d.claimAt) || p.claimAt || 0;
           if (d.claimBallX != null) p.claimBallX = Number(d.claimBallX);
           if (d.claimBallY != null) p.claimBallY = Number(d.claimBallY);
         }
@@ -1793,7 +1801,9 @@ export class RoomDO{
         // tg_state 경로만 계속 사용되면 해당 sc_pos edge가 영원히 방송되지 않는다.
         if (!isAction && n - (this.sc.lastPosBroadcastAt || 0) < 33) return;
         this.sc.lastPosBroadcastAt = n;
-        this._broadcast("sc_players", { players: this.sc.players });
+        // 액션 방송은 방 전체의 오래 저장된 edge를 재전송하지 않고 현재 송신자만
+        // 보낸다. 일반 위치 fallback에서는 명시적 0으로 정리된 전체 상태를 보낸다.
+        this._broadcast("sc_players", { players: isAction ? { [uid]: p } : this.sc.players });
         return;
       }
       if (t === "sc_ball"){
@@ -1806,7 +1816,7 @@ export class RoomDO{
         // 서버 권한 기준이 어긋날 때(좌석 0이 방장이 아닌 경우) 공 물리를
         // 아무도 계산하지 못해 공이 완전히 멈춰버리는 치명적 버그가 된다.
         if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
-        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), z: Math.max(0, Number(d.z ?? 0)), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), vz: Number(d.vz ?? 0), owner: d.owner ?? null, impactAt: String(d.impactAt||''), impactPower: Number(d.impactPower||0), impactDir: Number(d.impactDir||0) };
+        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), z: Math.max(0, Number(d.z ?? 0)), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), vz: Number(d.vz ?? 0), owner: d.owner ?? null, impactAt: String(d.impactAt||''), impactPower: Number(d.impactPower||0), impactDir: Number(d.impactDir||0), sentAt: Number(d.sentAt||0), ballSeq: Number(d.ballSeq||0) };
         // broadcast to everyone except the sender (host already has authoritative local state)
         for (const [sock, sUid] of this.sockets.entries()){
           if (sUid && sUid !== uid) this._send(sock, "sc_ball", this.sc.ball);

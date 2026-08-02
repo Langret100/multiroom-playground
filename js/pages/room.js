@@ -1355,17 +1355,15 @@ function updatePreview(modeId){
       const soccerNow = Date.now();
       if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
 
-      // 액션 edge는 sc_pos 한 경로로만 보낸다. 같은 stateSeq를 sc_pos와
-      // tg_state에 동시에 보내면 도착 순서에 따라 액션 필드가 없는 상태가 먼저
-      // 적용되어 킥/claim이 유실될 수 있다. 반복 edge도 같은 전용 경로를 사용하고,
-      // 게임 쪽 kickAt/headerAt/claimAt id가 중복 물리 적용을 막는다.
+      // 액션은 검증된 tg_state 주 경로에도 반드시 싣고, 즉시 반응을 위한 sc_pos
+      // 보조 경로에도 함께 보낸다. 이전 보강에서 sc_pos 전용으로 분리하면서 정상인
+      // tg_players 경로를 끊어 게스트 킥이 호스트에 확정되지 않는 요요 현상이 생겼다.
+      // 같은 action id가 두 경로로 와도 게임 쪽 _last* 비교가 물리 중복 적용을 막는다.
+      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
       if(isEvent){
         try{ room.send("sc_pos", soccerState); }catch(_){ }
         return;
       }
-
-      // 일반 이동만 검증된 tg_state 집계 경로를 사용한다.
-      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
 
       // tg_players가 1.2초 안에 한 번도 돌아오지 않거나 도중에 1.5초 이상
       // 끊긴 경우에만 기존 sc_pos 경로를 자동 보조 경로로 사용한다.
