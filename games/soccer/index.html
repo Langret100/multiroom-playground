@@ -157,7 +157,7 @@ const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
 const DRIBBLE_DISTANCE = PR+BR-1; // 몸에 붙이지 않고 발끝에서 한 박자씩 굴리는 기본 거리
-const MAX_BALL_SPEED = 3.70;      // 강슛의 첫 속도는 살리되 지상 구름 저항으로 비거리를 제어
+const MAX_BALL_SPEED = 5.10;      // 강슛의 첫 속도는 살리되 지상 구름 저항으로 비거리를 제어
 const BALL_GRAVITY = 0.061;       // 로프트가 떠 있기만 하지 않고 자연스럽게 내려오게 조정
 const BALL_BOUNCE = 0.18;         // 잔디 바운드는 낮고 빠르게 안정됨
 const BALL_AIR_DRAG = 0.9965;     // 공중 슛도 지나치게 멀리 뻗지 않게 감쇠
@@ -174,21 +174,21 @@ const BALL_PREDICTION_REJECT_SNAPSHOTS = 12; // 킥 이후 권위 스냅샷이 �
 // 킥 물리의 단일 기준. 호스트 판정과 게스트 즉시 표시가 반드시 같은 값을 쓴다.
 function makeKickSpec(charge, dir, playerVX=0, playerVY=0){
   const c=clamp(Number(charge)||0,0,1);
-  // 킥 자체의 힘과 달리는 선수의 전진 관성을 분리한다. 달리면서 찰 때는
-  // 선수의 진행 방향 성분만 공에 더해져, 공이 선수보다 확실히 앞으로 빠진다.
-  // 뒤로 움직이거나 옆으로 미끄러지는 속도는 슛을 약하게 만들지 않도록 제외한다.
   const fx=Math.cos(dir), fy=Math.sin(dir);
   const forwardRun=Math.max(0,Number(playerVX||0)*fx+Number(playerVY||0)*fy);
+
+  // 정지 킥의 힘과 달리기 관성을 분리한다. 달리는 중에는 공의 첫 속도가
+  // 반드시 선수의 전진 속도보다 빨라야 하므로, 단순 가산 뒤 낮은 상한으로
+  // 잘라 버리지 않고 "선수 속도 + 분리 여유"를 최저값으로 보장한다.
   const power=1.55+1.35*Math.pow(c,1.60);
-  const runCarry=Math.min(.95,forwardRun*.62);
+  const runCarry=Math.min(1.55,forwardRun*.36);
+  const separationSpeed=forwardRun>.45 ? forwardRun+.58+.22*c : 0;
+  const launchSpeed=Math.min(MAX_BALL_SPEED,Math.max(power+runCarry,separationSpeed));
   const loft=c<.48?0:lerp(.90,2.18,(c-.48)/.52);
-  let vx=fx*(power+runCarry), vy=fy*(power+runCarry);
-  const speed=Math.hypot(vx,vy);
-  if(speed>MAX_BALL_SPEED){ vx*=MAX_BALL_SPEED/speed; vy*=MAX_BALL_SPEED/speed; }
   return {
-    charge:c,dir,power,runCarry,forwardRun,
-    startLead:DRIBBLE_DISTANCE+Math.min(5.5,forwardRun*1.35),
-    loft,vx,vy,vz:loft
+    charge:c,dir,power,runCarry,forwardRun,launchSpeed,
+    startLead:DRIBBLE_DISTANCE+Math.min(7.0,forwardRun*1.45),
+    loft,vx:fx*launchSpeed,vy:fy*launchSpeed,vz:loft
   };
 }
 
@@ -207,11 +207,14 @@ function stepFreeBallState(state, steps=1){
   const preDragSpeed=Math.hypot(Number(state.vx||0),Number(state.vy||0));
   // 잔디 위 공은 일정 비율로 영원히 미끄러지지 않는다. 느린 패스는 빨리 멈추고,
   // 강하게 찬 공은 초반 속도를 유지하다 속도가 낮아지면 자연스럽게 감속한다.
-  let groundDrag=.991;
-  if(preDragSpeed<.70) groundDrag=.948;
-  else if(preDragSpeed<1.25) groundDrag=.966;
-  else if(preDragSpeed<2.05) groundDrag=.980;
-  else if(preDragSpeed<2.85) groundDrag=.987;
+  let groundDrag=.975;
+  if(preDragSpeed>4.20) groundDrag=.920;
+  else if(preDragSpeed>3.60) groundDrag=.950;
+  else if(preDragSpeed>2.85) groundDrag=.975;
+  else if(preDragSpeed>2.05) groundDrag=.985;
+  else if(preDragSpeed>1.25) groundDrag=.980;
+  else if(preDragSpeed>.70) groundDrag=.966;
+  else groundDrag=.948;
   const drag=Math.pow(state.z>0?BALL_AIR_DRAG:groundDrag,count);
   state.vx*=drag; state.vy*=drag;
   if(state.z<=0&&Math.hypot(state.vx,state.vy)<.055){state.vx=0;state.vy=0;}
@@ -1093,31 +1096,23 @@ function beginBallAuthorityHandoff(auth, now=Date.now(), duration=220){
 }
 
 function confirmBallAuthoritySmooth(auth, track, now=Date.now()){
-  const px=Number(netBall.x||0), py=Number(netBall.y||0), pz=Math.max(0,Number(netBall.z||0));
-  const ax=Number(auth.x??netBall.netX??px), ay=Number(auth.y??netBall.netY??py);
-  const az=Math.max(0,Number(auth.z??netBall.netZ??pz));
-  let dx=Number(track?.dirX||auth.vx||0), dy=Number(track?.dirY||auth.vy||0);
-  const dl=Math.hypot(dx,dy)||1; dx/=dl; dy/=dl;
-  const sx=-dy, sy=dx;
-  const predictedAlong=px*dx+py*dy;
-  const authorityAlong=ax*dx+ay*dy;
-  const predictedAcross=px*sx+py*sy;
-  const authorityAcross=ax*sx+ay*sy;
-
-  // 호스트 확정 좌표가 예측 공보다 뒤에 있어도 화면 공을 뒤로 당기지 않는다.
-  // 전진축은 현재 위치를 유지하고, 좌우 오차만 즉시 작게 정리한 뒤 호스트 공이
-  // 따라잡으면 정상 보간으로 복귀한다. 판정 데이터와 속도는 즉시 호스트 값을 쓴다.
-  const keepAlong=Math.max(predictedAlong,authorityAlong);
-  const across=lerp(predictedAcross,authorityAcross,.72);
-  netBall.x=dx*keepAlong+sx*across;
-  netBall.y=dy*keepAlong+sy*across;
-  netBall.z=lerp(pz,az,.65);
-  netBall.vx=Number(auth.vx??netBall.netVX??netBall.vx??0);
-  netBall.vy=Number(auth.vy??netBall.netVY??netBall.vy??0);
-  netBall.vz=Number(auth.vz??netBall.netVZ??netBall.vz??0);
+  // 확정 순간 과거 권위 좌표로 갈아타지 않는다. 현재 로컬 예측 위치와
+  // 최신 권위 위치의 전진축 차이를 visualLead로 저장하고, 권위 공은 계속
+  // 앞으로 움직이는 동안 그 차이만 서서히 줄인다. 따라서 화면 공은 한 번도
+  // 뒤로 가지 않으면서 최종적으로 호스트 궤도에 합류한다.
+  let dx=Number(track?.dirX||auth.vx||0),dy=Number(track?.dirY||auth.vy||0);
+  const dl=Math.hypot(dx,dy)||1;dx/=dl;dy/=dl;
+  const px=Number(netBall.x||0),py=Number(netBall.y||0);
+  const ax=Number(auth.x??netBall.netX??px),ay=Number(auth.y??netBall.netY??py);
+  track.confirmed=true;
+  track.confirmedAt=now;
+  track.authReceivedAt=now;
+  track.authX=ax;track.authY=ay;track.authZ=Math.max(0,Number(auth.z??0));
+  track.authVX=Number(auth.vx??0);track.authVY=Number(auth.vy??0);track.authVZ=Number(auth.vz??0);
+  track.visualLead=Math.max(0,(px*dx+py*dy)-(ax*dx+ay*dy));
+  track.dirX=dx;track.dirY=dy;
   netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
   netBall.renderOffsetUntil=0;
-  netBall.kickReconcile={dirX:dx,dirY:dy,until:now+700};
   netBall.samples=[];
 }
 function ballRenderState(b){
@@ -1148,27 +1143,50 @@ function updateNetBall(){
     const track=localKickTrack;
     const dt=clamp(now-(track.lastAt||now),0,34);
     track.lastAt=now;
-    stepFreeBallState(netBall,dt/(1000/60));
 
-    // 확정 전 예측 공은 소유권 판정에 사용하지 않는다. 예전에는 260ms가 지나면
-    // 호스트 응답 상태를 보지 않고 무조건 권위 공으로 복귀해, 정상 왕복 지연도
-    // 킥 거부로 오판하고 공이 요요처럼 돌아왔다. 이제는 최소 대기시간이 지난 뒤
-    // 킥 이후의 새 권위 스냅샷이 여러 개 도착했는데도 impactAt 확정이 없을 때만
-    // 거부로 판단한다. 패킷 유실 상황은 hard max에서만 안전하게 복귀한다.
-    const predictionAge=now-Number(track.createdAt||now);
-    const rejectedByAuthority=predictionAge>BALL_PREDICTION_MIN_WAIT_MS&&
-      Number(track.authoritySnapshots||0)>=BALL_PREDICTION_REJECT_SNAPSHOTS;
-    const hardExpired=predictionAge>BALL_PREDICTION_HARD_MAX_MS;
-    if(rejectedByAuthority||hardExpired){
-      // 늦은 확정을 킥 거부로 오판해 뒤로 당겼다가 다시 날아가는 요요를 막는다.
-      // 현재 전진 위치는 유지하고 권위 속도/옆 오차만 받아들이며 부드럽게 합류한다.
-      confirmBallAuthoritySmooth({
-        x:netBall.netX,y:netBall.netY,z:netBall.netZ,
-        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
-      },track,now);
+    if(!track.confirmed){
+      stepFreeBallState(netBall,dt/(1000/60));
+      const predictionAge=now-Number(track.createdAt||now);
+      const rejectedByAuthority=predictionAge>BALL_PREDICTION_MIN_WAIT_MS&&
+        Number(track.authoritySnapshots||0)>=BALL_PREDICTION_REJECT_SNAPSHOTS;
+      const hardExpired=predictionAge>BALL_PREDICTION_HARD_MAX_MS;
+      if(rejectedByAuthority||hardExpired){
+        confirmBallAuthoritySmooth({
+          x:netBall.netX,y:netBall.netY,z:netBall.netZ,
+          vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
+        },track,now);
+      }
+      return;
+    }
+
+    // 확정 뒤에는 권위 스냅샷을 현재 수신 시각까지 전진시킨 위치를 기준으로
+    // 표시한다. 예측 선행량은 420ms 동안 줄이되 전진축 좌표는 절대 감소시키지 않는다.
+    const dx=Number(track.dirX||0),dy=Number(track.dirY||0),sx=-dy,sy=dx;
+    const authSteps=clamp(now-Number(track.authReceivedAt||now),0,120)/(1000/60);
+    const auth={x:Number(track.authX||0),y:Number(track.authY||0),z:Math.max(0,Number(track.authZ||0)),
+      vx:Number(track.authVX||0),vy:Number(track.authVY||0),vz:Number(track.authVZ||0)};
+    stepFreeBallState(auth,authSteps);
+    const u=clamp((now-Number(track.confirmedAt||now))/420,0,1);
+    const lead=Number(track.visualLead||0)*(1-u)*(1-u);
+    const authAlong=auth.x*dx+auth.y*dy;
+    const oldAlong=Number(netBall.x||0)*dx+Number(netBall.y||0)*dy;
+    const authAcross=auth.x*sx+auth.y*sy;
+    const oldAcross=Number(netBall.x||0)*sx+Number(netBall.y||0)*sy;
+    const nextAlong=Math.max(oldAlong,authAlong+lead);
+    const nextAcross=lerp(oldAcross,authAcross,.34);
+    netBall.x=dx*nextAlong+sx*nextAcross;
+    netBall.y=dy*nextAlong+sy*nextAcross;
+    netBall.z=lerp(Number(netBall.z||0),auth.z,.32);
+    netBall.vx=lerp(Number(netBall.vx||0),auth.vx,.30);
+    netBall.vy=lerp(Number(netBall.vy||0),auth.vy,.30);
+    netBall.vz=lerp(Number(netBall.vz||0),auth.vz,.34);
+
+    if(u>=1){
+      netBall.kickReconcile={dirX:dx,dirY:dy,until:now+520};
+      netBall.samples=[];
       localKickTrack=null;
     }
-    if(localKickTrack)return;
+    return;
   }
 
   const claimedByOther=!!(netBall.owner&&netBall.owner!==mySid);
@@ -1375,7 +1393,7 @@ function updateBallHost(advancePhysics=true){
         p._pendingKickAt = 0;
         const dir = Number.isFinite(p.kickDir) ? p.kickDir : (Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx));
         const charge=clamp(p.kickCharge||0,0,1);
-        const spec=makeKickSpec(charge,dir,p.vx||0,p.vy||0);
+        const spec=makeKickSpec(charge,dir,effectiveVX,effectiveVY);
         // 소유 중 킥은 게스트와 호스트가 같은 선수 발앞 시작점을 사용한다.
         // 자유공은 권위 공 좌표를 그대로 사용하며, 보고 좌표로 임의 보정하지 않는다.
         if(ownedByShooter){
@@ -2488,14 +2506,17 @@ window.addEventListener('message', e=>{
     }
     netBall.netT = now;
     if(confirmsLocalKick){
-      // 예측은 여기서 끝낸다. 판정/재획득은 즉시 호스트 권위 좌표를 사용하고,
-      // 화면에는 작은 차이만 170ms 동안 감쇠해 뒤로 튀거나 멈추지 않게 한다.
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
         vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
       },localKickTrack,now);
-      localKickTrack=null;
-      netBall.owner=d.owner?String(d.owner):null;
+      netBall.owner=null;
+    }else if(localKickTrack&&localKickTrack.confirmed){
+      // 동일 킥의 후속 권위 스냅샷은 표시 위치를 덮지 않고 추적 상태만 갱신한다.
+      localKickTrack.authReceivedAt=now;
+      localKickTrack.authX=netBall.netX;localKickTrack.authY=netBall.netY;localKickTrack.authZ=netBall.netZ;
+      localKickTrack.authVX=netBall.netVX;localKickTrack.authVY=netBall.netVY;localKickTrack.authVZ=netBall.netVZ;
+      netBall.owner=null;
     }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)){
       // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
       localKickTrack=null;
@@ -2504,9 +2525,12 @@ window.addEventListener('message', e=>{
       netBall.owner=null;
     }
     if(!Array.isArray(netBall.samples)) netBall.samples=[];
-    let sampleX=netBall.netX,sampleY=netBall.netY,sampleZ=netBall.netZ;
-    netBall.samples.push({t:now,x:sampleX,y:sampleY,z:sampleZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
-    if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
+    if(!localKickTrack){
+      netBall.samples.push({t:now,x:netBall.netX,y:netBall.netY,z:netBall.netZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
+      if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
+    }else{
+      netBall.samples=[];
+    }
     if(d.impactAt){
       netBall.impactAt=String(d.impactAt);
       netBall.impactPower=Number(d.impactPower||0);
