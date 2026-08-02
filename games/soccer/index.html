@@ -180,14 +180,16 @@ function makeKickSpec(charge, dir, playerVX=0, playerVY=0){
   // 정지 킥의 힘과 달리기 관성을 분리한다. 달리는 중에는 공의 첫 속도가
   // 반드시 선수의 전진 속도보다 빨라야 하므로, 단순 가산 뒤 낮은 상한으로
   // 잘라 버리지 않고 "선수 속도 + 분리 여유"를 최저값으로 보장한다.
-  const power=1.55+1.35*Math.pow(c,1.60);
-  const runCarry=Math.min(1.55,forwardRun*.36);
-  const separationSpeed=forwardRun>.45 ? forwardRun+.58+.22*c : 0;
+  const power=1.62+1.28*Math.pow(c,1.72);
+  const runCarry=Math.min(1.45,forwardRun*.34);
+  // 달리면서 차는 경우 공이 선수보다 최소 1.05px/step 빠르게 출발하도록 한다.
+  // 송신 속도가 보간 때문에 약간 낮게 잡혀도 실제 전력질주보다 앞서도록 하한을 둔다.
+  const separationSpeed=forwardRun>.45 ? Math.max(forwardRun+1.05+.18*c,4.75+.20*c) : 0;
   const launchSpeed=Math.min(MAX_BALL_SPEED,Math.max(power+runCarry,separationSpeed));
   const loft=c<.48?0:lerp(.90,2.18,(c-.48)/.52);
   return {
     charge:c,dir,power,runCarry,forwardRun,launchSpeed,
-    startLead:DRIBBLE_DISTANCE+Math.min(7.0,forwardRun*1.45),
+    startLead:DRIBBLE_DISTANCE+Math.min(11.0,forwardRun*2.15),
     loft,vx:fx*launchSpeed,vy:fy*launchSpeed,vz:loft
   };
 }
@@ -234,17 +236,12 @@ function stepFreeBallState(state, steps=1){
 function dribbleTargetForPlayer(p, vx, vy, now=Date.now()){
   const speed=Math.hypot(vx||0,vy||0);
   const dir=Number.isFinite(p.dir)?p.dir:0;
-  const fx=Math.cos(dir), fy=Math.sin(dir), sx=-fy, sy=fx;
-  const moving=speed>.10;
-  const phase=(now+(Number(p.seat)||0)*97)/135;
-  const touch=moving?Math.max(0,Math.sin(phase))*Math.min(3.4,1.2+speed*.55):0;
-  const side=moving?Math.sin(phase*.5)*Math.min(1.4,speed*.24):0;
-  const lead=DRIBBLE_DISTANCE+Math.min(4.0,speed*.72)+touch;
-  return {
-    x:p.x+fx*lead+sx*side,
-    y:p.y+fy*lead+sy*side,
-    speed
-  };
+  const fx=Math.cos(dir), fy=Math.sin(dir);
+  // 드리블 위치를 Date.now() 기반 발 터치 파형으로 만들면 호스트와 게스트의
+  // 시계/수신 시점 차이만큼 서로 다른 공 좌표를 계산한다. 공 판정과 화면 위치는
+  // 하나의 결정론적 목표를 사용하고, 달리는 느낌은 속도에 따른 앞 간격으로만 낸다.
+  const lead=DRIBBLE_DISTANCE+Math.min(7.0,speed*1.05);
+  return {x:p.x+fx*lead,y:p.y+fy*lead,speed};
 }
 
 const canvas = document.getElementById('gc');
@@ -910,7 +907,7 @@ function releaseKickCharge(){
       netBall.kickReconcile=null;
       localKickTrack={
         id:String(pendingKickAt), createdAt:Date.now(), lastAt:Date.now(), confirmed:false,
-        separated:false, reacquireAfter:Date.now()+300,
+        separated:false, reacquireAfter:Date.now()+420,
         // 킥 직전까지 수신한 호스트 공 순번을 기준으로, 그 이후 권위 스냅샷이
         // 몇 개나 도착했는지 센다. 단순 시간 초과만으로 정상 킥을 되감지 않는다.
         baselineBallSeq:Number(netBall.lastAcceptedBallSeq||netBall.netBallSeq||0),
@@ -920,7 +917,7 @@ function releaseKickCharge(){
         dirX:Math.cos(me.dir), dirY:Math.sin(me.dir)
       };
       netBall.lastKicker=mySid;
-      netBall.noPickupUntil=Date.now()+300;
+      netBall.noPickupUntil=Date.now()+420;
     }
   }
 }
@@ -1182,7 +1179,7 @@ function updateNetBall(){
     netBall.vz=lerp(Number(netBall.vz||0),auth.vz,.34);
 
     if(u>=1){
-      netBall.kickReconcile={dirX:dx,dirY:dy,until:now+520};
+      netBall.kickReconcile={dirX:dx,dirY:dy,until:now+1400};
       netBall.samples=[];
       localKickTrack=null;
     }
@@ -1197,16 +1194,18 @@ function updateNetBall(){
   if(!netBall.owner&&!localKickTrack&&me&&(netBall.netZ||0)<5&&now>=Number(netBall.noPickupUntil||0)){
     const controlX=me.x+Math.cos(me.dir)*Math.min(8,Math.hypot(me.vx||0,me.vy||0)*1.1);
     const controlY=me.y+Math.sin(me.dir)*Math.min(8,Math.hypot(me.vx||0,me.vy||0)*1.1);
-    const pickupDist=Math.hypot(netBall.x-controlX,netBall.y-controlY);
-    if(pickupDist<PR+BR+10){
+    const visiblePickupDist=Math.hypot(netBall.x-controlX,netBall.y-controlY);
+    const authorityPickupDist=Math.hypot(Number(netBall.netX||netBall.x)-controlX,Number(netBall.netY||netBall.y)-controlY);
+    const pickupDist=Math.min(visiblePickupDist,authorityPickupDist);
+    if(pickupDist<PR+BR+16){
       if(now>=pendingClaimUntil){
         pendingClaimAt=now; pendingClaimUntil=now+520;
         pendingClaimBallX=netBall.x; pendingClaimBallY=netBall.y;
       }
       localDribbleVisualUntil=Math.max(localDribbleVisualUntil,now+180);
       const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
-      netBall.x=lerp(netBall.x,target.x,.76);
-      netBall.y=lerp(netBall.y,target.y,.76);
+      netBall.x=lerp(netBall.x,target.x,.94);
+      netBall.y=lerp(netBall.y,target.y,.94);
       netBall.z=lerp(netBall.z||0,0,.70);
       netBall.vx=lerp(netBall.vx||0,(me.vx||0)*.78,.48);
       netBall.vy=lerp(netBall.vy||0,(me.vy||0)*.78,.48);
@@ -1222,38 +1221,35 @@ function updateNetBall(){
     const pvx=isMine?(dribblePlayer.vx||0):(dribblePlayer.netVX||0);
     const pvy=isMine?(dribblePlayer.vy||0):(dribblePlayer.netVY||0);
     const target=dribbleTargetForPlayer(dribblePlayer,pvx,pvy,now);
-    netBall.x=lerp(netBall.x,target.x,isMine?.72:.30);
-    netBall.y=lerp(netBall.y,target.y,isMine?.72:.30);
+    netBall.x=lerp(netBall.x,target.x,isMine?.92:.55);
+    netBall.y=lerp(netBall.y,target.y,isMine?.92:.55);
     netBall.z=lerp(netBall.z||0,0,.55);netBall.vz=0;
     netBall.vx=lerp(netBall.vx||0,pvx*.78,.30);
     netBall.vy=lerp(netBall.vy||0,pvy*.78,.30);
     return;
   }
 
-  const renderAt=now-90;
+  // 공은 선수처럼 90ms 과거 버퍼를 재생하지 않는다. 축구공은 반응성이 중요하므로
+  // 최신 권위 스냅샷을 현재 시각까지 전진 계산하고 작은 오차만 보정한다.
   const samples=Array.isArray(netBall.samples)?netBall.samples:[];
-  while(samples.length>2&&samples[1].t<=renderAt)samples.shift();
-  let tx=netBall.netX,ty=netBall.netY,tz=Math.max(0,netBall.netZ||0);
+  const latest=samples.length?samples[samples.length-1]:null;
+  let tx=Number(netBall.netX||netBall.x),ty=Number(netBall.netY||netBall.y),tz=Math.max(0,Number(netBall.netZ||0));
   let tvx=Number(netBall.netVX||0),tvy=Number(netBall.netVY||0),tvz=Number(netBall.netVZ||0);
-  if(samples.length>=2&&samples[0].t<=renderAt&&renderAt<=samples[1].t){
-    const a=samples[0],b=samples[1],u=clamp((renderAt-a.t)/Math.max(1,b.t-a.t),0,1);
-    tx=lerp(a.x,b.x,u);ty=lerp(a.y,b.y,u);tz=lerp(a.z||0,b.z||0,u);
-    tvx=lerp(a.vx||0,b.vx||0,u);tvy=lerp(a.vy||0,b.vy||0,u);tvz=lerp(a.vz||0,b.vz||0,u);
-  }else if(samples.length){
-    const a=samples[samples.length-1],age=clamp(renderAt-a.t,0,120),steps=age*.06;
-    tx=a.x+(a.vx||0)*steps;ty=a.y+(a.vy||0)*steps;
-    tz=Math.max(0,(a.z||0)+(a.vz||0)*steps-.5*BALL_GRAVITY*steps*steps);
-    tvx=Number(a.vx||0);tvy=Number(a.vy||0);tvz=Number(a.vz||0);
+  if(latest){
+    const age=clamp(now-latest.t,0,100);
+    const auth={x:latest.x,y:latest.y,z:latest.z||0,vx:latest.vx||0,vy:latest.vy||0,vz:latest.vz||0};
+    stepFreeBallState(auth,age/(1000/60));
+    tx=auth.x;ty=auth.y;tz=auth.z;tvx=auth.vx;tvy=auth.vy;tvz=auth.vz;
   }
   const err=Math.hypot(tx-netBall.x,ty-netBall.y);
   const oldX=netBall.x,oldY=netBall.y;
   let nextX,nextY;
   if(err>180){nextX=tx;nextY=ty;netBall.z=tz;}
   else{
-    const correction=err>90?.38:(err>38?.22:.14);
+    const correction=err>90?.46:(err>38?.32:.24);
     nextX=lerp(netBall.x,tx,correction);
     nextY=lerp(netBall.y,ty,correction);
-    netBall.z=lerp(netBall.z||0,tz,err>40?.30:.18);
+    netBall.z=lerp(netBall.z||0,tz,err>40?.38:.28);
   }
   const reconcile=netBall.kickReconcile;
   if(reconcile&&now<Number(reconcile.until||0)){
@@ -1267,7 +1263,7 @@ function updateNetBall(){
       const nextAcross=nextX*sx+nextY*sy;
       nextX=dx*oldAlong+sx*nextAcross;
       nextY=dy*oldAlong+sy*nextAcross;
-    }else if(targetAlong>=oldAlong-1){
+    }else if(targetAlong>=oldAlong-1&&Math.abs(targetAlong-oldAlong)<10){
       netBall.kickReconcile=null;
     }
   }else if(reconcile){netBall.kickReconcile=null;}
@@ -1347,7 +1343,7 @@ function updateBallHost(advancePhysics=true){
     const moving=speed>.08;
     const target=dribbleTargetForPlayer(p,effectiveVX,effectiveVY,now);
     const wasOwner=ball.owner===sid&&now<(ball.ownerUntil||0);
-    const blend=wasOwner?(moving?.34:.52):(claimValid?.60:.46);
+    const blend=wasOwner?(moving?.72:.82):(claimValid?.82:.68);
     ball.x=lerp(ball.x,target.x,blend);
     ball.y=lerp(ball.y,target.y,blend);
     ball.z=0;ball.vz=0;
@@ -1414,7 +1410,7 @@ function updateBallHost(advancePhysics=true){
         ball.owner=null;
         ball.ownerUntil=0;
         ball.lastKicker=sid;
-        ball.noPickupUntil=now+300;
+        ball.noPickupUntil=now+420;
         p._kickPoseUntil=now+180;
         playKickImpactOnce(ball.impactAt,ball.x,ball.y,charge,dir);
         // 같은 프레임의 속도 변화 감지기가 이 효과를 한 번 더 재생하지 않게 기준 갱신.
@@ -2046,8 +2042,9 @@ function drawPlayer(p,mine,sid){
   const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*14):0;
   const dribbling=nearBall&&moving&&!kicking&&!heading&&!tackling;
   const proj=projectWorld(p.x,p.y,0);
-  p._visualDepthScale=lerp(Number(p._visualDepthScale||proj.scale),proj.scale,.12);
-  const depthScale=p._visualDepthScale;
+  // 발 프레임 교대와 동시에 y 좌표 원근 배율까지 변하면 크기가 출렁여 보인다.
+  // 캐릭터는 고정 배율로 그리고 경기장 깊이는 위치/그림자만으로 표현한다.
+  const depthScale=.95;
   const shadow=shadowSpecForY(p.y);
 
   ctx.save();
@@ -2077,8 +2074,8 @@ function drawPlayer(p,mine,sid){
     // 10~11 태클 / 12~14 대기 호흡 / 15~16 드리블 / 17~19 슛.
     // 원격 선수도 netVX/netVY와 현재 시간으로 같은 순환을 계산하므로 한 자세로
     // 미끄러지지 않는다. 기본 속도에서도 반드시 새 8프레임 달리기를 쓴다.
-    const moveFrames=[0,1,2,3,4,5,6,7];
-    const dribbleFrames=[0,15,2,3,4,16,6,7];
+    const moveFrames=[0,1,2,1,4,5,6,5];
+    const dribbleFrames=[0,15,2,15,4,16,6,16];
     const idleFrames=[12,13,14,13];
     const moveCycle=moveFrames[animStep%moveFrames.length];
     const dribbleCycle=dribbleFrames[animStep%dribbleFrames.length];
