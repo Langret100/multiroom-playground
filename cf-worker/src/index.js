@@ -1748,23 +1748,17 @@ export class RoomDO{
         try{ this._ensureSoccerPlayerRegistered(uid); }catch(_){ }
         const p = this.sc.players?.[uid];
         if (!p) return; // 좌석이 없는(관전 등) 클라이언트만 무시
-        const incomingStateSeq = Number(d.stateSeq || 0);
-        const previousStateSeq = Number(p.stateSeq || 0);
-        const staleState = incomingStateSeq > 0 && previousStateSeq > 0 && incomingStateSeq <= previousStateSeq;
+        p.x   = Number(d.x   ?? p.x);
+        p.y   = Number(d.y   ?? p.y);
+        p.dir = Number(d.dir ?? p.dir);
+        p.vx  = Number(d.vx  ?? 0);
+        p.vy  = Number(d.vy  ?? 0);
+        if (d.stateSeq != null) p.stateSeq = Number(d.stateSeq) || p.stateSeq || 0;
+        if (d.dribble != null) p.dribble = !!d.dribble;
+        if (d.dribbleBallX != null) p.dribbleBallX = Number(d.dribbleBallX);
+        if (d.dribbleBallY != null) p.dribbleBallY = Number(d.dribbleBallY);
+
         const isAction = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
-        // 동일 연결의 WebSocket 순서는 보존되지만, 재접속/중복 릴레이에 대비해
-        // 오래된 일반 상태는 버린다. 액션은 아래 edge id 비교를 위해 계속 읽는다.
-        if (!staleState){
-          p.x   = Number(d.x   ?? p.x);
-          p.y   = Number(d.y   ?? p.y);
-          p.dir = Number(d.dir ?? p.dir);
-          p.vx  = Number(d.vx  ?? 0);
-          p.vy  = Number(d.vy  ?? 0);
-          if (incomingStateSeq > 0) p.stateSeq = incomingStateSeq;
-          if (d.dribble != null) p.dribble = !!d.dribble;
-          if (d.dribbleBallX != null) p.dribbleBallX = Number(d.dribbleBallX);
-          if (d.dribbleBallY != null) p.dribbleBallY = Number(d.dribbleBallY);
-        }
         if (d.kickAt != null){
           p.kickAt = Number(d.kickAt) || 0;
         }

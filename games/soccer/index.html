@@ -128,13 +128,24 @@ function bridgeSend(type, payload={}){
   try{ parent.postMessage({ type, gameId:'soccer', ...payload }, '*'); }catch(_){}
 }
 
-/* ── 멀티플레이 동기화 구조 / 2026-08 재작성 ────────────────────────
- * 축구는 전용 sc_pos/sc_players와 sc_ball 경로만 사용한다.
- * 선수 입력/액션은 게스트→Worker→호스트로 전달되고, 공 물리·소유권·골 판정은
- * 호스트의 고정 60Hz 루프에서만 실행한다. 호스트는 단조 증가 ballSeq가 포함된
- * 공 스냅샷을 전송한다. 게스트는 같은 물리식으로 자기 킥만 즉시 예측하며,
- * 확정 스냅샷을 현재 시점까지 전진 계산한 뒤 작은 화면 오차만 감쇠한다.
- * tg_state/tg_players와의 이중 전송 및 과거 공 스냅샷 재생은 사용하지 않는다.
+/* ── 멀티플레이 동기화 구조 / 2026-07 수정 이유 ────────────────────────
+ * [기존 증상]
+ * bridge_init의 players 명단은 정상 도착해서 양쪽 화면에 캐릭터는 모두
+ * 만들어졌지만, 실제 이동은 축구 전용 sc_pos → sc_players 경로에만
+ * 의존했다. 배포 환경에서 이 전용 위치 스냅샷이 되돌아오지 않자 각 iframe은
+ * 자기 me 좌표만 갱신했고, 상대 캐릭터는 시작 위치에 멈춘 채 남았다.
+ * 공 역시 별도 sc_ball 경로만 써서 같은 환경에서 화면끼리 공유되지 않았다.
+ *
+ * [현재 해결 방식]
+ * 이 파일은 계속 sc_pos/sc_ball 형식으로 room.js에 상태를 보낸다. room.js가
+ * 이를 다른 협동게임에서 실제 동작이 확인된 tg_state → tg_players 공용 집계
+ * 경로에 __game:'soccer' 태그를 붙여 전달한다. 위치뿐 아니라 호스트의 공과
+ * 골/스턴/종료 이벤트도 같은 스냅샷에 포함한다. 공용 경로가 일정 시간
+ * 응답하지 않을 때만 기존 sc_* 경로를 자동 보조 경로로 사용한다.
+ *
+ * 두 경로의 좌표를 동시에 적용하면 오래된 스냅샷이 새 좌표를 덮어써서
+ * 멈춤/튐이 재발할 수 있다. 따라서 room.js의 주 경로 선택과 __game 태그를
+ * 제거하거나, sc_pos와 tg_state를 무조건 동시에 적용하지 말 것.
  */
 
 /* ── 캔버스 / 필드 좌표계 (고정 논리좌표, CSS로만 스케일) ── */
@@ -149,28 +160,36 @@ const DRIBBLE_DISTANCE = PR+BR-1; // 몸에 붙이지 않고 발끝에서 한 �
 const MAX_BALL_SPEED = 3.70;      // 강슛의 첫 속도는 살리되 지상 구름 저항으로 비거리를 제어
 const BALL_GRAVITY = 0.061;       // 로프트가 떠 있기만 하지 않고 자연스럽게 내려오게 조정
 const BALL_BOUNCE = 0.18;         // 잔디 바운드는 낮고 빠르게 안정됨
-const BALL_AIR_DRAG = 0.994;      // 로프트도 지상 슛과 비슷한 비거리 범위에 머물게 감쇠
+const BALL_AIR_DRAG = 0.9965;     // 공중 슛도 지나치게 멀리 뻗지 않게 감쇠
 const BALL_GOAL_MAX_Z = 38;      // 골대 크로스바 높이(화면 논리 높이)
 const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
 const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
 const FIXED_STEP_MS = 1000/60;   // 물리/소유권 판정은 화면 주사율과 무관하게 60Hz 고정
 const MAX_FIXED_STEPS = 5;        // 긴 프레임 뒤 과도한 따라잡기 방지
-const BALL_PREDICTION_HARD_MAX_MS = 3000; // 확정 패킷 유실 시에만 안전하게 권위 상태로 복귀
-const BALL_AUTH_EXTRAPOLATE_MAX_MS = 180; // 과거 스냅샷을 현재 시점까지 전진 계산하는 상한
-const BALL_ERROR_SMOOTH_MS = 110; // 확정 시 남은 작은 화면 오차만 짧게 감쇠
+const BALL_PREDICTION_MIN_WAIT_MS = 1600; // 정상 왕복 지연 중에는 예측을 강제로 되감지 않는다
+const BALL_PREDICTION_HARD_MAX_MS = 2600; // 응답 유실 시에도 예측이 무한 유지되지는 않게 한다
+const BALL_PREDICTION_REJECT_SNAPSHOTS = 12; // 킥 이후 권위 스냅샷이 충분히 왔는데도 확정이 없을 때만 거부로 판단
 
 
 // 킥 물리의 단일 기준. 호스트 판정과 게스트 즉시 표시가 반드시 같은 값을 쓴다.
-function makeKickSpec(charge, dir){
+function makeKickSpec(charge, dir, playerVX=0, playerVY=0){
   const c=clamp(Number(charge)||0,0,1);
-  // 탭 킥은 즉시 반응하되 충전 중간부터 힘이 폭증하지 않도록 완만한 곡선을 쓴다.
-  // 로프트는 강한 충전 구간에서만 시작해 조금 세게 눌렀다고 골대 끝까지 뜨지 않는다.
-  const power=1.60+0.90*Math.pow(c,1.50);
-  const loft=c<.78?0:lerp(.45,.95,(c-.78)/.22);
-  let vx=Math.cos(dir)*power, vy=Math.sin(dir)*power;
+  // 킥 자체의 힘과 달리는 선수의 전진 관성을 분리한다. 달리면서 찰 때는
+  // 선수의 진행 방향 성분만 공에 더해져, 공이 선수보다 확실히 앞으로 빠진다.
+  // 뒤로 움직이거나 옆으로 미끄러지는 속도는 슛을 약하게 만들지 않도록 제외한다.
+  const fx=Math.cos(dir), fy=Math.sin(dir);
+  const forwardRun=Math.max(0,Number(playerVX||0)*fx+Number(playerVY||0)*fy);
+  const power=1.55+1.35*Math.pow(c,1.60);
+  const runCarry=Math.min(.95,forwardRun*.62);
+  const loft=c<.48?0:lerp(.90,2.18,(c-.48)/.52);
+  let vx=fx*(power+runCarry), vy=fy*(power+runCarry);
   const speed=Math.hypot(vx,vy);
   if(speed>MAX_BALL_SPEED){ vx*=MAX_BALL_SPEED/speed; vy*=MAX_BALL_SPEED/speed; }
-  return {charge:c,dir,power,loft,vx,vy,vz:loft};
+  return {
+    charge:c,dir,power,runCarry,forwardRun,
+    startLead:DRIBBLE_DISTANCE+Math.min(5.5,forwardRun*1.35),
+    loft,vx,vy,vz:loft
+  };
 }
 
 // 한 프레임 공 물리. 호스트와 게스트 예측이 동일한 중력/저항/바운드를 사용한다.
@@ -662,9 +681,49 @@ function applyRemotePlayers(map){
     const incomingStateSeq=Number(snap.stateSeq||0);
     const staleState=(Number(p._lastStateSeq||0)>0&&incomingStateSeq<=0)||
       (incomingStateSeq>0&&incomingStateSeq<=Number(p._lastStateSeq||0));
-    // 축구 전용 WebSocket 경로는 송신 순서를 보존한다. 오래된 좌표/액션을
-    // 별도 병합하지 않고 통째로 버려 하나의 상태가 두 번 적용되지 않게 한다.
-    if(staleState)continue;
+    const actionOnly=!!snap.__actionOnly;
+
+    // sc_pos 보조 경로의 액션 패킷은 좌표 스냅샷이 아니다. tg_players보다
+    // stateSeq가 새롭더라도 위치/속도를 덮지 않고 아직 처리하지 않은 edge만 병합한다.
+    if(staleState||actionOnly){
+      const incomingKickAt=Number(snap.kickAt||0);
+      if(actionIdIsUsable(incomingKickAt)&&incomingKickAt!==p.kickAt&&incomingKickAt!==p._lastKickAt){
+        p.kickAt=incomingKickAt;
+        p.kickCharge=Number(snap.kickCharge||0);
+        if(snap.kickX!=null)p.kickX=Number(snap.kickX);
+        if(snap.kickY!=null)p.kickY=Number(snap.kickY);
+        if(snap.kickDir!=null)p.kickDir=Number(snap.kickDir);
+        if(snap.kickBallX!=null)p.kickBallX=Number(snap.kickBallX);
+        if(snap.kickBallY!=null)p.kickBallY=Number(snap.kickBallY);
+        p._pendingKickAt=incomingKickAt;
+        p._kickReceivedAt=now;
+        p._kickPoseUntil=now+180;
+      }
+      const incomingHeaderAt=Number(snap.headerAt||0);
+      if(actionIdIsUsable(incomingHeaderAt)&&incomingHeaderAt!==p.headerAt&&incomingHeaderAt!==p._lastHeaderAt){
+        p.headerAt=incomingHeaderAt;
+        if(snap.headerX!=null)p.headerX=Number(snap.headerX);
+        if(snap.headerY!=null)p.headerY=Number(snap.headerY);
+        if(snap.headerDir!=null)p.headerDir=Number(snap.headerDir);
+        if(snap.headerBallX!=null)p.headerBallX=Number(snap.headerBallX);
+        if(snap.headerBallY!=null)p.headerBallY=Number(snap.headerBallY);
+        p._headerPoseStart=now;p._headerPoseUntil=now+HEADER_DUR_MS;p._headerContactAt=now+90;
+        playHeaderJumpFxOnce(incomingHeaderAt,p.x,p.y,p.color);
+      }
+      const incomingTackleAt=Number(snap.tackleAt||0);
+      if(actionIdIsUsable(incomingTackleAt)&&incomingTackleAt!==p.tackleAt&&incomingTackleAt!==p._lastTackleAt){
+        p.tackleAt=incomingTackleAt;p.tackle=!!snap.tackle;
+        p._tacklePoseStart=now;p._tacklePoseUntil=now+TACKLE_DUR_MS;
+      }
+      const incomingClaimAt=Number(snap.claimAt||0);
+      if(actionIdIsUsable(incomingClaimAt)&&incomingClaimAt!==p.claimAt&&incomingClaimAt!==p._lastClaimAt){
+        p.claimAt=incomingClaimAt;
+        if(snap.claimBallX!=null)p.claimBallX=Number(snap.claimBallX);
+        if(snap.claimBallY!=null)p.claimBallY=Number(snap.claimBallY);
+        p._claimReceivedAt=now;p._claimAttempts=0;
+      }
+      continue;
+    }
     if(incomingStateSeq>0)p._lastStateSeq=incomingStateSeq;
     p.netX = Number(snap.x ?? p.netX);
     p.netY = Number(snap.y ?? p.netY);
@@ -783,8 +842,8 @@ function releaseKickCharge(){
   me._noDribbleReportUntil=pendingKickAt+450;
   localDribbleVisualUntil=0;
   pendingKickCharge = 0.20 + 0.80*charge; // 탭만 해도 최소한의 슛은 나가도록
-  // 일회성 액션은 일반 위치 패킷과 같은 전용 경로로 보내되, 일시적인 송신 누락에
-  // 대비해 같은 edge id를 짧게 반복한다. 호스트는 _lastKickAt으로 한 번만 적용한다.
+  // Worker의 tg_state 전송 제한(약 40ms)과 위치 송신 주기(약 30ms)가 엇갈려
+  // 한 프레임짜리 킥이 버려질 수 있으므로 같은 edge id를 잠깐 반복 전송한다.
   pendingKickUntil = pendingKickAt+650;
   const kickBall=ball_or_netball();
   pendingKickX=me.x; pendingKickY=me.y; pendingKickDir=me.dir;
@@ -832,7 +891,7 @@ function releaseKickCharge(){
       lastBallSpeedSeen=Math.max(lastBallSpeedSeen,1.10+pendingKickCharge*1.30);
       // 호스트 확인이 돌아오기 전 최대 180ms만 동일한 파워 공식으로 표시 공을
       // 전진시킨다. 그래서 이펙트 뒤 공이 멈춰 있다가 뒤늦게 출발하지 않는다.
-      const spec=makeKickSpec(pendingKickCharge,me.dir);
+      const spec=makeKickSpec(pendingKickCharge,me.dir,me.vx||0,me.vy||0);
       netBall.x=ownedLocally?pendingKickBallX:b.x;
       netBall.y=ownedLocally?pendingKickBallY:b.y;
       netBall.z=Math.max(0,b.z||0);
@@ -845,10 +904,16 @@ function releaseKickCharge(){
       // 다시 출발한다. 예측 시작점에서 과거 버퍼를 비우고 새 궤적만 재생한다.
       netBall.netX=netBall.x; netBall.netY=netBall.y; netBall.netZ=netBall.z;
       netBall.samples=[];
+      netBall.kickReconcile=null;
       localKickTrack={
         id:String(pendingKickAt), createdAt:Date.now(), lastAt:Date.now(), confirmed:false,
         separated:false, reacquireAfter:Date.now()+300,
+        // 킥 직전까지 수신한 호스트 공 순번을 기준으로, 그 이후 권위 스냅샷이
+        // 몇 개나 도착했는지 센다. 단순 시간 초과만으로 정상 킥을 되감지 않는다.
         baselineBallSeq:Number(netBall.lastAcceptedBallSeq||netBall.netBallSeq||0),
+        authoritySnapshots:0,
+        authAt:0, authX:netBall.x, authY:netBall.y, authZ:netBall.z,
+        authVX:netBall.vx, authVY:netBall.vy, authVZ:netBall.vz,
         dirX:Math.cos(me.dir), dirY:Math.sin(me.dir)
       };
       netBall.lastKicker=mySid;
@@ -1027,42 +1092,32 @@ function beginBallAuthorityHandoff(auth, now=Date.now(), duration=220){
   netBall.samples=[];
 }
 
-function projectAuthorityBall(auth, now=Date.now()){
-  const state={
-    x:Number(auth.x??netBall.netX??netBall.x??0),
-    y:Number(auth.y??netBall.netY??netBall.y??0),
-    z:Math.max(0,Number(auth.z??netBall.netZ??netBall.z??0)),
-    vx:Number(auth.vx??netBall.netVX??0),
-    vy:Number(auth.vy??netBall.netVY??0),
-    vz:Number(auth.vz??netBall.netVZ??0)
-  };
-  const sentAt=Number(auth.sentAt??netBall.netSentAt??now);
-  const age=clamp(now-sentAt,0,BALL_AUTH_EXTRAPOLATE_MAX_MS);
-  if(age>0)stepFreeBallState(state,age/FIXED_STEP_MS);
-  return state;
-}
-
 function confirmBallAuthoritySmooth(auth, track, now=Date.now()){
-  // 서버 스냅샷은 네트워크 지연만큼 과거 상태다. 원시 좌표를 바로 적용하면
-  // 예측 공이 뒤로 갔다 다시 전진하는 요요가 생기므로 현재 시점까지 먼저 전진 계산한다.
-  const visible=ballRenderState(netBall);
-  const projected=projectAuthorityBall(auth,now);
-  let dx=Number(track?.dirX||projected.vx||1),dy=Number(track?.dirY||projected.vy||0);
-  const dl=Math.hypot(dx,dy)||1;dx/=dl;dy/=dl;
-  const sx=-dy,sy=dx;
-  const errX=Number(visible.x||0)-projected.x;
-  const errY=Number(visible.y||0)-projected.y;
-  // 전진축 오차는 최대 3px만 남긴다. 큰 앞섬을 천천히 되감지 않고 즉시 정리해
-  // 화면에서 역방향 움직임이 보이지 않게 한다. 좌우 오차도 작은 범위만 감쇠한다.
-  const along=clamp(errX*dx+errY*dy,-8,3);
-  const across=clamp(errX*sx+errY*sy,-7,7);
-  netBall.x=projected.x;netBall.y=projected.y;netBall.z=projected.z;
-  netBall.vx=projected.vx;netBall.vy=projected.vy;netBall.vz=projected.vz;
-  netBall.renderOffsetX=dx*along+sx*across;
-  netBall.renderOffsetY=dy*along+sy*across;
-  netBall.renderOffsetZ=clamp(Number(visible.z||0)-projected.z,-5,5);
-  netBall.renderOffsetStartedAt=now;
-  netBall.renderOffsetUntil=now+BALL_ERROR_SMOOTH_MS;
+  const px=Number(netBall.x||0), py=Number(netBall.y||0), pz=Math.max(0,Number(netBall.z||0));
+  const ax=Number(auth.x??netBall.netX??px), ay=Number(auth.y??netBall.netY??py);
+  const az=Math.max(0,Number(auth.z??netBall.netZ??pz));
+  let dx=Number(track?.dirX||auth.vx||0), dy=Number(track?.dirY||auth.vy||0);
+  const dl=Math.hypot(dx,dy)||1; dx/=dl; dy/=dl;
+  const sx=-dy, sy=dx;
+  const predictedAlong=px*dx+py*dy;
+  const authorityAlong=ax*dx+ay*dy;
+  const predictedAcross=px*sx+py*sy;
+  const authorityAcross=ax*sx+ay*sy;
+
+  // 호스트 확정 좌표가 예측 공보다 뒤에 있어도 화면 공을 뒤로 당기지 않는다.
+  // 전진축은 현재 위치를 유지하고, 좌우 오차만 즉시 작게 정리한 뒤 호스트 공이
+  // 따라잡으면 정상 보간으로 복귀한다. 판정 데이터와 속도는 즉시 호스트 값을 쓴다.
+  const keepAlong=Math.max(predictedAlong,authorityAlong);
+  const across=lerp(predictedAcross,authorityAcross,.72);
+  netBall.x=dx*keepAlong+sx*across;
+  netBall.y=dy*keepAlong+sy*across;
+  netBall.z=lerp(pz,az,.65);
+  netBall.vx=Number(auth.vx??netBall.netVX??netBall.vx??0);
+  netBall.vy=Number(auth.vy??netBall.netVY??netBall.vy??0);
+  netBall.vz=Number(auth.vz??netBall.netVZ??netBall.vz??0);
+  netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
+  netBall.renderOffsetUntil=0;
+  netBall.kickReconcile={dirX:dx,dirY:dy,until:now+700};
   netBall.samples=[];
 }
 function ballRenderState(b){
@@ -1087,90 +1142,121 @@ function updateNetBall(){
   const now=Date.now();
   netBall.visualAt=now;
 
-  // 로컬 킥 예측은 호스트가 같은 impactAt을 확정할 때까지 동일한 60Hz 물리로 진행한다.
-  // 그 사이 도착한 킥 이전/과거 스냅샷은 권위 캐시에만 저장하고 화면 공에는 적용하지 않는다.
+  // 호스트 확정 전까지만 로컬 예측을 사용한다. 확정되면 실제 판정 좌표는
+  // 즉시 권위 공으로 전환하고, 화면 위치만 짧은 오프셋으로 이어 붙인다.
   if(localKickTrack){
     const track=localKickTrack;
     const dt=clamp(now-(track.lastAt||now),0,34);
     track.lastAt=now;
-    stepFreeBallState(netBall,dt/FIXED_STEP_MS);
-    if(now-Number(track.createdAt||now)>BALL_PREDICTION_HARD_MAX_MS){
+    stepFreeBallState(netBall,dt/(1000/60));
+
+    // 확정 전 예측 공은 소유권 판정에 사용하지 않는다. 예전에는 260ms가 지나면
+    // 호스트 응답 상태를 보지 않고 무조건 권위 공으로 복귀해, 정상 왕복 지연도
+    // 킥 거부로 오판하고 공이 요요처럼 돌아왔다. 이제는 최소 대기시간이 지난 뒤
+    // 킥 이후의 새 권위 스냅샷이 여러 개 도착했는데도 impactAt 확정이 없을 때만
+    // 거부로 판단한다. 패킷 유실 상황은 hard max에서만 안전하게 복귀한다.
+    const predictionAge=now-Number(track.createdAt||now);
+    const rejectedByAuthority=predictionAge>BALL_PREDICTION_MIN_WAIT_MS&&
+      Number(track.authoritySnapshots||0)>=BALL_PREDICTION_REJECT_SNAPSHOTS;
+    const hardExpired=predictionAge>BALL_PREDICTION_HARD_MAX_MS;
+    if(rejectedByAuthority||hardExpired){
+      // 늦은 확정을 킥 거부로 오판해 뒤로 당겼다가 다시 날아가는 요요를 막는다.
+      // 현재 전진 위치는 유지하고 권위 속도/옆 오차만 받아들이며 부드럽게 합류한다.
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
-        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ,
-        sentAt:netBall.netSentAt
+        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
       },track,now);
       localKickTrack=null;
-    }else return;
+    }
+    if(localKickTrack)return;
   }
 
-  if(netBall.owner===mySid)localDribbleVisualUntil=now+240;
+  const claimedByOther=!!(netBall.owner&&netBall.owner!==mySid);
+  if(netBall.owner===mySid)localDribbleVisualUntil=now+220;
 
-  // claim을 보낸 직후에는 호스트 승인 왕복을 기다리지 않고 발앞 반응만 즉시 보여준다.
-  // 실제 owner 값은 건드리지 않으므로 동시 경합의 최종 판정은 계속 호스트가 맡는다.
-  const localPickupPredicted=!!(me&&now<localDribbleVisualUntil&&now<pendingClaimUntil&&netBall.owner!==mySid);
-  if(localPickupPredicted){
-    const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
-    netBall.x=lerp(netBall.x,target.x,.86);
-    netBall.y=lerp(netBall.y,target.y,.86);
-    netBall.z=lerp(netBall.z||0,0,.80);
-    netBall.vx=lerp(netBall.vx||0,(me.vx||0)*.78,.62);
-    netBall.vy=lerp(netBall.vy||0,(me.vy||0)*.78,.62);
-    return;
-  }
-
-  if(!netBall.owner&&me&&(netBall.netZ||0)<5&&now>=Number(netBall.noPickupUntil||0)){
+  // 게스트가 자유공에 실제로 닿은 순간은 화면에서 즉시 발앞 반응을 준다.
+  // 판정 소유권은 여전히 호스트가 결정하고, 이 로컬 반응은 짧은 시각 예측뿐이다.
+  if(!netBall.owner&&!localKickTrack&&me&&(netBall.netZ||0)<5&&now>=Number(netBall.noPickupUntil||0)){
     const controlX=me.x+Math.cos(me.dir)*Math.min(8,Math.hypot(me.vx||0,me.vy||0)*1.1);
     const controlY=me.y+Math.sin(me.dir)*Math.min(8,Math.hypot(me.vx||0,me.vy||0)*1.1);
-    if(Math.hypot(netBall.x-controlX,netBall.y-controlY)<PR+BR+10){
+    const pickupDist=Math.hypot(netBall.x-controlX,netBall.y-controlY);
+    if(pickupDist<PR+BR+10){
       if(now>=pendingClaimUntil){
-        pendingClaimAt=now;pendingClaimUntil=now+520;
-        pendingClaimBallX=netBall.x;pendingClaimBallY=netBall.y;
+        pendingClaimAt=now; pendingClaimUntil=now+520;
+        pendingClaimBallX=netBall.x; pendingClaimBallY=netBall.y;
       }
-      localDribbleVisualUntil=now+220;
+      localDribbleVisualUntil=Math.max(localDribbleVisualUntil,now+180);
       const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
-      netBall.x=lerp(netBall.x,target.x,.86);
-      netBall.y=lerp(netBall.y,target.y,.86);
-      netBall.z=lerp(netBall.z||0,0,.80);
-      netBall.vx=lerp(netBall.vx||0,(me.vx||0)*.78,.62);
-      netBall.vy=lerp(netBall.vy||0,(me.vy||0)*.78,.62);
+      netBall.x=lerp(netBall.x,target.x,.76);
+      netBall.y=lerp(netBall.y,target.y,.76);
+      netBall.z=lerp(netBall.z||0,0,.70);
+      netBall.vx=lerp(netBall.vx||0,(me.vx||0)*.78,.48);
+      netBall.vy=lerp(netBall.vy||0,(me.vy||0)*.78,.48);
       return;
     }
   }
 
+  // 자유공의 최종 소유권은 호스트가 한 명을 선정한 sc_ball 스냅샷으로 확정한다.
   const ownerPlayer=netBall.owner?players[netBall.owner]:null;
-  if(ownerPlayer&&(netBall.netZ||0)<5){
-    const isMine=ownerPlayer===me;
-    const pvx=isMine?(ownerPlayer.vx||0):(ownerPlayer.netVX||0);
-    const pvy=isMine?(ownerPlayer.vy||0):(ownerPlayer.netVY||0);
-    const target=dribbleTargetForPlayer(ownerPlayer,pvx,pvy,now);
-    netBall.x=lerp(netBall.x,target.x,isMine?.78:.38);
-    netBall.y=lerp(netBall.y,target.y,isMine?.78:.38);
-    netBall.z=lerp(netBall.z||0,0,.62);netBall.vz=0;
-    netBall.vx=lerp(netBall.vx||0,pvx*.78,.38);
-    netBall.vy=lerp(netBall.vy||0,pvy*.78,.38);
+  const dribblePlayer=ownerPlayer;
+  if(dribblePlayer&&(netBall.netZ||0)<5){
+    const isMine=dribblePlayer===me;
+    const pvx=isMine?(dribblePlayer.vx||0):(dribblePlayer.netVX||0);
+    const pvy=isMine?(dribblePlayer.vy||0):(dribblePlayer.netVY||0);
+    const target=dribbleTargetForPlayer(dribblePlayer,pvx,pvy,now);
+    netBall.x=lerp(netBall.x,target.x,isMine?.72:.30);
+    netBall.y=lerp(netBall.y,target.y,isMine?.72:.30);
+    netBall.z=lerp(netBall.z||0,0,.55);netBall.vz=0;
+    netBall.vx=lerp(netBall.vx||0,pvx*.78,.30);
+    netBall.vy=lerp(netBall.vy||0,pvy*.78,.30);
     return;
   }
 
-  // 자유공은 90ms 과거 버퍼를 재생하지 않는다. 최신 권위 스냅샷을 수신 시점에서
-  // 현재 시점까지 전진 계산한 뒤 작은 오차만 보정한다. 빠른 공이 뒤로 끌리는 원인을 제거한다.
-  const target=projectAuthorityBall({
-    x:netBall.netX,y:netBall.netY,z:netBall.netZ,
-    vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ,
-    sentAt:netBall.netSentAt
-  },now);
-  const err=Math.hypot(target.x-netBall.x,target.y-netBall.y);
-  if(err>150){
-    netBall.x=target.x;netBall.y=target.y;netBall.z=target.z;
-  }else{
-    const correction=err>70?.48:(err>24?.34:.24);
-    netBall.x=lerp(netBall.x,target.x,correction);
-    netBall.y=lerp(netBall.y,target.y,correction);
-    netBall.z=lerp(netBall.z||0,target.z,err>35?.40:.28);
+  const renderAt=now-90;
+  const samples=Array.isArray(netBall.samples)?netBall.samples:[];
+  while(samples.length>2&&samples[1].t<=renderAt)samples.shift();
+  let tx=netBall.netX,ty=netBall.netY,tz=Math.max(0,netBall.netZ||0);
+  let tvx=Number(netBall.netVX||0),tvy=Number(netBall.netVY||0),tvz=Number(netBall.netVZ||0);
+  if(samples.length>=2&&samples[0].t<=renderAt&&renderAt<=samples[1].t){
+    const a=samples[0],b=samples[1],u=clamp((renderAt-a.t)/Math.max(1,b.t-a.t),0,1);
+    tx=lerp(a.x,b.x,u);ty=lerp(a.y,b.y,u);tz=lerp(a.z||0,b.z||0,u);
+    tvx=lerp(a.vx||0,b.vx||0,u);tvy=lerp(a.vy||0,b.vy||0,u);tvz=lerp(a.vz||0,b.vz||0,u);
+  }else if(samples.length){
+    const a=samples[samples.length-1],age=clamp(renderAt-a.t,0,120),steps=age*.06;
+    tx=a.x+(a.vx||0)*steps;ty=a.y+(a.vy||0)*steps;
+    tz=Math.max(0,(a.z||0)+(a.vz||0)*steps-.5*BALL_GRAVITY*steps*steps);
+    tvx=Number(a.vx||0);tvy=Number(a.vy||0);tvz=Number(a.vz||0);
   }
-  netBall.vx=lerp(netBall.vx||0,target.vx,.32);
-  netBall.vy=lerp(netBall.vy||0,target.vy,.32);
-  netBall.vz=lerp(netBall.vz||0,target.vz,.36);
+  const err=Math.hypot(tx-netBall.x,ty-netBall.y);
+  const oldX=netBall.x,oldY=netBall.y;
+  let nextX,nextY;
+  if(err>180){nextX=tx;nextY=ty;netBall.z=tz;}
+  else{
+    const correction=err>90?.38:(err>38?.22:.14);
+    nextX=lerp(netBall.x,tx,correction);
+    nextY=lerp(netBall.y,ty,correction);
+    netBall.z=lerp(netBall.z||0,tz,err>40?.30:.18);
+  }
+  const reconcile=netBall.kickReconcile;
+  if(reconcile&&now<Number(reconcile.until||0)){
+    const dx=Number(reconcile.dirX||0),dy=Number(reconcile.dirY||0);
+    const oldAlong=oldX*dx+oldY*dy;
+    const targetAlong=tx*dx+ty*dy;
+    const nextAlong=nextX*dx+nextY*dy;
+    if(targetAlong<oldAlong-1){
+      // 호스트 좌표가 아직 뒤라면 앞으로 가던 공을 되감지 않고 좌우 오차만 보정한다.
+      const sx=-dy,sy=dx;
+      const nextAcross=nextX*sx+nextY*sy;
+      nextX=dx*oldAlong+sx*nextAcross;
+      nextY=dy*oldAlong+sy*nextAcross;
+    }else if(targetAlong>=oldAlong-1){
+      netBall.kickReconcile=null;
+    }
+  }else if(reconcile){netBall.kickReconcile=null;}
+  netBall.x=nextX;netBall.y=nextY;
+  netBall.vx=lerp(netBall.vx||0,tvx,.16);
+  netBall.vy=lerp(netBall.vy||0,tvy,.16);
+  netBall.vz=lerp(netBall.vz||0,tvz,.20);
 }
 
 function updateBallHost(advancePhysics=true){
@@ -1289,12 +1375,12 @@ function updateBallHost(advancePhysics=true){
         p._pendingKickAt = 0;
         const dir = Number.isFinite(p.kickDir) ? p.kickDir : (Number.isFinite(p.dir) ? p.dir : Math.atan2(dy,dx));
         const charge=clamp(p.kickCharge||0,0,1);
-        const spec=makeKickSpec(charge,dir);
+        const spec=makeKickSpec(charge,dir,p.vx||0,p.vy||0);
         // 소유 중 킥은 게스트와 호스트가 같은 선수 발앞 시작점을 사용한다.
         // 자유공은 권위 공 좌표를 그대로 사용하며, 보고 좌표로 임의 보정하지 않는다.
         if(ownedByShooter){
-          ball.x=clamp(kickPX+Math.cos(dir)*DRIBBLE_DISTANCE,FX-GOAL_W-BR,FX+FW+GOAL_W+BR);
-          ball.y=clamp(kickPY+Math.sin(dir)*DRIBBLE_DISTANCE,FY+BR,FY+FH-BR);
+          ball.x=clamp(kickPX+Math.cos(dir)*spec.startLead,FX-GOAL_W-BR,FX+FW+GOAL_W+BR);
+          ball.y=clamp(kickPY+Math.sin(dir)*spec.startLead,FY+BR,FY+FH-BR);
         }
         ball.vx=spec.vx;
         ball.vy=spec.vy;
@@ -1749,8 +1835,7 @@ function projectWorld(x,y,z=0){
   const scale=lerp(PROJ_FAR_SCALE,PROJ_NEAR_SCALE,t);
   return { x:groundX, y:groundY-(z||0)*PROJ_HEIGHT_SCALE*scale, groundY, scale, t, left, right };
 }
-const PLAYER_RENDER_SCALE=.94;
-function spriteScaleForY(y){ return PLAYER_RENDER_SCALE; }
+function spriteScaleForY(y){ return projectWorld(FX+FW/2,y,0).scale; }
 function ballScaleForY(y){ return lerp(.88,.98,depthTFromY(y)); }
 function shadowSpecForY(y){
   const t=depthTFromY(y);
@@ -1943,8 +2028,8 @@ function drawPlayer(p,mine,sid){
   const actionLift=heading?Math.round(Math.sin(headerProgress*Math.PI)*14):0;
   const dribbling=nearBall&&moving&&!kicking&&!heading&&!tackling;
   const proj=projectWorld(p.x,p.y,0);
-  p._visualDepthScale=PLAYER_RENDER_SCALE;
-  const depthScale=PLAYER_RENDER_SCALE;
+  p._visualDepthScale=lerp(Number(p._visualDepthScale||proj.scale),proj.scale,.12);
+  const depthScale=p._visualDepthScale;
   const shadow=shadowSpecForY(p.y);
 
   ctx.save();
@@ -2366,6 +2451,11 @@ window.addEventListener('message', e=>{
     const incomingImpact=d.impactAt?String(d.impactAt):'';
     const newImpact=!!(incomingImpact&&incomingImpact!==String(netBall.impactAt||''));
     const confirmsLocalKick=!!(localKickTrack&&incomingImpact===String(localKickTrack.id));
+    // 로컬 킥이 시작된 뒤 생성된 호스트 공 스냅샷만 거부 판단에 사용한다.
+    // 킥 전에 이미 전송돼 늦게 도착한 스냅샷은 baselineBallSeq 이하라 세지 않는다.
+    if(localKickTrack&&incomingBallSeq>Number(localKickTrack.baselineBallSeq||0)){
+      localKickTrack.authoritySnapshots=Number(localKickTrack.authoritySnapshots||0)+1;
+    }
     const preservingLocalKick=!!localKickTrack;
     netBall.netX = Number(d.x ?? netBall.netX);
     netBall.netY = Number(d.y ?? netBall.netY);
@@ -2390,13 +2480,11 @@ window.addEventListener('message', e=>{
         netBall.vz=lerp(netBall.vz||0,netBall.netVZ,.26);
       }
     }
-    if(!localKickTrack){
-      netBall.owner = d.owner ? String(d.owner) : null;
-      if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
-      if(netBall.owner===mySid){
-        pendingClaimAt=0; pendingClaimUntil=0;
-        localDribbleVisualUntil=now+420;
-      }
+    netBall.owner = d.owner ? String(d.owner) : null;
+    if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
+    if(netBall.owner===mySid){
+      pendingClaimAt=0; pendingClaimUntil=0;
+      localDribbleVisualUntil=now+420;
     }
     netBall.netT = now;
     if(confirmsLocalKick){
@@ -2404,21 +2492,21 @@ window.addEventListener('message', e=>{
       // 화면에는 작은 차이만 170ms 동안 감쇠해 뒤로 튀거나 멈추지 않게 한다.
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
-        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ,
-        sentAt:netBall.netSentAt
+        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
       },localKickTrack,now);
       localKickTrack=null;
       netBall.owner=d.owner?String(d.owner):null;
     }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)){
-      const oldTrack=localKickTrack;
-      confirmBallAuthoritySmooth({
-        x:netBall.netX,y:netBall.netY,z:netBall.netZ,
-        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ,
-        sentAt:netBall.netSentAt
-      },oldTrack,now);
+      // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
       localKickTrack=null;
-      netBall.owner=d.owner?String(d.owner):null;
+    }else if(localKickTrack&&netBall.owner){
+      // 확정 전 도착한 소유권은 킥 이전 스냅샷일 수 있으므로 예측을 취소하지 않는다.
+      netBall.owner=null;
     }
+    if(!Array.isArray(netBall.samples)) netBall.samples=[];
+    let sampleX=netBall.netX,sampleY=netBall.netY,sampleZ=netBall.netZ;
+    netBall.samples.push({t:now,x:sampleX,y:sampleY,z:sampleZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
+    if(netBall.samples.length>14) netBall.samples.splice(0,netBall.samples.length-14);
     if(d.impactAt){
       netBall.impactAt=String(d.impactAt);
       netBall.impactPower=Number(d.impactPower||0);

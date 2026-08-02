@@ -1323,56 +1323,112 @@ function updatePreview(modeId){
       return;
     }
     // ── Soccer: iframe → server relays ─────────────────────────────
-    // 축구는 전용 sc_* 경로 하나만 사용한다. tg_state/tg_players와 동시에
-    // 보내면 동일 액션과 서로 다른 시점의 좌표가 두 번 도착해 보정이 충돌한다.
     if (d.type === "sc_pos"){
       if (!fromMainForSoccer) return;
       const isEvent = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
+      // 킥/헤딩/태클의 최초 edge 패킷은 위치 쓰로틀을 기다리지 않는다.
       if (!isEvent){
         const _now = Date.now();
         if (!window.__scPosTs) window.__scPosTs = 0;
-        if (_now - window.__scPosTs < 30) return;
+        if (_now - window.__scPosTs < 30) return; // 일반 위치 갱신만 최대 ~33fps로 제한
         window.__scPosTs = _now;
       }
-      try{
-        room.send("sc_pos", {
-          stateSeq:d.stateSeq,
-          x:d.x,y:d.y,dir:d.dir,vx:d.vx,vy:d.vy,
-          dribble:d.dribble==null?undefined:!!d.dribble,
-          dribbleBallX:d.dribbleBallX,dribbleBallY:d.dribbleBallY,
-          claimAt:d.claimAt,claimBallX:d.claimBallX,claimBallY:d.claimBallY,
-          kickAt:d.kickAt,kickCharge:d.kickCharge,
-          kickX:d.kickX,kickY:d.kickY,kickDir:d.kickDir,
-          kickBallX:d.kickBallX,kickBallY:d.kickBallY,
-          headerAt:d.headerAt,headerX:d.headerX,headerY:d.headerY,headerDir:d.headerDir,
-          headerBallX:d.headerBallX,headerBallY:d.headerBallY,
-          tackle:!!d.tackle,tackleAt:d.tackleAt
-        });
-      }catch(_){ }
+      const soccerState = {
+        __game: "soccer",
+        stateSeq: d.stateSeq,
+        x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
+        dribble:d.dribble==null?undefined:!!d.dribble,dribbleBallX:d.dribbleBallX,dribbleBallY:d.dribbleBallY,
+        claimAt:d.claimAt,claimBallX:d.claimBallX,claimBallY:d.claimBallY,
+        kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
+        kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
+        kickBallX:d.kickBallX, kickBallY:d.kickBallY,
+        headerAt:d.headerAt,headerX:d.headerX,headerY:d.headerY,headerDir:d.headerDir,
+        headerBallX:d.headerBallX,headerBallY:d.headerBallY,tackleAt:d.tackleAt,
+        seat: getMySeat(), nick: myNick || "Player", isHost: getMyIsHost()
+      };
+      // 호스트가 보낸 최신 공/이벤트를 위치 스냅샷에도 계속 싣는다.
+      // tg_state는 사용자별 최신 상태 하나를 저장하므로, 위치만 새 객체로
+      // 덮으면 직전에 실어 보낸 공이 사라진다.
+      if (coop.soccerLocalState?.ball) soccerState.ball = coop.soccerLocalState.ball;
+      if (coop.soccerLocalState?.event) soccerState.event = coop.soccerLocalState.event;
+      coop.soccerLocalState = soccerState;
+      const soccerNow = Date.now();
+      if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
+
+      // 액션은 검증된 tg_state 주 경로에도 반드시 싣고, 즉시 반응을 위한 sc_pos
+      // 보조 경로에도 함께 보낸다. 이전 보강에서 sc_pos 전용으로 분리하면서 정상인
+      // tg_players 경로를 끊어 게스트 킥이 호스트에 확정되지 않는 요요 현상이 생겼다.
+      // 같은 action id가 두 경로로 와도 게임 쪽 _last* 비교가 물리 중복 적용을 막는다.
+      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
+      if(isEvent){
+        try{ room.send("sc_pos", soccerState); }catch(_){ }
+        return;
+      }
+
+      // tg_players가 1.2초 안에 한 번도 돌아오지 않거나 도중에 1.5초 이상
+      // 끊긴 경우에만 기존 sc_pos 경로를 자동 보조 경로로 사용한다.
+      const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
+      const probeExpired = (soccerNow - coop.soccerMovementProbeAt) >= 1200;
+      if (!tgHealthy && probeExpired){
+        try{ room.send("sc_pos", soccerState); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_ball"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_ball", {
-        x:d.x,y:d.y,z:d.z||0,vx:d.vx,vy:d.vy,vz:d.vz||0,owner:d.owner,
-        sentAt:Number(d.sentAt||Date.now()),ballSeq:Number(d.ballSeq||0),
-        impactAt:d.impactAt||"",impactPower:d.impactPower||0,impactDir:d.impactDir||0
-      }); }catch(_){ }
+      const soccerNow = Date.now();
+      if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
+      const state = Object.assign({
+        __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost()
+      }, coop.soccerLocalState || {});
+      state.isHost = getMyIsHost();
+      state.ball = {
+        x:d.x, y:d.y, z:d.z||0, vx:d.vx, vy:d.vy, vz:d.vz||0, owner:d.owner,
+        sentAt:Number(d.sentAt||soccerNow), at:Number(d.sentAt||soccerNow), ballSeq:Number(d.ballSeq||0),
+        impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0
+      };
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
+      if (!tgHealthy && (soccerNow - coop.soccerMovementProbeAt) >= 1200){
+        try{ room.send("sc_ball", state.ball); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_goal"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_goal", { team:d.team, scoreA:d.scoreA, scoreB:d.scoreB }); }catch(_){ }
+      const event = { kind:"goal", id:`${mySessionId}:goal:${Date.now()}`, team:d.team, scoreA:d.scoreA, scoreB:d.scoreB };
+      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
+      state.isHost = getMyIsHost();
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
+        try{ room.send("sc_goal", { team:d.team, scoreA:d.scoreA, scoreB:d.scoreB }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_stun"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_stun", { sid:d.sid, dur:d.dur }); }catch(_){ }
+      const event = { kind:"stun", id:`${mySessionId}:stun:${Date.now()}:${d.sid||''}`, sid:d.sid, dur:d.dur };
+      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
+      state.isHost = getMyIsHost();
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
+        try{ room.send("sc_stun", { sid:d.sid, dur:d.dur }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_over"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_over", { scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner }); }catch(_){ }
+      const event = { kind:"over", id:`${mySessionId}:over:${Date.now()}`, scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner };
+      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
+      state.isHost = getMyIsHost();
+      coop.soccerLocalState = state;
+      try{ room.send("tg_state", { state }); }catch(_){ }
+      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
+        try{ room.send("sc_over", { scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "sc_sync"){
@@ -2970,6 +3026,42 @@ try{
       // Togester (coop) relay: server -> iframe
       room.onMessage("tg_players", (msg)=>{
         postToMain({ type:"tg_players", players: msg.players || {} });
+        // sc_players가 없는 구 Worker에서도, 위의 축구 태그가 붙은
+        // tg_players 스냅샷만 골라 수학축구 형식으로 전달한다.
+        if (String(room?.state?.mode||"") === "soccer"){
+          const soccerPlayers = {};
+          let sharedBall = null;
+          const sharedEvents = [];
+          try{
+            for (const [sid, state] of Object.entries(msg.players || {})){
+              if (!state || state.__game !== "soccer") continue;
+              soccerPlayers[String(sid)] = state;
+              // 공/득점/스턴/종료는 호스트 상태만 권위값으로 인정한다.
+              if (state.isHost && state.ball){
+                if (!sharedBall || Number(state.ball.at||0) >= Number(sharedBall.at||0)) sharedBall = state.ball;
+              }
+              if (state.isHost && state.event?.id) sharedEvents.push(state.event);
+            }
+          }catch(_){ }
+          if (Object.keys(soccerPlayers).length){
+            coop.soccerTgSeenAt = Date.now();
+            postToMain({ type:"sc_players", players:soccerPlayers });
+          }
+          if (sharedBall){
+            postToMain({
+              type:"sc_ball", x:sharedBall.x, y:sharedBall.y, z:sharedBall.z||0, vx:sharedBall.vx, vy:sharedBall.vy, vz:sharedBall.vz||0, owner:sharedBall.owner,
+              sentAt:Number(sharedBall.sentAt||sharedBall.at||0), ballSeq:Number(sharedBall.ballSeq||0),
+              impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0
+            });
+          }
+          for (const evt of sharedEvents){
+            if (coop.soccerSeenEvents.has(String(evt.id))) continue;
+            coop.soccerSeenEvents.add(String(evt.id));
+            if (evt.kind === "goal") postToMain({ type:"sc_goal", eventId:evt.id, team:evt.team, scoreA:evt.scoreA, scoreB:evt.scoreB });
+            else if (evt.kind === "stun") postToMain({ type:"sc_stun", eventId:evt.id, sid:evt.sid, dur:evt.dur });
+            else if (evt.kind === "over") postToMain({ type:"sc_end", eventId:evt.id, scoreA:evt.scoreA, scoreB:evt.scoreB, winner:evt.winner });
+          }
+        }
       });
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
@@ -3043,13 +3135,30 @@ try{
       // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는
       // 전제가 있어 roster 타이밍 문제에 취약했다 — 이제는 그 전제가 없다.
       room.onMessage("sc_players", (msg)=>{
-        postToMain({ type:"sc_players", players:msg.players || {} });
+        const players = msg.players || {};
+        const tgHealthy = coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000;
+        if (tgHealthy){
+          // 일반 좌표는 tg_players가 권위 경로이므로 오래된 sc_players로 덮지 않는다.
+          // 단, 킥/헤딩/태클/claim edge는 sc_pos 전용 경로로만 전송되므로 여기까지
+          // 버리면 게스트 액션이 호스트에 영원히 도착하지 않는다. 액션이 든 선수만
+          // 통과시키고 게임 쪽 stateSeq 처리에서 좌표는 유지한 채 edge만 병합한다.
+          const urgent = {};
+          for (const [sid,state] of Object.entries(players)){
+            if (!state || !(state.kickAt || state.headerAt || state.tackleAt || state.claimAt)) continue;
+            // 이 패킷은 액션 edge 전용이다. 좌표 필드가 함께 있어도 게임 쪽에서
+            // tg_players 위치를 덮지 않도록 명시적으로 표시한다.
+            urgent[sid] = Object.assign({}, state, { __actionOnly:true });
+          }
+          if (Object.keys(urgent).length) postToMain({ type:"sc_players", players:urgent });
+          return;
+        }
+        postToMain({ type:"sc_players", players });
       });
       room.onMessage("sc_ball", (msg)=>{
+        if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({
-          type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0,
-          vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
-          sentAt:Number(msg.sentAt||0), ballSeq:Number(msg.ballSeq||0),
+          type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0, vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
+          sentAt:Number(msg.sentAt||msg.at||0), ballSeq:Number(msg.ballSeq||0),
           impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0
         });
       });
