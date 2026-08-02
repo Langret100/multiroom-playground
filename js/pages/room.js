@@ -1355,15 +1355,20 @@ function updatePreview(modeId){
       const soccerNow = Date.now();
       if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
 
-      // 액션은 검증된 tg_state 주 경로에도 반드시 싣고, 즉시 반응을 위한 sc_pos
-      // 보조 경로에도 함께 보낸다. 이전 보강에서 sc_pos 전용으로 분리하면서 정상인
-      // tg_players 경로를 끊어 게스트 킥이 호스트에 확정되지 않는 요요 현상이 생겼다.
-      // 같은 action id가 두 경로로 와도 게임 쪽 _last* 비교가 물리 중복 적용을 막는다.
-      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
-      if(isEvent){
+      // 세 액션은 모두 위치와 달리 한 번의 edge 이벤트다. 공용 tg_state
+      // 집계 주기를 기다리면 게스트 판정이 늦으므로 새로운 id는 축구 전용
+      // 경로로도 즉시 한 번 보내고, 반복 패킷은 아래 공용 경로만 사용한다.
+      const urgentActionId=d.kickAt?`k:${d.kickAt}`:
+        (d.headerAt?`h:${d.headerAt}`:(d.tackleAt?`t:${d.tackleAt}`:""));
+      if(urgentActionId&&urgentActionId!==coop.soccerLastUrgentActionId){
+        coop.soccerLastUrgentActionId=urgentActionId;
         try{ room.send("sc_pos", soccerState); }catch(_){ }
-        return;
       }
+
+      // 다른 게임에서 실제 사용 중인 검증된 집계 경로를 축구 이동의 주 경로로 쓴다.
+      // 축구 전용 sc_players와 동시에 좌표를 받으면 서로 다른 시점의 값이 덮어써져
+      // 상대가 멈추거나 튀는 현상이 생길 수 있으므로, 둘을 동시에 활성화하지 않는다.
+      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
 
       // tg_players가 1.2초 안에 한 번도 돌아오지 않거나 도중에 1.5초 이상
       // 끊긴 경우에만 기존 sc_pos 경로를 자동 보조 경로로 사용한다.
@@ -3135,24 +3140,10 @@ try{
       // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는
       // 전제가 있어 roster 타이밍 문제에 취약했다 — 이제는 그 전제가 없다.
       room.onMessage("sc_players", (msg)=>{
-        const players = msg.players || {};
-        const tgHealthy = coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000;
-        if (tgHealthy){
-          // 일반 좌표는 tg_players가 권위 경로이므로 오래된 sc_players로 덮지 않는다.
-          // 단, 킥/헤딩/태클/claim edge는 sc_pos 전용 경로로만 전송되므로 여기까지
-          // 버리면 게스트 액션이 호스트에 영원히 도착하지 않는다. 액션이 든 선수만
-          // 통과시키고 게임 쪽 stateSeq 처리에서 좌표는 유지한 채 edge만 병합한다.
-          const urgent = {};
-          for (const [sid,state] of Object.entries(players)){
-            if (!state || !(state.kickAt || state.headerAt || state.tackleAt || state.claimAt)) continue;
-            // 이 패킷은 액션 edge 전용이다. 좌표 필드가 함께 있어도 게임 쪽에서
-            // tg_players 위치를 덮지 않도록 명시적으로 표시한다.
-            urgent[sid] = Object.assign({}, state, { __actionOnly:true });
-          }
-          if (Object.keys(urgent).length) postToMain({ type:"sc_players", players:urgent });
-          return;
-        }
-        postToMain({ type:"sc_players", players });
+        // tg_players 주 경로가 살아 있을 때는 더 오래된 sc_players 좌표가
+        // 최신 좌표를 덮어쓰지 못하게 한다. 주 경로가 끊겼을 때만 보조 수신.
+        if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
+        postToMain({ type:"sc_players", players: msg.players || {} });
       });
       room.onMessage("sc_ball", (msg)=>{
         if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;

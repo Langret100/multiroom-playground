@@ -1748,62 +1748,43 @@ export class RoomDO{
         try{ this._ensureSoccerPlayerRegistered(uid); }catch(_){ }
         const p = this.sc.players?.[uid];
         if (!p) return; // 좌석이 없는(관전 등) 클라이언트만 무시
+        p.stateSeq = Number(d.stateSeq ?? p.stateSeq ?? 0);
         p.x   = Number(d.x   ?? p.x);
         p.y   = Number(d.y   ?? p.y);
         p.dir = Number(d.dir ?? p.dir);
         p.vx  = Number(d.vx  ?? 0);
         p.vy  = Number(d.vy  ?? 0);
-        if (d.stateSeq != null) p.stateSeq = Number(d.stateSeq) || p.stateSeq || 0;
         if (d.dribble != null) p.dribble = !!d.dribble;
         if (d.dribbleBallX != null) p.dribbleBallX = Number(d.dribbleBallX);
         if (d.dribbleBallY != null) p.dribbleBallY = Number(d.dribbleBallY);
-
-        const isAction = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
-        if (d.kickAt != null){
-          p.kickAt = Number(d.kickAt) || 0;
+        p.tackle = !!d.tackle;
+        if (d.claimAt){
+          p.claimAt = Number(d.claimAt) || p.claimAt || 0;
+          p.claimBallX = Number(d.claimBallX ?? p.claimBallX ?? 0);
+          p.claimBallY = Number(d.claimBallY ?? p.claimBallY ?? 0);
         }
         if (d.kickAt){
+          p.kickAt = Number(d.kickAt) || p.kickAt;
           p.kickCharge = Number(d.kickCharge ?? p.kickCharge ?? 0);
-          if (d.kickX != null) p.kickX = Number(d.kickX);
-          if (d.kickY != null) p.kickY = Number(d.kickY);
-          if (d.kickDir != null) p.kickDir = Number(d.kickDir);
-          if (d.kickBallX != null) p.kickBallX = Number(d.kickBallX);
-          if (d.kickBallY != null) p.kickBallY = Number(d.kickBallY);
-        }
-        if (d.headerAt != null){
-          p.headerAt = Number(d.headerAt) || 0;
+          p.kickX = Number(d.kickX ?? p.kickX ?? p.x);
+          p.kickY = Number(d.kickY ?? p.kickY ?? p.y);
+          p.kickDir = Number(d.kickDir ?? p.kickDir ?? p.dir);
+          p.kickBallX = Number(d.kickBallX ?? p.kickBallX ?? 0);
+          p.kickBallY = Number(d.kickBallY ?? p.kickBallY ?? 0);
         }
         if (d.headerAt){
-          if (d.headerX != null) p.headerX = Number(d.headerX);
-          if (d.headerY != null) p.headerY = Number(d.headerY);
-          if (d.headerDir != null) p.headerDir = Number(d.headerDir);
-          if (d.headerBallX != null) p.headerBallX = Number(d.headerBallX);
-          if (d.headerBallY != null) p.headerBallY = Number(d.headerBallY);
+          p.headerAt = Number(d.headerAt) || p.headerAt || 0;
+          p.headerX = Number(d.headerX ?? p.headerX ?? p.x);
+          p.headerY = Number(d.headerY ?? p.headerY ?? p.y);
+          p.headerDir = Number(d.headerDir ?? p.headerDir ?? p.dir);
+          p.headerBallX = Number(d.headerBallX ?? p.headerBallX ?? 0);
+          p.headerBallY = Number(d.headerBallY ?? p.headerBallY ?? 0);
         }
-        if (d.tackleAt != null){
-          p.tackleAt = Number(d.tackleAt) || 0;
-        }
-        if (d.tackleAt){
-          p.tackle = !!d.tackle;
-        } else if (d.tackle != null){
-          p.tackle = !!d.tackle;
-        }
-        if (d.claimAt != null){
-          p.claimAt = Number(d.claimAt) || 0;
-        }
-        if (d.claimAt){
-          if (d.claimBallX != null) p.claimBallX = Number(d.claimBallX);
-          if (d.claimBallY != null) p.claimBallY = Number(d.claimBallY);
-        }
-
+        if (d.tackleAt) p.tackleAt = Number(d.tackleAt) || p.tackleAt || 0;
         const n = now();
-        // 액션 edge는 33ms 위치 방송 제한을 적용하면 안 된다. 제한 구간에 걸린 뒤
-        // tg_state 경로만 계속 사용되면 해당 sc_pos edge가 영원히 방송되지 않는다.
-        if (!isAction && n - (this.sc.lastPosBroadcastAt || 0) < 33) return;
+        if (n - (this.sc.lastPosBroadcastAt || 0) < 33) return; // ~30Hz (was ~20Hz; tighter for smoother sync)
         this.sc.lastPosBroadcastAt = n;
-        // 액션 방송은 방 전체의 오래 저장된 edge를 재전송하지 않고 현재 송신자만
-        // 보낸다. 일반 위치 fallback에서는 명시적 0으로 정리된 전체 상태를 보낸다.
-        this._broadcast("sc_players", { players: isAction ? { [uid]: p } : this.sc.players });
+        this._broadcast("sc_players", { players: this.sc.players });
         return;
       }
       if (t === "sc_ball"){
