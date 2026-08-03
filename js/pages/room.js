@@ -542,6 +542,9 @@ function updatePreview(modeId){
     soccerLocalState: null,
     soccerLastUrgentActionId: "",
     soccerSeenEvents: new Set(),
+    soccerBridgeAck: false,
+    soccerBridgeInitTimer: null,
+    soccerPending: { roster:null, timer:null, goal:null, ball:null, mathStart:null, mathResult:null, mathProgress:null },
     iframeLoaded: false,
     startPayload: null,
     sentGameStart: false,
@@ -971,6 +974,15 @@ function updatePreview(modeId){
           try{ setTimeout(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 900); }catch(_){ }
         }
       }
+      return;
+    }
+    if (d.type === "soccer_bridge_init_ack"){
+      if (!soccerModeLikely || String(d.gameId||'soccer') !== 'soccer') return;
+      coop.soccerBridgeAck = true;
+      try{ if (coop.soccerBridgeInitTimer) clearTimeout(coop.soccerBridgeInitTimer); }catch(_){ }
+      coop.soccerBridgeInitTimer = null;
+      flushSoccerPending();
+      try{ room?.send?.('sc_sync', {}); }catch(_){ }
       return;
     }
     if (d.type === "mx_game_start_ack"){
@@ -2114,6 +2126,35 @@ function sendCpuBridgeInit(){
   });
 }
 
+function resetSoccerBridgeState(){
+  try{ if (coop.soccerBridgeInitTimer) clearTimeout(coop.soccerBridgeInitTimer); }catch(_){ }
+  coop.soccerBridgeInitTimer = null;
+  coop.soccerBridgeAck = false;
+  coop.soccerPending = { roster:null, timer:null, goal:null, ball:null, mathStart:null, mathResult:null, mathProgress:null };
+}
+
+function cacheSoccerPacket(key, packet){
+  try{
+    if (!coop.soccerPending) coop.soccerPending = { roster:null, timer:null, goal:null, ball:null, mathStart:null, mathResult:null, mathProgress:null };
+    coop.soccerPending[key] = packet;
+    if (coop.soccerBridgeAck) postToMain(packet);
+  }catch(_){ }
+}
+
+function flushSoccerPending(){
+  try{
+    const p = coop.soccerPending || {};
+    // 반드시 월드 생성에 필요한 순서로 재생한다.
+    if (p.roster) postToMain(p.roster);
+    if (p.timer) postToMain(p.timer);
+    if (p.goal) postToMain(p.goal);
+    if (p.ball) postToMain(p.ball);
+    if (p.mathStart) postToMain(p.mathStart);
+    if (p.mathProgress) postToMain(p.mathProgress);
+    if (p.mathResult) postToMain(p.mathResult);
+  }catch(_){ }
+}
+
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
 
@@ -2318,7 +2359,7 @@ function sendCoopBridgeInit(){
     return arr.sort((a,b)=>(Number.isFinite(a.seat)?a.seat:99)-(Number.isFinite(b.seat)?b.seat:99));
   })();
 
-  (isMathExplorerCoopMode() ? postToMathExplorer : postToMain)({
+  const coopInitPacket = {
     type: "bridge_init",
     gameId: coop.meta.id,
     sessionId: mySessionId,
@@ -2343,7 +2384,17 @@ function sendCoopBridgeInit(){
       if (coop.meta && coop.meta.id === "suhaktokki") return (expectedHumans < 4);
       return false;
     })()
-  });
+  };
+  (isMathExplorerCoopMode() ? postToMathExplorer : postToMain)(coopInitPacket);
+  if (coop.meta?.id === 'soccer' && !coop.soccerBridgeAck){
+    try{ if (coop.soccerBridgeInitTimer) clearTimeout(coop.soccerBridgeInitTimer); }catch(_){ }
+    coop.soccerBridgeInitTimer = setTimeout(()=>{
+      try{
+        coop.soccerBridgeInitTimer = null;
+        if (coop.active && coop.meta?.id === 'soccer' && !coop.soccerBridgeAck) sendCoopBridgeInit();
+      }catch(_){ }
+    }, 250);
+  }
 
   // If the room has already provided an authoritative start payload,
   // deliver it to the iframe right after bridge_init.
@@ -2587,6 +2638,7 @@ function startCoopEmbed(meta){
   coop.soccerTgSeenAt = 0;
   coop.soccerLocalState = null;
   coop.soccerSeenEvents = new Set();
+  resetSoccerBridgeState();
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -3168,7 +3220,7 @@ try{
 
       // ── Soccer: server → iframe relays ──────────────────────────────
       room.onMessage("sc_math_start", (msg)=>{
-        postToMain({
+        cacheSoccerPacket('mathStart', {
           type:"sc_math_start",
           roundId:String(msg.roundId||""),
           kind:String(msg.kind||"initial"),
@@ -3179,7 +3231,7 @@ try{
         });
       });
       room.onMessage("sc_math_progress", (msg)=>{
-        postToMain({
+        cacheSoccerPacket('mathProgress', {
           type:"sc_math_progress",
           roundId:String(msg.roundId||""),
           scoreA:msg.scoreA,
@@ -3188,7 +3240,7 @@ try{
         });
       });
       room.onMessage("sc_math_result", (msg)=>{
-        postToMain({
+        cacheSoccerPacket('mathResult', {
           type:"sc_math_result",
           roundId:String(msg.roundId||""),
           kind:String(msg.kind||"initial"),
@@ -3203,7 +3255,7 @@ try{
         });
       });
       room.onMessage("sc_timer", (msg)=>{
-        postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
+        cacheSoccerPacket('timer', { type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
       });
       // 투게스터의 tg_players 릴레이와 완전히 동일한 패턴: 서버가 집계한
       // "전체 인원 위치 스냅샷"을 그대로 iframe에 전달한다. 개별 sc_pos를
@@ -3217,7 +3269,7 @@ try{
       });
       room.onMessage("sc_ball", (msg)=>{
         if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
-        postToMain({
+        cacheSoccerPacket('ball', {
           type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0, vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
           sentAt:Number(msg.sentAt||msg.at||0), ballSeq:Number(msg.ballSeq||0),
           impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0,
@@ -3238,12 +3290,12 @@ try{
         // 대한 "현재 점수 그대로 알려주기"일 뿐이다. sc_goal로 잘못 변환해서
         // 보내면 게임 시작 직후(0:0이라도) 매번 가짜 골 이펙트(컨페티·사운드·
         // 2.5초 정지·리스폰)가 터지는 심각한 버그가 된다 — 반드시 별도 타입으로.
-        postToMain({ type:"sc_score_sync", scoreA: msg.scoreA, scoreB: msg.scoreB });
+        cacheSoccerPacket('goal', { type:"sc_score_sync", scoreA: msg.scoreA, scoreB: msg.scoreB });
       });
       // 투게스터의 tg_players 릴레이와 동일한 패턴 — 서버가 보낸 전체 인원
       // 목록을 그대로 iframe에 전달. 게임 쪽이 이걸로 players{}를 보정한다.
       room.onMessage("sc_roster", (msg)=>{
-        postToMain({ type:"sc_roster", players: msg.players || [] });
+        cacheSoccerPacket('roster', { type:"sc_roster", players: msg.players || [] });
       });
       // ────────────────────────────────────────────────────────────────
 
