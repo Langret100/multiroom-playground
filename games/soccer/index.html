@@ -1038,7 +1038,9 @@ function applyRoster(list){
 
   // bridge_init가 첫 room_state보다 먼저 와 빈 로스터로 초기화된 경우에도,
   // 뒤이어 도착한 서버 로스터만으로 게임을 정상 시작한다.
-  if (gameInitialized && !gameActive && !gameOver && me){
+  // 퀴즈 진행 중에는 gameActive가 false이지만 게임 월드는 이미 준비된 상태다.
+  // sc_sync 재요청으로 로스터가 반복 도착해도 공/점수/잠금 상태를 다시 초기화하지 않는다.
+  if (gameInitialized && !loopRunning && !gameOver && me){
     initGame();
   }
 }
@@ -2922,6 +2924,10 @@ window.addEventListener('message', e=>{
   if (!d || typeof d !== 'object') return;
 
   if (d.type === 'bridge_init'){
+    // 협동게임용 정식 초기화에는 sessionId가 반드시 있다.
+    // 다른 게임의 범용 bridge_init이 먼저 들어오면 빈 sid로 초기화되어
+    // 경기장만 보이고 조작/퀴즈가 멈출 수 있으므로 무시한다.
+    if(!d.sessionId) return;
     mySid = String(d.sessionId||'');
     myNick = String(d.nick||'Player');
     mySeat = Number(d.seat ?? -1);
@@ -2934,7 +2940,12 @@ window.addEventListener('message', e=>{
       isHost: !!p.isHost,
     })).filter(p=>p.seat>=0);
 
-    if (gameInitialized){ applyRoster(incoming); return; }
+    if (gameInitialized){
+      applyRoster(incoming);
+      // 초기 room.state 명단이 비어 있었던 경우 서버 권위 상태를 즉시 다시 요청한다.
+      bridgeSend('sc_sync', {});
+      return;
+    }
     gameInitialized = true;
     roster = incoming;
     const sAt = Number(d.startedAt||0);

@@ -566,8 +566,31 @@ function statusDot(room){
   if (!el || !window.AudioManager) return;
 
   const storageKey = 'audio_enabled';
-  // Slightly lower lobby BGM (was a bit loud)
-  // Reduce lobby BGM volume by ~30%
+
+  // Pick one lobby track per lobby page load. The selected source stays fixed
+  // while this lobby page remains open, including room-overlay entry/exit.
+  const LOBBY_BGM_TRACKS = Object.freeze([
+    'assets/audio/lobby_music.mp3',
+    'assets/audio/lobby_music2.mp3',
+    'assets/audio/lobby_music3.mp3',
+  ]);
+  const randomIndex = (() => {
+    try{
+      if (window.crypto && typeof window.crypto.getRandomValues === 'function'){
+        const n = new Uint32Array(1);
+        window.crypto.getRandomValues(n);
+        return n[0] % LOBBY_BGM_TRACKS.length;
+      }
+    }catch(_){ }
+    return Math.floor(Math.random() * LOBBY_BGM_TRACKS.length);
+  })();
+  const selectedTrack = LOBBY_BGM_TRACKS[randomIndex];
+  if (el.getAttribute('src') !== selectedTrack){
+    el.src = selectedTrack;
+    try{ el.load(); }catch(_){ }
+  }
+
+  // Keep the existing reduced lobby-volume setting for every random track.
   const LOBBY_BGM_VOLUME = 0.0875;
   const handle = window.AudioManager.attachAudioManager(el, { label: '로비 음악', storageKey, volume: LOBBY_BGM_VOLUME });
   try{ window.__bgmLobbyHandle = handle; }catch(_){}

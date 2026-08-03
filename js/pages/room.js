@@ -447,7 +447,7 @@ function updatePreview(modeId){
       const cleaned = lines
         .map(s => (s ?? "").toString().trim())
         .filter(Boolean)
-        .slice(0, (meta?.id || modeId) === "soccer" ? 7 : 2);
+        .slice(0, 3);
 
       // 2줄이 없으면 최소 1줄은 보여주기
       const fallback = cleaned.length ? cleaned : ["게임 시작 시 전체 화면으로 전환됩니다."];
@@ -2188,6 +2188,7 @@ function sendCoopBridgeInit(){
     const hasMe = hasMePlayer || hasMeOrder;
 
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
+    const isSoccer = (coop && coop.meta && coop.meta.id === "soccer");
     // 금칙어 게임: 자체 WS 연결 유지 → room.state.order 없이도 바로 전송
     const isGeumchikeo = (coop && coop.meta && coop.meta.id === "geumchikeo");
 
@@ -2196,7 +2197,10 @@ function sendCoopBridgeInit(){
     // so we MUST NOT block bridge_init waiting for it. We only wait until we can
     // identify "me" in either `players` or the seat-map `order`. A single host is
     // elected deterministically (lowest seat / smallest sid) below.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo)){
+    // Soccer는 서버 sc_roster/sc_sync가 권위 로스터를 바로 보완하므로
+    // room.state 스냅샷이 늦더라도 bridge_init을 막지 않는다. 이 대기가 걸리면
+    // 경기장만 보이고 입력·수학 퀴즈가 모두 비활성인 상태가 된다.
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -2299,7 +2303,19 @@ function sendCoopBridgeInit(){
         });
       });
     }catch(_){}
-    return arr.sort((a,b)=>(a.seat||99)-(b.seat||99));
+    // Soccer bridge_init은 room.state.players가 늦어도 반드시 내 항목을 포함한다.
+    // 실제 팀/캐릭터는 직후 서버 sc_roster가 덮어써 권위 상태를 유지한다.
+    try{
+      if (coop?.meta?.id === 'soccer' && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
+        arr.push({
+          sessionId:String(mySessionId),
+          nick:myNick || 'Player',
+          seat:Number(getMySeat()),
+          isHost:!!getMyIsHost()
+        });
+      }
+    }catch(_){ }
+    return arr.sort((a,b)=>(Number.isFinite(a.seat)?a.seat:99)-(Number.isFinite(b.seat)?b.seat:99));
   })();
 
   (isMathExplorerCoopMode() ? postToMathExplorer : postToMain)({
@@ -2343,6 +2359,10 @@ function sendCoopBridgeInit(){
   try{
     if (coop.meta && coop.meta.id === "soccer"){
       room?.send?.("sc_sync", {});
+      // iframe/Colyseus 이벤트 순서가 엇갈리는 모바일 환경을 위한 제한적 재요청.
+      // 상태를 생성하지 않고 현재 서버 상태만 다시 받으므로 중복 실행 부작용이 없다.
+      setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='soccer') room?.send?.('sc_sync',{}); }catch(_){ } }, 180);
+      setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='soccer') room?.send?.('sc_sync',{}); }catch(_){ } }, 650);
     }
   }catch(_){ }
 // Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
