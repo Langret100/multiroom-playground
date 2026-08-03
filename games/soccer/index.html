@@ -2777,32 +2777,9 @@ window.addEventListener('message', e=>{
       }
     }
     netBall.owner = d.owner ? String(d.owner) : null;
-
-    // 게스트 자기 화면의 킥은 로컬 예측으로 즉시 출발한다. 이 직후 도착하는
-    // owner=mySid는 호스트가 킥을 처리하기 전에 이미 만들어 둔 드리블 스냅샷일 수 있다.
-    // 실제 재획득은 noPickupUntil 전에는 불가능하므로, 그 짧은 구간의 자기 owner만
-    // 표시에서 무시한다. 시간 비교는 이 창 안에서 만든 createdAt/noPickupUntil끼리만 한다.
-    const selfOwnerBeforePickupAllowed=!!(
-      netBall.owner===mySid && localKickTrack &&
-      now < Math.max(Number(netBall.noPickupUntil||0),Number(localKickTrack.createdAt||0)+360)
-    );
-    if(selfOwnerBeforePickupAllowed)netBall.owner=null;
-
     const localOwnerConfirmed=netBall.owner===mySid;
     if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
-    netBall.netT = now;
-
-    // 같은 impactAt은 방금 누른 킥의 호스트 확정이다. 패킷에 직전 owner가 함께
-    // 남아 있어도 킥 확정을 먼저 적용해야 공이 발로 돌아갔다가 다시 출발하지 않는다.
-    if(confirmsLocalKick){
-      confirmBallAuthoritySmooth({
-        x:netBall.netX,y:netBall.netY,z:netBall.netZ,
-        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
-      },localKickTrack,now);
-      netBall.owner=null;
-    }else if(localOwnerConfirmed){
-      // noPickupUntil 이후 호스트가 owner=mySid를 보낸 경우만 실제 재획득이다.
-      // 이때는 이전 킥 표시를 끝내고 자기 발앞 드리블 표시로 전환한다.
+    if(localOwnerConfirmed){
       pendingClaimAt=0; pendingClaimUntil=0;
       localDribbleVisualUntil=now+420;
       localKickTrack=null;
@@ -2810,6 +2787,16 @@ window.addEventListener('message', e=>{
       netBall.samples=[];
       netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
       netBall.renderOffsetUntil=0;
+    }
+    netBall.netT = now;
+    if(localOwnerConfirmed){
+      // 호스트가 owner=mySid로 승인한 순간부터 자기 발앞 드리블 표시를 유지한다.
+    }else if(confirmsLocalKick){
+      confirmBallAuthoritySmooth({
+        x:netBall.netX,y:netBall.netY,z:netBall.netZ,
+        vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
+      },localKickTrack,now);
+      netBall.owner=null;
     }else if(localKickTrack&&localKickTrack.confirmed){
       // 동일 킥의 후속 권위 스냅샷은 표시 위치를 덮지 않고 추적 상태만 갱신한다.
       localKickTrack.authReceivedAt=now;
