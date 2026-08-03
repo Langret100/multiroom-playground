@@ -142,12 +142,15 @@
 7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
 8) 골 직후에는 호스트만 reset하지 말고 sc_goal로 모든 클라이언트의 owner/예측/입력/
    시작 좌표를 같은 단계로 초기화한다. 카운트다운 중 오래된 sc_ball도 무시한다.
-9) 골대는 득점 사각형 하나로 처리하지 않는다. 양쪽 포스트와 크로스바는 충돌체이며,
-   골문 안쪽을 통과한 공만 득점이다. 라인 밖 공은 벽 반사로 숨기지 말고 킥인/코너/골킥으로 재개한다.
+9) 골대 전면선 통과만으로 득점시키지 않는다. 포스트/크로스바 충돌을 먼저 처리하고,
+   공 전체가 골문 사이·크로스바 아래를 지나 네트 안쪽 득점선까지 들어간 뒤에만 골을 확정한다.
+   골 확정 전에는 공이 골대 안으로 계속 이동하는 장면을 보여준다. 라인 밖 공은 킥인/코너/골킥으로 재개한다.
 10) 소유 중인 선수를 항상 claim 우선순위로 이기게 두면 상대가 공을 절대 뺏지 못한다.
 11) 로컬 게스트 킥은 호스트 응답 전에 발앞 좌표에서 즉시 예측을 시작해야 한다. UI 지연을 네트워크 재전송으로만 덮지 않는다.
 12) 발밑 원/링/막대는 오브젝트로 오해되므로 넣지 않는다. 헤딩/태클 쿨타임은 버튼 채움으로만 표시한다.
-13) 게스트 로컬 킥 직후 도착하는 owner=mySid는 킥 이전 스냅샷일 수 있다. impact 확인 전 localKickTrack을 owner 패킷으로 취소하지 않는다.
+13) 게스트 로컬 킥 중에는 같은 kick id의 impact 확정이 owner=mySid보다 우선이다.
+   같은 패킷에 이전 owner가 남아 있어도 공을 발로 되돌리지 말고 자유공 킥 확정으로 처리한다.
+   kick id가 없는 owner=mySid만 재획득 확정 후보이며, 킥 직전 순번/시간의 패킷은 무시한다.
 14) UI는 경기 화면을 가리지 않게 유지한다. PC 스킬 버튼은 우측 하단의 반투명 젤리 질감으로 두고, 닉네임은 프레임 없이 정수리 바로 위의 작은 글자로만 표시한다. 발밑 원형 표식은 다시 넣지 않는다.
 14) PC 액션 버튼은 이동키와 겹치지 않도록 우측 하단에 둔다. 닉네임은 프레임 없이 머리 바로 위에 표시한다.
 11) 아웃은 선을 넘는 즉시 공을 재개 지점으로 텔레포트하지 않는다. 짧은 비행 연출 뒤 마지막 터치 반대 팀에 재개권을 준다.
@@ -210,6 +213,9 @@ const KICKOFF_Y = FY + FH*0.407;
 const GOAL_Y1 = FY + FH*0.13, GOAL_Y2 = FY + FH*0.48;
 const GOAL_PLANE_LEFT_X = FX - GOAL_W*0.58;
 const GOAL_PLANE_RIGHT_X = FX + FW + GOAL_W*0.58;
+// 득점은 골대 전면이 아니라 공이 네트 안쪽 깊이까지 들어간 뒤 확정한다.
+const GOAL_SCORE_LEFT_X = FX-GOAL_W-BR-8;
+const GOAL_SCORE_RIGHT_X = FX+FW+GOAL_W+BR+8;
 const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
@@ -1247,10 +1253,10 @@ function updateNetBall(){
   // 권위상 내가 공 소유자가 된 순간에는 이전 킥 예측/보정을 즉시 끝낸다.
   // 이 우선순위가 localKickTrack보다 뒤에 있으면, 호스트 화면은 재드리블 중인데
   // 게스트 화면만 공이 마지막 킥 위치에 남아 있는 현상이 생긴다.
-  // 킥 직후 늦게 도착한 킥 이전 owner=mySid 스냅샷은 로컬 공 예측을
-  // 취소하면 안 된다. 실제 킥 impact가 확인되기 전까지는 자유공으로 간주한다.
-  const staleSelfOwnerDuringLocalKick=!!(netBall.owner===mySid&&localKickTrack&&!localKickTrack.confirmed);
-  if(staleSelfOwnerDuringLocalKick)netBall.owner=null;
+  // 수신부에서 같은 kick id의 impact와 오래된 owner를 이미 정리한다.
+  // 여기서는 남아 있는 로컬 킥 예측이 있는 동안 owner가 갑자기 발앞 표시를
+  // 덮지 못하도록 한 번 더 보호한다.
+  if(netBall.owner===mySid&&localKickTrack&&!localKickTrack.confirmed)netBall.owner=null;
   if(netBall.owner===mySid&&me&&(netBall.netZ||0)<5){
     localKickTrack=null;
     netBall.kickReconcile=null;
@@ -1417,6 +1423,7 @@ function announceFieldRestart(text, ms=850){
 }
 function resetBallForRestart(x,y,text,restartTeam=null){
   const now=Date.now();
+  pendingGoalVisual=null;
   ball.x=clamp(x,FX+BR,FX+FW-BR);
   ball.y=clamp(y,FY+BR,FY+FH-BR);
   ball.z=0;ball.vx=0;ball.vy=0;ball.vz=0;
@@ -1459,12 +1466,20 @@ function handleFieldOut(prevX,prevY){
     queueFieldRestart('kickin',clamp(ball.x,FX+36,FX+FW-36),FY+FH-BR-2,'라인 아웃 · 킥인',lastTeam==='A'?'B':'A');
     return true;
   }
+  // 골문 유효 영역으로 들어간 공은 네트 안쪽 득점선까지 계속 진행시킨다.
+  // 골라인 아웃 경계가 깊은 득점선보다 앞에 있으므로 이 예외가 없으면 공이
+  // 골대 안으로 들어가는 도중 골킥/코너킥으로 먼저 처리될 수 있다.
+  const insideGoalTunnel = ball.y>GOAL_Y1+GOAL_POST_HALF_Y+BR*.55 &&
+    ball.y<GOAL_Y2-GOAL_POST_HALF_Y-BR*.55 &&
+    (ball.z||0)+BR*.32<BALL_GOAL_MAX_Z-GOAL_CROSSBAR_HALF_Z;
   if(ball.x<FX-GOAL_W-BR){
+    if(insideGoalTunnel && ball.x>GOAL_SCORE_LEFT_X-BR*1.5) return false;
     if(lastTeam==='A') queueFieldRestart('corner',FX+24,ball.y<(GOAL_Y1+GOAL_Y2)/2?FY+24:FY+FH-24,'코너킥 · BLUE','B');
     else queueFieldRestart('goalkick',FX+72,(GOAL_Y1+GOAL_Y2)/2,'골킥 · RED','A');
     return true;
   }
   if(ball.x>FX+FW+GOAL_W+BR){
+    if(insideGoalTunnel && ball.x<GOAL_SCORE_RIGHT_X+BR*1.5) return false;
     if(lastTeam==='B') queueFieldRestart('corner',FX+FW-24,ball.y<(GOAL_Y1+GOAL_Y2)/2?FY+24:FY+FH-24,'코너킥 · RED','A');
     else queueFieldRestart('goalkick',FX+FW-72,(GOAL_Y1+GOAL_Y2)/2,'골킥 · BLUE','B');
     return true;
@@ -1501,6 +1516,20 @@ function updateBallHost(advancePhysics=true){
     const prevBallX=ball.x,prevBallY=ball.y;
     stepFreeBallState(ball,1);
     handleFieldOut(prevBallX,prevBallY);
+    return;
+  }
+  if(pendingGoalVisual){
+    // 득점 확정 전 공을 네트 안쪽으로 계속 진행시킨다. 진입 속도가 아주 약해도
+    // 골대 앞에서 멈춰 보이지 않도록 득점 방향 최소 속도를 보장한다.
+    const goalDir=pendingGoalVisual.team==='A'?1:-1;
+    if(Math.abs(ball.vx)<1.05)ball.vx=goalDir*1.05;
+    else if(Math.sign(ball.vx)!==goalDir)ball.vx=goalDir*Math.max(1.05,Math.abs(ball.vx));
+    stepFreeBallState(ball,1);
+    ball.vx*=.94;ball.vy*=.94;ball.vz*=.90;
+    ball.y=clamp(ball.y,GOAL_Y1+GOAL_POST_HALF_Y+BR*.5,GOAL_Y2-GOAL_POST_HALF_Y-BR*.5);
+    if(Date.now()>=pendingGoalVisual.resolveAt){
+      const team=pendingGoalVisual.team;pendingGoalVisual=null;scoreGoal(team);
+    }
     return;
   }
 
@@ -1746,10 +1775,9 @@ function updateBallHost(advancePhysics=true){
   const prevBallX=ball.x, prevBallY=ball.y, prevBallZ=ball.z||0;
   stepFreeBallState(ball,1);
 
-  // 골 판정은 벽 충돌보다 먼저 '이전 위치→현재 위치'의 선분이 골라인을
-  // 통과했는지 검사한다. 빠른 슛이나 골대 바로 앞 슛도 한 프레임에 선을
-  // 넘어가면 놓치지 않는다.
-  function crossedGoalLine(lineX, movingLeft){
+  // 골대 전면을 지났다고 바로 득점시키지 않는다. 공 전체가 골문 사이와
+  // 크로스바 아래를 통과한 채 네트 안쪽 득점선까지 들어가야 골 연출을 시작한다.
+  function crossedDeepGoalLine(lineX, movingLeft){
     const crossed=movingLeft
       ? (prevBallX>=lineX&&ball.x<lineX)
       : (prevBallX<=lineX&&ball.x>lineX);
@@ -1758,15 +1786,14 @@ function updateBallHost(advancePhysics=true){
     const t=Math.abs(denom)<1e-6?1:clamp((lineX-prevBallX)/denom,0,1);
     const crossY=lerp(prevBallY,ball.y,t);
     const crossZ=lerp(prevBallZ,ball.z||0,t);
-    // 공 전체가 양 포스트 사이와 크로스바 아래에 들어간 경우만 득점이다.
-    return crossY>GOAL_Y1+GOAL_POST_HALF_Y+BR*.45&&
-      crossY<GOAL_Y2-GOAL_POST_HALF_Y-BR*.45&&
-      crossZ+3.0<BALL_GOAL_MAX_Z-GOAL_CROSSBAR_HALF_Z;
+    return crossY>GOAL_Y1+GOAL_POST_HALF_Y+BR*.55&&
+      crossY<GOAL_Y2-GOAL_POST_HALF_Y-BR*.55&&
+      crossZ+BR*.32<BALL_GOAL_MAX_Z-GOAL_CROSSBAR_HALF_Z;
   }
-  // 포스트/크로스바 충돌을 득점보다 먼저 검사한다. 프레임에 닿은 공은 튕겨 나온다.
+  // 포스트/크로스바는 골 판정보다 먼저 충돌한다.
   if(collideGoalFrame(prevBallX,prevBallY,prevBallZ))return;
-  if(crossedGoalLine(GOAL_PLANE_LEFT_X,true)){ scoreGoal('B'); return; }
-  if(crossedGoalLine(GOAL_PLANE_RIGHT_X,false)){ scoreGoal('A'); return; }
+  if(crossedDeepGoalLine(GOAL_SCORE_LEFT_X,true)){ beginGoalVisual('B'); return; }
+  if(crossedDeepGoalLine(GOAL_SCORE_RIGHT_X,false)){ beginGoalVisual('A'); return; }
 
   // 터치라인·골라인 밖은 벽이 아니다. 마지막 터치 팀과 나간 위치에 따라 재개한다.
   if(handleFieldOut(prevBallX,prevBallY))return;
@@ -1823,6 +1850,15 @@ let pendingFieldOut=null;       // 공이 선 밖으로 완전히 날아가는 �
 let fieldRestartTeam=null;      // 골킥/코너/킥인 재개 권한 팀
 let fieldRestartTeamUntil=0;
 let goalPending = false;
+let pendingGoalVisual=null; // 공이 네트 안쪽으로 들어가는 장면이 끝난 뒤 득점 확정
+function beginGoalVisual(team){
+  if(pendingGoalVisual||goalPending)return;
+  const now=Date.now();
+  ball.owner=null;ball.ownerUntil=0;ball.noPickupUntil=now+1200;
+  // 골문 안에서 공이 갑자기 멈추지 않도록 속도는 유지하되 네트에 걸리는 느낌으로 감쇠한다.
+  pendingGoalVisual={team,resolveAt:now+520};
+  sendBallSnapshot();
+}
 function scoreGoal(team){
   if(goalPending||isRoundLocked())return;
   goalPending=true;
@@ -1838,10 +1874,10 @@ function scoreGoal(team){
 let goalFlashUntil=0, goalFlashTeam=null;
 function showGoalFlash(team){ goalFlashTeam=team; goalFlashUntil=Date.now()+900; }
 function spawnGoalParticles(team){
-  const cx = team==='A' ? FX+FW : FX;
+  const cx = team==='A' ? GOAL_SCORE_RIGHT_X : GOAL_SCORE_LEFT_X;
   const cy = (GOAL_Y1+GOAL_Y2)/2;
   const cols = team==='A' ? ['#e74c3c','#ff8a80','#fff'] : ['#3b82f6','#8ab4ff','#fff'];
-  for (let i=0;i<26;i++){
+  for (let i=0;i<58;i++){
     const a = Math.random()*Math.PI*2, sp = 2+Math.random()*4;
     particles.push({ x:cx, y:cy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp-2,
       life:1, color: cols[i%cols.length], size:3+Math.random()*3 });
@@ -2442,12 +2478,12 @@ function drawPlayer(p,mine,sid){
   // 내 캐릭터 표식도 몸과 같이 올라간다.
   const nick=String(p.nick||'Player').slice(0,10);
   ctx.font='700 7px "Segoe UI",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-  const labelY=-58;
+  const labelY=-53;
   ctx.lineWidth=1.8;ctx.strokeStyle='rgba(0,0,0,.40)';ctx.strokeText(nick,0,labelY);
   ctx.fillStyle=mine?'rgba(255,246,188,.94)':'rgba(255,255,255,.88)';ctx.fillText(nick,0,labelY);
   if(mine){
     // 내 캐릭터 표시는 정수리 바로 위의 작은 반투명 역삼각형만 사용한다.
-    const markerY=labelY-9;
+    const markerY=labelY-7;
     ctx.fillStyle='rgba(255,235,128,.62)';
     ctx.beginPath();ctx.moveTo(-4,markerY-3);ctx.lineTo(4,markerY-3);ctx.lineTo(0,markerY+2);ctx.closePath();ctx.fill();
   }
@@ -2782,10 +2818,15 @@ window.addEventListener('message', e=>{
       }
     }
     netBall.owner = d.owner ? String(d.owner) : null;
-    // 로컬 킥 이후 impact가 아직 확인되지 않은 동안 들어온 owner=mySid는
-    // 대부분 킥 직전 스냅샷이다. 이것을 재획득 확정으로 처리하면 게스트 화면만
-    // 공이 발에 잠깐 붙었다가 뒤늦게 출발한다.
-    const staleSelfOwnerDuringKick=!!(netBall.owner===mySid&&localKickTrack&&!confirmsLocalKick);
+    // 같은 kick id의 impact 확정이 왔다면 그 패킷에 남아 있는 owner=mySid는
+    // 킥 직전 소유권 잔상이다. owner 분기보다 impact 확정을 먼저 적용해야
+    // 게스트 화면 공이 발로 되돌아갔다가 다시 출발하는 요요가 생기지 않는다.
+    if(confirmsLocalKick)netBall.owner=null;
+    const packetPredatesKick=!!(localKickTrack&&(
+      (incomingBallSeq&&incomingBallSeq<=Number(localKickTrack.baselineBallSeq||0))||
+      (incomingSentAt&&incomingSentAt<Number(localKickTrack.createdAt||0)-20)
+    ));
+    const staleSelfOwnerDuringKick=!!(netBall.owner===mySid&&localKickTrack&&(!localKickTrack.confirmed||packetPredatesKick));
     if(staleSelfOwnerDuringKick)netBall.owner=null;
     const localOwnerConfirmed=netBall.owner===mySid;
     if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
