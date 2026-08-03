@@ -440,14 +440,14 @@ function updatePreview(modeId){
   const meta = window.gameById ? window.gameById(modeId) : null;
   const label = meta?.name || modeLabel(modeId) || "-";
 
-  // 요청사항: 방 화면에서 제목/기본설명 대신 게임별 2줄 설명만 표시
+  // 요청사항: 방 화면에 게임별 핵심 규칙 설명을 표시
   try{
     if (previewEls.desc){
       const lines = Array.isArray(meta?.descLines) ? meta.descLines : [];
       const cleaned = lines
         .map(s => (s ?? "").toString().trim())
         .filter(Boolean)
-        .slice(0, 2);
+        .slice(0, (meta?.id || modeId) === "soccer" ? 7 : 2);
 
       // 2줄이 없으면 최소 1줄은 보여주기
       const fallback = cleaned.length ? cleaned : ["게임 시작 시 전체 화면으로 전환됩니다."];
@@ -860,7 +860,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync"]);
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync","sc_math_submit"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -1436,6 +1436,18 @@ function updatePreview(modeId){
       if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
         try{ room.send("sc_over", { scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner }); }catch(_){ }
       }
+      return;
+    }
+    if (d.type === "sc_math_submit"){
+      if (!fromMainForSoccer) return;
+      try{
+        room.send("sc_math_submit", {
+          roundId:String(d.roundId||""),
+          score:Number(d.score||0),
+          solved:!!d.solved,
+          final:!!d.final
+        });
+      }catch(_){ }
       return;
     }
     if (d.type === "sc_sync"){
@@ -3135,6 +3147,41 @@ try{
       });
 
       // ── Soccer: server → iframe relays ──────────────────────────────
+      room.onMessage("sc_math_start", (msg)=>{
+        postToMain({
+          type:"sc_math_start",
+          roundId:String(msg.roundId||""),
+          kind:String(msg.kind||"initial"),
+          seed:msg.seed,
+          beginsAt:msg.beginsAt,
+          endsAt:msg.endsAt,
+          kickoffAt:msg.kickoffAt
+        });
+      });
+      room.onMessage("sc_math_progress", (msg)=>{
+        postToMain({
+          type:"sc_math_progress",
+          roundId:String(msg.roundId||""),
+          scoreA:msg.scoreA,
+          scoreB:msg.scoreB,
+          submitted:msg.submitted
+        });
+      });
+      room.onMessage("sc_math_result", (msg)=>{
+        postToMain({
+          type:"sc_math_result",
+          roundId:String(msg.roundId||""),
+          kind:String(msg.kind||"initial"),
+          winner:msg.winner,
+          tied:!!msg.tied,
+          scoreA:msg.scoreA,
+          scoreB:msg.scoreB,
+          ownerSid:msg.ownerSid,
+          kickoffAt:msg.kickoffAt,
+          startTs:msg.startTs,
+          durationMs:msg.durationMs
+        });
+      });
       room.onMessage("sc_timer", (msg)=>{
         postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
       });
