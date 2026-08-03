@@ -1784,7 +1784,10 @@ export class RoomDO{
         }
         if (d.tackleAt) p.tackleAt = Number(d.tackleAt) || p.tackleAt || 0;
         const n = now();
-        if (n - (this.sc.lastPosBroadcastAt || 0) < 33) return; // ~30Hz (was ~20Hz; tighter for smoother sync)
+        const urgentSoccerAction=!!(d.kickAt||d.headerAt||d.tackleAt||d.claimAt);
+        // 게스트 킥/헤딩/태클 엣지는 30Hz 위치 쓰로틀을 타면 최대 한 프레임 이상 늦어진다.
+        // 액션은 즉시 방송하고, 일반 이동만 기존 33ms 제한을 유지한다.
+        if (!urgentSoccerAction && n - (this.sc.lastPosBroadcastAt || 0) < 33) return;
         this.sc.lastPosBroadcastAt = n;
         this._broadcast("sc_players", { players: this.sc.players });
         return;
