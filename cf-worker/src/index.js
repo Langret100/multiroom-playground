@@ -1799,7 +1799,7 @@ export class RoomDO{
         // 서버 권한 기준이 어긋날 때(좌석 0이 방장이 아닌 경우) 공 물리를
         // 아무도 계산하지 못해 공이 완전히 멈춰버리는 치명적 버그가 된다.
         if (!u?.isHost && Number(u?.seat ?? -1) !== 0) return;
-        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), z: Math.max(0, Number(d.z ?? 0)), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), vz: Number(d.vz ?? 0), owner: d.owner ?? null, impactAt: String(d.impactAt||''), impactPower: Number(d.impactPower||0), impactDir: Number(d.impactDir||0), sentAt: Number(d.sentAt||0), ballSeq: Number(d.ballSeq||0) };
+        this.sc.ball = { x: Number(d.x ?? 0), y: Number(d.y ?? 0), z: Math.max(0, Number(d.z ?? 0)), vx: Number(d.vx ?? 0), vy: Number(d.vy ?? 0), vz: Number(d.vz ?? 0), owner: d.owner ?? null, impactAt: String(d.impactAt||''), impactPower: Number(d.impactPower||0), impactDir: Number(d.impactDir||0), restartText: String(d.restartText||''), restartUntil: Number(d.restartUntil||0), restartSerial: Number(d.restartSerial||0), sentAt: Number(d.sentAt||0), ballSeq: Number(d.ballSeq||0) };
         // broadcast to everyone except the sender (host already has authoritative local state)
         for (const [sock, sUid] of this.sockets.entries()){
           if (sUid && sUid !== uid) this._send(sock, "sc_ball", this.sc.ball);

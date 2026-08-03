@@ -1391,7 +1391,8 @@ function updatePreview(modeId){
       state.ball = {
         x:d.x, y:d.y, z:d.z||0, vx:d.vx, vy:d.vy, vz:d.vz||0, owner:d.owner,
         sentAt:Number(d.sentAt||soccerNow), at:Number(d.sentAt||soccerNow), ballSeq:Number(d.ballSeq||0),
-        impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0
+        impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0,
+        restartText:d.restartText||"", restartUntil:Number(d.restartUntil||0), restartSerial:Number(d.restartSerial||0)
       };
       coop.soccerLocalState = state;
       try{ room.send("tg_state", { state }); }catch(_){ }
@@ -3057,7 +3058,8 @@ try{
             postToMain({
               type:"sc_ball", x:sharedBall.x, y:sharedBall.y, z:sharedBall.z||0, vx:sharedBall.vx, vy:sharedBall.vy, vz:sharedBall.vz||0, owner:sharedBall.owner,
               sentAt:Number(sharedBall.sentAt||sharedBall.at||0), ballSeq:Number(sharedBall.ballSeq||0),
-              impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0
+              impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0,
+              restartText:sharedBall.restartText||"", restartUntil:Number(sharedBall.restartUntil||0), restartSerial:Number(sharedBall.restartSerial||0)
             });
           }
           for (const evt of sharedEvents){
@@ -3151,7 +3153,8 @@ try{
         postToMain({
           type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0, vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
           sentAt:Number(msg.sentAt||msg.at||0), ballSeq:Number(msg.ballSeq||0),
-          impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0
+          impactAt:msg.impactAt||"", impactPower:msg.impactPower||0, impactDir:msg.impactDir||0,
+          restartText:msg.restartText||"", restartUntil:Number(msg.restartUntil||0), restartSerial:Number(msg.restartSerial||0)
         });
       });
       room.onMessage("sc_goal", (msg)=>{

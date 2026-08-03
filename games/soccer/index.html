@@ -125,7 +125,12 @@
 7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
 8) 골 직후에는 호스트만 reset하지 말고 sc_goal로 모든 클라이언트의 owner/예측/입력/
    시작 좌표를 같은 단계로 초기화한다. 카운트다운 중 오래된 sc_ball도 무시한다.
-9) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
+9) 골대는 득점 사각형 하나로 처리하지 않는다. 양쪽 포스트와 크로스바는 충돌체이며,
+   골문 안쪽을 통과한 공만 득점이다. 라인 밖 공은 벽 반사로 숨기지 말고 킥인/코너/골킥으로 재개한다.
+10) 소유 중인 선수를 항상 claim 우선순위로 이기게 두면 상대가 공을 절대 뺏지 못한다.
+    짧은 소유 보호시간 이후 실제 접촉한 상대에게 탈취 우선권을 준다.
+11) 헤딩은 캐릭터 중심의 큰 원이 아니라 머리 높이(z)와 짧은 수평 거리 모두를 만족해야 한다.
+12) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
    동시 claim, 헤딩, 태클, 골 판정, 방장 승계, 세 파일 node --check.
    - 재획득 직후 공 위치를 이전 자유공 좌표에서 발앞으로 lerp하지 않는다. 최초 소유권 확정은
      즉시 발앞 목표로 스냅하고, 이미 소유 중인 연속 드리블에서만 보간한다. 이 원칙을 어기면
@@ -189,9 +194,11 @@ const MAX_BALL_SPEED = 6.35;      // 이동 중 킥이 선수보다 확실히 �
 const BALL_GRAVITY = 0.061;       // 로프트가 떠 있기만 하지 않고 자연스럽게 내려오게 조정
 const BALL_BOUNCE = 0.18;         // 잔디 바운드는 낮고 빠르게 안정됨
 const BALL_AIR_DRAG = 0.9965;     // 공중 슛도 지나치게 멀리 뻗지 않게 감쇠
-const BALL_GOAL_MAX_Z = 38;      // 골대 크로스바 높이(화면 논리 높이)
-const HEADER_MIN_Z = 7;          // 이보다 낮은 공은 헤딩 불가
-const HEADER_MAX_Z = 47;         // 점프 헤딩 가능한 최대 높이
+const BALL_GOAL_MAX_Z = 23;      // 배경 골대 크로스바 높이에 맞춘 물리 높이
+const GOAL_POST_HALF_Y = 7.5;    // 좌우 골포스트 충돌 두께(공 반지름 포함 전)
+const GOAL_CROSSBAR_HALF_Z = 3.4;// 크로스바 충돌 두께
+const HEADER_MIN_Z = 10;         // 머리 높이까지 오지 않은 공은 헤딩 불가
+const HEADER_MAX_Z = 34;         // 점프 헤딩 가능한 실제 머리 범위
 const FIXED_STEP_MS = 1000/60;   // 물리/소유권 판정은 화면 주사율과 무관하게 60Hz 고정
 const MAX_FIXED_STEPS = 5;        // 긴 프레임 뒤 과도한 따라잡기 방지
 const BALL_PREDICTION_MIN_WAIT_MS = 1600; // 정상 왕복 지연 중에는 예측을 강제로 되감지 않는다
@@ -253,12 +260,10 @@ function stepFreeBallState(state, steps=1){
   if(state.z<=0&&Math.hypot(state.vx,state.vy)<.055){state.vx=0;state.vy=0;}
   const speed=Math.hypot(state.vx,state.vy);
   if(speed>MAX_BALL_SPEED){ state.vx*=MAX_BALL_SPEED/speed; state.vy*=MAX_BALL_SPEED/speed; }
-  if(state.y-BR<FY){ state.y=FY+BR; state.vy=Math.abs(state.vy)*.18; }
-  if(state.y+BR>FY+FH){ state.y=FY+FH-BR; state.vy=-Math.abs(state.vy)*.18; }
-  const inGoalMouth=state.y>GOAL_Y1+BR*.10&&state.y<GOAL_Y2-BR*.10&&state.z<=BALL_GOAL_MAX_Z;
-  if(state.x<FX&&!inGoalMouth){ state.x=FX+BR; state.vx=Math.abs(state.vx)*.18; }
-  if(state.x>FX+FW&&!inGoalMouth){ state.x=FX+FW-BR; state.vx=-Math.abs(state.vx)*.18; }
-  state.x=clamp(state.x,FX-GOAL_W-BR,FX+FW+GOAL_W+BR);
+  // 라인 밖 처리는 호스트 규칙 루프에서 킥인/코너/골킥으로 판정한다.
+  // 여기서 벽처럼 반사시키면 아웃 상황이 사라지고 골대 뒤로 공이 끼게 된다.
+  state.x=clamp(state.x,FX-GOAL_W-BR-20,FX+FW+GOAL_W+BR+20);
+  state.y=clamp(state.y,FY-BR-20,FY+FH+BR+20);
   return state;
 }
 
@@ -572,7 +577,7 @@ function updateKickoffCountdown(){
   if (!kickoffSoundsDone.has(key) && sec<=3){ kickoffSoundsDone.add(key); sfxTick(); }
 }
 
-function isRoundLocked(now=Date.now()){ return now < Math.max(restartLockUntil||0,kickoffUntil||0); }
+function isRoundLocked(now=Date.now()){ return now < Math.max(restartLockUntil||0,kickoffUntil||0,fieldRestartUntil||0); }
 
 function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
 function lerp(a,b,t){ return a+(b-a)*t; }
@@ -883,7 +888,7 @@ const KICK_CHARGE_MS = 600;
 const HEADER_COOLDOWN_MS=800;
 const HEADER_DUR_MS=520;
 const HEADER_CONTACT_DELAY_MS=210;
-const HEADER_RANGE=KICK_RANGE+13;
+const HEADER_RANGE=PR+BR+5; // 몸 전체가 아니라 실제 머리 근처의 짧은 접촉 범위
 const TACKLE_COOLDOWN_MS = 3000;
 const TACKLE_DUR_MS = 230;
 const STUN_MS = 550;
@@ -1369,6 +1374,67 @@ function updateNetBall(){
   netBall.vz=lerp(netBall.vz||0,tvz,.20);
 }
 
+
+function announceFieldRestart(text, ms=850){
+  fieldRestartText=String(text||'');
+  fieldRestartUntil=Date.now()+ms;
+  fieldRestartSerial++;
+}
+function resetBallForRestart(x,y,text){
+  const now=Date.now();
+  ball.x=clamp(x,FX+BR,FX+FW-BR);
+  ball.y=clamp(y,FY+BR,FY+FH-BR);
+  ball.z=0;ball.vx=0;ball.vy=0;ball.vz=0;
+  ball.owner=null;ball.ownerUntil=0;ball.ownerSince=0;
+  ball.noPickupUntil=now+620;ball.noStealUntil=now+620;
+  ball.lastKicker=null;
+  announceFieldRestart(text,850);
+  sendBallSnapshot();
+}
+function handleFieldOut(prevX,prevY){
+  if(isRoundLocked()||Date.now()<fieldRestartUntil)return false;
+  const last=players[ball.lastKicker||''];
+  const lastTeam=last&&last.team;
+  if(ball.y<FY-BR){
+    resetBallForRestart(clamp(ball.x,FX+36,FX+FW-36),FY+BR+2,'라인 아웃 · 킥인');
+    return true;
+  }
+  if(ball.y>FY+FH+BR){
+    resetBallForRestart(clamp(ball.x,FX+36,FX+FW-36),FY+FH-BR-2,'라인 아웃 · 킥인');
+    return true;
+  }
+  if(ball.x<FX-GOAL_W-BR){
+    if(lastTeam==='A') resetBallForRestart(FX+24, ball.y<(GOAL_Y1+GOAL_Y2)/2?FY+24:FY+FH-24,'코너킥 · BLUE');
+    else resetBallForRestart(FX+72,(GOAL_Y1+GOAL_Y2)/2,'골킥 · RED');
+    return true;
+  }
+  if(ball.x>FX+FW+GOAL_W+BR){
+    if(lastTeam==='B') resetBallForRestart(FX+FW-24,ball.y<(GOAL_Y1+GOAL_Y2)/2?FY+24:FY+FH-24,'코너킥 · RED');
+    else resetBallForRestart(FX+FW-72,(GOAL_Y1+GOAL_Y2)/2,'골킥 · BLUE');
+    return true;
+  }
+  return false;
+}
+function collideGoalFrame(prevX,prevY,prevZ){
+  const leftPlane=GOAL_PLANE_LEFT_X,rightPlane=GOAL_PLANE_RIGHT_X;
+  const crossedLeft=prevX>=leftPlane-BR&&ball.x<leftPlane+BR;
+  const crossedRight=prevX<=rightPlane+BR&&ball.x>rightPlane-BR;
+  const nearPlane=crossedLeft||crossedRight;
+  if(!nearPlane)return false;
+  const postHit=Math.abs(ball.y-GOAL_Y1)<=GOAL_POST_HALF_Y+BR*.42||Math.abs(ball.y-GOAL_Y2)<=GOAL_POST_HALF_Y+BR*.42;
+  const insideMouth=ball.y>GOAL_Y1+GOAL_POST_HALF_Y&&ball.y<GOAL_Y2-GOAL_POST_HALF_Y;
+  const crossbarHit=insideMouth&&Math.abs((ball.z||0)-BALL_GOAL_MAX_Z)<=GOAL_CROSSBAR_HALF_Z+2.2;
+  if(!postHit&&!crossbarHit)return false;
+  if(crossedLeft){ball.x=leftPlane+BR+1;ball.vx=Math.abs(ball.vx)*.58;}
+  else {ball.x=rightPlane-BR-1;ball.vx=-Math.abs(ball.vx)*.58;}
+  if(crossbarHit){ball.vz=-Math.max(.8,Math.abs(ball.vz||0)*.55);ball.z=Math.min(ball.z,BALL_GOAL_MAX_Z-GOAL_CROSSBAR_HALF_Z-1);}
+  else {ball.vy+=(ball.y<(GOAL_Y1+GOAL_Y2)/2?-1:1)*.65;}
+  ball.owner=null;ball.ownerUntil=0;ball.noPickupUntil=Date.now()+180;
+  ball.impactAt=`frame:${Date.now()}`;ball.impactPower=.5;ball.impactDir=Math.atan2(ball.vy,ball.vx);
+  sfxTackle();sendBallSnapshot();
+  return true;
+}
+
 function updateBallHost(advancePhysics=true){
   if (!isHost || !gameActive || gameOver) return;
   const now = Date.now();
@@ -1392,6 +1458,8 @@ function updateBallHost(advancePhysics=true){
     const minD=PR+BR;
     const pickupLocked=ball.lastKicker===sid&&now<Number(ball.noPickupUntil||0);
     const carrying=groundBall&&ball.owner===sid&&now<(ball.ownerUntil||0)&&d<minD+28;
+    const ownerIsOpponent=!!(ball.owner&&ball.owner!==sid&&players[ball.owner]&&players[ball.owner].team!==p.team);
+    const stealReady=ownerIsOpponent&&now>=Number(ball.noStealUntil||0)&&groundBall&&d<minD+2;
 
     const reportedPlayerX=Number(p.netX),reportedPlayerY=Number(p.netY);
     const reportedBallX=Number(p.dribbleBallX),reportedBallY=Number(p.dribbleBallY);
@@ -1417,11 +1485,12 @@ function updateBallHost(advancePhysics=true){
     }
 
     stateBySid[sid]={sid,p,effectiveVX,effectiveVY,speed,controlX,controlY,dx,dy,d,minD,
-      pickupLocked,carrying,reportedContact,claimPending,claimValid,claimExpired};
+      pickupLocked,carrying,ownerIsOpponent,stealReady,reportedContact,claimPending,claimValid,claimExpired};
 
     if(!pickupLocked&&groundBall){
       // 우선순위가 같으면 실제 권위 공에 더 가까운 선수를 선택한다.
-      if(claimValid)pickupCandidates.push({sid,priority:3,d});
+      if(stealReady)pickupCandidates.push({sid,priority:4,d});
+      else if(claimValid)pickupCandidates.push({sid,priority:3,d});
       else if(carrying)pickupCandidates.push({sid,priority:2,d});
       else if(d<minD+4||reportedContact)pickupCandidates.push({sid,priority:1,d});
     }
@@ -1455,8 +1524,10 @@ function updateBallHost(advancePhysics=true){
       ball.vy=lerp(ball.vy,effectiveVY*.78,moving?.38:.30);
     }
     ball.z=0;ball.vz=0;
+    const changedOwner=ball.owner!==sid;
     ball.owner=sid;
     ball.ownerUntil=now+260;
+    if(changedOwner){ ball.ownerSince=now; ball.noStealUntil=now+240; }
     if(claimValid){
       sendBallSnapshot();
     }
@@ -1543,8 +1614,11 @@ function updateBallHost(advancePhysics=true){
       const requestDist=Math.hypot(Number(p.headerBallX)-headerPX,Number(p.headerBallY)-headerPY);
       const reportedDrift=Math.hypot(ball.x-Number(p.headerBallX),ball.y-Number(p.headerBallY));
       const airborne=(ball.z||0)>=HEADER_MIN_Z&&(ball.z||0)<=HEADER_MAX_Z;
-      const headerInRange=airborne&&(d<HEADER_RANGE||
-        (Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+4&&reportedDrift<58));
+      const headDir=Number.isFinite(p.headerDir)?p.headerDir:(Number.isFinite(p.dir)?p.dir:0);
+      const frontDot=((ball.x-headerPX)*Math.cos(headDir)+(ball.y-headerPY)*Math.sin(headDir));
+      const nearHead=d<HEADER_RANGE&&frontDot>-9&&frontDot<HEADER_RANGE+7;
+      const reportedNearHead=Number.isFinite(requestDist)&&requestDist<HEADER_RANGE+2&&reportedDrift<30;
+      const headerInRange=airborne&&(nearHead||reportedNearHead);
       if(headerInRange){
         const dir=Number.isFinite(p.headerDir)?p.headerDir:(Number.isFinite(p.dir)?p.dir:0);
         const power=1.95;
@@ -1612,23 +1686,18 @@ function updateBallHost(advancePhysics=true){
     const t=Math.abs(denom)<1e-6?1:clamp((lineX-prevBallX)/denom,0,1);
     const crossY=lerp(prevBallY,ball.y,t);
     const crossZ=lerp(prevBallZ,ball.z||0,t);
-    return crossY>GOAL_Y1+BR*.10&&crossY<GOAL_Y2-BR*.10&&crossZ<=BALL_GOAL_MAX_Z;
+    // 공 전체가 양 포스트 사이와 크로스바 아래에 들어간 경우만 득점이다.
+    return crossY>GOAL_Y1+GOAL_POST_HALF_Y+BR*.45&&
+      crossY<GOAL_Y2-GOAL_POST_HALF_Y-BR*.45&&
+      crossZ+3.0<BALL_GOAL_MAX_Z-GOAL_CROSSBAR_HALF_Z;
   }
+  // 포스트/크로스바 충돌을 득점보다 먼저 검사한다. 프레임에 닿은 공은 튕겨 나온다.
+  if(collideGoalFrame(prevBallX,prevBallY,prevBallZ))return;
   if(crossedGoalLine(GOAL_PLANE_LEFT_X,true)){ scoreGoal('B'); return; }
   if(crossedGoalLine(GOAL_PLANE_RIGHT_X,false)){ scoreGoal('A'); return; }
 
-  // 득점은 골대 앞이 아니라 네트 안쪽 GOAL_PLANE을 실제 통과할 때만 인정한다.
-
-  // 골문 안쪽은 네트 깊이만큼 이동할 수 있고, 골문 밖 끝선은 벽처럼 튕긴다.
-  const inGoalMouth=ball.y>GOAL_Y1+BR*.10&&ball.y<GOAL_Y2-BR*.10&&
-    (ball.z||0)<=BALL_GOAL_MAX_Z;
-  if(ball.x<FX&&!inGoalMouth){
-    ball.x=FX+BR;ball.vx=Math.abs(ball.vx)*.18;
-  }
-  if(ball.x>FX+FW&&!inGoalMouth){
-    ball.x=FX+FW-BR;ball.vx=-Math.abs(ball.vx)*.18;
-  }
-  ball.x=clamp(ball.x,FX-GOAL_W-BR,FX+FW+GOAL_W+BR);
+  // 터치라인·골라인 밖은 벽이 아니다. 마지막 터치 팀과 나간 위치에 따라 재개한다.
+  if(handleFieldOut(prevBallX,prevBallY))return;
 }
 
 let lastBallSpeedSeen = 0;
@@ -1675,6 +1744,9 @@ function applyStun(sid, dur, notifyServer){
   }
 }
 
+let fieldRestartUntil=0;
+let fieldRestartText='';
+let fieldRestartSerial=0;
 let goalPending = false;
 function scoreGoal(team){
   if(goalPending||isRoundLocked())return;
@@ -1716,7 +1788,8 @@ function sendBallSnapshot(){
   lastBallSent=sentAt;
   bridgeSend('sc_ball', {
     x:ball.x,y:ball.y,z:ball.z||0,vx:ball.vx,vy:ball.vy,vz:ball.vz||0,owner:ball.owner||null,
-    impactAt:ball.impactAt||'',impactPower:ball.impactPower||0,impactDir:ball.impactDir||0,sentAt,ballSeq
+    impactAt:ball.impactAt||'',impactPower:ball.impactPower||0,impactDir:ball.impactDir||0,
+    restartText:fieldRestartText||'',restartUntil:fieldRestartUntil||0,restartSerial:fieldRestartSerial||0,sentAt,ballSeq
   });
 }
 function netSends(){
@@ -2405,6 +2478,17 @@ function drawKickoffCountdown(){
   ctx.restore();
 }
 
+
+function drawFieldRestartNotice(){
+  if(!fieldRestartText||Date.now()>=fieldRestartUntil)return;
+  ctx.save();
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.font='900 25px system-ui,sans-serif';ctx.lineWidth=7;
+  ctx.strokeStyle='rgba(0,0,0,.68)';ctx.strokeText(fieldRestartText,CW/2,86);
+  ctx.fillStyle='#fff4c2';ctx.fillText(fieldRestartText,CW/2,86);
+  ctx.restore();
+}
+
 function drawGoalFlash(){
   if (!goalFlashTeam || Date.now()>goalFlashUntil) { goalFlashTeam=null; return; }
   ctx.save();
@@ -2442,6 +2526,7 @@ function draw(){
   ctx.restore();
   drawHUD();
   drawGoalFlash();
+  drawFieldRestartNotice();
   drawKickoffCountdown();
 }
 
@@ -2590,6 +2675,12 @@ window.addEventListener('message', e=>{
     netBall.netVY=Number(d.vy??0);
     netBall.netVZ=Number(d.vz??0);
     netBall.netSentAt=Number(d.sentAt||now);
+    if(Number(d.restartSerial||0)>Number(netBall.restartSerial||0)){
+      netBall.restartSerial=Number(d.restartSerial||0);
+      fieldRestartText=String(d.restartText||'');
+      fieldRestartUntil=Number(d.restartUntil||0);
+      localKickTrack=null;localDribbleVisualUntil=0;pendingClaimAt=0;pendingClaimUntil=0;
+    }
     netBall.netBallSeq=incomingBallSeq||netBall.netBallSeq||0;
     // 표시 속도와 수신 속도를 분리한다. 매 패킷마다 표시 속도까지 교체하면
     // 게스트 화면에서 공이 30ms 단위로 가다 서다를 반복한다. 새 타격은 즉시
