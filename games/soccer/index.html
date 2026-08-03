@@ -30,21 +30,25 @@
     border-radius:50%; background:rgba(255,255,255,.55);
   }
   body.mobile #joy { display:block; }
-  #actionBtns { position:fixed; right:18px; bottom:22px; z-index:15; display:none;
-      flex-direction:row; gap:10px; align-items:flex-end; }
-  body.mobile #actionBtns { display:flex; }
+  #actionBtns { position:fixed; left:18px; bottom:18px; z-index:15; display:flex;
+      flex-direction:row; gap:9px; align-items:flex-end; }
+  body.mobile #actionBtns { left:auto; right:18px; bottom:22px; }
+  body:not(.mobile) #kickBtn { display:none; }
   .actBtn {
-    width:68px; height:68px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    width:64px; height:58px; border-radius:14px; display:flex; align-items:center; justify-content:center;
     font-size:12px; font-weight:700; color:#fff; text-align:center; line-height:1.2;
     background:rgba(255,255,255,.14); border:2px solid rgba(255,255,255,.35); position:relative;
     overflow:hidden;
   }
-  .actBtn .chargeFill{ position:absolute; left:0; right:0; bottom:0; height:0%; background:rgba(255,214,64,.55); transition:height .05s linear; }
-  .actBtn.cooling { opacity:.4; }
+  .actBtn .chargeFill,.actBtn .coolFill{ position:absolute; left:0; right:0; bottom:0; height:0%; background:rgba(255,214,64,.55); transition:height .05s linear; }
+  .actBtn .coolFill{background:rgba(255,255,255,.24);transition:height .04s linear;}
+  .actBtn.cooling { opacity:.34; }
   .actBtn span{ position:relative; z-index:1; }
   #kickBtn { background:rgba(231,76,60,.22); }
   #jumpBtn { background:rgba(245,158,11,.22); }
-  #tackleBtn { background:rgba(59,130,246,.22); }
+  #tackleBtn { background:rgba(59,130,246,.24); }
+  body.mobile .actBtn{border-radius:50%;width:68px;height:68px;}
+  body:not(.mobile) .actBtn{backdrop-filter:blur(3px);box-shadow:0 3px 10px rgba(0,0,0,.22);}
 
   #scoreHud {
     position:fixed; left:50%; top:max(8px, env(safe-area-inset-top)); transform:translateX(-50%);
@@ -101,8 +105,8 @@
 <div id="scoreHud"><div class="team red"><span>RED</span><span id="scoreA" class="score">0</span></div><div id="scoreClock" class="clock">02:00</div><div class="team blue"><span id="scoreB" class="score">0</span><span>BLUE</span></div></div>
 <div id="joy"><div id="joyStick"></div></div>
 <div id="actionBtns">
-  <div id="tackleBtn" class="actBtn"><span>태클<br>C</span></div>
-  <div id="jumpBtn" class="actBtn"><span>헤딩<br>X</span></div>
+  <div id="tackleBtn" class="actBtn"><div class="coolFill" id="tackleCoolFill"></div><span>태클<br>C</span></div>
+  <div id="jumpBtn" class="actBtn"><div class="coolFill" id="headerCoolFill"></div><span>헤딩<br>X</span></div>
   <div id="kickBtn" class="actBtn"><div class="chargeFill" id="kickChargeFill"></div><span>킥<br>Z</span></div>
 </div>
 <div id="overlay"><h2 id="ovTitle">연결 대기 중...</h2><p id="ovText">잠시만 기다려주세요.</p></div>
@@ -128,6 +132,8 @@
 9) 골대는 득점 사각형 하나로 처리하지 않는다. 양쪽 포스트와 크로스바는 충돌체이며,
    골문 안쪽을 통과한 공만 득점이다. 라인 밖 공은 벽 반사로 숨기지 말고 킥인/코너/골킥으로 재개한다.
 10) 소유 중인 선수를 항상 claim 우선순위로 이기게 두면 상대가 공을 절대 뺏지 못한다.
+11) 로컬 게스트 킥은 호스트 응답 전에 발앞 좌표에서 즉시 예측을 시작해야 한다. UI 지연을 네트워크 재전송으로만 덮지 않는다.
+12) 하단 막대형 표시는 체력바처럼 보이고 접지감을 해치므로 다시 넣지 않는다. 헤딩/태클 쿨타임은 버튼 채움으로 표시한다.
 11) 아웃은 선을 넘는 즉시 공을 재개 지점으로 텔레포트하지 않는다. 짧은 비행 연출 뒤 마지막 터치 반대 팀에 재개권을 준다.
 12) 탈취 시 공의 권위 owner는 즉시 바꾸되 화면/물리 좌표는 짧게 발앞으로 전환해 순간이동을 피한다.
     짧은 소유 보호시간 이후 실제 접촉한 상대에게 탈취 우선권을 준다.
@@ -481,6 +487,8 @@ const kickBtnEl = document.getElementById('kickBtn');
 const jumpBtnEl = document.getElementById('jumpBtn');
 const tackleBtnEl = document.getElementById('tackleBtn');
 const kickChargeFillEl = document.getElementById('kickChargeFill');
+const headerCoolFillEl=document.getElementById('headerCoolFill');
+const tackleCoolFillEl=document.getElementById('tackleCoolFill');
 kickBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); beginKickCharge(); }, { passive:false });
 kickBtnEl.addEventListener('touchend',   e=>{ e.preventDefault(); releaseKickCharge(); }, { passive:false });
 kickBtnEl.addEventListener('touchcancel',e=>{ e.preventDefault(); releaseKickCharge(); }, { passive:false });
@@ -964,7 +972,8 @@ function releaseKickCharge(){
     // 빠른 공은 화면 표시가 목표보다 몇 프레임 뒤라 실제로 맞은 슛을 놓칠 수 있다.
     const visibleDist=Math.hypot(b.x-me.x,b.y-me.y);
     const targetDist=Math.hypot((netBall.netX??b.x)-me.x,(netBall.netY??b.y)-me.y);
-    const ownedLocally=(b.owner===mySid)||Date.now()<localDribbleVisualUntil;
+    const locallyAtFoot=Math.hypot(b.x-(me.x+Math.cos(me.dir)*DRIBBLE_DISTANCE),b.y-(me.y+Math.sin(me.dir)*DRIBBLE_DISTANCE))<DRIBBLE_DISTANCE+18;
+    const ownedLocally=(b.owner===mySid)||Date.now()<localDribbleVisualUntil||locallyAtFoot;
     const immediateEligible=ownedLocally||
       Math.min(visibleDist,targetDist,Math.hypot(pendingKickBallX-me.x,pendingKickBallY-me.y))<KICK_RANGE+24;
     if(immediateEligible){
@@ -1056,6 +1065,10 @@ function updateMe(){
   const now = Date.now();
   jumpBtnEl.classList.toggle('cooling',now<headerCooldownUntil);
   tackleBtnEl.classList.toggle('cooling',now<tackleCooldownUntil);
+  const headerRemain=clamp((headerCooldownUntil-now)/HEADER_COOLDOWN_MS,0,1);
+  const tackleRemain=clamp((tackleCooldownUntil-now)/TACKLE_COOLDOWN_MS,0,1);
+  if(headerCoolFillEl)headerCoolFillEl.style.height=`${Math.round((1-headerRemain)*100)}%`;
+  if(tackleCoolFillEl)tackleCoolFillEl.style.height=`${Math.round((1-tackleRemain)*100)}%`;
   if (isRoundLocked(now)){ me.vx=0; me.vy=0; me.tackle=false; return; }
   if (isStunned(mySid, now)){ me.vx=0; me.vy=0; me.tackle=false; return; }
 
@@ -2073,7 +2086,7 @@ function shadowSpecForY(y){
   const t=depthTFromY(y);
   return {
     offX: Math.round(lerp(-1,2,t)),
-    offY: Math.round(lerp(6,9,t)),
+    offY: Math.round(lerp(1,4,t)),
     w: Math.round(lerp(9,15,t)),
     h: Math.round(lerp(3,5,t)),
     alphaA: lerp(.13,.22,t),
@@ -2272,11 +2285,12 @@ function drawPlayer(p,mine,sid){
   ctx.fillRect(-shadow.w+shadow.offX,shadow.offY,shadow.w*2,shadow.h);
   ctx.fillStyle=`rgba(2,18,12,${shadow.alphaB.toFixed(3)})`;
   ctx.fillRect(-Math.round(shadow.w*.65)+shadow.offX,shadow.offY+2,Math.round(shadow.w*1.3),Math.max(2,shadow.h-1));
-  // 팀 표시는 캐릭터 이미지/좌우 반전/점프 변환 바깥의 물리 중심에 그린다.
-  ctx.globalAlpha=.85;ctx.fillStyle=p.color;
-  ctx.fillRect(Math.round(-10*depthScale),shadow.offY+8,Math.round(16*depthScale),2);
-  ctx.fillRect(Math.round(-6*depthScale),shadow.offY+10,Math.round(12*depthScale),1);
-  ctx.globalAlpha=1;
+  // 하단의 파란 막대형 팀 표시는 떠 보이고 체력바처럼 오해돼 제거한다.
+  // 내 캐릭터만 발밑에 얇은 타원 링으로 표시한다.
+  if(mine){
+    ctx.save();ctx.globalAlpha=.78;ctx.strokeStyle='#fff3a8';ctx.lineWidth=2;
+    ctx.beginPath();ctx.ellipse(0,shadow.offY+5,Math.round(13*depthScale),Math.max(3,Math.round(4*depthScale)),0,0,Math.PI*2);ctx.stroke();ctx.restore();
+  }
   ctx.translate(0,Math.round(bob-actionLift));
 
   if(now<tackleActiveUntil&&mine){
@@ -2403,15 +2417,19 @@ function drawPlayer(p,mine,sid){
   }
   if(stunned){ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff59d';ctx.fillText('💫',0,-55);}
 
-  // 작은 닉네임 텍스트만 남긴다. 배경 오버레이가 머리카락을 덮지 않으며,
-  // 얇은 외곽선은 잔디 위 가독성만 확보한다.
+  // 닉네임은 작은 반투명 캡슐로 정리하고, '나'는 별도 배지로 분리한다.
   const nick=String(p.nick||'Player').slice(0,10);
-  const label=(mine?'나 · ':'')+nick;
-  ctx.font='bold 8px monospace';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.font='700 9px "Segoe UI",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
   const labelY=Math.round(-70*depthScale);
-  ctx.lineWidth=2;ctx.strokeStyle='rgba(4,12,20,.9)';ctx.strokeText(label,0,labelY);
-  ctx.fillStyle=mine?'#ffe66d':'#fff';ctx.fillText(label,0,labelY);
-  if(mine){ctx.fillStyle='#ffe66d';ctx.fillRect(-3,labelY-7,6,2);ctx.fillRect(-1,labelY-9,2,2);}
+  const textW=Math.ceil(ctx.measureText(nick).width);
+  const boxW=textW+12,boxH=16;
+  ctx.fillStyle='rgba(5,12,18,.72)';ctx.fillRect(Math.round(-boxW/2),labelY-8,boxW,boxH);
+  ctx.strokeStyle=mine?'rgba(255,238,143,.95)':'rgba(255,255,255,.45)';ctx.lineWidth=1;ctx.strokeRect(Math.round(-boxW/2)+.5,labelY-7.5,boxW-1,boxH-1);
+  ctx.fillStyle=mine?'#fff4a8':'#fff';ctx.fillText(nick,0,labelY);
+  if(mine){
+    const badgeY=labelY-15;ctx.fillStyle='#ffe66d';ctx.beginPath();ctx.arc(0,badgeY,6,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#27313a';ctx.font='900 7px sans-serif';ctx.fillText('ME',0,badgeY+.5);
+  }
   ctx.restore();
 }
 
@@ -2455,7 +2473,7 @@ function drawBall(b){
   ctx.fillStyle=`rgba(2,12,18,${(shadow.alphaA+.05).toFixed(3)})`;
   ctx.fillRect(Math.round(ground.x-Math.round(8*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY),Math.round(16*depthScale),Math.max(3,shadow.h));
   ctx.fillStyle='rgba(2,12,18,.13)';
-  ctx.fillRect(Math.round(ground.x-Math.round(5.6*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY+2),Math.round(11.2*depthScale),2);
+  ctx.fillRect(Math.round(ground.x-Math.round(5.6*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY+1),Math.round(11.2*depthScale),2);
   ctx.restore();
 
   const speed=Math.hypot(b.vx||0,b.vy||0);
