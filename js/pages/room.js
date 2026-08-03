@@ -863,7 +863,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync","sc_math_submit"]);
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","soccer_bridge_init_ack","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync","sc_math_submit"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -2137,7 +2137,12 @@ function cacheSoccerPacket(key, packet){
   try{
     if (!coop.soccerPending) coop.soccerPending = { roster:null, timer:null, goal:null, ball:null, mathStart:null, mathResult:null, mathProgress:null };
     coop.soccerPending[key] = packet;
-    if (coop.soccerBridgeAck) postToMain(packet);
+    // bridge_init 확인 패킷이 일부 브라우저/WebView에서 e.source=null로 오거나
+    // 타이밍상 누락돼도 서버 상태가 부모 캐시에만 갇히면 안 된다.
+    // 축구 iframe이 이미 존재하면 우선 전달하고, ACK 뒤 flushSoccerPending()이
+    // 같은 상태를 한 번 더 재생한다. 게임 쪽은 roundId/로스터 기준으로 중복을 무시한다.
+    const frameReady = !!(coop.active && coop.meta?.id === 'soccer' && duel?.iframeEl?.contentWindow);
+    if (coop.soccerBridgeAck || frameReady) postToMain(packet);
   }catch(_){ }
 }
 
@@ -2410,6 +2415,9 @@ function sendCoopBridgeInit(){
   try{
     if (coop.meta && coop.meta.id === "soccer"){
       room?.send?.("sc_sync", {});
+      // ACK가 유실돼도 캐시에 들어온 로스터/퀴즈 상태를 iframe으로 재생한다.
+      setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='soccer') flushSoccerPending(); }catch(_){ } }, 120);
+      setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='soccer') flushSoccerPending(); }catch(_){ } }, 420);
       // iframe/Colyseus 이벤트 순서가 엇갈리는 모바일 환경을 위한 제한적 재요청.
       // 상태를 생성하지 않고 현재 서버 상태만 다시 받으므로 중복 실행 부작용이 없다.
       setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='soccer') room?.send?.('sc_sync',{}); }catch(_){ } }, 180);
