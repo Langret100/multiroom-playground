@@ -30,25 +30,38 @@
     border-radius:50%; background:rgba(255,255,255,.55);
   }
   body.mobile #joy { display:block; }
-  #actionBtns { position:fixed; left:18px; bottom:18px; z-index:15; display:flex;
-      flex-direction:row; gap:9px; align-items:flex-end; }
+  #actionBtns { position:fixed; right:18px; left:auto; bottom:18px; z-index:15; display:flex;
+      flex-direction:row; gap:10px; align-items:flex-end; }
   body.mobile #actionBtns { left:auto; right:18px; bottom:22px; }
   body:not(.mobile) #kickBtn { display:none; }
   .actBtn {
     width:64px; height:58px; border-radius:14px; display:flex; align-items:center; justify-content:center;
-    font-size:12px; font-weight:700; color:#fff; text-align:center; line-height:1.2;
-    background:rgba(255,255,255,.14); border:2px solid rgba(255,255,255,.35); position:relative;
-    overflow:hidden;
+    font-size:12px; font-weight:800; color:rgba(255,255,255,.96); text-align:center; line-height:1.15;
+    position:relative; overflow:hidden; isolation:isolate;
+    border:1px solid rgba(255,255,255,.26);
+    background:linear-gradient(180deg, rgba(255,255,255,.28) 0%, rgba(255,255,255,.12) 18%, rgba(255,255,255,.08) 100%);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.46), inset 0 -8px 14px rgba(0,0,0,.14), 0 8px 18px rgba(0,0,0,.18);
+    backdrop-filter:blur(7px) saturate(1.18); -webkit-backdrop-filter:blur(7px) saturate(1.18);
   }
-  .actBtn .chargeFill,.actBtn .coolFill{ position:absolute; left:0; right:0; bottom:0; height:0%; background:rgba(255,214,64,.55); transition:height .05s linear; }
-  .actBtn .coolFill{background:rgba(255,255,255,.24);transition:height .04s linear;}
-  .actBtn.cooling { opacity:.34; }
-  .actBtn span{ position:relative; z-index:1; }
-  #kickBtn { background:rgba(231,76,60,.22); }
-  #jumpBtn { background:rgba(245,158,11,.22); }
-  #tackleBtn { background:rgba(59,130,246,.24); }
+  .actBtn::before{
+    content:''; position:absolute; left:7px; right:7px; top:5px; height:44%; border-radius:11px;
+    background:linear-gradient(180deg, rgba(255,255,255,.52) 0%, rgba(255,255,255,.20) 46%, rgba(255,255,255,0) 100%);
+    pointer-events:none; z-index:0;
+  }
+  .actBtn::after{
+    content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none; z-index:0;
+    box-shadow:inset 0 0 0 1px rgba(255,255,255,.10), inset 0 -10px 16px rgba(255,255,255,.05);
+  }
+  .actBtn .chargeFill,.actBtn .coolFill{ position:absolute; left:0; right:0; bottom:0; height:0%; transition:height .05s linear; z-index:0; }
+  .actBtn .chargeFill{ background:linear-gradient(180deg, rgba(255,232,130,.18) 0%, rgba(255,214,64,.50) 70%, rgba(255,187,0,.62) 100%); }
+  .actBtn .coolFill{ background:linear-gradient(180deg, rgba(255,255,255,.08) 0%, rgba(255,255,255,.20) 100%); transition:height .04s linear; }
+  .actBtn.cooling { opacity:.46; filter:saturate(.88); }
+  .actBtn span{ position:relative; z-index:1; text-shadow:0 1px 3px rgba(0,0,0,.28); letter-spacing:-.1px; }
+  #kickBtn { background:linear-gradient(180deg, rgba(255,120,120,.38) 0%, rgba(218,64,64,.24) 100%); }
+  #jumpBtn { background:linear-gradient(180deg, rgba(255,208,126,.36) 0%, rgba(234,156,36,.24) 100%); }
+  #tackleBtn { background:linear-gradient(180deg, rgba(141,198,255,.34) 0%, rgba(59,130,246,.23) 100%); }
   body.mobile .actBtn{border-radius:50%;width:68px;height:68px;}
-  body:not(.mobile) .actBtn{backdrop-filter:blur(3px);box-shadow:0 3px 10px rgba(0,0,0,.22);}
+  body:not(.mobile) .actBtn{min-width:64px;}
 
   #scoreHud {
     position:fixed; left:50%; top:max(8px, env(safe-area-inset-top)); transform:translateX(-50%);
@@ -105,8 +118,8 @@
 <div id="scoreHud"><div class="team red"><span>RED</span><span id="scoreA" class="score">0</span></div><div id="scoreClock" class="clock">02:00</div><div class="team blue"><span id="scoreB" class="score">0</span><span>BLUE</span></div></div>
 <div id="joy"><div id="joyStick"></div></div>
 <div id="actionBtns">
-  <div id="tackleBtn" class="actBtn"><div class="coolFill" id="tackleCoolFill"></div><span>태클<br>C</span></div>
   <div id="jumpBtn" class="actBtn"><div class="coolFill" id="headerCoolFill"></div><span>헤딩<br>X</span></div>
+  <div id="tackleBtn" class="actBtn"><div class="coolFill" id="tackleCoolFill"></div><span>태클<br>C</span></div>
   <div id="kickBtn" class="actBtn"><div class="chargeFill" id="kickChargeFill"></div><span>킥<br>Z</span></div>
 </div>
 <div id="overlay"><h2 id="ovTitle">연결 대기 중...</h2><p id="ovText">잠시만 기다려주세요.</p></div>
@@ -133,7 +146,10 @@
    골문 안쪽을 통과한 공만 득점이다. 라인 밖 공은 벽 반사로 숨기지 말고 킥인/코너/골킥으로 재개한다.
 10) 소유 중인 선수를 항상 claim 우선순위로 이기게 두면 상대가 공을 절대 뺏지 못한다.
 11) 로컬 게스트 킥은 호스트 응답 전에 발앞 좌표에서 즉시 예측을 시작해야 한다. UI 지연을 네트워크 재전송으로만 덮지 않는다.
-12) 하단 막대형 표시는 체력바처럼 보이고 접지감을 해치므로 다시 넣지 않는다. 헤딩/태클 쿨타임은 버튼 채움으로 표시한다.
+12) 발밑 원/링/막대는 오브젝트로 오해되므로 넣지 않는다. 헤딩/태클 쿨타임은 버튼 채움으로만 표시한다.
+13) 게스트 로컬 킥 직후 도착하는 owner=mySid는 킥 이전 스냅샷일 수 있다. impact 확인 전 localKickTrack을 owner 패킷으로 취소하지 않는다.
+14) UI는 경기 화면을 가리지 않게 유지한다. PC 스킬 버튼은 우측 하단의 반투명 젤리 질감으로 두고, 닉네임은 프레임 없이 정수리 바로 위의 작은 글자로만 표시한다. 발밑 원형 표식은 다시 넣지 않는다.
+14) PC 액션 버튼은 이동키와 겹치지 않도록 우측 하단에 둔다. 닉네임은 프레임 없이 머리 바로 위에 표시한다.
 11) 아웃은 선을 넘는 즉시 공을 재개 지점으로 텔레포트하지 않는다. 짧은 비행 연출 뒤 마지막 터치 반대 팀에 재개권을 준다.
 12) 탈취 시 공의 권위 owner는 즉시 바꾸되 화면/물리 좌표는 짧게 발앞으로 전환해 순간이동을 피한다.
     짧은 소유 보호시간 이후 실제 접촉한 상대에게 탈취 우선권을 준다.
@@ -1231,6 +1247,10 @@ function updateNetBall(){
   // 권위상 내가 공 소유자가 된 순간에는 이전 킥 예측/보정을 즉시 끝낸다.
   // 이 우선순위가 localKickTrack보다 뒤에 있으면, 호스트 화면은 재드리블 중인데
   // 게스트 화면만 공이 마지막 킥 위치에 남아 있는 현상이 생긴다.
+  // 킥 직후 늦게 도착한 킥 이전 owner=mySid 스냅샷은 로컬 공 예측을
+  // 취소하면 안 된다. 실제 킥 impact가 확인되기 전까지는 자유공으로 간주한다.
+  const staleSelfOwnerDuringLocalKick=!!(netBall.owner===mySid&&localKickTrack&&!localKickTrack.confirmed);
+  if(staleSelfOwnerDuringLocalKick)netBall.owner=null;
   if(netBall.owner===mySid&&me&&(netBall.netZ||0)<5){
     localKickTrack=null;
     netBall.kickReconcile=null;
@@ -2085,12 +2105,13 @@ function ballScaleForY(y){ return lerp(.88,.98,depthTFromY(y)); }
 function shadowSpecForY(y){
   const t=depthTFromY(y);
   return {
-    offX: Math.round(lerp(-1,2,t)),
-    offY: Math.round(lerp(1,4,t)),
-    w: Math.round(lerp(9,15,t)),
+    offX: Math.round(lerp(-1,1,t)),
+    // 스프라이트의 실제 발바닥 투명 여백을 고려한 접지점.
+    footY: Math.round(lerp(8,10,t)),
+    w: Math.round(lerp(11,16,t)),
     h: Math.round(lerp(3,5,t)),
-    alphaA: lerp(.13,.22,t),
-    alphaB: lerp(.20,.32,t)
+    alphaA: lerp(.15,.22,t),
+    alphaB: lerp(.24,.34,t)
   };
 }
 function strokeWorldLine(points, color, width){
@@ -2280,17 +2301,16 @@ function drawPlayer(p,mine,sid){
 
   ctx.save();
   ctx.translate(Math.round(proj.x),Math.round(proj.groundY));
-  // 그림자는 발 바로 아래에 붙이고, 화면 아래쪽 선수일수록 조금 더 크고 짙게 준다.
-  ctx.fillStyle=`rgba(2,18,12,${shadow.alphaA.toFixed(3)})`;
-  ctx.fillRect(-shadow.w+shadow.offX,shadow.offY,shadow.w*2,shadow.h);
-  ctx.fillStyle=`rgba(2,18,12,${shadow.alphaB.toFixed(3)})`;
-  ctx.fillRect(-Math.round(shadow.w*.65)+shadow.offX,shadow.offY+2,Math.round(shadow.w*1.3),Math.max(2,shadow.h-1));
-  // 하단의 파란 막대형 팀 표시는 떠 보이고 체력바처럼 오해돼 제거한다.
-  // 내 캐릭터만 발밑에 얇은 타원 링으로 표시한다.
-  if(mine){
-    ctx.save();ctx.globalAlpha=.78;ctx.strokeStyle='#fff3a8';ctx.lineWidth=2;
-    ctx.beginPath();ctx.ellipse(0,shadow.offY+5,Math.round(13*depthScale),Math.max(3,Math.round(4*depthScale)),0,0,Math.PI*2);ctx.stroke();ctx.restore();
-  }
+  // 그림자는 발바닥 바로 아래에 붙인다. 직사각형 층 대신 낮은 타원 두 겹을
+  // 사용해 캐릭터가 잔디 위에 서 있는 것처럼 보이게 한다.
+  ctx.save();
+  ctx.translate(shadow.offX,shadow.footY);
+  ctx.fillStyle=`rgba(2,14,10,${shadow.alphaA.toFixed(3)})`;
+  ctx.beginPath();ctx.ellipse(0,0,shadow.w,shadow.h,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle=`rgba(2,14,10,${shadow.alphaB.toFixed(3)})`;
+  ctx.beginPath();ctx.ellipse(0,0,Math.max(5,shadow.w*.58),Math.max(2,shadow.h*.52),0,0,Math.PI*2);ctx.fill();
+  ctx.restore();
+  // 발밑 원/링/막대는 플레이 오브젝트로 오해되므로 표시하지 않는다.
   ctx.translate(0,Math.round(bob-actionLift));
 
   if(now<tackleActiveUntil&&mine){
@@ -2417,18 +2437,19 @@ function drawPlayer(p,mine,sid){
   }
   if(stunned){ctx.font='13px sans-serif';ctx.textAlign='center';ctx.fillStyle='#fff59d';ctx.fillText('💫',0,-55);}
 
-  // 닉네임은 작은 반투명 캡슐로 정리하고, '나'는 별도 배지로 분리한다.
+  // 닉네임은 프레임 없이 정수리 바로 위에 작고 반투명하게 둔다.
+  // 현재 컨텍스트가 점프 높이(actionLift)만큼 함께 이동하므로 헤딩 시 이름과
+  // 내 캐릭터 표식도 몸과 같이 올라간다.
   const nick=String(p.nick||'Player').slice(0,10);
-  ctx.font='700 9px "Segoe UI",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
-  const labelY=Math.round(-70*depthScale);
-  const textW=Math.ceil(ctx.measureText(nick).width);
-  const boxW=textW+12,boxH=16;
-  ctx.fillStyle='rgba(5,12,18,.72)';ctx.fillRect(Math.round(-boxW/2),labelY-8,boxW,boxH);
-  ctx.strokeStyle=mine?'rgba(255,238,143,.95)':'rgba(255,255,255,.45)';ctx.lineWidth=1;ctx.strokeRect(Math.round(-boxW/2)+.5,labelY-7.5,boxW-1,boxH-1);
-  ctx.fillStyle=mine?'#fff4a8':'#fff';ctx.fillText(nick,0,labelY);
+  ctx.font='700 7px "Segoe UI",sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+  const labelY=-58;
+  ctx.lineWidth=1.8;ctx.strokeStyle='rgba(0,0,0,.40)';ctx.strokeText(nick,0,labelY);
+  ctx.fillStyle=mine?'rgba(255,246,188,.94)':'rgba(255,255,255,.88)';ctx.fillText(nick,0,labelY);
   if(mine){
-    const badgeY=labelY-15;ctx.fillStyle='#ffe66d';ctx.beginPath();ctx.arc(0,badgeY,6,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle='#27313a';ctx.font='900 7px sans-serif';ctx.fillText('ME',0,badgeY+.5);
+    // 내 캐릭터 표시는 정수리 바로 위의 작은 반투명 역삼각형만 사용한다.
+    const markerY=labelY-9;
+    ctx.fillStyle='rgba(255,235,128,.62)';
+    ctx.beginPath();ctx.moveTo(-4,markerY-3);ctx.lineTo(4,markerY-3);ctx.lineTo(0,markerY+2);ctx.closePath();ctx.fill();
   }
   ctx.restore();
 }
@@ -2470,16 +2491,19 @@ function drawBall(b){
   const depthScale=ballScaleForY(b.y);
   const shadow=shadowSpecForY(b.y);
   ctx.save();
-  ctx.fillStyle=`rgba(2,12,18,${(shadow.alphaA+.05).toFixed(3)})`;
-  ctx.fillRect(Math.round(ground.x-Math.round(8*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY),Math.round(16*depthScale),Math.max(3,shadow.h));
-  ctx.fillStyle='rgba(2,12,18,.13)';
-  ctx.fillRect(Math.round(ground.x-Math.round(5.6*depthScale)+shadow.offX),Math.round(ground.groundY+shadow.offY+1),Math.round(11.2*depthScale),2);
+  // 높이 올라갈수록 그림자는 작고 옅어지며, 지상에서는 공 바로 아래에 붙는다.
+  const ballLift=clamp(Number(b.z||0)/28,0,1);
+  const sw=Math.max(3,8*depthScale*(1-ballLift*.48));
+  const sh=Math.max(1.5,2.7*depthScale*(1-ballLift*.38));
+  ctx.globalAlpha=.34-ballLift*.20;
+  ctx.fillStyle='rgba(2,12,10,.72)';
+  ctx.beginPath();ctx.ellipse(Math.round(ground.x+shadow.offX),Math.round(ground.groundY+4),sw,sh,0,0,Math.PI*2);ctx.fill();
   ctx.restore();
 
   const speed=Math.hypot(b.vx||0,b.vy||0);
   const frame=Math.floor(Date.now()/(speed>1?80:220)+Math.abs((b.x||0)+(b.y||0))/28)%4;
   const w=Math.round(16.32*depthScale), h=Math.round(16.32*depthScale);
-  const dx=Math.round(proj.x-w/2), dy=Math.round(proj.y-h/2);
+  const dx=Math.round(proj.x-w/2), dy=Math.round(proj.y-h*.78);
   ctx.imageSmoothingEnabled=false;
   if(BALL_SHEET.complete && BALL_SHEET.naturalWidth){
     ctx.drawImage(BALL_SHEET, frame*16, 0, 16, 16, dx, dy, w, h);
@@ -2758,6 +2782,11 @@ window.addEventListener('message', e=>{
       }
     }
     netBall.owner = d.owner ? String(d.owner) : null;
+    // 로컬 킥 이후 impact가 아직 확인되지 않은 동안 들어온 owner=mySid는
+    // 대부분 킥 직전 스냅샷이다. 이것을 재획득 확정으로 처리하면 게스트 화면만
+    // 공이 발에 잠깐 붙었다가 뒤늦게 출발한다.
+    const staleSelfOwnerDuringKick=!!(netBall.owner===mySid&&localKickTrack&&!confirmsLocalKick);
+    if(staleSelfOwnerDuringKick)netBall.owner=null;
     const localOwnerConfirmed=netBall.owner===mySid;
     if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
     if(localOwnerConfirmed){
