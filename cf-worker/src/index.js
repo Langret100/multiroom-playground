@@ -1817,7 +1817,7 @@ export class RoomDO{
         const scoreA = Number(d.scoreA ?? 0);
         const scoreB = Number(d.scoreB ?? 0);
         this.sc.score.A = scoreA; this.sc.score.B = scoreB;
-        this._broadcast("sc_goal", { team, scoreA, scoreB });
+        this._broadcast("sc_goal", { team, scoreA, scoreB, resetDelayMs: Math.max(0, Number(d.resetDelayMs||900)), countdownMs: Math.max(1000, Number(d.countdownMs||2400)), restartId: String(d.restartId||Date.now()) });
         return;
       }
       if (t === "sc_stun"){

@@ -123,7 +123,9 @@
    이후 프레임의 감속된 vx/vy로 다시 계산하면 약한 이동 킥이 드리블처럼 보인다.
 6) 호스트 확정과 게스트 예측은 반드시 동일한 makeKickSpec/stepFreeBallState를 쓴다.
 7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
-8) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
+8) 골 직후에는 호스트만 reset하지 말고 sc_goal로 모든 클라이언트의 owner/예측/입력/
+   시작 좌표를 같은 단계로 초기화한다. 카운트다운 중 오래된 sc_ball도 무시한다.
+9) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
    동시 claim, 헤딩, 태클, 골 판정, 방장 승계, 세 파일 node --check.
    - 재획득 직후 공 위치를 이전 자유공 좌표에서 발앞으로 lerp하지 않는다. 최초 소유권 확정은
      즉시 발앞 목표로 스냅하고, 이미 소유 중인 연속 드리블에서만 보간한다. 이 원칙을 어기면
@@ -174,7 +176,11 @@ function bridgeSend(type, payload={}){
 const CW=900, CH=560;
 const FX=40, FY=54, FW=820, FH=452;
 const GOAL_W=14, GOAL_H=130;
-const GOAL_Y1 = FY+FH/2-GOAL_H/2, GOAL_Y2 = FY+FH/2+GOAL_H/2;
+// 배경 에셋은 원근 때문에 논리 사각형의 세로 중앙과 화면 중앙점이 다르다.
+const KICKOFF_Y = FY + FH*0.407;
+const GOAL_Y1 = FY + FH*0.13, GOAL_Y2 = FY + FH*0.48;
+const GOAL_PLANE_LEFT_X = FX - GOAL_W*0.58;
+const GOAL_PLANE_RIGHT_X = FX + FW + GOAL_W*0.58;
 const PR=17, BR=11;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
@@ -478,8 +484,8 @@ tackleBtnEl.addEventListener('touchstart', e=>{ e.preventDefault(); primeSfx(); 
 let mySid='', myNick='Player', mySeat=-1, isHost=false, roster=[];
 let players={};      // sid -> {x,y,netX,netY,netVX,netVY,netT, seat,team,nick,color,dir,kickAt,kickCharge,tackle,_lastKickAt}
 let me=null;
-let ball={x:FX+FW/2,y:FY+FH/2,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:0};
-let netBall={x:FX+FW/2,y:FY+FH/2,z:0,vx:0,vy:0,vz:0,netX:FX+FW/2,netY:FY+FH/2,netZ:0,netVX:0,netVY:0,netVZ:0,netT:0,owner:null,samples:[],lastKicker:null,noPickupUntil:0};
+let ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:0};
+let netBall={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,netX:FX+FW/2,netY:KICKOFF_Y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:0,owner:null,samples:[],lastKicker:null,noPickupUntil:0};
 let localDribbleVisualUntil=0;
 let score={A:0,B:0};
 let startTs=0, durationMs=120000;
@@ -491,7 +497,10 @@ let particles = [];          // 골 세리머니/충격 파티클
 let rings = [];               // 킥/태클 충격파 링 {x,y,r,alpha,color}
 let ballTrail = [];           // 빠른 공 뒤에 남는 잔상
 let shakeUntil = 0, shakeMag = 0;   // 화면 흔들림
-let kickoffUntil = 0;         // 이 시각까지는 킥오프 카운트다운(입력/공 물리 정지)
+let kickoffUntil = 0;         // 이 시각까지는 킥오프 카운트다운
+let restartLockUntil = 0;      // 골 직후 세리머니+카운트다운 전체 잠금
+let restartTimer = 0;
+let restartGeneration = 0;
 let kickoffSoundsDone = new Set();
 let scoreAnimA = 0, scoreAnimB = 0; // 골 넣었을 때 스코어보드 팝 애니메이션 타임스탬프
 let prevScoreA = 0, prevScoreB = 0;
@@ -563,6 +572,8 @@ function updateKickoffCountdown(){
   if (!kickoffSoundsDone.has(key) && sec<=3){ kickoffSoundsDone.add(key); sfxTick(); }
 }
 
+function isRoundLocked(now=Date.now()){ return now < Math.max(restartLockUntil||0,kickoffUntil||0); }
+
 function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
 function lerp(a,b,t){ return a+(b-a)*t; }
 function teamOf(seat){ return (Number(seat)||0)%2===0 ? 'A' : 'B'; }
@@ -571,8 +582,10 @@ function defaultDir(team){ return team==='A' ? 0 : Math.PI; } // A는 오른쪽(
 
 function getSpawn(seat){
   const team = teamOf(seat);
-  const idx = Math.floor((Number(seat)||0)/2); // 같은 팀 내 순번
-  const laneY = FY + FH*0.30 + idx*90;
+  const idx = Math.floor((Number(seat)||0)/2);
+  // 첫 선수는 실제 중앙원 높이에, 추가 선수는 위/아래 대칭으로 배치한다.
+  const laneOffsets=[0,-78,78,-142,142];
+  const laneY = KICKOFF_Y + (laneOffsets[idx] ?? ((idx%2?-1:1)*(142+Math.floor(idx/2)*48)));
   const x = team==='A' ? FX+FW*0.28 : FX+FW*0.72;
   return { x, y: clamp(laneY, FY+PR+4, FY+FH-PR-4) };
 }
@@ -598,20 +611,47 @@ function startKickoffCountdown(ms){
   kickoffSoundsDone = new Set();
 }
 
-function resetKickoff(){
-  localKickTrack=null;
-  pendingClaimAt=0; pendingClaimUntil=0;
-  ball = { x:FX+FW/2, y:FY+FH/2, z:0, vx:0, vy:0, vz:0, owner:null, ownerUntil:0, lastKicker:null, noPickupUntil:0 };
+function clearRoundActions(){
+  kickCharging=false; kickChargeStart=0;
+  localKickTrack=null; localDribbleVisualUntil=0;
+  pendingClaimAt=0; pendingClaimUntil=0; pendingClaimBallX=0; pendingClaimBallY=0;
+  pendingKickAt=0; pendingKickUntil=0; pendingKickCharge=0;
+  pendingHeaderAt=0; pendingHeaderUntil=0;
+  pendingTackleAt=0; pendingTackleUntil=0; tackleActiveUntil=0;
+  joyReset();
+  for(const p of Object.values(players)){
+    p.vx=0; p.vy=0; p.tackle=false; p.dribble=false;
+    p.kickAt=0; p.headerAt=0; p.claimAt=0;
+    p._noDribbleReportUntil=restartLockUntil;
+  }
+}
+function resetKickoff(countdownMs=2400){
+  clearRoundActions();
+  ball = { x:FX+FW/2, y:KICKOFF_Y, z:0, vx:0, vy:0, vz:0, owner:null, ownerUntil:0, lastKicker:null, noPickupUntil:0 };
   netBall = { x:ball.x, y:ball.y, z:0, vx:0, vy:0, vz:0, netX:ball.x, netY:ball.y, netZ:0,
     netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:0 };
-  ballTrail = [];
-  lastBallSpeedSeen = 0;
+  ballTrail=[]; lastBallSpeedSeen=0;
   for(const p of Object.values(players)){
-    const sp = getSpawn(p.seat);
+    const sp=getSpawn(p.seat);
     p.x=sp.x; p.y=sp.y; p.vx=0; p.vy=0;
     p.netX=sp.x; p.netY=sp.y; p.netVX=0; p.netVY=0; p.netT=Date.now();
   }
-  startKickoffCountdown(2400);
+  startKickoffCountdown(countdownMs);
+  restartLockUntil=kickoffUntil;
+}
+function beginGoalRestart(resetDelayMs=900,countdownMs=2400){
+  const generation=++restartGeneration;
+  if(restartTimer)clearTimeout(restartTimer);
+  const now=Date.now();
+  restartLockUntil=now+resetDelayMs+countdownMs;
+  kickoffUntil=0;
+  clearRoundActions();
+  ball.owner=null; ball.ownerUntil=0; ball.vx=0; ball.vy=0; ball.vz=0;
+  netBall.owner=null; netBall.vx=0; netBall.vy=0; netBall.vz=0; netBall.samples=[];
+  restartTimer=setTimeout(()=>{
+    if(generation!==restartGeneration)return;
+    resetKickoff(countdownMs);
+  },Math.max(0,resetDelayMs));
 }
 
 function initGame(){
@@ -622,7 +662,7 @@ function initGame(){
   }
   me = players[mySid] || null;
   score = { A:0, B:0 }; prevScoreA=0; prevScoreB=0;
-  ball = { x:FX+FW/2, y:FY+FH/2, z:0, vx:0, vy:0, vz:0, owner:null, ownerUntil:0, lastKicker:null, noPickupUntil:0 };
+  ball = { x:FX+FW/2, y:KICKOFF_Y, z:0, vx:0, vy:0, vz:0, owner:null, ownerUntil:0, lastKicker:null, noPickupUntil:0 };
   netBall = { x:ball.x, y:ball.y, z:0, vx:0, vy:0, vz:0, netX:ball.x, netY:ball.y, netZ:0,
     netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:0 };
   gameOver = false;
@@ -851,7 +891,7 @@ const STUN_MS = 550;
 function isStunned(sid, now){ return (stunUntilMap[sid]||0) > (now||Date.now()); }
 
 function beginKickCharge(){
-  if (!me || !gameActive || gameOver) return;
+  if (!me || !gameActive || gameOver || isRoundLocked()) return;
   if (isStunned(mySid)) return;
   const now=Date.now();
   if(now<tackleActiveUntil||now<(me._headerPoseUntil||0))return;
@@ -862,7 +902,7 @@ function beginKickCharge(){
 function releaseKickCharge(){
   if (!kickCharging) return;
   kickCharging = false;
-  if (!me || !gameActive || gameOver) return;
+  if (!me || !gameActive || gameOver || isRoundLocked()) return;
   const held = Date.now() - kickChargeStart;
   const charge = clamp(held / KICK_CHARGE_MS, 0, 1);
   pendingKickAt = Date.now();
@@ -956,7 +996,7 @@ function releaseKickCharge(){
   }
 }
 function tryHeader(){
-  if(!me||!gameActive||gameOver||isStunned(mySid))return;
+  if(!me||!gameActive||gameOver||isRoundLocked()||isStunned(mySid))return;
   const now=Date.now();
   if(now<headerCooldownUntil||now<tackleActiveUntil||kickCharging)return;
   headerCooldownUntil=now+HEADER_COOLDOWN_MS;
@@ -984,7 +1024,7 @@ function tryHeader(){
   // 실제 접촉 효과음은 호스트가 공중 공 접촉을 확정했을 때 재생한다.
 }
 function tryTackle(){
-  if (!me || !gameActive || gameOver) return;
+  if (!me || !gameActive || gameOver || isRoundLocked()) return;
   if (isStunned(mySid)) return;
   const now = Date.now();
   if (now < tackleCooldownUntil||now<(me._headerPoseUntil||0)||kickCharging) return;
@@ -1009,7 +1049,7 @@ function updateMe(){
   const now = Date.now();
   jumpBtnEl.classList.toggle('cooling',now<headerCooldownUntil);
   tackleBtnEl.classList.toggle('cooling',now<tackleCooldownUntil);
-  if (now < kickoffUntil){ me.vx=0; me.vy=0; me.tackle=false; return; }
+  if (isRoundLocked(now)){ me.vx=0; me.vy=0; me.tackle=false; return; }
   if (isStunned(mySid, now)){ me.vx=0; me.vy=0; me.tackle=false; return; }
 
   let dx=0, dy=0;
@@ -1332,7 +1372,7 @@ function updateNetBall(){
 function updateBallHost(advancePhysics=true){
   if (!isHost || !gameActive || gameOver) return;
   const now = Date.now();
-  if (now < kickoffUntil) return;
+  if (isRoundLocked(now)) return;
 
   // 공 소유권은 선수 반복 순서에 따라 여러 번 덮어쓰지 않는다.
   // 한 프레임의 모든 접촉/claim 후보를 먼저 모은 뒤 가장 적합한 한 명만 선정한다.
@@ -1574,15 +1614,10 @@ function updateBallHost(advancePhysics=true){
     const crossZ=lerp(prevBallZ,ball.z||0,t);
     return crossY>GOAL_Y1+BR*.10&&crossY<GOAL_Y2-BR*.10&&crossZ<=BALL_GOAL_MAX_Z;
   }
-  if(crossedGoalLine(FX,true)){ scoreGoal('B'); return; }
-  if(crossedGoalLine(FX+FW,false)){ scoreGoal('A'); return; }
+  if(crossedGoalLine(GOAL_PLANE_LEFT_X,true)){ scoreGoal('B'); return; }
+  if(crossedGoalLine(GOAL_PLANE_RIGHT_X,false)){ scoreGoal('A'); return; }
 
-  // 근거리 슛이 이미 골라인 안쪽에서 시작했거나 한 프레임 보정으로 교차 검사를
-  // 건너뛴 경우도 실제 골문 내부 영역에 들어오면 정상 득점 처리한다.
-  const insideGoalY=ball.y>GOAL_Y1+BR*.10&&ball.y<GOAL_Y2-BR*.10;
-  const underBar=(ball.z||0)<=BALL_GOAL_MAX_Z;
-  if(insideGoalY&&underBar&&ball.x<FX-BR*.15){ scoreGoal('B'); return; }
-  if(insideGoalY&&underBar&&ball.x>FX+FW+BR*.15){ scoreGoal('A'); return; }
+  // 득점은 골대 앞이 아니라 네트 안쪽 GOAL_PLANE을 실제 통과할 때만 인정한다.
 
   // 골문 안쪽은 네트 깊이만큼 이동할 수 있고, 골문 밖 끝선은 벽처럼 튕긴다.
   const inGoalMouth=ball.y>GOAL_Y1+BR*.10&&ball.y<GOAL_Y2-BR*.10&&
@@ -1642,16 +1677,15 @@ function applyStun(sid, dur, notifyServer){
 
 let goalPending = false;
 function scoreGoal(team){
-  if (goalPending) return;
-  goalPending = true;
-  if (team==='A') score.A++; else score.B++;
-  if (team==='A') scoreAnimA = Date.now(); else scoreAnimB = Date.now();
-  bridgeSend('sc_goal', { team, scoreA:score.A, scoreB:score.B });
-  showGoalFlash(team);
-  spawnGoalParticles(team);
-  sfxGoal();
-  addShake(8, 400);
-  setTimeout(()=>{ resetKickoff(); goalPending=false; }, 900);
+  if(goalPending||isRoundLocked())return;
+  goalPending=true;
+  const resetDelayMs=900,countdownMs=2400;
+  if(team==='A')score.A++;else score.B++;
+  if(team==='A')scoreAnimA=Date.now();else scoreAnimB=Date.now();
+  bridgeSend('sc_goal',{team,scoreA:score.A,scoreB:score.B,resetDelayMs,countdownMs,restartId:String(Date.now())});
+  beginGoalRestart(resetDelayMs,countdownMs);
+  showGoalFlash(team);spawnGoalParticles(team);sfxGoal();addShake(8,400);
+  setTimeout(()=>{goalPending=false;},resetDelayMs+countdownMs);
 }
 
 let goalFlashUntil=0, goalFlashTeam=null;
@@ -1694,7 +1728,7 @@ function netSends(){
     const localSpeed=Math.hypot(me.vx||0,me.vy||0);
     // dribble은 단순 근접 보고가 아니라 호스트가 승인한 실제 소유권만 전송한다.
     // 킥 직후/로컬 예측 중에는 가까워도 절대 다시 드리블로 보고하지 않는다.
-    const dribble=now>=kickoffUntil&&!kickCharging&&!localKickTrack&&
+    const dribble=!isRoundLocked(now)&&!kickCharging&&!localKickTrack&&
       now>=Number(me._noDribbleReportUntil||0)&&shownBall.owner===mySid&&
       (shownBall.z||0)<AUTH_CLIENT_PICKUP_Z;
     const kickActive=now<pendingKickUntil;
@@ -2518,6 +2552,14 @@ window.addEventListener('message', e=>{
 
   if (d.type === 'sc_ball'){
     const now=Date.now();
+    if(isRoundLocked(now)){
+      netBall.owner=null;localKickTrack=null;localDribbleVisualUntil=0;
+      if(kickoffUntil>0){
+        netBall.x=netBall.netX=FX+FW/2;netBall.y=netBall.netY=KICKOFF_Y;netBall.z=netBall.netZ=0;
+        netBall.vx=netBall.netVX=0;netBall.vy=netBall.netVY=0;netBall.vz=netBall.netVZ=0;netBall.samples=[];
+      }
+      return;
+    }
     const incomingSentAt=Number(d.sentAt||0);
     const incomingBallSeq=Number(d.ballSeq||0);
     const lastAcceptedBallSeq=Number(netBall.lastAcceptedBallSeq||0);
@@ -2627,7 +2669,10 @@ window.addEventListener('message', e=>{
     if (newA !== score.A) scoreAnimA = Date.now();
     if (newB !== score.B) scoreAnimB = Date.now();
     score.A = newA; score.B = newB;
-    if (d.type === 'sc_goal' && !isHost){ showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400); }
+    if (d.type === 'sc_goal' && !isHost){
+      beginGoalRestart(Number(d.resetDelayMs||900),Number(d.countdownMs||2400));
+      showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400);
+    }
     return;
   }
 

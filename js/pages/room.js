@@ -1403,13 +1403,13 @@ function updatePreview(modeId){
     }
     if (d.type === "sc_goal"){
       if (!fromMainForSoccer) return;
-      const event = { kind:"goal", id:`${mySessionId}:goal:${Date.now()}`, team:d.team, scoreA:d.scoreA, scoreB:d.scoreB };
+      const event = { kind:"goal", id:`${mySessionId}:goal:${Date.now()}`, team:d.team, scoreA:d.scoreA, scoreB:d.scoreB, resetDelayMs:Number(d.resetDelayMs||900), countdownMs:Number(d.countdownMs||2400), restartId:String(d.restartId||Date.now()) };
       const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
       state.isHost = getMyIsHost();
       coop.soccerLocalState = state;
       try{ room.send("tg_state", { state }); }catch(_){ }
       if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
-        try{ room.send("sc_goal", { team:d.team, scoreA:d.scoreA, scoreB:d.scoreB }); }catch(_){ }
+        try{ room.send("sc_goal", { team:d.team, scoreA:d.scoreA, scoreB:d.scoreB, resetDelayMs:Number(d.resetDelayMs||900), countdownMs:Number(d.countdownMs||2400), restartId:String(d.restartId||Date.now()) }); }catch(_){ }
       }
       return;
     }
@@ -3063,7 +3063,7 @@ try{
           for (const evt of sharedEvents){
             if (coop.soccerSeenEvents.has(String(evt.id))) continue;
             coop.soccerSeenEvents.add(String(evt.id));
-            if (evt.kind === "goal") postToMain({ type:"sc_goal", eventId:evt.id, team:evt.team, scoreA:evt.scoreA, scoreB:evt.scoreB });
+            if (evt.kind === "goal") postToMain({ type:"sc_goal", eventId:evt.id, team:evt.team, scoreA:evt.scoreA, scoreB:evt.scoreB, resetDelayMs:Number(evt.resetDelayMs||900), countdownMs:Number(evt.countdownMs||2400), restartId:String(evt.restartId||evt.id||'') });
             else if (evt.kind === "stun") postToMain({ type:"sc_stun", eventId:evt.id, sid:evt.sid, dur:evt.dur });
             else if (evt.kind === "over") postToMain({ type:"sc_end", eventId:evt.id, scoreA:evt.scoreA, scoreB:evt.scoreB, winner:evt.winner });
           }
@@ -3155,7 +3155,7 @@ try{
         });
       });
       room.onMessage("sc_goal", (msg)=>{
-        postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB });
+        postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB, resetDelayMs:Number(msg.resetDelayMs||900), countdownMs:Number(msg.countdownMs||2400), restartId:String(msg.restartId||'') });
       });
       room.onMessage("sc_stun", (msg)=>{
         postToMain({ type:"sc_stun", sid: msg.sid, dur: msg.dur });
