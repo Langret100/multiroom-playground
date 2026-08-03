@@ -1242,6 +1242,7 @@ function ballRenderState(b){
 function updateNetBall(){
   if(isHost)return;
   const now=Date.now();
+  const visualDt=clamp(now-Number(netBall.visualAt||now),0,34);
   netBall.visualAt=now;
 
   // 권위상 내가 공 소유자가 된 순간에는 이전 킥 예측/보정을 즉시 끝낸다.
@@ -1361,8 +1362,9 @@ function updateNetBall(){
     return;
   }
 
-  // 공은 선수처럼 90ms 과거 버퍼를 재생하지 않는다. 축구공은 반응성이 중요하므로
-  // 최신 권위 스냅샷을 현재 시각까지 전진 계산하고 작은 오차만 보정한다.
+  // 자유공은 다음 네트워크 패킷을 기다리며 멈추지 않는다. 화면 공을 매 프레임
+  // 현재 속도로 먼저 진행한 뒤 최신 권위 위치와의 작은 오차만 부드럽게 보정한다.
+  if(visualDt>0)stepFreeBallState(netBall,visualDt/(1000/60));
   const samples=Array.isArray(netBall.samples)?netBall.samples:[];
   const latest=samples.length?samples[samples.length-1]:null;
   let tx=Number(netBall.netX||netBall.x),ty=Number(netBall.netY||netBall.y),tz=Math.max(0,Number(netBall.netZ||0));
@@ -1378,7 +1380,7 @@ function updateNetBall(){
   let nextX,nextY;
   if(err>180){nextX=tx;nextY=ty;netBall.z=tz;}
   else{
-    const correction=err>90?.46:(err>38?.32:.24);
+    const correction=err>90?.40:(err>38?.25:.12);
     nextX=lerp(netBall.x,tx,correction);
     nextY=lerp(netBall.y,ty,correction);
     netBall.z=lerp(netBall.z||0,tz,err>40?.38:.28);
@@ -1400,9 +1402,9 @@ function updateNetBall(){
     }
   }else if(reconcile){netBall.kickReconcile=null;}
   netBall.x=nextX;netBall.y=nextY;
-  netBall.vx=lerp(netBall.vx||0,tvx,.16);
-  netBall.vy=lerp(netBall.vy||0,tvy,.16);
-  netBall.vz=lerp(netBall.vz||0,tvz,.20);
+  netBall.vx=lerp(netBall.vx||0,tvx,.22);
+  netBall.vy=lerp(netBall.vy||0,tvy,.22);
+  netBall.vz=lerp(netBall.vz||0,tvz,.24);
 }
 
 
@@ -1437,42 +1439,53 @@ function queueFieldRestart(kind,x,y,text,restartTeam){
   fieldRestartSerial++;
   sendBallSnapshot();
 }
+function returnBallFromOut(side){
+  const now=Date.now();
+  const midX=FX+FW/2, midY=FY+FH/2;
+  let tx=midX,ty=midY;
+  if(side==='top'){
+    ball.y=FY-BR-2; tx=clamp(ball.x,FX+80,FX+FW-80); ty=FY+FH*.34;
+  }else if(side==='bottom'){
+    ball.y=FY+FH+BR+2; tx=clamp(ball.x,FX+80,FX+FW-80); ty=FY+FH*.66;
+  }else if(side==='left'){
+    ball.x=FX-GOAL_W-BR-2; tx=FX+FW*.27; ty=clamp(ball.y,FY+60,FY+FH-60);
+  }else{
+    ball.x=FX+FW+GOAL_W+BR+2; tx=FX+FW*.73; ty=clamp(ball.y,FY+60,FY+FH-60);
+  }
+  const dx=tx-ball.x,dy=ty-ball.y,len=Math.max(.001,Math.hypot(dx,dy));
+  // 중간 세기의 낮은 킥처럼 안쪽으로 되돌린다. 즉시 재배치하지 않고
+  // 선 밖 좌표에서 출발하므로 공이 경기장 안으로 날아드는 과정이 보인다.
+  const power=4.35;
+  ball.owner=null;ball.ownerUntil=0;ball.ownerSince=0;
+  ball.vx=dx/len*power;ball.vy=dy/len*power;
+  ball.z=Math.max(1.5,ball.z||0);ball.vz=Math.max(.55,Math.min(1.15,Math.abs(ball.vz||0)+.55));
+  ball.noPickupUntil=now+330;ball.noStealUntil=now+430;
+  ball.impactAt=`return:${now}`;ball.impactPower=.58;ball.impactDir=Math.atan2(ball.vy,ball.vx);
+  announceFieldRestart('공이 경기장 안으로 돌아옵니다',620);
+  spawnRing(ball.x,ball.y,'rgba(255,255,255,.72)');
+  sendBallSnapshot();
+}
 function handleFieldOut(prevX,prevY){
   const now=Date.now();
-  if(pendingFieldOut){
-    if(now<pendingFieldOut.resolveAt)return true;
-    const r=pendingFieldOut;pendingFieldOut=null;
-    resetBallForRestart(r.x,r.y,r.text,r.restartTeam);
-    return true;
-  }
-  if(isRoundLocked()||now<fieldRestartUntil)return false;
-  const last=players[ball.lastKicker||''];
-  const lastTeam=last&&last.team;
-  if(ball.y<FY-BR){
-    queueFieldRestart('kickin',clamp(ball.x,FX+36,FX+FW-36),FY+BR+2,'라인 아웃 · 킥인',lastTeam==='A'?'B':'A');
-    return true;
-  }
-  if(ball.y>FY+FH+BR){
-    queueFieldRestart('kickin',clamp(ball.x,FX+36,FX+FW-36),FY+FH-BR-2,'라인 아웃 · 킥인',lastTeam==='A'?'B':'A');
-    return true;
-  }
-  // 포스트 사이·크로스바 아래로 들어간 공은 네트 안쪽 득점선까지 아웃 처리하지 않는다.
+  if(isRoundLocked()||now<Number(ball._outReturnLockUntil||0))return false;
+
+  // 포스트 사이·크로스바 아래의 유효 골문은 네트 안쪽 목표선까지 계속 진행한다.
   const insideGoalTunnel = ball.y>GOAL_Y1+GOAL_POST_HALF_Y+BR*.55 &&
     ball.y<GOAL_Y2-GOAL_POST_HALF_Y-BR*.55 &&
     (ball.z||0)+BR*.32<BALL_GOAL_MAX_Z-GOAL_CROSSBAR_HALF_Z;
-  if(ball.x<FX-GOAL_W-BR){
-    if(insideGoalTunnel && ball.x>GOAL_SCORE_LEFT_X-BR*1.5) return false;
-    if(lastTeam==='A') queueFieldRestart('corner',FX+24,ball.y<(GOAL_Y1+GOAL_Y2)/2?FY+24:FY+FH-24,'코너킥 · BLUE','B');
-    else queueFieldRestart('goalkick',FX+72,(GOAL_Y1+GOAL_Y2)/2,'골킥 · RED','A');
-    return true;
-  }
-  if(ball.x>FX+FW+GOAL_W+BR){
-    if(insideGoalTunnel && ball.x<GOAL_SCORE_RIGHT_X+BR*1.5) return false;
-    if(lastTeam==='B') queueFieldRestart('corner',FX+FW-24,ball.y<(GOAL_Y1+GOAL_Y2)/2?FY+24:FY+FH-24,'코너킥 · RED','A');
-    else queueFieldRestart('goalkick',FX+FW-72,(GOAL_Y1+GOAL_Y2)/2,'골킥 · BLUE','B');
-    return true;
-  }
-  return false;
+  if(ball.x<FX-GOAL_W-BR && insideGoalTunnel && ball.x>GOAL_SCORE_LEFT_X-BR*1.5)return false;
+  if(ball.x>FX+FW+GOAL_W+BR && insideGoalTunnel && ball.x<GOAL_SCORE_RIGHT_X+BR*1.5)return false;
+
+  let side='';
+  if(ball.y<FY-BR)side='top';
+  else if(ball.y>FY+FH+BR)side='bottom';
+  else if(ball.x<FX-GOAL_W-BR)side='left';
+  else if(ball.x>FX+FW+GOAL_W+BR)side='right';
+  if(!side)return false;
+
+  ball._outReturnLockUntil=now+700;
+  returnBallFromOut(side);
+  return true;
 }
 function collideGoalFrame(prevX,prevY,prevZ){
   const leftPlane=GOAL_PLANE_LEFT_X,rightPlane=GOAL_PLANE_RIGHT_X;
@@ -1507,15 +1520,23 @@ function updateBallHost(advancePhysics=true){
     return;
   }
   if(pendingGoalVisual){
-    // 골 판정 후에도 공이 네트 안쪽으로 실제 이동하는 장면을 먼저 보여준다.
-    const goalDir=pendingGoalVisual.team==='A'?1:-1;
-    if(Math.abs(ball.vx)<1.05)ball.vx=goalDir*1.05;
-    else if(Math.sign(ball.vx)!==goalDir)ball.vx=goalDir*Math.max(1.05,Math.abs(ball.vx));
+    // 골문 입구부터 네트 안쪽까지 공이 실제로 굴러가거나 날아가는 모습을 유지한다.
+    const g=pendingGoalVisual;
+    const goalDir=Number(g.goalDir||0)||1;
+    const targetX=Number(g.targetX||ball.x);
+    const towardSpeed=Math.max(1.35,Math.abs(ball.vx||0));
+    ball.vx=goalDir*towardSpeed;
     stepFreeBallState(ball,1);
-    ball.vx*=.94;ball.vy*=.94;ball.vz*=.90;
+    ball.vx*=.965;ball.vy*=.94;ball.vz*=.91;
     ball.y=clamp(ball.y,GOAL_Y1+GOAL_POST_HALF_Y+BR*.5,GOAL_Y2-GOAL_POST_HALF_Y-BR*.5);
-    if(Date.now()>=pendingGoalVisual.resolveAt){
-      const team=pendingGoalVisual.team;pendingGoalVisual=null;scoreGoal(team);
+    const reached=goalDir>0?ball.x>=targetX:ball.x<=targetX;
+    if(reached){
+      ball.x=targetX;
+      ball.vx=goalDir*Math.max(.38,Math.abs(ball.vx)*.45);
+      if(!g.insideAt){g.insideAt=now;sendBallSnapshot();}
+      if(now-g.insideAt>=220){
+        const team=g.team;pendingGoalVisual=null;scoreGoal(team);
+      }
     }
     return;
   }
@@ -1762,9 +1783,9 @@ function updateBallHost(advancePhysics=true){
   const prevBallX=ball.x, prevBallY=ball.y, prevBallZ=ball.z||0;
   stepFreeBallState(ball,1);
 
-  // 골대 전면을 지났다고 바로 득점시키지 않는다. 공 전체가 포스트 사이와
-  // 크로스바 아래를 지나 네트 안쪽 득점선까지 도달해야 골 연출을 시작한다.
-  function crossedDeepGoalLine(lineX, movingLeft){
+  // 골문 입구를 통과하면 네트 안쪽 이동 연출을 시작한다. 득점 자체는
+  // beginGoalVisual 이후 공이 안쪽 목표선에 도달한 뒤에만 확정된다.
+  function crossedGoalMouth(lineX,movingLeft){
     const crossed=movingLeft
       ? (prevBallX>=lineX&&ball.x<lineX)
       : (prevBallX<=lineX&&ball.x>lineX);
@@ -1779,10 +1800,11 @@ function updateBallHost(advancePhysics=true){
   }
   // 포스트와 크로스바에 닿으면 골이 아니라 실제처럼 튕겨 나온다.
   if(collideGoalFrame(prevBallX,prevBallY,prevBallZ))return;
-  if(crossedDeepGoalLine(GOAL_SCORE_LEFT_X,true)){ beginGoalVisual('B'); return; }
-  if(crossedDeepGoalLine(GOAL_SCORE_RIGHT_X,false)){ beginGoalVisual('A'); return; }
+  if(crossedGoalMouth(GOAL_PLANE_LEFT_X,true)){ beginGoalVisual('B'); return; }
+  if(crossedGoalMouth(GOAL_PLANE_RIGHT_X,false)){ beginGoalVisual('A'); return; }
 
-  // 터치라인·골라인 밖은 벽이 아니다. 마지막 터치 팀과 나간 위치에 따라 재개한다.
+  // 골문이 아닌 경기장 선 밖으로 나가면 선 밖 위치에서 중간 세기의 낮은 킥처럼
+  // 경기장 안으로 자동 복귀한다. 순간이동식 킥인/골킥은 사용하지 않는다.
   if(handleFieldOut(prevBallX,prevBallY))return;
 }
 
@@ -1833,7 +1855,7 @@ function applyStun(sid, dur, notifyServer){
 let fieldRestartUntil=0;
 let fieldRestartText='';
 let fieldRestartSerial=0;
-let pendingFieldOut=null;       // 공이 선 밖으로 완전히 날아가는 장면을 보여준 뒤 재개
+let pendingFieldOut=null;       // 구버전 재개 호환 필드(현재 일반 아웃은 자동 리턴 사용)
 let fieldRestartTeam=null;      // 골킥/코너/킥인 재개 권한 팀
 let fieldRestartTeamUntil=0;
 let goalPending = false;
@@ -1841,8 +1863,12 @@ let pendingGoalVisual=null;
 function beginGoalVisual(team){
   if(pendingGoalVisual||goalPending)return;
   const now=Date.now();
-  ball.owner=null;ball.ownerUntil=0;ball.noPickupUntil=now+1200;
-  pendingGoalVisual={team,resolveAt:now+520};
+  const goalDir=team==='A'?1:-1;
+  const targetX=team==='A'?GOAL_SCORE_RIGHT_X:GOAL_SCORE_LEFT_X;
+  ball.owner=null;ball.ownerUntil=0;ball.noPickupUntil=now+1400;
+  // 골문 입구를 통과한 순간부터 연출을 시작한다. 공은 여기서 멈추지 않고
+  // 네트 안쪽 목표선까지 실제 물리 좌표로 이동한 뒤에만 득점 처리된다.
+  pendingGoalVisual={team,targetX,goalDir,enteredAt:now,insideAt:0};
   sendBallSnapshot();
 }
 function scoreGoal(team){
@@ -2114,7 +2140,9 @@ const PROJ_HEIGHT_SCALE=2.35;
 function depthTFromY(y){ return clamp((y-FY)/FH,0,1); }
 function projectWorld(x,y,z=0){
   const t=depthTFromY(y);
-  const fx=clamp((x-FX)/FW,0,1);
+  // 골대 안쪽 및 라인 밖 공도 화면에 보여야 하므로 경기장 경계에서 x를 고정하지 않는다.
+  // 지나치게 먼 좌표만 제한하고, 골 네트 깊이와 자동 리턴 연출은 투영 범위에 포함한다.
+  const fx=clamp((x-FX)/FW,-0.14,1.14);
   const left=lerp(PROJ_TOP_L,PROJ_BOTTOM_L,t);
   const right=lerp(PROJ_TOP_R,PROJ_BOTTOM_R,t);
   const groundX=lerp(left,right,fx);
