@@ -853,14 +853,17 @@ export class RoomDO{
         // (or reconnecting) client — mirrors the SnakeTail/Togester late-join sync pattern.
         if (this.meta.phase === "playing" && this.meta.mode === "soccer" && this.sc && this.sc.startedAt > 0){
           try{ this._ensureSoccerPlayerRegistered(wantUid); }catch(_){ }
+          // 접속 직후에도 sc_sync와 동일하게 로스터를 가장 먼저 보낸다.
+          // 연결 대기 중 수학 라운드가 끝난 클라이언트는 결과만 받을 수 있으므로,
+          // 월드/내 캐릭터가 먼저 준비되어야 결과 적용 후 즉시 경기를 활성화할 수 있다.
+          try{ this._send(ws, "sc_roster", { players: this._buildSoccerRoster() }); }catch(_){ }
+          try{ this._send(ws, "sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs }); }catch(_){ }
+          try{ if (this.sc.ball) this._send(ws, "sc_ball", this.sc.ball); }catch(_){ }
+          try{ this._send(ws, "sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B }); }catch(_){ }
           try{
             if(this.sc.math?.result) this._send(ws,"sc_math_result",this.sc.math.result);
             else if(this.sc.math) this._send(ws,"sc_math_start",{roundId:this.sc.math.roundId,kind:this.sc.math.kind,seed:this.sc.math.seed,beginsAt:this.sc.math.beginsAt,endsAt:this.sc.math.endsAt,kickoffAt:this.sc.math.kickoffAt});
           }catch(_){ }
-          try{ this._send(ws, "sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs }); }catch(_){ }
-          try{ if (this.sc.ball) this._send(ws, "sc_ball", this.sc.ball); }catch(_){ }
-          try{ this._send(ws, "sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B }); }catch(_){ }
-          try{ this._broadcast("sc_roster", { players: this._buildSoccerRoster() }); }catch(_){ }
         }
 
         // Togester: if a match is already running, sync current players + floors to the joining client
@@ -1867,12 +1870,15 @@ export class RoomDO{
         if (this.meta.mode !== "soccer") return;
         if (!this.sc || this.sc.startedAt <= 0) return;
         try{ this._ensureSoccerPlayerRegistered(uid); }catch(_){ }
-        if(this.sc.math?.result)this._send(ws,"sc_math_result",this.sc.math.result);
-        else if(this.sc.math)this._send(ws,"sc_math_start",{roundId:this.sc.math.roundId,kind:this.sc.math.kind,seed:this.sc.math.seed,beginsAt:this.sc.math.beginsAt,endsAt:this.sc.math.endsAt,kickoffAt:this.sc.math.kickoffAt});
+        // 초기 동기화는 반드시 로스터를 먼저 보낸다. 모바일/느린 WebView에서
+        // 퀴즈 메시지가 로스터보다 먼저 도착하면 게임 월드가 없는 상태로 퀴즈가
+        // 시작되어 축구장만 보이고 입력이 영구 비활성화될 수 있다.
+        this._send(ws, "sc_roster", { players: this._buildSoccerRoster() });
         this._send(ws, "sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
         if (this.sc.ball) this._send(ws, "sc_ball", this.sc.ball);
         this._send(ws, "sc_goal_sync", { scoreA: this.sc.score.A, scoreB: this.sc.score.B });
-        this._send(ws, "sc_roster", { players: this._buildSoccerRoster() });
+        if(this.sc.math?.result)this._send(ws,"sc_math_result",this.sc.math.result);
+        else if(this.sc.math)this._send(ws,"sc_math_start",{roundId:this.sc.math.roundId,kind:this.sc.math.kind,seed:this.sc.math.seed,beginsAt:this.sc.math.beginsAt,endsAt:this.sc.math.endsAt,kickoffAt:this.sc.math.kickoffAt});
         return;
       }
 

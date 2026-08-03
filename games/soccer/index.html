@@ -690,6 +690,7 @@ let localDribbleVisualUntil=0;
 let score={A:0,B:0};
 let startTs=0, durationMs=120000;
 let gameInitialized=false, gameActive=false, gameOver=false;
+let pendingMathStart=null, pendingMathResult=null;
 let initialKickoffResolved=false;
 let lastPosSent=0, lastBallSent=0, localStateSeq=0;
 function nextStateSeq(){ return ++localStateSeq; }
@@ -786,7 +787,26 @@ function mathKickoffFrame(){
   if(mathKickoff.phase!=='done'&&mathKickoff.phase!=='result')mathKickoff.raf=requestAnimationFrame(mathKickoffFrame);
 }
 function applyMathResult(d){
-  if(String(d.roundId||'')!==mathKickoff.roundId)return;clearMathTimeouts();mathKickoff.result=d;mathKickoff.phase='result';submitMathScore();mkTimer.textContent='결과';mkTimer.classList.remove('danger');mkChoices.innerHTML='';clearMathFeedback();mkTeamA.classList.remove('pop');mkTeamB.classList.remove('pop');
+  const incomingRoundId=String(d.roundId||'');
+  if(!incomingRoundId)return;
+  // 연결 대기 중 최초 퀴즈가 이미 끝난 경우 sc_math_start를 못 받고
+  // sc_math_result만 받을 수 있다. 예전에는 현재 roundId가 비어 있어 결과를
+  // 버렸고 gameActive가 영원히 false로 남았다. idle/done 상태라면 결과 패킷을
+  // 기준으로 최소 라운드 상태를 복구해 바로 결과 연출/경기 시작으로 이어간다.
+  if(incomingRoundId!==mathKickoff.roundId){
+    if(mathKickoff.phase!=='idle'&&mathKickoff.phase!=='done')return;
+    mathKickoff.roundId=incomingRoundId;
+    mathKickoff.kind=d.kind==='restart'?'restart':'initial';
+    mathKickoff.submitted=true;
+    mathKickoff.correct=0;
+    mathKickoff.solved=false;
+    mkEl.classList.add('show');
+    mkTitle.textContent=mathKickoff.kind==='restart'?'⚽ 득점 후 선공 결정':'⚽ 선·후공 결정';
+    mkPhase.textContent=mathKickoff.kind==='restart'?'재시작 결과':'첫 경기 결과';
+    mkTeamALabel.textContent=mathKickoff.kind==='restart'?'해결 인원':'정답 합계';
+    mkTeamBLabel.textContent=mkTeamALabel.textContent;
+  }
+  clearMathTimeouts();mathKickoff.result=d;mathKickoff.phase='result';submitMathScore();mkTimer.textContent='결과';mkTimer.classList.remove('danger');mkChoices.innerHTML='';clearMathFeedback();mkTeamA.classList.remove('pop');mkTeamB.classList.remove('pop');
   const scoreA=Number(d.scoreA||0),scoreB=Number(d.scoreB||0);const winner=d.winner==='A'?'RED':'BLUE';mkResult.className=`mk-result ${d.winner==='A'?'red':'blue'}`;mkSub.textContent='양 팀 결과를 하나씩 공개합니다';mkProblem.textContent='두근두근…';mkResult.textContent='';mkHelp.textContent='누가 먼저 공을 가질까요?';mkTeamA.textContent='?';mkTeamB.textContent='?';
   queueMathTimeout(()=>{sfxMathReveal();mkTeamA.textContent=String(scoreA);mkTeamA.classList.remove('pop');void mkTeamA.offsetWidth;mkTeamA.classList.add('pop');},260);
   queueMathTimeout(()=>{sfxMathReveal();mkTeamB.textContent=String(scoreB);mkTeamB.classList.remove('pop');void mkTeamB.offsetWidth;mkTeamB.classList.add('pop');},720);
@@ -1042,6 +1062,12 @@ function applyRoster(list){
   // sc_sync 재요청으로 로스터가 반복 도착해도 공/점수/잠금 상태를 다시 초기화하지 않는다.
   if (gameInitialized && !loopRunning && !gameOver && me){
     initGame();
+  }
+  // 로스터/월드가 준비되기 전에 도착한 퀴즈 상태를 여기서 재생한다.
+  // 네트워크 패킷 순서가 바뀌어도 문제 화면과 입력 잠금이 정상적으로 이어진다.
+  if(loopRunning && me){
+    if(pendingMathStart){ const q=pendingMathStart; pendingMathStart=null; startMathKickoff(q); }
+    if(pendingMathResult){ const r=pendingMathResult; pendingMathResult=null; applyMathResult(r); }
   }
 }
 
@@ -2975,6 +3001,7 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_math_start'){
+    if(!loopRunning || !me){ pendingMathStart={...d}; return; }
     startMathKickoff(d);
     return;
   }
@@ -2986,6 +3013,7 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_math_result'){
+    if(!loopRunning || !me){ pendingMathResult={...d}; return; }
     applyMathResult(d);
     return;
   }
