@@ -127,41 +127,30 @@
 <script>
 /*
 ===============================================================================
-수학축구 핵심 수정 주의사항 — 문제 발생 시 먼저 읽을 것
+수학축구 핵심 수정 주의사항 — 현재 코드 기준
 ===============================================================================
-1) 연결이 확인된 통신 골격(tg_state/tg_players 주 경로 + sc_* 보조 경로)을
-   임의로 단일화하거나 역할을 뒤바꾸지 않는다. room.js와 Worker를 반드시 함께 본다.
-2) 공의 실제 위치·소유권·골 판정은 호스트만 결정한다. 게스트 예측은 화면 반응용이다.
-3) 게스트 킥/재획득 문제를 시간 제한이나 강제 스냅 조건으로 덮지 않는다.
-   localKickTrack, netBall.owner, claim 처리의 우선순위를 먼저 확인한다.
-4) 게스트가 권위상 공 소유자가 되면 남아 있는 킥 예측/보정 상태를 즉시 폐기하고
-   드리블 표시로 전환해야 한다. 그렇지 않으면 공이 찬 자리에 고정돼 보인다.
-5) 이동 중 킥은 버튼을 놓은 순간의 속도(kickVX/kickVY)를 이벤트에 고정해 보낸다.
-   이후 프레임의 감속된 vx/vy로 다시 계산하면 약한 이동 킥이 드리블처럼 보인다.
-6) 호스트 확정과 게스트 예측은 반드시 동일한 makeKickSpec/stepFreeBallState를 쓴다.
-7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
-8) 골 직후에는 호스트만 reset하지 말고 sc_goal로 모든 클라이언트의 owner/예측/입력/
-   시작 좌표를 같은 단계로 초기화한다. 카운트다운 중 오래된 sc_ball도 무시한다.
-9) 골대 전면선 통과만으로 득점시키지 않는다. 포스트/크로스바 충돌을 먼저 처리하고,
-   공 전체가 골문 사이·크로스바 아래를 지나 네트 안쪽 득점선까지 들어간 뒤에만 골을 확정한다.
-   골 확정 전에는 공이 골대 안으로 계속 이동하는 장면을 보여준다. 라인 밖 공은 킥인/코너/골킥으로 재개한다.
-10) 소유 중인 선수를 항상 claim 우선순위로 이기게 두면 상대가 공을 절대 뺏지 못한다.
-11) 로컬 게스트 킥은 호스트 응답 전에 발앞 좌표에서 즉시 예측을 시작해야 한다. UI 지연을 네트워크 재전송으로만 덮지 않는다.
-12) 발밑 원/링/막대는 오브젝트로 오해되므로 넣지 않는다. 헤딩/태클 쿨타임은 버튼 채움으로만 표시한다.
-13) 게스트 로컬 킥 중에는 같은 kick id의 impact 확정이 owner=mySid보다 우선이다.
-   같은 패킷에 이전 owner가 남아 있어도 공을 발로 되돌리지 말고 자유공 킥 확정으로 처리한다.
-   kick id가 없는 owner=mySid만 재획득 확정 후보이며, 킥 직전 순번/시간의 패킷은 무시한다.
-14) UI는 경기 화면을 가리지 않게 유지한다. PC 스킬 버튼은 우측 하단의 반투명 젤리 질감으로 두고, 닉네임은 프레임 없이 정수리 바로 위의 작은 글자로만 표시한다. 발밑 원형 표식은 다시 넣지 않는다.
-14) PC 액션 버튼은 이동키와 겹치지 않도록 우측 하단에 둔다. 닉네임은 프레임 없이 머리 바로 위에 표시한다.
-11) 아웃은 선을 넘는 즉시 공을 재개 지점으로 텔레포트하지 않는다. 짧은 비행 연출 뒤 마지막 터치 반대 팀에 재개권을 준다.
-12) 탈취 시 공의 권위 owner는 즉시 바꾸되 화면/물리 좌표는 짧게 발앞으로 전환해 순간이동을 피한다.
-    짧은 소유 보호시간 이후 실제 접촉한 상대에게 탈취 우선권을 준다.
-11) 헤딩은 캐릭터 중심의 큰 원이 아니라 머리 높이(z)와 짧은 수평 거리 모두를 만족해야 한다.
-12) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
-   동시 claim, 헤딩, 태클, 골 판정, 방장 승계, 세 파일 node --check.
-   - 재획득 직후 공 위치를 이전 자유공 좌표에서 발앞으로 lerp하지 않는다. 최초 소유권 확정은
-     즉시 발앞 목표로 스냅하고, 이미 소유 중인 연속 드리블에서만 보간한다. 이 원칙을 어기면
-     호스트와 게스트 모두 재드리블 시작 위치가 옆/뒤로 어긋난다.
+1) 연결이 확인된 통신 골격은 tg_state/tg_players가 주 경로이고 sc_*는 긴급·보조
+   경로다. room.js와 Worker 중 한쪽만 바꾸거나 두 경로를 임의로 합치지 않는다.
+2) 실제 공 위치·소유권·골·아웃 판정은 호스트만 확정한다. 게스트는 입력 직후의
+   화면 반응만 예측하며, 예측값으로 권위 상태를 덮어쓰지 않는다.
+3) 게스트 공 상태는 수신부 한 곳에서만 다음 순서로 결정한다.
+   같은 킥 impact 확정 → 킥 이전 패킷 무시 → 실제 owner 승인 → 상대 owner.
+   updateNetBall()에서는 확정된 owner를 다시 null로 바꾸지 않는다.
+4) owner=mySid가 실제 재획득으로 승인되면 localKickTrack·보정·과거 샘플을 지우고
+   공을 매 틱 로컬 선수 발앞 목표에 직접 붙인다. 이 경로에 lerp를 넣지 않는다.
+5) 킥 직후 도착한 owner=mySid라도 baselineBallSeq 이하이거나 킥 생성 시각보다 오래된
+   패킷이면 킥 이전 잔상이다. 다만 이 보호 조건을 재획득 가능 시간까지 늘리지 않는다.
+6) 이동 중 킥은 버튼을 놓은 순간의 kickVX/kickVY를 고정해 호스트까지 전달한다.
+   이후 프레임의 감속 속도로 다시 계산하지 않는다.
+7) 골은 공 전체가 포스트 사이·크로스바 아래를 지나 네트 안쪽 득점선까지 들어간
+   뒤 확정한다. 유효 골문 안에서는 골라인 아웃 판정을 득점선까지 유예한다.
+8) 득점·아웃 재시작 동안 owner, 속도, 예측, claim과 입력을 모두 초기화·잠금한다.
+9) 발밑 원·막대는 넣지 않는다. 닉네임은 프레임 없이 정수리 바로 위, PC 스킬 버튼은
+   우측 하단에 둔다. 쿨타임은 버튼 내부 채움만 사용한다.
+10) 새 예외 조건을 추가하기 전에 owner를 null로 만드는 모든 경로와 localKickTrack을
+    종료하는 모든 경로를 검색한다. 같은 상태를 두 군데에서 수정하지 않는다.
+11) 배포 전 index.html 인라인 JS, room.js, Worker를 문법 검사하고 새 방에서 호스트와
+    게스트 각각 킥→자유공→재획득→재킥, 탈취, 골, 아웃, 재시작을 확인한다.
 ===============================================================================
 */
 'use strict';
@@ -1252,13 +1241,10 @@ function updateNetBall(){
   const now=Date.now();
   netBall.visualAt=now;
 
-  // 권위상 내가 공 소유자가 된 순간에는 이전 킥 예측/보정을 즉시 끝낸다.
-  // 이 우선순위가 localKickTrack보다 뒤에 있으면, 호스트 화면은 재드리블 중인데
-  // 게스트 화면만 공이 마지막 킥 위치에 남아 있는 현상이 생긴다.
-  // 수신부에서 같은 kick id의 impact와 오래된 owner를 이미 정리한다.
-  // 여기서는 남아 있는 로컬 킥 예측이 있는 동안 owner가 갑자기 발앞 표시를
-  // 덮지 못하도록 한 번 더 보호한다.
-  if(netBall.owner===mySid&&localKickTrack&&!localKickTrack.confirmed)netBall.owner=null;
+  // 확정된 소유권은 수신부에서 한 번만 결정한다. updateNetBall()은 그 결과를
+  // 표시할 뿐 다시 owner를 null로 바꾸지 않는다. 수신부와 표시부가 각각 소유권을
+  // 지우면, 호스트 화면에서는 드리블되지만 게스트 자기 화면에서는 공이 멈추는
+  // 회귀가 반복된다.
   if(netBall.owner===mySid&&me&&(netBall.netZ||0)<5){
     localKickTrack=null;
     netBall.kickReconcile=null;
@@ -2819,55 +2805,60 @@ window.addEventListener('message', e=>{
         netBall.vz=lerp(netBall.vz||0,netBall.netVZ,.26);
       }
     }
-    netBall.owner = d.owner ? String(d.owner) : null;
-    // 같은 kick id의 impact 확정이 왔다면 그 패킷에 남아 있는 owner=mySid는
-    // 킥 직전 소유권 잔상이다. owner 분기보다 impact 확정을 먼저 적용해야
-    // 게스트 화면 공이 발로 되돌아갔다가 다시 출발하는 요요가 생기지 않는다.
-    if(confirmsLocalKick)netBall.owner=null;
+    const incomingOwner=d.owner?String(d.owner):null;
     const packetPredatesKick=!!(localKickTrack&&(
       (incomingBallSeq&&incomingBallSeq<=Number(localKickTrack.baselineBallSeq||0))||
       (incomingSentAt&&incomingSentAt<Number(localKickTrack.createdAt||0)-20)
     ));
-    const staleSelfOwnerDuringKick=!!(netBall.owner===mySid&&localKickTrack&&(!localKickTrack.confirmed||packetPredatesKick));
-    if(staleSelfOwnerDuringKick)netBall.owner=null;
-    const localOwnerConfirmed=netBall.owner===mySid;
-    if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
-    if(localOwnerConfirmed){
-      // [중요] 호스트가 owner=mySid를 보냈다면 재획득이 최종 확정된 것이다.
-      // 이전 킥 예측(localKickTrack)이 남아 있더라도 owner를 null로 되돌리면 안 된다.
-      // 그렇게 하면 호스트 화면만 드리블되고 게스트 화면 공은 마지막 킥 위치에 멈춘다.
-      pendingClaimAt=0; pendingClaimUntil=0;
-      localDribbleVisualUntil=now+420;
-      localKickTrack=null;
-      netBall.kickReconcile=null;
-      netBall.samples=[];
-      netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
-      netBall.renderOffsetUntil=0;
-    }
-    netBall.netT = now;
-    if(localOwnerConfirmed){
-      // 소유권 확정은 킥 예측 확정보다 항상 우선한다. updateNetBall()이 다음 고정 틱에서
-      // 자기 발앞 목표로 즉시 배치하므로 여기서는 권위 owner를 그대로 보존한다.
-    }else if(confirmsLocalKick){
+    const predictionGrace=!!(localKickTrack&&!localKickTrack.confirmed&&
+      now-Number(localKickTrack.createdAt||now)<320);
+
+    // 공 상태는 이 수신부 한 곳에서만 결정한다.
+    // 1) 같은 킥의 impact 확정은 킥 직전 owner 잔상보다 우선한다.
+    // 2) 킥 전에 전송된 자기 owner 패킷은 무시한다.
+    // 3) 그 밖의 owner=mySid는 호스트가 승인한 실제 재획득이므로 보존한다.
+    if(confirmsLocalKick){
+      netBall.owner=null;
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
         vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
       },localKickTrack,now);
-      netBall.owner=null;
-    }else if(localKickTrack&&localKickTrack.confirmed){
-      // 동일 킥의 후속 권위 스냅샷은 표시 위치를 덮지 않고 추적 상태만 갱신한다.
-      localKickTrack.authReceivedAt=now;
-      localKickTrack.authX=netBall.netX;localKickTrack.authY=netBall.netY;localKickTrack.authZ=netBall.netZ;
-      localKickTrack.authVX=netBall.netVX;localKickTrack.authVY=netBall.netVY;localKickTrack.authVZ=netBall.netVZ;
-      netBall.owner=null;
-    }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)){
-      // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
-      localKickTrack=null;
-    }else if(localKickTrack&&netBall.owner){
-      // 다른 선수의 소유권이 킥 이전 스냅샷으로 늦게 도착한 경우에만 예측을 유지한다.
-      // 내 소유권(owner===mySid)은 위 localOwnerConfirmed 분기에서 절대 지우지 않는다.
-      netBall.owner=null;
+    }else if(incomingOwner===mySid){
+      if(packetPredatesKick||predictionGrace){
+        // 로컬 킥 직후 늦게 도착한 킥 이전 소유권이다. 예측은 유지하되
+        // 권위 owner로 승격하지 않는다. 실제 재획득은 noPickup 기간 뒤에 오므로
+        // 이 짧은 보호 구간과 겹치지 않는다.
+        netBall.owner=null;
+      }else{
+        // 호스트가 승인한 실제 재획득. 이전 킥 추적과 화면 보정을 모두 끝내고
+        // 다음 updateNetBall()부터 발앞 드리블 위치를 직접 사용한다.
+        netBall.owner=mySid;
+        pendingClaimAt=0;pendingClaimUntil=0;
+        localDribbleVisualUntil=now+420;
+        localKickTrack=null;
+        netBall.kickReconcile=null;
+        netBall.samples=[];
+        netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
+        netBall.renderOffsetUntil=0;
+      }
+    }else{
+      netBall.owner=incomingOwner;
+      if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
+      if(localKickTrack&&localKickTrack.confirmed&&!netBall.owner){
+        // 같은 킥의 후속 자유공 스냅샷은 표시 위치를 즉시 덮지 않고
+        // 권위 추적값만 갱신한다.
+        localKickTrack.authReceivedAt=now;
+        localKickTrack.authX=netBall.netX;localKickTrack.authY=netBall.netY;localKickTrack.authZ=netBall.netZ;
+        localKickTrack.authVX=netBall.netVX;localKickTrack.authVY=netBall.netVY;localKickTrack.authVZ=netBall.netVZ;
+      }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)){
+        // 다른 선수의 새 타격이 확정됐을 때만 내 예측을 종료한다.
+        localKickTrack=null;
+      }else if(localKickTrack&&netBall.owner){
+        // 상대가 공을 실제로 소유한 권위 상태가 오면 내 예측을 끝낸다.
+        localKickTrack=null;
+      }
     }
+    netBall.netT=now;
     if(!Array.isArray(netBall.samples)) netBall.samples=[];
     if(!localKickTrack){
       netBall.samples.push({t:now,x:netBall.netX,y:netBall.netY,z:netBall.netZ,vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ});
