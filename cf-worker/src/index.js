@@ -853,9 +853,6 @@ export class RoomDO{
         // (or reconnecting) client — mirrors the SnakeTail/Togester late-join sync pattern.
         if (this.meta.phase === "playing" && this.meta.mode === "soccer" && this.sc && this.sc.startedAt > 0){
           try{ this._ensureSoccerPlayerRegistered(wantUid); }catch(_){ }
-          // 접속 직후에도 sc_sync와 동일하게 로스터를 가장 먼저 보낸다.
-          // 연결 대기 중 수학 라운드가 끝난 클라이언트는 결과만 받을 수 있으므로,
-          // 월드/내 캐릭터가 먼저 준비되어야 결과 적용 후 즉시 경기를 활성화할 수 있다.
           try{ this._send(ws, "sc_roster", { players: this._buildSoccerRoster() }); }catch(_){ }
           try{ this._send(ws, "sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs }); }catch(_){ }
           try{ if (this.sc.ball) this._send(ws, "sc_ball", this.sc.ball); }catch(_){ }
@@ -1866,6 +1863,7 @@ export class RoomDO{
         this._finishSoccer(winner);
         return;
       }
+
       if (t === "sc_sync"){
         if (this.meta.mode !== "soccer") return;
         if (!this.sc || this.sc.startedAt <= 0) return;
@@ -2260,9 +2258,9 @@ export class RoomDO{
       };
     }
 
+    this._broadcast("sc_roster", { players: this._buildSoccerRoster() });
     this._startSoccerMathRound("initial",0);
     this._broadcast("sc_timer", { startTs: this.sc.startedAt, durationMs: this.sc.durationMs });
-    this._broadcast("sc_roster", { players: this._buildSoccerRoster() });
 
   }
 

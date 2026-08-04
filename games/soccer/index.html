@@ -2958,7 +2958,6 @@ window.addEventListener('message', e=>{
     myNick = String(d.nick||'Player');
     mySeat = Number(d.seat ?? -1);
     isHost = !!d.isHost;
-    bridgeSend('soccer_bridge_init_ack', { sessionId:mySid });
 
     const incoming = (d.players||[]).map(p=>({
       sid: String(p.sid||p.sessionId||''),
@@ -3191,11 +3190,6 @@ window.addEventListener('message', e=>{
 });
 
 bridgeSend('bridge_ready', {});
-const bridgeReadyRetry=setInterval(()=>{
-  if(gameInitialized){ clearInterval(bridgeReadyRetry); return; }
-  bridgeSend('bridge_ready', {});
-},300);
-setTimeout(()=>{ try{clearInterval(bridgeReadyRetry);}catch(_){ } },15000);
 </script>
 </body>
 </html>
