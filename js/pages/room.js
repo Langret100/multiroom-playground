@@ -542,6 +542,11 @@ function updatePreview(modeId){
     soccerLocalState: null,
     soccerLastUrgentActionId: "",
     soccerSeenEvents: new Set(),
+    // Soccer math packets can arrive before the iframe exists/finishes loading.
+    // Keep the latest authoritative round packets so bridge_ready can replay them.
+    soccerMathStartCache: null,
+    soccerMathProgressCache: null,
+    soccerMathResultCache: null,
     iframeLoaded: false,
     startPayload: null,
     sentGameStart: false,
@@ -963,6 +968,13 @@ function updatePreview(modeId){
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
         sendCoopBridgeInit();
+        if (fromMainForSoccer){
+          // The initial sc_math_start broadcast often happens before the iframe is ready.
+          // Ask the server again from the parent (not from the child) and replay anything cached.
+          requestSoccerAuthoritativeSync();
+          setTimeout(()=>{ replaySoccerMathState(); requestSoccerAuthoritativeSync(); }, 60);
+          setTimeout(()=>{ replaySoccerMathState(); requestSoccerAuthoritativeSync(); }, 320);
+        }
         if (fromMain){
           try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
         } else {
@@ -2040,6 +2052,24 @@ function postTo(targetIframe, msg){
   }catch{}
 }
 function postToMain(msg){ postTo(duel.iframeEl, msg); }
+function replaySoccerMathState(){
+  try{
+    if (!coop?.active || String(coop?.meta?.id||'') !== 'soccer') return;
+    // Result supersedes start/progress. Replaying both can reopen a finished quiz.
+    if (coop.soccerMathResultCache){
+      postToMain({ ...coop.soccerMathResultCache });
+      return;
+    }
+    if (coop.soccerMathStartCache) postToMain({ ...coop.soccerMathStartCache });
+    if (coop.soccerMathProgressCache) postToMain({ ...coop.soccerMathProgressCache });
+  }catch(_){ }
+}
+function requestSoccerAuthoritativeSync(){
+  try{
+    if (!room || !coop?.active || String(coop?.meta?.id||'') !== 'soccer') return;
+    room.send('sc_sync', {});
+  }catch(_){ }
+}
 function isMathExplorerCoopMode(){
   try{
     const id = String(coop?.meta?.id || room?.state?.mode || "");
@@ -2345,6 +2375,13 @@ function sendCoopBridgeInit(){
     })()
   };
   (isMathExplorerCoopMode() ? postToMathExplorer : postToMain)(coopInitPacket);
+  if (coop?.meta?.id === 'soccer'){
+    // Do not depend on the iframe's own sc_sync request: the first math packet may have
+    // already been broadcast while this iframe was still loading.
+    requestSoccerAuthoritativeSync();
+    setTimeout(()=>{ replaySoccerMathState(); }, 0);
+    setTimeout(()=>{ requestSoccerAuthoritativeSync(); replaySoccerMathState(); }, 180);
+  }
 
   // If the room has already provided an authoritative start payload,
   // deliver it to the iframe right after bridge_init.
@@ -2578,6 +2615,9 @@ function startCoopEmbed(meta){
   coop.soccerTgSeenAt = 0;
   coop.soccerLocalState = null;
   coop.soccerSeenEvents = new Set();
+  coop.soccerMathStartCache = null;
+  coop.soccerMathProgressCache = null;
+  coop.soccerMathResultCache = null;
   
 
   showDuelUI(true);
@@ -2626,6 +2666,9 @@ function startCoopPractice(meta){
   coop.soccerTgSeenAt = 0;
   coop.soccerLocalState = null;
   coop.soccerSeenEvents = new Set();
+  coop.soccerMathStartCache = null;
+  coop.soccerMathProgressCache = null;
+  coop.soccerMathResultCache = null;
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -3160,7 +3203,7 @@ try{
 
       // ── Soccer: server → iframe relays ──────────────────────────────
       room.onMessage("sc_math_start", (msg)=>{
-        postToMain({
+        const packet={
           type:"sc_math_start",
           roundId:String(msg.roundId||""),
           kind:String(msg.kind||"initial"),
@@ -3168,19 +3211,25 @@ try{
           beginsAt:msg.beginsAt,
           endsAt:msg.endsAt,
           kickoffAt:msg.kickoffAt
-        });
+        };
+        coop.soccerMathStartCache=packet;
+        coop.soccerMathProgressCache=null;
+        coop.soccerMathResultCache=null;
+        postToMain(packet);
       });
       room.onMessage("sc_math_progress", (msg)=>{
-        postToMain({
+        const packet={
           type:"sc_math_progress",
           roundId:String(msg.roundId||""),
           scoreA:msg.scoreA,
           scoreB:msg.scoreB,
           submitted:msg.submitted
-        });
+        };
+        coop.soccerMathProgressCache=packet;
+        postToMain(packet);
       });
       room.onMessage("sc_math_result", (msg)=>{
-        postToMain({
+        const packet={
           type:"sc_math_result",
           roundId:String(msg.roundId||""),
           kind:String(msg.kind||"initial"),
@@ -3192,7 +3241,9 @@ try{
           kickoffAt:msg.kickoffAt,
           startTs:msg.startTs,
           durationMs:msg.durationMs
-        });
+        };
+        coop.soccerMathResultCache=packet;
+        postToMain(packet);
       });
       room.onMessage("sc_timer", (msg)=>{
         postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
