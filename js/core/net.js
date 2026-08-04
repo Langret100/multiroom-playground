@@ -251,6 +251,7 @@ if (isDuel && humans.length === 1){
         "br_msg","br_batch",
         // Soccer (coop) — server → client relays (positions/ball/score/timer/roster/end)
         "sc_timer","sc_players","sc_ball","sc_goal","sc_stun","sc_end","sc_goal_sync","sc_roster",
+        "sc_math_start","sc_math_progress","sc_math_result",
         // misc
         "frame"
       ]);
@@ -391,6 +392,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-07-23-soccer-unified-motion-v23";
+  window.__BUILD_ID = "2026-08-04-soccer-flow-clean-v24";
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();
