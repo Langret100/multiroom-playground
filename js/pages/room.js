@@ -537,12 +537,7 @@ function updatePreview(modeId){
     iframeReady: false,
     mxFrameWin: null,
     soccerFrameWin: null,
-    soccerMovementProbeAt: 0,
-    soccerTgSeenAt: 0,
-    soccerLocalState: null,
     soccerLastUrgentActionId: "",
-    soccerSeenEvents: new Set(),
-    soccerMathState: { start:null, progress:null, result:null, roundId:"" },
     soccerMathSyncTimer: null,
     iframeLoaded: false,
     startPayload: null,
@@ -862,7 +857,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_over","sc_sync","sc_math_submit"]);
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_math_submit","sc_time_ping"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -1006,10 +1001,10 @@ function updatePreview(modeId){
           coop.meta = null;
           coop.mxFrameWin = null;
           coop.soccerFrameWin = null;
-          coop.soccerMovementProbeAt = 0;
-          coop.soccerTgSeenAt = 0;
-          coop.soccerLocalState = null;
-          coop.soccerSeenEvents = new Set();
+          
+          
+          
+          
           coop.iframeLoaded = false;
           coop.iframeReady = false;
         }catch(_){ }
@@ -1124,10 +1119,10 @@ function updatePreview(modeId){
       coop.practice = false;
       coop.mxFrameWin = null;
       coop.soccerFrameWin = null;
-      coop.soccerMovementProbeAt = 0;
-      coop.soccerTgSeenAt = 0;
-      coop.soccerLocalState = null;
-      coop.soccerSeenEvents = new Set();
+      
+      
+      
+      
       coop.iframeLoaded = false;
       coop.iframeReady = false;
       try{ renderPlayers(); }catch(_){ }
@@ -1324,120 +1319,50 @@ function updatePreview(modeId){
       try{ room.send("st_over", { reason: d.reason, winnerSid: d.winnerSid }); }catch(_){ }
       return;
     }
-    // ── Soccer: iframe → server relays ─────────────────────────────
+    // ── Soccer: iframe → server relays (single authoritative path) ──
     if (d.type === "sc_pos"){
       if (!fromMainForSoccer) return;
-      const isEvent = !!(d.kickAt || d.headerAt || d.tackleAt || d.claimAt);
-      // 킥/헤딩/태클의 최초 edge 패킷은 위치 쓰로틀을 기다리지 않는다.
-      if (!isEvent){
-        const _now = Date.now();
-        if (!window.__scPosTs) window.__scPosTs = 0;
-        if (_now - window.__scPosTs < 30) return; // 일반 위치 갱신만 최대 ~33fps로 제한
-        window.__scPosTs = _now;
+      const isEvent=!!(d.kickAt||d.headerAt||d.tackleAt||d.claimAt);
+      const n=Date.now();
+      if(!isEvent){
+        if(!window.__scDirectPosTs)window.__scDirectPosTs=0;
+        if(n-window.__scDirectPosTs<30)return;
+        window.__scDirectPosTs=n;
       }
-      const soccerState = {
-        __game: "soccer",
-        stateSeq: d.stateSeq,
-        x: d.x, y: d.y, dir: d.dir, vx: d.vx, vy: d.vy,
-        dribble:d.dribble==null?undefined:!!d.dribble,dribbleBallX:d.dribbleBallX,dribbleBallY:d.dribbleBallY,
-        claimAt:d.claimAt,claimBallX:d.claimBallX,claimBallY:d.claimBallY,
-        kickAt: d.kickAt, kickCharge: d.kickCharge, tackle: d.tackle,
-        kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir,
-        kickVX:d.kickVX, kickVY:d.kickVY,
-        kickBallX:d.kickBallX, kickBallY:d.kickBallY,
-        headerAt:d.headerAt,headerX:d.headerX,headerY:d.headerY,headerDir:d.headerDir,
-        headerBallX:d.headerBallX,headerBallY:d.headerBallY,tackleAt:d.tackleAt,
-        seat: getMySeat(), nick: myNick || "Player", isHost: getMyIsHost()
-      };
-      // 호스트가 보낸 최신 공/이벤트를 위치 스냅샷에도 계속 싣는다.
-      // tg_state는 사용자별 최신 상태 하나를 저장하므로, 위치만 새 객체로
-      // 덮으면 직전에 실어 보낸 공이 사라진다.
-      if (coop.soccerLocalState?.ball) soccerState.ball = coop.soccerLocalState.ball;
-      if (coop.soccerLocalState?.event) soccerState.event = coop.soccerLocalState.event;
-      coop.soccerLocalState = soccerState;
-      const soccerNow = Date.now();
-      if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
-
-      // 세 액션은 모두 위치와 달리 한 번의 edge 이벤트다. 공용 tg_state
-      // 집계 주기를 기다리면 게스트 판정이 늦으므로 새로운 id는 축구 전용
-      // 경로로도 즉시 한 번 보내고, 반복 패킷은 아래 공용 경로만 사용한다.
-      const urgentActionId=d.kickAt?`k:${d.kickAt}`:
-        (d.headerAt?`h:${d.headerAt}`:(d.tackleAt?`t:${d.tackleAt}`:""));
-      if(urgentActionId&&urgentActionId!==coop.soccerLastUrgentActionId){
-        coop.soccerLastUrgentActionId=urgentActionId;
-        try{ room.send("sc_pos", soccerState); }catch(_){ }
-      }
-
-      // 다른 게임에서 실제 사용 중인 검증된 집계 경로를 축구 이동의 주 경로로 쓴다.
-      // 축구 전용 sc_players와 동시에 좌표를 받으면 서로 다른 시점의 값이 덮어써져
-      // 상대가 멈추거나 튀는 현상이 생길 수 있으므로, 둘을 동시에 활성화하지 않는다.
-      try{ room.send("tg_state", { state: soccerState }); }catch(_){ }
-
-      // tg_players가 1.2초 안에 한 번도 돌아오지 않거나 도중에 1.5초 이상
-      // 끊긴 경우에만 기존 sc_pos 경로를 자동 보조 경로로 사용한다.
-      const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
-      const probeExpired = (soccerNow - coop.soccerMovementProbeAt) >= 1200;
-      if (!tgHealthy && probeExpired){
-        try{ room.send("sc_pos", soccerState); }catch(_){ }
-      }
+      try{
+        room.send("sc_pos", {
+          stateSeq:Number(d.stateSeq||0), x:Number(d.x||0), y:Number(d.y||0), dir:Number(d.dir||0),
+          vx:Number(d.vx||0), vy:Number(d.vy||0),
+          dribble:d.dribble==null?undefined:!!d.dribble, dribbleBallX:d.dribbleBallX, dribbleBallY:d.dribbleBallY,
+          claimAt:d.claimAt, claimBallX:d.claimBallX, claimBallY:d.claimBallY,
+          kickAt:d.kickAt, kickCharge:d.kickCharge, tackle:d.tackle,
+          kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir, kickVX:d.kickVX, kickVY:d.kickVY,
+          kickBallX:d.kickBallX, kickBallY:d.kickBallY,
+          headerAt:d.headerAt, headerX:d.headerX, headerY:d.headerY, headerDir:d.headerDir,
+          headerBallX:d.headerBallX, headerBallY:d.headerBallY, tackleAt:d.tackleAt
+        });
+      }catch(_){ }
       return;
     }
     if (d.type === "sc_ball"){
       if (!fromMainForSoccer) return;
-      const soccerNow = Date.now();
-      if (!coop.soccerMovementProbeAt) coop.soccerMovementProbeAt = soccerNow;
-      const state = Object.assign({
-        __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost()
-      }, coop.soccerLocalState || {});
-      state.isHost = getMyIsHost();
-      state.ball = {
-        x:d.x, y:d.y, z:d.z||0, vx:d.vx, vy:d.vy, vz:d.vz||0, owner:d.owner,
-        sentAt:Number(d.sentAt||soccerNow), at:Number(d.sentAt||soccerNow), ballSeq:Number(d.ballSeq||0),
-        impactAt:d.impactAt||"", impactPower:d.impactPower||0, impactDir:d.impactDir||0,
-        restartText:d.restartText||"", restartUntil:Number(d.restartUntil||0), restartSerial:Number(d.restartSerial||0)
-      };
-      coop.soccerLocalState = state;
-      try{ room.send("tg_state", { state }); }catch(_){ }
-      const tgHealthy = coop.soccerTgSeenAt > 0 && (soccerNow - coop.soccerTgSeenAt) < 1500;
-      if (!tgHealthy && (soccerNow - coop.soccerMovementProbeAt) >= 1200){
-        try{ room.send("sc_ball", state.ball); }catch(_){ }
-      }
+      try{ room.send("sc_ball", {
+        x:Number(d.x||0), y:Number(d.y||0), z:Number(d.z||0),
+        vx:Number(d.vx||0), vy:Number(d.vy||0), vz:Number(d.vz||0), owner:d.owner||null,
+        sentAt:Number(d.sentAt||Date.now()), ballSeq:Number(d.ballSeq||0),
+        impactAt:String(d.impactAt||""), impactPower:Number(d.impactPower||0), impactDir:Number(d.impactDir||0),
+        restartText:String(d.restartText||""), restartUntil:Number(d.restartUntil||0), restartSerial:Number(d.restartSerial||0)
+      }); }catch(_){ }
       return;
     }
     if (d.type === "sc_goal"){
       if (!fromMainForSoccer) return;
-      const event = { kind:"goal", id:`${mySessionId}:goal:${Date.now()}`, team:d.team, scoreA:d.scoreA, scoreB:d.scoreB, resetDelayMs:Number(d.resetDelayMs||900), countdownMs:Number(d.countdownMs||2400), restartId:String(d.restartId||Date.now()) };
-      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
-      state.isHost = getMyIsHost();
-      coop.soccerLocalState = state;
-      try{ room.send("tg_state", { state }); }catch(_){ }
-      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
-        try{ room.send("sc_goal", { team:d.team, scoreA:d.scoreA, scoreB:d.scoreB, resetDelayMs:Number(d.resetDelayMs||900), countdownMs:Number(d.countdownMs||2400), restartId:String(d.restartId||Date.now()) }); }catch(_){ }
-      }
+      try{ room.send("sc_goal", { team:String(d.team||""), restartId:String(d.restartId||Date.now()) }); }catch(_){ }
       return;
     }
     if (d.type === "sc_stun"){
       if (!fromMainForSoccer) return;
-      const event = { kind:"stun", id:`${mySessionId}:stun:${Date.now()}:${d.sid||''}`, sid:d.sid, dur:d.dur };
-      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
-      state.isHost = getMyIsHost();
-      coop.soccerLocalState = state;
-      try{ room.send("tg_state", { state }); }catch(_){ }
-      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
-        try{ room.send("sc_stun", { sid:d.sid, dur:d.dur }); }catch(_){ }
-      }
-      return;
-    }
-    if (d.type === "sc_over"){
-      if (!fromMainForSoccer) return;
-      const event = { kind:"over", id:`${mySessionId}:over:${Date.now()}`, scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner };
-      const state = Object.assign({ __game:"soccer", seat:getMySeat(), nick:myNick||"Player", isHost:getMyIsHost() }, coop.soccerLocalState || {}, { event });
-      state.isHost = getMyIsHost();
-      coop.soccerLocalState = state;
-      try{ room.send("tg_state", { state }); }catch(_){ }
-      if (!(coop.soccerTgSeenAt > 0 && Date.now()-coop.soccerTgSeenAt < 1500)){
-        try{ room.send("sc_over", { scoreA:d.scoreA, scoreB:d.scoreB, winner:d.winner }); }catch(_){ }
-      }
+      try{ room.send("sc_stun", { sid:String(d.sid||""), dur:Number(d.dur||0) }); }catch(_){ }
       return;
     }
     if (d.type === "sc_math_submit"){
@@ -1445,11 +1370,17 @@ function updatePreview(modeId){
       try{
         room.send("sc_math_submit", {
           roundId:String(d.roundId||""),
-          score:Number(d.score||0),
-          solved:!!d.solved,
-          final:!!d.final
+          final:!!d.final,
+          answeredAt:Number(d.answeredAt||0),
+          questionIndex:Number.isInteger(Number(d.questionIndex))?Number(d.questionIndex):null,
+          answer:Number.isFinite(Number(d.answer))?Number(d.answer):null
         });
       }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_time_ping"){
+      if (!fromMainForSoccer) return;
+      try{ room.send("sc_time_ping", { clientSentAt:Number(d.clientSentAt||0) }); }catch(_){ }
       return;
     }
     if (d.type === "sc_sync"){
@@ -2043,30 +1974,18 @@ function postTo(targetIframe, msg){
 }
 function postToMain(msg){ postTo(duel.iframeEl, msg); }
 function resetSoccerMathBridgeState(){
-  try{
-    if (coop.soccerMathSyncTimer) clearTimeout(coop.soccerMathSyncTimer);
-  }catch(_){ }
+  try{ if (coop.soccerMathSyncTimer) clearTimeout(coop.soccerMathSyncTimer); }catch(_){ }
   coop.soccerMathSyncTimer = null;
-  coop.soccerMathState = { start:null, progress:null, result:null, roundId:"" };
-}
-function replaySoccerMathState(){
-  try{
-    if (!coop.active || String(coop.meta?.id||"") !== "soccer") return;
-    const state = coop.soccerMathState || {};
-    if (state.result){ postToMain({ ...state.result }); return; }
-    if (state.start) postToMain({ ...state.start });
-    if (state.progress) postToMain({ ...state.progress });
-  }catch(_){ }
 }
 function syncSoccerAuthoritativeState(){
   try{
     if (!room || !coop.active || String(coop.meta?.id||"") !== "soccer") return;
-    replaySoccerMathState();
     room.send("sc_sync", {});
     if (coop.soccerMathSyncTimer) clearTimeout(coop.soccerMathSyncTimer);
+    // iframe/room-state 초기화 순서가 뒤집힌 경우를 위해 한 번만 재요청한다.
     coop.soccerMathSyncTimer = setTimeout(()=>{
       coop.soccerMathSyncTimer = null;
-      try{ room?.send?.("sc_sync", {}); replaySoccerMathState(); }catch(_){ }
+      try{ room?.send?.("sc_sync", {}); }catch(_){ }
     }, 250);
   }catch(_){ }
 }
@@ -2363,7 +2282,8 @@ function sendCoopBridgeInit(){
     players: bridgePlayers,
     ...(brBridgeStartPayload ? { startPayload: brBridgeStartPayload } : (coop?.meta?.id === 'backrooms3d' && coop?.startPayload ? { startPayload: coop.startPayload } : {})),
     level: coop.level || 1,
-    startedAt: (coop.meta?.id === 'soccer' && coop.soccerStartedAt) ? coop.soccerStartedAt : 0,
+    // Soccer clock/round timing comes only from sc_round_state.serverNow/remainingMs.
+    startedAt: 0,
     practice: (() => {
       // Explicit local practice mode (togester only)
       if (coop.practice) return true;
@@ -2605,10 +2525,10 @@ function startCoopEmbed(meta){
   coop._brGameStartAck = false;
   coop.mxFrameWin = null;
   coop.soccerFrameWin = null;
-  coop.soccerMovementProbeAt = 0;
-  coop.soccerTgSeenAt = 0;
-  coop.soccerLocalState = null;
-  coop.soccerSeenEvents = new Set();
+  
+  
+  
+  
   resetSoccerMathBridgeState();
   
 
@@ -2654,10 +2574,10 @@ function startCoopPractice(meta){
   coop._mxGameStartAck = false;
   coop.mxFrameWin = null;
   coop.soccerFrameWin = null;
-  coop.soccerMovementProbeAt = 0;
-  coop.soccerTgSeenAt = 0;
-  coop.soccerLocalState = null;
-  coop.soccerSeenEvents = new Set();
+  
+  
+  
+  
   resetSoccerMathBridgeState();
 
   showDuelUI(true);
@@ -3090,43 +3010,6 @@ try{
       // Togester (coop) relay: server -> iframe
       room.onMessage("tg_players", (msg)=>{
         postToMain({ type:"tg_players", players: msg.players || {} });
-        // sc_players가 없는 구 Worker에서도, 위의 축구 태그가 붙은
-        // tg_players 스냅샷만 골라 수학축구 형식으로 전달한다.
-        if (String(room?.state?.mode||"") === "soccer"){
-          const soccerPlayers = {};
-          let sharedBall = null;
-          const sharedEvents = [];
-          try{
-            for (const [sid, state] of Object.entries(msg.players || {})){
-              if (!state || state.__game !== "soccer") continue;
-              soccerPlayers[String(sid)] = state;
-              // 공/득점/스턴/종료는 호스트 상태만 권위값으로 인정한다.
-              if (state.isHost && state.ball){
-                if (!sharedBall || Number(state.ball.at||0) >= Number(sharedBall.at||0)) sharedBall = state.ball;
-              }
-              if (state.isHost && state.event?.id) sharedEvents.push(state.event);
-            }
-          }catch(_){ }
-          if (Object.keys(soccerPlayers).length){
-            coop.soccerTgSeenAt = Date.now();
-            postToMain({ type:"sc_players", players:soccerPlayers });
-          }
-          if (sharedBall){
-            postToMain({
-              type:"sc_ball", x:sharedBall.x, y:sharedBall.y, z:sharedBall.z||0, vx:sharedBall.vx, vy:sharedBall.vy, vz:sharedBall.vz||0, owner:sharedBall.owner,
-              sentAt:Number(sharedBall.sentAt||sharedBall.at||0), ballSeq:Number(sharedBall.ballSeq||0),
-              impactAt:sharedBall.impactAt||"", impactPower:sharedBall.impactPower||0, impactDir:sharedBall.impactDir||0,
-              restartText:sharedBall.restartText||"", restartUntil:Number(sharedBall.restartUntil||0), restartSerial:Number(sharedBall.restartSerial||0)
-            });
-          }
-          for (const evt of sharedEvents){
-            if (coop.soccerSeenEvents.has(String(evt.id))) continue;
-            coop.soccerSeenEvents.add(String(evt.id));
-            if (evt.kind === "goal") postToMain({ type:"sc_goal", eventId:evt.id, team:evt.team, scoreA:evt.scoreA, scoreB:evt.scoreB, resetDelayMs:Number(evt.resetDelayMs||900), countdownMs:Number(evt.countdownMs||2400), restartId:String(evt.restartId||evt.id||'') });
-            else if (evt.kind === "stun") postToMain({ type:"sc_stun", eventId:evt.id, sid:evt.sid, dur:evt.dur });
-            else if (evt.kind === "over") postToMain({ type:"sc_end", eventId:evt.id, scoreA:evt.scoreA, scoreB:evt.scoreB, winner:evt.winner });
-          }
-        }
       });
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
@@ -3192,64 +3075,34 @@ try{
       });
 
       // ── Soccer: server → iframe relays ──────────────────────────────
-      room.onMessage("sc_math_start", (msg)=>{
-        const packet={
-          type:"sc_math_start",
-          roundId:String(msg.roundId||""),
-          kind:String(msg.kind||"initial"),
-          seed:msg.seed,
-          beginsAt:msg.beginsAt,
-          endsAt:msg.endsAt,
-          kickoffAt:msg.kickoffAt
-        };
-        coop.soccerMathState={ start:packet, progress:null, result:null, roundId:packet.roundId };
-        postToMain(packet);
+      // 2026-08 clean soccer protocol: the Worker owns the whole round state machine.
+      room.onMessage("sc_time_pong", (msg)=>{
+        postToMain({ type:"sc_time_pong", clientSentAt:Number(msg.clientSentAt||0), serverNow:Number(msg.serverNow||0) });
       });
-      room.onMessage("sc_math_progress", (msg)=>{
-        const packet={
-          type:"sc_math_progress",
-          roundId:String(msg.roundId||""),
-          scoreA:msg.scoreA,
-          scoreB:msg.scoreB,
-          submitted:msg.submitted
-        };
-        if (packet.roundId && packet.roundId === String(coop.soccerMathState?.roundId||"")){
-          coop.soccerMathState.progress=packet;
-        }
-        postToMain(packet);
+      room.onMessage("sc_round_state", (msg)=>{
+        postToMain({ type:"sc_round_state", ...msg });
       });
-      room.onMessage("sc_math_result", (msg)=>{
-        const packet={
-          type:"sc_math_result",
-          roundId:String(msg.roundId||""),
-          kind:String(msg.kind||"initial"),
-          winner:msg.winner,
-          tied:!!msg.tied,
-          scoreA:msg.scoreA,
-          scoreB:msg.scoreB,
-          ownerSid:msg.ownerSid,
-          kickoffAt:msg.kickoffAt,
-          startTs:msg.startTs,
-          durationMs:msg.durationMs
-        };
-        coop.soccerMathState={ start:null, progress:null, result:packet, roundId:packet.roundId };
-        postToMain(packet);
+      room.onMessage("sc_round_progress", (msg)=>{
+        postToMain({ type:"sc_round_progress", roundId:String(msg.roundId||""), scoreA:Number(msg.scoreA||0), scoreB:Number(msg.scoreB||0) });
       });
-      room.onMessage("sc_timer", (msg)=>{
-        postToMain({ type:"sc_timer", startTs: msg.startTs, durationMs: msg.durationMs });
+      room.onMessage("sc_math_ack", (msg)=>{
+        postToMain({
+          type:"sc_math_ack", roundId:String(msg.roundId||""), activeRoundId:String(msg.activeRoundId||""),
+          accepted:!!msg.accepted, reason:String(msg.reason||""), score:Number(msg.score||0),
+          expectedQuestionIndex:Number(msg.expectedQuestionIndex||0), phase:String(msg.phase||""), serverNow:Number(msg.serverNow||0)
+        });
+      });
+      room.onMessage("sc_score_sync", (msg)=>{
+        postToMain({ type:"sc_score_sync", scoreA:Number(msg.scoreA||0), scoreB:Number(msg.scoreB||0) });
       });
       // 투게스터의 tg_players 릴레이와 완전히 동일한 패턴: 서버가 집계한
       // "전체 인원 위치 스냅샷"을 그대로 iframe에 전달한다. 개별 sc_pos를
       // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는
       // 전제가 있어 roster 타이밍 문제에 취약했다 — 이제는 그 전제가 없다.
       room.onMessage("sc_players", (msg)=>{
-        // tg_players 주 경로가 살아 있을 때는 더 오래된 sc_players 좌표가
-        // 최신 좌표를 덮어쓰지 못하게 한다. 주 경로가 끊겼을 때만 보조 수신.
-        if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({ type:"sc_players", players: msg.players || {} });
       });
       room.onMessage("sc_ball", (msg)=>{
-        if (coop.soccerTgSeenAt > 0 && (Date.now() - coop.soccerTgSeenAt) < 2000) return;
         postToMain({
           type:"sc_ball", x:msg.x, y:msg.y, z:msg.z||0, vx:msg.vx, vy:msg.vy, vz:msg.vz||0, owner:msg.owner,
           sentAt:Number(msg.sentAt||msg.at||0), ballSeq:Number(msg.ballSeq||0),
@@ -3258,20 +3111,13 @@ try{
         });
       });
       room.onMessage("sc_goal", (msg)=>{
-        postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB, resetDelayMs:Number(msg.resetDelayMs||900), countdownMs:Number(msg.countdownMs||2400), restartId:String(msg.restartId||'') });
+        postToMain({ type:"sc_goal", team: msg.team, scoreA: msg.scoreA, scoreB: msg.scoreB, restartId:String(msg.restartId||''), quizDelayMs:Number(msg.quizDelayMs||0) });
       });
       room.onMessage("sc_stun", (msg)=>{
         postToMain({ type:"sc_stun", sid: msg.sid, dur: msg.dur });
       });
       room.onMessage("sc_end", (msg)=>{
         postToMain({ type:"sc_end", scoreA: msg.scoreA, scoreB: msg.scoreB, winner: msg.winner, winnerNick: msg.winnerNick });
-      });
-      room.onMessage("sc_goal_sync", (msg)=>{
-        // 주의: 이건 "방금 골이 들어갔다"는 이벤트가 아니라, sc_sync 요청에
-        // 대한 "현재 점수 그대로 알려주기"일 뿐이다. sc_goal로 잘못 변환해서
-        // 보내면 게임 시작 직후(0:0이라도) 매번 가짜 골 이펙트(컨페티·사운드·
-        // 2.5초 정지·리스폰)가 터지는 심각한 버그가 된다 — 반드시 별도 타입으로.
-        postToMain({ type:"sc_score_sync", scoreA: msg.scoreA, scoreB: msg.scoreB });
       });
       // 투게스터의 tg_players 릴레이와 동일한 패턴 — 서버가 보낸 전체 인원
       // 목록을 그대로 iframe에 전달. 게임 쪽이 이걸로 players{}를 보정한다.
@@ -3306,7 +3152,7 @@ try{
         hideResultOverlay();
         showDuelUI(false);
         duel.active=null; duel.meta=null;
-        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.soccerMovementProbeAt=0; coop.soccerTgSeenAt=0; coop.soccerLocalState=null; coop.soccerSeenEvents=new Set(); coop.iframeLoaded=false; coop.iframeReady=false;
+        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null;     coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
         // Notify iframes (best-effort) before clearing.
