@@ -1,36 +1,10 @@
 /*
-===============================================================================
-수학축구 핵심 수정 주의사항 — 문제 발생 시 먼저 읽을 것
-===============================================================================
-1) 수학축구 전용 sc_* 통신 경로를 단일 경로로 사용하고
-   임의로 단일화하거나 역할을 뒤바꾸지 않는다. room.js와 Worker를 반드시 함께 본다.
-2) 공의 실제 위치·소유권·골 판정은 호스트만 결정한다. 게스트 예측은 화면 반응용이다.
-3) 게스트 킥/재획득 문제를 시간 제한이나 강제 스냅 조건으로 덮지 않는다.
-   localKickTrack, netBall.owner, claim 처리의 우선순위를 먼저 확인한다.
-4) 게스트가 권위상 공 소유자가 되면 남아 있는 킥 예측/보정 상태를 즉시 폐기하고
-   드리블 표시로 전환해야 한다. 그렇지 않으면 공이 찬 자리에 고정돼 보인다.
-5) 이동 중 킥은 버튼을 놓은 순간의 속도(kickVX/kickVY)를 이벤트에 고정해 보낸다.
-   이후 프레임의 감속된 vx/vy로 다시 계산하면 약한 이동 킥이 드리블처럼 보인다.
-6) 호스트 확정과 게스트 예측은 반드시 동일한 makeKickSpec/stepFreeBallState를 쓴다.
-7) 증상별 임시 플래그를 추가하기 전에 같은 상태를 처리하는 중복 경로가 있는지 찾는다.
-8) 골 직후에는 호스트만 reset하지 말고 sc_goal로 모든 클라이언트의 owner/예측/입력/
-   시작 좌표를 같은 단계로 초기화한다. 카운트다운 중 오래된 sc_ball도 무시한다.
-9) 골대는 득점 사각형 하나로 처리하지 않는다. 양쪽 포스트와 크로스바는 충돌체이며,
-   골문 안쪽을 통과한 공만 득점이다. 라인 밖 공은 벽 반사로 숨기지 말고 킥인/코너/골킥으로 재개한다.
-10) 소유 중인 선수를 항상 claim 우선순위로 이기게 두면 상대가 공을 절대 뺏지 못한다.
-11) 로컬 게스트 킥은 호스트 응답 전에 발앞 좌표에서 즉시 예측을 시작해야 한다. UI 지연을 네트워크 재전송으로만 덮지 않는다.
-12) 하단 막대형 표시는 체력바처럼 보이고 접지감을 해치므로 다시 넣지 않는다. 헤딩/태클 쿨타임은 버튼 채움으로 표시한다.
-11) 아웃은 선을 넘는 즉시 공을 재개 지점으로 텔레포트하지 않는다. 짧은 비행 연출 뒤 마지막 터치 반대 팀에 재개권을 준다.
-12) 탈취 시 공의 권위 owner는 즉시 바꾸되 화면/물리 좌표는 짧게 발앞으로 전환해 순간이동을 피한다.
-    짧은 소유 보호시간 이후 실제 접촉한 상대에게 탈취 우선권을 준다.
-11) 헤딩은 캐릭터 중심의 큰 원이 아니라 머리 높이(z)와 짧은 수평 거리 모두를 만족해야 한다.
-12) 수정 후 최소 점검: 호스트/게스트 정지 킥, 이동 중 탭 킥, 강킥, 재획득 드리블,
-   동시 claim, 헤딩, 태클, 골 판정, 방장 승계, 세 파일 node --check.
-   - 재획득 직후 공 위치를 이전 자유공 좌표에서 발앞으로 lerp하지 않는다. 최초 소유권 확정은
-     즉시 발앞 목표로 스냅하고, 이미 소유 중인 연속 드리블에서만 보간한다. 이 원칙을 어기면
-     호스트와 게스트 모두 재드리블 시작 위치가 옆/뒤로 어긋난다.
-===============================================================================
-*/
+ * Soccer client responsibilities
+ * - Worker owns match/round phase, score, kickoff owner and remaining match time.
+ * - This iframe owns rendering, local input prediction and host-side ball physics only.
+ * - Every authoritative round snapshot is applied through SoccerRoundController.
+ * - bridge_ready -> bridge_init -> sc_sync is the only startup synchronization path.
+ */
 'use strict';
 
 /* ── 임베드/브릿지 (투게스터와 동일한 방식) ─────────────────────────────
@@ -402,7 +376,8 @@ let localDribbleVisualUntil=0;
 let score={A:0,B:0};
 let startTs=0, durationMs=120000;
 let gameInitialized=false, gameActive=false, gameOver=false;
-let pendingMathStart=null;
+let pendingSoccerSnapshot=null;
+const soccerRoundController = new SoccerRoundCore.SoccerRoundController();
 let initialKickoffResolved=false;
 let lastPosSent=0, lastBallSent=0, localStateSeq=0;
 function nextStateSeq(){ return ++localStateSeq; }
@@ -663,9 +638,6 @@ function setLiveRoundScores(a,b){
   if(mkTeamB.textContent!==nextB){mkTeamB.textContent=nextB;mkTeamB.classList.remove('pop');void mkTeamB.offsetWidth;mkTeamB.classList.add('pop');}
 }
 
-let soccerServerPhase={roundId:'',phase:''};
-let soccerServerKickoffOwnerSid='';
-let soccerServerKickoffAt=0;
 let kickoffTeamLabel='';
 function prepareAuthoritativeKickoff(d){
   const ownerSid=String(d.kickoffOwnerSid||d.ownerSid||'');
@@ -683,68 +655,83 @@ function prepareAuthoritativeKickoff(d){
   }
   netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:ball.owner,samples:[],lastKicker:null,noPickupUntil:0};
 }
-function handleSoccerRoundState(d){
-  if(Number.isFinite(Number(d.serverNow))&&Number(d.serverNow)>0&&!soccerClockSynced){
-    // Rough first estimate only. The ping/pong samples below remove one-way network
-    // delay from the estimate instead of giving high-latency players extra quiz time.
-    soccerServerOffset=Number(d.serverNow)-Date.now();
-  }
+
+function applySoccerRoundSnapshot(raw){
+  const accepted=soccerRoundController.accept(raw,durationMs);
+  if(!accepted.accepted)return false;
+  const d=accepted.next;
+  if(d.serverNow>0&&!soccerClockSynced) soccerServerOffset=d.serverNow-Date.now();
   requestSoccerClockSync();
-  const rid=String(d.roundId||''), ph=String(d.phase||'idle');
-  const nextOwnerSid=String(d.kickoffOwnerSid||'');
-  const nextKickoffAt=Number(d.kickoffAt||0);
-  const samePhase=soccerServerPhase.roundId===rid&&soccerServerPhase.phase===ph;
-  const ownerChanged=soccerServerPhase.roundId===rid&&soccerServerKickoffOwnerSid!==nextOwnerSid;
-  const kickoffTimeChanged=soccerServerPhase.roundId===rid&&Math.abs(Number(soccerServerKickoffAt||0)-nextKickoffAt)>80;
-  const remain=Math.max(0,Number(d.remainingMs??durationMs));
-  durationMs=remain;
-  if(ph==='playing') startTs=Date.now(); else startTs=0; // 문제/결과/카운트다운 중 경기 시계 정지
-  const packet={...d,roundId:rid,kind:String(d.kind||'initial'),ownerSid:String(d.kickoffOwnerSid||''),scoreA:Number(d.roundScoreA||0),scoreB:Number(d.roundScoreB||0)};
+
+  durationMs=d.remainingMs;
+  if(d.phase==='playing')startTs=Date.now();else startTs=0;
   if(d.winner==='A')kickoffTeamLabel='RED 선공';else if(d.winner==='B')kickoffTeamLabel='BLUE 선공';
-  if(ph==='quiz'){
-    goalPending=false; pendingGoalVisual=null;
-    gameActive=false;kickoffUntil=0;restartLockUntil=Math.max(restartLockUntil,Date.now()+Math.max(0,Number(d.endsAt||0)-soccerNow()));
-    if(!samePhase) startMathKickoff(packet);
-    setLiveRoundScores(d.roundScoreA,d.roundScoreB);
-  }else if(ph==='goal'){
-    gameActive=false;kickoffUntil=0;clearRoundActions();
-    // 골 연출은 sc_goal 이벤트가 담당한다. 이 단계에서는 문제 UI를 띄우지
-    // 않고 경기 입력만 잠가, 축구 장면 위에서 골 효과가 충분히 보이게 한다.
-    mkEl.classList.remove('show');
-  }else if(ph==='result'){
-    gameActive=false;
-    if(!samePhase) applyMathResult(packet);
-  }else if(ph==='countdown'){
-    if(!samePhase){
-      clearMathTimeouts();mkEl.classList.remove('show');mathKickoff.phase='countdown';prepareAuthoritativeKickoff(d);
-      const ms=Math.max(0,Number(d.kickoffAt||soccerNow())-soccerNow());startKickoffCountdown(ms);restartLockUntil=Date.now()+ms;
-    }else{
-      // COUNTDOWN 안에서도 선공자가 바뀔 수 있다(선공자 순간 이탈/재접속).
-      // 서버가 새 kickoffOwnerSid를 방송했는데 phase가 같다는 이유로 무시하면
-      // 화면과 로컬 공 소유는 끊긴 옛 선수에게 남는다. 소유자 변경은 즉시
-      // 킥오프 배치를 다시 적용하되, 카운트다운 시간 자체는 불필요하게 리셋하지 않는다.
-      if(ownerChanged)prepareAuthoritativeKickoff(d);
-      if(kickoffTimeChanged){
-        const ms=Math.max(0,nextKickoffAt-soccerNow());
-        startKickoffCountdown(ms);restartLockUntil=Date.now()+ms;
+
+  const packet={...d,ownerSid:d.kickoffOwnerSid,scoreA:d.roundScoreA,scoreB:d.roundScoreB};
+  switch(d.phase){
+    case 'quiz':
+      goalPending=false;pendingGoalVisual=null;gameActive=false;kickoffUntil=0;
+      restartLockUntil=Math.max(restartLockUntil,Date.now()+Math.max(0,d.endsAt-soccerNow()));
+      if(accepted.phaseChanged)startMathKickoff(packet);
+      setLiveRoundScores(d.roundScoreA,d.roundScoreB);
+      break;
+    case 'goal':
+      gameActive=false;kickoffUntil=0;clearRoundActions();mkEl.classList.remove('show');
+      break;
+    case 'result':
+      gameActive=false;
+      if(accepted.phaseChanged)applyMathResult(packet);
+      break;
+    case 'countdown': {
+      gameActive=false;
+      if(accepted.phaseChanged){
+        clearMathTimeouts();mkEl.classList.remove('show');mathKickoff.phase='countdown';prepareAuthoritativeKickoff(d);
+      }else if(accepted.ownerChanged){
+        prepareAuthoritativeKickoff(d);
       }
+      if(accepted.phaseChanged||accepted.kickoffTimeChanged){
+        const ms=Math.max(0,d.kickoffAt-soccerNow());startKickoffCountdown(ms);restartLockUntil=Date.now()+ms;
+      }
+      break;
     }
-  }else if(ph==='playing'){
-    if(!samePhase){
-      // Normally COUNTDOWN already prepared the kickoff layout. But if ownership
-      // changed at the countdown/play boundary (for example a reconnect on the last
-      // tick), the PLAYING packet is the first packet carrying the valid new owner.
-      // Re-apply in that case so the actual ball owner matches the server result.
-      if(soccerServerPhase.roundId!==rid||soccerServerPhase.phase!=='countdown'||ownerChanged)prepareAuthoritativeKickoff(d);
-      mkEl.classList.remove('show');mathKickoff.phase='done';kickoffUntil=0;restartLockUntil=0;gameActive=true;initialKickoffResolved=true;goalPending=false;
-      if(isHost)sendBallSnapshot();
-    }else gameActive=true;
-  }else if(ph==='over'){
-    gameActive=false;kickoffUntil=0;restartLockUntil=0;
+    case 'playing':
+      if(accepted.phaseChanged){
+        if(accepted.prev.phase!=='countdown'||accepted.roundChanged||accepted.ownerChanged)prepareAuthoritativeKickoff(d);
+        mkEl.classList.remove('show');mathKickoff.phase='done';kickoffUntil=0;restartLockUntil=0;
+        gameActive=true;initialKickoffResolved=true;goalPending=false;
+        if(isHost)sendBallSnapshot();
+      }else{
+        gameActive=true;
+      }
+      break;
+    case 'over':
+      gameActive=false;kickoffUntil=0;restartLockUntil=0;
+      break;
+    default:
+      gameActive=false;
+      break;
   }
-  soccerServerPhase={roundId:rid,phase:ph};
-  soccerServerKickoffOwnerSid=nextOwnerSid;
-  soccerServerKickoffAt=nextKickoffAt;
+  return true;
+}
+
+function queueOrApplySoccerSnapshot(data){
+  if(!loopRunning||!me){
+    const next=SoccerRoundCore.normalizeSnapshot(data,durationMs);
+    const prev=pendingSoccerSnapshot;
+    if(!prev||next.roundSerial>prev.roundSerial||
+      (next.roundSerial===prev.roundSerial&&(SoccerRoundCore.PHASE_ORDER[next.phase]??0)>=(SoccerRoundCore.PHASE_ORDER[prev.phase]??0))){
+      pendingSoccerSnapshot=next;
+    }
+    return false;
+  }
+  return applySoccerRoundSnapshot(data);
+}
+
+function flushPendingSoccerSnapshot(){
+  if(!loopRunning||!me||!pendingSoccerSnapshot)return;
+  const snapshot=pendingSoccerSnapshot;
+  pendingSoccerSnapshot=null;
+  applySoccerRoundSnapshot(snapshot);
 }
 
 function disposeMathKickoffUi(){
@@ -896,6 +883,7 @@ function initGame(){
   hideOverlay();
   restartLockUntil=Date.now()+20000;
   startLoop();
+  flushPendingSoccerSnapshot();
 }
 
 /* 로스터(전원 명단)를 서버 권위값(this.sc_roster의 seat/isHost)과 항상 일치하도록
@@ -957,7 +945,7 @@ function applyRoster(list){
   // 로스터/월드가 준비되기 전에 도착한 퀴즈 상태를 여기서 재생한다.
   // 네트워크 패킷 순서가 바뀌어도 문제 화면과 입력 잠금이 정상적으로 이어진다.
   if(loopRunning && me){
-    if(pendingMathStart){ const q=pendingMathStart; pendingMathStart=null; handleSoccerRoundState(q); }
+    flushPendingSoccerSnapshot();
   }
 }
 
@@ -2853,8 +2841,7 @@ window.addEventListener('message', e=>{
 
     if (gameInitialized){
       applyRoster(incoming);
-      // 초기 room.state 명단이 비어 있었던 경우 서버 권위 상태를 즉시 다시 요청한다.
-      bridgeSend('sc_sync', {});
+      flushPendingSoccerSnapshot();
       return;
     }
     gameInitialized = true;
@@ -2862,7 +2849,7 @@ window.addEventListener('message', e=>{
     const sAt = Number(d.startedAt||0);
     startTs = sAt>0 ? sAt : Date.now();
     initGame();
-    bridgeSend('sc_sync', {});
+    flushPendingSoccerSnapshot();
     return;
   }
 
@@ -2891,13 +2878,7 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_round_state'){
-    if(!loopRunning || !me){
-      // iframe 초기화 직후 sync가 먼저 도착할 수 있다. 다음 상태 패킷 또는
-      // init 완료 직후 sc_sync 재요청으로 복구되므로 여기서는 저장만 한다.
-      pendingMathStart={...d};
-      return;
-    }
-    handleSoccerRoundState(d);
+    queueOrApplySoccerSnapshot(d);
     return;
   }
 

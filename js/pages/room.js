@@ -538,7 +538,6 @@ function updatePreview(modeId){
     mxFrameWin: null,
     soccerFrameWin: null,
     soccerLastUrgentActionId: "",
-    soccerMathSyncTimer: null,
     iframeLoaded: false,
     startPayload: null,
     sentGameStart: false,
@@ -1973,20 +1972,10 @@ function postTo(targetIframe, msg){
   }catch{}
 }
 function postToMain(msg){ postTo(duel.iframeEl, msg); }
-function resetSoccerMathBridgeState(){
-  try{ if (coop.soccerMathSyncTimer) clearTimeout(coop.soccerMathSyncTimer); }catch(_){ }
-  coop.soccerMathSyncTimer = null;
-}
 function syncSoccerAuthoritativeState(){
   try{
-    if (!room || !coop.active || String(coop.meta?.id||"") !== "soccer") return;
+    if (!room || !coop.active || String(coop.meta?.id||"") !== "soccer" || !coop.iframeReady) return;
     room.send("sc_sync", {});
-    if (coop.soccerMathSyncTimer) clearTimeout(coop.soccerMathSyncTimer);
-    // iframe/room-state 초기화 순서가 뒤집힌 경우를 위해 한 번만 재요청한다.
-    coop.soccerMathSyncTimer = setTimeout(()=>{
-      coop.soccerMathSyncTimer = null;
-      try{ room?.send?.("sc_sync", {}); }catch(_){ }
-    }, 250);
   }catch(_){ }
 }
 function isMathExplorerCoopMode(){
@@ -2065,6 +2054,7 @@ function sendCpuBridgeInit(){
 
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
+  if (coop.meta.id === "soccer" && !coop.iframeReady) return;
 
   const playersObj = room?.state?.players;
   const getPlayer = (sid)=>{
@@ -2529,8 +2519,6 @@ function startCoopEmbed(meta){
   
   
   
-  resetSoccerMathBridgeState();
-  
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
@@ -2578,8 +2566,6 @@ function startCoopPractice(meta){
   
   
   
-  resetSoccerMathBridgeState();
-
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
   duel.ui.spectate?.classList.add("hidden");
