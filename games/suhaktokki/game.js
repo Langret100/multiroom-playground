@@ -520,10 +520,38 @@
     if (!G.ui) G.ui = {};
     if (G.ui._matchEndReturnScheduled) return;
     G.ui._matchEndReturnScheduled = true;
-    try { showCenterNotice('게임이 종료되었습니다. 잠시 후 방으로 돌아갑니다.', 1600); } catch (_) {}
-    // Tell all clients to quit (they handle hostExit by calling leaveRoom).
-    try { if (G.net && G.net.isHost) broadcast({ t: 'hostExit', reason: 'match_end', at: now() }); } catch (_) {}
-    setTimeout(() => { try { leaveRoom('match_end'); } catch (_) {} }, 1700);
+    // The canvas renders the local win/lose verdict. Keep it visible long enough
+    // to read; reusing hostExit here used to cover it with an incorrect
+    // "host disconnected" notice on every guest.
+    G.ui._matchEndReturnTimer = setTimeout(() => {
+      G.ui._matchEndReturnTimer = null;
+      try { leaveRoom('match_end'); } catch (_) {}
+    }, 4200);
+  }
+
+  function resetMatchEndReturn() {
+    try {
+      if (!G.ui) G.ui = {};
+      if (G.ui._matchEndReturnTimer) clearTimeout(G.ui._matchEndReturnTimer);
+      G.ui._matchEndReturnTimer = null;
+      G.ui._matchEndReturnScheduled = false;
+    } catch (_) {}
+  }
+
+  function hostFinishMatch(winner, reason = '') {
+    if (!G.net?.isHost || G.state.practice || G.state.winner) return false;
+    G.state.winner = winner === 'teacher' ? 'teacher' : 'crew';
+    G.state.winnerReason = String(reason || 'match_end');
+    G.phase = 'end';
+    G.host.meetingEndsAt = 0;
+    // The ejection modal sits above the game canvas. If it remains open, the
+    // win/lose overlay is rendered correctly but is completely hidden until
+    // the iframe closes, which looked like the match never produced a result.
+    try { closeMeetingUI(); } catch (_) {}
+    try { closeScene(); } catch (_) {}
+    try { broadcastState(true); } catch (_) {}
+    try { scheduleMatchEndReturn(); } catch (_) {}
+    return true;
   }
 
   function tryHostLeave() {
@@ -2187,6 +2215,7 @@
       lamps: {}, // id -> {on, kind}
       teacherId: null,
       winner: null,
+      winnerReason: '',
       lastUpdateAt: 0,
     },
 
@@ -2688,6 +2717,7 @@
 
   function hostStartGame(practice = false) {
     const st = G.state;
+    resetMatchEndReturn();
     hostInitFromMap();
 
     // In embed mode, decide practice based on the room's expected human count (from parent),
@@ -2714,6 +2744,8 @@
     st.started = true;
     st.practice = !!practice;
     st.infiniteMissions = !st.practice;
+    st.winner = null;
+    st.winnerReason = '';
     st.timeLeft = 180;
     st.maxTime = 180;
     hostAssignTeacher();
@@ -2775,11 +2807,8 @@
     // (Ghost/down players are allowed to exist and do NOT affect win conditions.)
     if (!st.practice && Number(st.teacherId || 0) === pid) {
       st.teacherId = null;
-      st.winner = 'crew';
-      G.phase = 'end';
       broadcast({ t: 'toast', text: '선생토끼가 퇴장해서 학생토끼 승리!' });
-      broadcastState(true);
-      try { scheduleMatchEndReturn(); } catch (_) {}
+      hostFinishMatch('crew', 'teacher_left');
       return;
     }
 
@@ -2789,11 +2818,8 @@
       if (!st.practice && humansNow < 2) {
         // 선생토끼가 이미 퇴장해서 winner가 설정된 경우는 이미 처리됨
         if (!st.winner) {
-          st.winner = 'crew';
-          G.phase = 'end';
           broadcast({ t: 'toast', text: '인원 부족으로 학생토끼 승리! 잠시 후 방으로 돌아갑니다.' });
-          broadcastState(true);
-          try { scheduleMatchEndReturn(); } catch (_) {}
+          hostFinishMatch('crew', 'not_enough_players');
         }
       }
     }catch(_){ }
@@ -2913,10 +2939,7 @@
         broadcast({ t: 'toast', text: '연습 모드: 시간이 리셋됐어!' });
       } else {
         st.timeLeft = 0;
-        st.winner = 'teacher';
-        G.phase = 'end';
-        try { broadcastState(true); } catch (_) {}
-        try { scheduleMatchEndReturn(); } catch (_) {}
+        hostFinishMatch('teacher', 'time_up');
         return;
       }
     }
@@ -3173,18 +3196,12 @@
       const crewAlive = hostCrewAliveCount();
       // Teacher wins when ALL other rabbits are down.
       if (crewAlive === 0 && st.teacherId && st.players[st.teacherId]?.alive) {
-        st.winner = 'teacher';
-        G.phase = 'end';
-        try { broadcastState(true); } catch (_) {}
-        try { scheduleMatchEndReturn(); } catch (_) {}
+        hostFinishMatch('teacher', 'all_students_down');
         return;
       }
 
       if (!st.infiniteMissions && st.solved >= st.total) {
-        st.winner = 'crew';
-        G.phase = 'end';
-        try { broadcastState(true); } catch (_) {}
-        try { scheduleMatchEndReturn(); } catch (_) {}
+        hostFinishMatch('crew', 'missions_complete');
         return;
       }
     }
@@ -3909,6 +3926,14 @@ function hostHandleInteract(playerId) {
     broadcastState(true);
     broadcast({ t: 'uiMeetingOpen', kind, reason, endsAt });
     broadcast({ t: 'voteUpdate', tally: {}, skip: 0, total: 0, endsAt });
+
+    // Keep an explicit host timer as a fallback. A delayed pre-meeting state
+    // packet must not turn `meetingEndsAt` into zero and resolve instantly.
+    try { if (G.host._meetingVoteTimer) clearTimeout(G.host._meetingVoteTimer); } catch (_) {}
+    G.host._meetingVoteTimer = setTimeout(() => {
+      G.host._meetingVoteTimer = null;
+      if (G.net?.isHost && G.phase === 'meeting') hostResolveMeeting();
+    }, Math.max(0, endsAt - now()));
   }
 
   function hostSubmitVote(playerId, target) {
@@ -3935,6 +3960,7 @@ function hostHandleInteract(playerId) {
   }
 
   function hostResolveMeeting() {
+    if (G.phase !== 'meeting') return;
     const st = G.state;
     const tally = {};
     let skip = 0;
@@ -3951,6 +3977,7 @@ function hostHandleInteract(playerId) {
     let title = '회의 종료';
     let text = '아무도 쫓아내지 못했다.';
     let scenePayload = { t: 'uiScene', kind: 'text', title, text };
+    let teacherCaught = false;
     if (topPid != null && !tied && topVotes > skip) {
       const ex = st.players[topPid];
       if (ex) {
@@ -3970,13 +3997,32 @@ function hostHandleInteract(playerId) {
             isTeacher: ex.role === 'teacher',
           },
         };
+        teacherCaught = ex.role === 'teacher' || Number(ex.id || 0) === Number(st.teacherId || 0);
+        scenePayload.teacherCaught = teacherCaught;
       }
     }
     G.phase = 'scene';
     G.host.meetingEndsAt = 0;
+    try { if (G.host._meetingVoteTimer) clearTimeout(G.host._meetingVoteTimer); } catch (_) {}
+    G.host._meetingVoteTimer = null;
     try { G.host.votes && G.host.votes.clear(); } catch (_) {}
     broadcastState(true);
     broadcast(scenePayload);
+
+    // Resolve the scene from the same authoritative function that counted the
+    // votes. Previously the main loop re-queried the teacher three seconds later;
+    // a roster/state race could leave every client permanently stuck in `scene`.
+    try { if (G.host._meetingSceneTimer) clearTimeout(G.host._meetingSceneTimer); } catch (_) {}
+    G.host._meetingSceneTimer = setTimeout(() => {
+      G.host._meetingSceneTimer = null;
+      if (!G.net?.isHost || G.phase !== 'scene') return;
+      if (teacherCaught) {
+        hostFinishMatch('crew', 'teacher_caught');
+        return;
+      }
+      G.phase = 'play';
+      broadcastState(true);
+    }, 3000);
   }
 
   function hostHandleKill(playerId) {
@@ -5052,6 +5098,7 @@ function showToast(text) {
       lockedRoomUntil: st.lockedRoomUntil,
       teacherId: st.teacherId,
       winner: st.winner,
+      winnerReason: st.winnerReason || '',
       host: {
         meetingEndsAt: G.host.meetingEndsAt,
         revealUntil: G.host.revealUntil,
@@ -5627,8 +5674,18 @@ function showToast(text) {
 
   function openScene(payloadOrTitle, textMaybe) {
     const payload = (typeof payloadOrTitle === 'object' && payloadOrTitle) ? payloadOrTitle : { kind: 'text', title: payloadOrTitle, text: textMaybe };
-    sceneTitle.textContent = payload.title || '비 내리는 바깥...';
-    sceneText.textContent = payload.text || '';
+    if (payload.teacherCaught) {
+      const meId = Number(G.net?.myPlayerId || 0);
+      const me = G.state?.players?.[meId];
+      const amTeacher = me?.role === 'teacher' || (meId > 0 && meId === Number(G.state?.teacherId || 0));
+      sceneTitle.textContent = amTeacher ? '패배' : '승리!';
+      sceneText.textContent = amTeacher
+        ? '선생토끼가 잡혔다. 학생토끼 팀 승리!'
+        : '선생토끼를 잡았다! 학생토끼 팀 승리!';
+    } else {
+      sceneTitle.textContent = payload.title || '비 내리는 바깥...';
+      sceneText.textContent = payload.text || '';
+    }
     sceneModal.classList.add('show');
     // 모달이 뜬 뒤 실제 레이아웃 크기를 재서 캔버스 맞추기
     requestAnimationFrame(() => startSceneAnim(payload));
@@ -7297,13 +7354,21 @@ try{
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.font = '900 32px system-ui';
-      const msg = st.winner === 'crew' ? '학생토끼 승리!' : '선생토끼 승리!';
+      const meId = Number(G.net?.myPlayerId || 0);
+      const meRole = st.players?.[meId]?.role || (meId && Number(st.teacherId || 0) === meId ? 'teacher' : 'crew');
+      const localWon = st.winner === 'crew' ? meRole !== 'teacher' : meRole === 'teacher';
+      const msg = localWon ? '승리!' : '패배';
+      const teamMsg = st.winner === 'crew'
+        ? (st.winnerReason === 'teacher_caught' ? '학생토끼 팀 승리 · 선생토끼를 잡았다!' : '학생토끼 팀 승리!')
+        : '선생토끼 승리!';
       const cx = viewW * 0.5;
       const cy = viewH * 0.5;
       ctx.fillText(msg, cx, cy - 14);
+      ctx.font = '900 17px system-ui';
+      ctx.fillText(teamMsg, cx, cy + 18);
       ctx.font = '800 14px system-ui';
       const sub = EMBED ? '잠시 후 방으로 돌아갑니다.' : '새로고침하면 다시 시작할 수 있어요.';
-      ctx.fillText(sub, cx, cy + 18);
+      ctx.fillText(sub, cx, cy + 46);
       ctx.restore();
     }
   }
@@ -9434,27 +9499,8 @@ try{
 
     // host sim
     if (G.net?.isHost && G.host.started) {
-      if (G.phase === 'meeting' && now() >= G.host.meetingEndsAt) {
+      if (G.phase === 'meeting' && Number(G.host.meetingEndsAt || 0) > 0 && now() >= G.host.meetingEndsAt) {
         hostResolveMeeting();
-        // scene 유지 3초 후 play (또는 선생 추방 시 크루 즉시 승리)
-        setTimeout(() => {
-          if (G.net?.isHost && G.phase === 'scene') {
-            // 선생토끼가 추방(alive=false)됐으면 크루 승리로 즉시 종료
-            const _st = G.state;
-            if (_st && _st.teacherId) {
-              const _teacher = _st.players && _st.players[_st.teacherId];
-              if (_teacher && !_teacher.alive) {
-                _st.winner = 'crew';
-                G.phase = 'end';
-                try { broadcastState(true); } catch (_) {}
-                try { scheduleMatchEndReturn(); } catch (_) {}
-                return;
-              }
-            }
-            G.phase = 'play';
-            broadcastState(true);
-          }
-        }, 3000);
       }
       if (G.phase === 'scene') {
         // 유지
@@ -10180,6 +10226,7 @@ G.state.missions = m.missions;
       G.state.lockedRoomUntil = m.lockedRoomUntil || 0;
       G.state.teacherId = m.teacherId;
       G.state.winner = m.winner;
+      G.state.winnerReason = m.winnerReason || '';
       G.host.meetingEndsAt = m.host?.meetingEndsAt || 0;
       G.host.revealUntil = m.host?.revealUntil || 0;
       G.host.missionDisabledUntil = m.host?.missionDisabledUntil || 0;
@@ -10196,6 +10243,9 @@ G.state.missions = m.missions;
       }
 
       if (G.phase === 'end' && G.state.winner) {
+        // Reveal the canvas result instead of leaving the ejection scene above it.
+        try { closeMeetingUI(); } catch (_) {}
+        try { closeScene(); } catch (_) {}
         // end: if we are embedded in multiroom, auto-return to the room (late joiners too)
         try { scheduleMatchEndReturn(); } catch (_) {}
       }

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no"/>
-<title>Backrooms 3D (Solo Test) - Clean v4</title>
+<title>백룸 3D</title>
 <style>
   :root{
     --safeB: env(safe-area-inset-bottom, 0px);
@@ -120,7 +120,10 @@
 
 
 /* HUD cleanup: keep only time, door progress, and ? */
-#pRole, #pKey, #pMode, #pMonster, #p3d, #pName { display:none !important; }
+#pKey, #pMode, #pMonster, #p3d, #pName { display:none !important; }
+#pRole{font-weight:900;border-width:2px}
+#pRole.monster{color:#ff8b8b;border-color:rgba(255,70,70,.75);background:rgba(74,9,18,.84)}
+#pRole.rabbit{color:#b7ffe1;border-color:rgba(85,239,196,.65);background:rgba(8,55,48,.84)}
 
 </style>
 </head>
@@ -148,6 +151,7 @@
   </div>
 
   <div id="hud">
+    <div class="pill rabbit" id="pRole">🐰 토끼</div>
     <div class="pill" id="pName">나: 토끼</div>
     <div class="pill" id="pKey">🔑 0</div>
     <div class="pill" id="pTime">⏱ 05:00</div>
@@ -168,18 +172,18 @@
         <button id="helpClose" class="pill" style="cursor:pointer">닫기</button>
       </div>
       <div id="helpBody" style="margin-top:10px;font-size:13px;line-height:1.6;color:rgba(233,238,252,.92)"></div>
-        <div>미니맵(우측): 내 위치/방향, 주요 오브젝트(문/철창/특수표시)를 표시합니다. 현재 버전에서는 테스트용 표식이 일부 남아 있을 수 있습니다.</div>
+        <div>미니맵(우측): 내 위치/방향, 주요 오브젝트(문/철창/특수표시)를 표시합니다.</div>
         <div>탈출문 위에는 <b>형광 EXIT 표지</b>가 붙어 있고, 미니맵에서 <b>문 위치 표시는 녹색 점</b>입니다.</div>
 
-        <div style="margin-top:12px;font-weight:900;margin-bottom:6px;">주의</div>
-        <div style="opacity:.9">멀티 테스트 버전입니다. 역할/동기화는 방 서버 기준으로 적용됩니다.</div>
+        <div style="margin-top:12px;font-weight:900;margin-bottom:6px;">멀티 규칙</div>
+        <div style="opacity:.9">맵, 역할, 남은 시간과 상호작용 결과는 방 서버 기준으로 모두에게 동일하게 적용됩니다.</div>
       </div>      </div>
     </div>
   </div>
 
   <div id="tip">
     W/S 전진·후진 · A/D 회전(시야 포함) · E 상호작용 · 가까운 책장 E로 쓰러뜨리기 · 카트/큰 공은 밀어서 이동<br/>
-    (싱글 테스트) 열쇠 사용 시 새 열쇠 1개 재생성 · 중앙 철창 · 철창 수학 7문제 탈출 가능 · 문 3회 해제 후 탈출 · G: 괴물 AI<br/>
+    열쇠 사용 시 새 열쇠 1개 재생성 · 중앙 철창 · 철창 수학 7문제 탈출 가능 · 문 잠금 3회 해제 후 탈출<br/>
     당근은 맵에 최대 5개 유지 · 괴물은 문 1회 10초 봉인 가능 · 2번 잡히면 유령화(이동/채팅만 가능) · 모바일: 왼쪽 조이스틱, 오른쪽 E 버튼
   </div>
 
@@ -564,7 +568,7 @@ function run3D(){
   const renderer = new THREE.WebGLRenderer({antialias:false, powerPreference:"high-performance", alpha:false, desynchronized:true});
   renderer.domElement.dataset.br3dMain = "1";
   window.__BR3D_RENDERER__ = renderer;
-  const __brDpr = Math.max(0.55, Math.min(devicePixelRatio || 1, 0.66));
+  let __brDpr = Math.max(0.55, Math.min(devicePixelRatio || 1, 0.66));
   renderer.setPixelRatio(__brDpr);
   renderer.setSize(innerWidth, innerHeight);
   renderer.shadowMap.enabled = false;
@@ -727,6 +731,15 @@ carveHall(mDoorX, mDoorY + 1, GW/2, GH/2);
   for(let i=1;i<rooms.length;i++){
     rooms[i].theme = themePool[(i-1) % themePool.length];
   }
+  // 실제 생성된 격자 서명. 멀티 테스트에서 seed뿐 아니라 맵 결과까지 같은지 검증한다.
+  let mapGridHash=0x811c9dc5;
+  for(let gy=0;gy<GH;gy++) for(let gx=0;gx<GW;gx++){
+    mapGridHash ^= (grid[gy][gx] ? 49 : 48);
+    mapGridHash = Math.imul(mapGridHash,0x01000193)>>>0;
+  }
+  window.__BR_MAP_HASH__ = mapGridHash>>>0;
+  document.body.dataset.brMapSeed=String(Number(window.__BR_MAP_SEED__||0)>>>0);
+  document.body.dataset.brMapHash=String(mapGridHash>>>0);
 
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(GW*CELL, GH*CELL), floorMat);
   floor.rotation.x = -Math.PI/2;
@@ -1141,6 +1154,14 @@ function makeRabbit(){
       window.__brUiState.rabbitGhost = !!rabbitGhost;
       window.playerRole = String(playerRole || 'rabbit');
       window.rabbitGhost = !!rabbitGhost;
+      document.body.dataset.brRole=String(playerRole||'rabbit');
+      const roleEl = document.getElementById('pRole');
+      if(roleEl){
+        const isMonster = String(playerRole||'rabbit') === 'monster';
+        roleEl.textContent = isMonster ? '👾 술래 · 괴물' : (rabbitGhost ? '👻 유령 토끼' : '🐰 도망자 · 토끼');
+        roleEl.classList.toggle('monster', isMonster);
+        roleEl.classList.toggle('rabbit', !isMonster);
+      }
     }catch(_){ }
   }
 
@@ -2028,8 +2049,9 @@ function spawnShelfPillar(wx,wz, idx=0){
     const k=e.key.toLowerCase();
     if(keysDown[k]!=null) keysDown[k]=1;
     if(k==="e") doInteract();
-    if(k==="g"){ monsterAI=!monsterAI; ensureMonster(); addChat("[테스트] 괴물 AI: "+(monsterAI?"ON":"OFF")); }
-    if(k==="v"){ seekerView=!seekerView; addChat("[테스트] 술래 시점(바닥 열쇠 숨김): "+(seekerView?"ON":"OFF")); }
+    const multiplayerActive = !!(bridge?.start && Number(bridge.start.playerCount||0)>=2);
+    if(!multiplayerActive && k==="g"){ monsterAI=!monsterAI; ensureMonster(); addChat("[연습] 괴물 AI: "+(monsterAI?"ON":"OFF")); }
+    if(!multiplayerActive && k==="v"){ seekerView=!seekerView; addChat("[연습] 술래 시점: "+(seekerView?"ON":"OFF")); }
   });
   addEventListener("keyup",(e)=>{ const k=e.key.toLowerCase(); if(keysDown[k]!=null) keysDown[k]=0; });
 
@@ -2501,13 +2523,16 @@ function pushOutWalls(px,pz,rad){
   let remaining=300, lastTick=performance.now();
   function tickTimer(now){
     const dt=(now-lastTick)/1000; lastTick=now;
-    // [FIX] 싱글/호스트만 타이머 감소, 비호스트는 world sync로 수신
-    if(bridge.isHost || !bridge.start || !(bridge.start.playerCount >= 2)){
+    // 멀티 타이머는 RAF 누적값이 아니라 서버의 공통 시작 시각에서 계산한다.
+    // 비활성/백그라운드 탭의 RAF가 느려져도 모든 플레이어가 같은 시간을 본다.
+    if(bridge.start && Number(bridge.start.playerCount||0)>=2 && Number(bridge.start.startedAt||0)>0){
+      remaining=Math.max(0,300-(Date.now()-Number(bridge.start.startedAt))/1000);
+    }else{
       remaining=Math.max(0, remaining-dt);
-      if(remaining <= 0 && !gameOver){
-        endGame("괴물 승리!");
-        try{ maybeSendWorld(true); }catch(_){ }
-      }
+    }
+    if(remaining <= 0 && !gameOver){
+      endGame("괴물 승리!");
+      try{ maybeSendWorld(true); }catch(_){ }
     }
     const mm=String(Math.floor(remaining/60)).padStart(2,'0');
     const ss=String(Math.floor(remaining%60)).padStart(2,'0');
@@ -2881,8 +2906,10 @@ let last=performance.now();
 // Global countdown for monster release
 // [FIX] 호스트만 타이머를 감소시키고, world sync로 비호스트에 전달
 if(monsterReleaseLeft>0){
-  // 싱글 또는 멀티 전 bridge 미설정 시 로컬 감소, 멀티에선 호스트만 감소
-  if(bridge.isHost || !bridge.start || !(bridge.start.playerCount >= 2)){
+  if(bridge.start && Number(bridge.start.playerCount||0)>=2 && Number(bridge.start.startedAt||0)>0){
+    const releaseAt=Number(bridge.start.releaseAt||0) || (Number(bridge.start.startedAt)+Number(bridge.start.spawnLockMs||10000));
+    monsterReleaseLeft=Math.max(0,(releaseAt-Date.now())/1000);
+  }else{
     monsterReleaseLeft = Math.max(0, monsterReleaseLeft - dt);
   }
   countdownEl.style.display = "block";
@@ -3123,7 +3150,7 @@ if(monsterReleaseLeft>0){
   const q=(id)=>document.getElementById(id);
   const qs=new URLSearchParams(location.search);
   const roomId=window.__BR_ROOM_ID__ || qs.get('roomId') || '';
-  let bridge={ sid:String(window.__BR_BOOT_ID__||'')||null, nick:String(window.__BR_BOOT_NICK__||'Player'), isHost:!!window.__BR_BOOT_HOST__, selfSeat:Number(window.__BR_BOOT_SEAT__ ?? -1), roomId, start:(window.__BR_START__||null), active:false, remotes:new Map(), lastStateAt:0, lastWorldAt:0, lastWorldReqAt:0, lastCatchAt:0, lastEndCheckAt:0, stateSeq:0, hostSid:null, forceSpawnUntil:0, ignoreCaughtUntil:0, startId:null, spawn:null, spawnApplied:false, prevAnimateNow:0 };
+  let bridge={ sid:String(window.__BR_BOOT_ID__||'')||null, nick:String(window.__BR_BOOT_NICK__||'Player'), isHost:!!window.__BR_BOOT_HOST__, selfSeat:Number(window.__BR_BOOT_SEAT__ ?? -1), roomId, start:(window.__BR_START__||null), active:false, remotes:new Map(), lastStateAt:0, lastWorldAt:0, lastWorldReqAt:0, lastWorldReceivedAt:0, lastCatchAt:0, lastEndCheckAt:0, stateSeq:0, hostSid:null, forceSpawnUntil:0, ignoreCaughtUntil:0, startId:null, spawn:null, spawnApplied:false, prevAnimateNow:0, perfFrames:0, perfStartedAt:performance.now(), lastQualityAt:0 };
   let pendingStartPayload = null;
   let helperMonster = null, helperRemote = null, helperState = null;
   const bridgeStateCache = { x:null, y:null, z:null, yaw:null, hasKey:null, caught:null, ghost:null, trapped:null, sentAt:0 };
@@ -3750,6 +3777,7 @@ if(monsterReleaseLeft>0){
     const ts = Number(w.ts || 0);
     if(ts && ts < lastAppliedWorldTs) return;
     if(ts) lastAppliedWorldTs = ts;
+    bridge.lastWorldReceivedAt = performance.now();
     applySharedWorld(w, true);
   }
   function appendChatLine(nick, text){
@@ -3779,8 +3807,12 @@ if(monsterReleaseLeft>0){
       bridgeStateCache.ghost !== snap.ghost ||
       bridgeStateCache.trapped !== snap.trapped
     );
-    const minGap = moving ? 32 : 90; // 서버 25fps 제한과 맞춰 패킷 뭉침·폐기 감소
-    if(!force && !changed && (now - (bridgeStateCache.sentAt||0) < minGap)) return;
+    // Worker가 40ms보다 빠른 패킷을 폐기하므로 45ms(약 22Hz)로 고정한다.
+    // 프레임마다 전송하던 기존 코드는 불규칙한 드롭과 원격 캐릭터 끊김을 만들었다.
+    const minGap = 45;
+    const sinceLast = now - (bridgeStateCache.sentAt||0);
+    if(!force && sinceLast < minGap) return;
+    if(!force && !changed && sinceLast < (moving ? 140 : 450)) return;
     Object.assign(bridgeStateCache, snap, { sentAt: now });
     relay('state', { seq:(++bridge.stateSeq), role:playerRole, seat:Number(bridge.selfSeat ?? -1), sentAt: Date.now(), ...snap });
   }
@@ -4034,7 +4066,10 @@ if(monsterReleaseLeft>0){
           maybeFinishMultiplayerRound();
         }
       } else {
-        if(nowp - (bridge.lastWorldReqAt||0) > 2000){ bridge.lastWorldReqAt = nowp; relay('world_req', {}); }
+        // 호스트가 500ms마다 보내는 동안에는 요청 패킷을 만들지 않는다.
+        // 실제로 월드 수신이 끊긴 경우에만 복구 요청한다.
+        const worldStale = nowp - Number(bridge.lastWorldReceivedAt||0) > 4500;
+        if(worldStale && nowp - (bridge.lastWorldReqAt||0) > 4500){ bridge.lastWorldReqAt = nowp; relay('world_req', {}); }
       }
       // catch loop: 호스트만 판정 + relay. 서버가 발신자에게도 되돌려줄 수
       // 있으므로 위 메시지 처리기에서 자기 에코는 무시한다.
@@ -4103,6 +4138,17 @@ if(monsterReleaseLeft>0){
           }
         }
       }
+    }
+    bridge.perfFrames++;
+    if(bridgeNow - bridge.perfStartedAt >= 2200){
+      const fps = bridge.perfFrames * 1000 / Math.max(1, bridgeNow - bridge.perfStartedAt);
+      bridge.perfFrames = 0; bridge.perfStartedAt = bridgeNow;
+      const desired = fps < 42 ? 0.50 : (fps > 55 ? Math.max(0.55,Math.min(devicePixelRatio||1,0.66)) : __brDpr);
+      if(Math.abs(desired-__brDpr)>0.02 && bridgeNow-bridge.lastQualityAt>4000){
+        __brDpr=desired;bridge.lastQualityAt=bridgeNow;renderer.setPixelRatio(__brDpr);renderer.setSize(innerWidth,innerHeight,false);
+      }
+      window.__brDebugState = { role:playerRole, mapSeed:Number(window.__BR_MAP_SEED__||0)>>>0, mapHash:Number(window.__BR_MAP_HASH__||0)>>>0, startId:String(bridge.startId||''), remoteCount:bridge.remotes.size, fps:+fps.toFixed(1), dpr:__brDpr };
+      document.body.dataset.brNet=JSON.stringify({role:playerRole,startId:String(bridge.startId||''),remoteCount:bridge.remotes.size,fps:+fps.toFixed(1),dpr:__brDpr,x:+player.position.x.toFixed(3),z:+player.position.z.toFixed(3),remotes:[...bridge.remotes.entries()].map(([sid,r])=>({sid,x:+Number(r?.obj?.position?.x||0).toFixed(3),z:+Number(r?.obj?.position?.z||0).toFixed(3),role:String(r?.role||'')}))});
     }
     return _animate(now);
   };

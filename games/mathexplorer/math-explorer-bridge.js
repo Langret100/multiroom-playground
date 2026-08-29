@@ -67,7 +67,7 @@
     localCharChosen:false, localCharType:'', selectedBySid:{}, gameBooted:false, uiReady:false,
     chat:null, overlay:null, remoteStates:{}, worldSnap:null, labelsCanvas:null, labelsCtx:null, chatSeen:new Set(), chatSeq:0,
     selecting:false, choiceType:'', lastEventId:'', wrapped:false, entitySeq:1, lastWorldSeq:0, worldGhost:null,
-    lastWorldAppliedAt:0, lastPhaseBroadcastAt:0, selectLockPos:null, __mxForceChoiceUi:false, __mxChoiceUiOpened:false, hostEnemySeen:{}, choiceDoneBySid:{}, choiceReqPending:false, choiceAckKey:'', tauntSid:'', tauntOffered:false, tauntChosen:false, lastAttackPulseSent:0, remoteAttackSeen:{}, __mxPendingChoiceCommit:'', __mxPendingChoiceAt:0,
+    lastWorldAppliedAt:0, lastPhaseBroadcastAt:0, selectLockPos:null, __mxForceChoiceUi:false, __mxChoiceUiOpened:false, hostEnemySeen:{}, choiceDoneBySid:{}, choiceReqPending:false, choiceAckKey:'', tauntSid:'', tauntOffered:false, tauntChosen:false, lastAttackPulseSent:0, remoteAttackSeen:{}, __mxPendingChoiceCommit:'', __mxPendingChoiceAt:0, localChoiceTracked:{},
     idMap:{ enemies:new WeakMap(), projectiles:new WeakMap(), enemyProjectiles:new WeakMap(), items:new WeakMap(), effects:new WeakMap() },
     ghostCache:{ monsters:Object.create(null), projectiles:Object.create(null), enemyProjectiles:Object.create(null) }, remoteFx:[], phaseParticipants:[], mapAppliedHash:''
   };
@@ -270,11 +270,24 @@
     };
     if(phase===PHASES.CHAR_SELECT){ pauseGame(true); setSelecting(true,'캐릭터'); ticker('캐릭터 선택', ()=>{ if(!state.localCharChosen){ const t=randomCharType(); if(t&&G()?.selectChar) G().selectChar(t); else document.querySelector('#charSelectGrid .character')?.click(); } if(iAmHost()) finalizeCharSelect(true); }); }
     else if(phase===PHASES.LEVEL_CHOICE){ if(!Array.isArray(state.phaseParticipants)||!state.phaseParticipants.length) state.phaseParticipants=getExpectedChoiceParticipants(); if(!sameChoicePhase){ resetChoiceDone(); state.__mxChoiceUiOpened=false; } setSelecting(true,'레벨업'); forceOpenChoiceUiForPhase(); ticker('레벨업 선택', ()=>{ if(isChoiceVisible()) autoPickCard('#upgrades .upgradeCard'); markChoiceDoneLocal(true); }); pauseGame(true); }
-    else if(phase===PHASES.CHEST_CHOICE){ if(!Array.isArray(state.phaseParticipants)||!state.phaseParticipants.length) state.phaseParticipants=getExpectedChoiceParticipants(); if(!sameChoicePhase){ resetChoiceDone(); state.__mxChoiceUiOpened=false; state.__mxChestMathSolved=false; state.__mxChestAbortedLocal=false; } setSelecting(true,'보물'); forceOpenChoiceUiForPhase(); ticker('보물 선택', ()=>{ const vis=isChoiceVisible(); if(vis==='itemScreen' && state.__mxChestMathSolved){ autoPickCard('#items .upgradeCard'); markChoiceDoneLocal(true); } else { markChoiceDoneLocal(false); try{ document.getElementById('mathScreen')?.classList.add('hidden'); document.getElementById('itemScreen')?.classList.add('hidden'); }catch(_){} } }); pauseGame(true); }
+    else if(phase===PHASES.CHEST_CHOICE){ if(!Array.isArray(state.phaseParticipants)||!state.phaseParticipants.length) state.phaseParticipants=getExpectedChoiceParticipants(); if(!sameChoicePhase){ resetChoiceDone(); state.__mxChoiceUiOpened=false; state.__mxChestMathSolved=false; state.__mxChestAbortedLocal=false; resetMathUiForSharedPhase(); } setSelecting(true,'보물'); forceOpenChoiceUiForPhase(); ticker('보물 선택', ()=>{ const vis=isChoiceVisible(); if(vis==='itemScreen' && state.__mxChestMathSolved){ autoPickCard('#items .upgradeCard'); markChoiceDoneLocal(true); } else { markChoiceDoneLocal(false); try{ document.getElementById('mathScreen')?.classList.add('hidden'); document.getElementById('itemScreen')?.classList.add('hidden'); }catch(_){} } }); pauseGame(true); }
     else if(phase===PHASES.PLAYING){ state.phaseParticipants=[]; setSelecting(false,''); setOverlay(''); pauseGame(false); hideChoiceScreens(); }
     else { pauseGame(true); }
   }
   function hideChoiceScreens(){ try{ ['levelUpScreen','itemScreen','mathScreen'].forEach(id=>document.getElementById(id)?.classList.add('hidden')); }catch(_){ } }
+  function resetMathUiForSharedPhase(){
+    // A guest can touch its locally-rendered ghost chest a few seconds before
+    // the host starts the authoritative shared phase. Reusing that old local
+    // 20-second timer makes the guest time out early and wait on a blank screen.
+    // Start every participant's problem from the shared phase edge instead.
+    try{
+      const g=G();
+      if(g&&g._mathTimerInterval){ clearInterval(g._mathTimerInterval); g._mathTimerInterval=null; }
+      if(g) g._mathScreenOpen=false;
+      document.getElementById('mathScreen')?.classList.add('hidden');
+      document.getElementById('itemScreen')?.classList.add('hidden');
+    }catch(_){}
+  }
   function autoPickCard(sel){ try{ document.querySelector(sel)?.click(); }catch(_){ } }
   function currentPhaseKey(){ return `${state.phase}:${safeNum(state.phaseDeadline,0)}`; }
   function resetChoiceDone(){ state.choiceDoneBySid={}; state.choiceAckKey=''; }
@@ -548,14 +561,29 @@
     try{
       const g = G(); const p = g && g.player;
       if(!p || !key) return false;
-      // card.onclick 내부에서 up.apply()/item.apply()가 이미 실행된 후 호출됨.
-      // 여기서 할 일은 mxGuestChoiceStats(보너스 추적 객체) 업데이트뿐.
-      // _snap 기반의 더미 객체에 적용해 mxGuestChoiceStats의 카운터만 올린다.
-      // (더미 객체 자체는 버려지고, reapplyGuestChoiceStats가 실제 player에 50ms마다 재적용)
-      const _snap = snapshotChoiceStats(p);
-      const _dummy = Object.assign({}, _snap, { itemLevels: Object.assign({}, _snap.itemLevels||{}) });
-      if(kind==='level') applyLevelChoiceLocal(_dummy, key);
-      else applyItemChoiceLocal(_dummy, key);
+      // 원본 카드 onclick이 먼저 실제 player에 적용한다. 여기서는 그 결과를
+      // 기록만 해야 한다. 예전 코드는 post-apply 스냅샷에 효과를 한 번 더
+      // 적용해서 레벨/아이템 수치가 2회 증가하거나 기준 스탯이 틀어졌다.
+      const resolved = kind==='level' ? (UPGRADE_NAME_MAP[String(key||'')] || String(key||'')) : String(key||'');
+      const phaseToken = `${currentPhaseKey()}:${kind}:${resolved}`;
+      state.localChoiceTracked = state.localChoiceTracked || {};
+      if(state.localChoiceTracked[phaseToken]) return true;
+      state.localChoiceTracked[phaseToken] = true;
+      const cs=mxGuestChoiceStats;
+      if(kind==='level'){
+        if(resolved==='damage_up'){ if(cs.baseDamage===null) cs.baseDamage=safeNum(p.damage,0)-10; cs.damageBonus+=10; }
+        else if(resolved==='atk_speed_up'){ if(cs.baseAtkSpeed===null) cs.baseAtkSpeed=safeNum(p.atkSpeed,0)+50; cs.atkSpeedBonus+=50; }
+        else if(resolved==='speed_up'){ if(cs.baseSpeed===null) cs.baseSpeed=safeNum(p.speed,0)-0.5; cs.speedBonus+=0.5; }
+        else if(resolved==='pierce'||resolved==='pierce_up'){ if(cs.basePierce===null) cs.basePierce=Math.max(0,safeNum(p.pierce,0)-1); cs.pierceBonus+=1; }
+        else if(resolved==='regen'||resolved==='regen_up'){ if(cs.baseRegen===null) cs.baseRegen=Math.max(0,safeNum(p.regen,0)-0.5); cs.regenBonus+=0.5; }
+        else if(resolved==='hp_up'){ if(cs.baseMaxHp===null) cs.baseMaxHp=Math.max(1,safeNum(p.maxHp,0)-50); cs.maxHpBonus+=50; }
+        else if(resolved==='shield'||resolved==='shield_up'){ cs.shield=!!p.shield; cs.shieldHp=safeNum(p.shieldHp,0); }
+      }else{
+        cs.itemLevels=Object.assign({},cs.itemLevels||{});
+        const lv=safeNum(p.itemLevels&&p.itemLevels[resolved],0);
+        if(lv>0) cs.itemLevels[resolved]=Math.max(safeNum(cs.itemLevels[resolved],0),lv);
+        if(resolved==='taunt_shield'){ cs.shield=!!p.shield; cs.shieldHp=safeNum(p.shieldHp,0); }
+      }
       return true;
     }catch(_){ return false; }
   }
@@ -921,18 +949,18 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       if(safeNum(p.speed,0) < expected - 0.01) p.speed = expected;
     }
     if(cs.pierceBonus > 0){
-      const expected = cs.pierceBonus;
+      const expected = safeNum(cs.basePierce,0) + cs.pierceBonus;
       if(Math.round(safeNum(p.pierce,0)) < expected) p.pierce = expected;
     }
     if(cs.regenBonus > 0){
-      const expected = cs.regenBonus;
+      const expected = safeNum(cs.baseRegen,0) + cs.regenBonus;
       if(safeNum(p.regen,0) < expected - 0.01) p.regen = expected;
     }
     if(cs.maxHpBonus > 0){
       const expected = safeNum(cs.baseMaxHp,100) + cs.maxHpBonus;
       if(safeNum(p.maxHp,0) < expected - 0.5) p.maxHp = expected;
     }
-    if(cs.shield){ p.shield = true; if(safeNum(p.shieldHp,0) <= 0) p.shieldHp = 100; }
+    if(cs.shield){ p.shield = true; if(safeNum(p.shieldHp,0) <= 0) p.shieldHp = Math.max(100,safeNum(cs.shieldHp,0)); }
     // 아이템 레벨 보너스 재적용
     if(cs.itemLevels && Object.keys(cs.itemLevels).length > 0){
       p.itemLevels = p.itemLevels || {};
@@ -951,10 +979,15 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   function applyHostPlayerProgressToGuest(s){ const g=G(); if(!g||!g.player||!s) return; try{ const hp=s.player||{}; const lp=g.player;
       // 개별 플레이어 HP/MaxHP는 호스트 값으로 덮어쓰지 않는다.
       // 이 경로가 살아 있으면 피격 대상이 꼬였을 때 엉뚱한 유저가 맞은 것처럼 보인다.
-      // [BUG FIX 2] 게스트가 레벨업/보상 선택으로 올린 레벨을 호스트 값으로 리셋하지 않는다.
-      if(typeof hp.level==='number' && hp.level > safeNum(lp.level,1)){ lp.level = hp.level; }
-      if(typeof hp.exp==='number' && safeNum(lp.level,1) <= safeNum(hp.level,1)){ lp.exp = hp.exp; }
+      // Team progress is host-authoritative. Keeping a locally-higher guest
+      // level caused clients to remain one level apart after ghost XP races.
+      if(typeof hp.level==='number') lp.level = hp.level;
+      if(typeof hp.exp==='number') lp.exp = hp.exp;
       if(typeof hp.expNext==='number') lp.expNext = hp.expNext;
+      try{
+        const levelEl=document.getElementById('level');
+        if(levelEl && typeof hp.level==='number') levelEl.textContent=String(Math.round(hp.level));
+      }catch(_){}
       // ★ FIX: s.player는 호스트 자신의 스탯 스냅샷.
       // 게스트의 개인 전투 스탯(damage/speed/아이템 효과)을 덮어쓰면
       // 레벨업·아이템 보상 선택 결과가 매 50ms마다 리셋된다.
@@ -1296,8 +1329,14 @@ function simulateRemoteAttackOnHost(rs, meta={}){
             if(state.__mxLastAttackNonce !== nonce){
               state.__mxLastAttackNonce = nonce;
               try{ state.__mxLastAttackAim={ x:safeNum(target&&target.x, safeNum(this.x,0)), y:safeNum(target&&target.y, safeNum(this.y,0)), t:now(), kind:(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee')) }; }catch(_){}
-              // [FIX v24] remote_attack은 prototype wrapper(완전한 스탯)가 전송. 이 wrapper에서 중복 전송 금지.
-              // [FIX v25] pushRemoteFx 제거: g.projectiles/g.slashes 유지로 솔로와 동일한 native 이펙트 복원.
+              // Prototype lookup can fail for top-level class bindings in some
+              // browsers/builds. Send here as a reliable fallback; when the
+              // prototype hook already sent, lastAttackPulseSent deduplicates it.
+              const pulse=getLocalAttackPulse(this)||t0;
+              if(pulse!==safeNum(state.lastAttackPulseSent,0)){
+                state.lastAttackPulseSent=pulse;
+                sendEvent('remote_attack',{ sid:(mySid()||''), x:Math.round(safeNum(this.x)), y:Math.round(safeNum(this.y)), tx:Math.round(safeNum(target&&target.x,this.x)), ty:Math.round(safeNum(target&&target.y,this.y)), damage:safeNum(this.damage,0), range:safeNum(this.range,0), atkSpeed:safeNum(this.atkSpeed,0), crit:safeNum(this.crit,0), multishot:safeNum(this.multishot,0), pierce:safeNum(this.pierce,0), poison:!!this.poison, poisonDmg:safeNum(this.poisonDmg,0), freeze:!!this.freeze, explode:!!this.explode, lightning:safeNum(this.lightning,0), meteorChance:safeNum(this.meteorChance,0), meteorDmg:safeNum(this.meteorDmg,0), spinBlade:!!this.spinBlade, spinDmgMultiplier:safeNum(this.spinDmgMultiplier,1), shield:!!this.shield, shieldHp:safeNum(this.shieldHp,0), itemLevels:Object.assign({},this.itemLevels||{}), charType:ctype, pulse });
+              }
             }
           }
         }catch(_){}
@@ -1310,7 +1349,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     // 인스턴스 takeDamage 래핑: __mxInvuln(선택 중 무적)과 phase 체크만 수행.
     // 호스트/게스트 구분 없이 데미지 받음 (prototype 패치와 충돌하지 않도록 간소화)
     if(!pl.__mxTakeDamageWrapped&&typeof pl.takeDamage==='function'){ const o=pl.takeDamage.bind(pl); pl.takeDamage=function(d){ if(this.__mxInvuln || state.phase!==PHASES.PLAYING) return; return o(d); }; pl.__mxTakeDamageWrapped=true; }
-    if(!pl.__mxGainExpWrapped&&typeof pl.gainExp==='function'){ const ge=pl.gainExp.bind(pl); pl.gainExp=function(v){ return ge(v); }; pl.__mxGainExpWrapped=true; }
+    if(!pl.__mxGainExpWrapped&&typeof pl.gainExp==='function'){ const ge=pl.gainExp.bind(pl); pl.gainExp=function(v){ if(!iAmHost() && embed) return; return ge(v); }; pl.__mxGainExpWrapped=true; }
     if(!pl.__mxDrawWrapped&&typeof pl.draw==='function'){ const od=pl.draw.bind(pl); pl.draw=function(){ const selectingNow = !!this.__mxInvuln && (state.choiceType==='레벨업' || state.choiceType==='보물' || !!isChoiceVisible()); if(selectingNow && window.ctx){ try{ window.ctx.save(); window.ctx.globalAlpha = 0.48; const r=od(); window.ctx.restore(); return r; }catch(_){ try{ window.ctx.restore(); }catch(__){} } } return od(); }; pl.__mxDrawWrapped=true; }
   }catch(_){} }
   function wrapGameHooks(){ const g=G(); if(!g){ ensurePlayerSafetyWrap(); ensureLocalAttackSendWrap(); return; } if(g.__mxNetWrapped){ ensurePlayerSafetyWrap(); ensureLocalAttackSendWrap(); return; } g.__mxNetWrapped=true;
@@ -1457,7 +1496,10 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         if(!el) continue;
         const cs = getComputedStyle(el);
         const hiddenCls = el.classList && el.classList.contains('hidden');
-        if (!hiddenCls && cs.display !== 'none' && cs.visibility !== 'hidden' && el.offsetParent !== null) return id;
+        // fixed/fullscreen overlays legitimately have offsetParent === null.
+        // Treating that as hidden made raf() call showLevelUp/showItemScreen every
+        // frame, continuously re-randomising the three reward cards.
+        if (!hiddenCls && cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0') return id;
       }
     }catch(_){ }
     return '';
@@ -1628,7 +1670,8 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       if(state && state.phase !== PHASES.PLAYING) return;
       return oTD.call(this,d);
     }; } const oGE=PlayerCtor.prototype.gainExp; if(typeof oGE==='function'){ PlayerCtor.prototype.gainExp=function(v){
-      // 호스트/게스트 모두 경험치·레벨업 정상 처리
+      // Team XP is collected once by the host and mirrored in world snapshots.
+      if(!iAmHost() && embed) return;
       return oGE.call(this,v);
     }; } PlayerCtor.prototype.__mxBridgeGuardPatched=true; } }catch(_){} }
   function raf(){ try{ updateRemoteRenderTracks(); forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks();

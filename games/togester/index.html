@@ -15,6 +15,7 @@
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
+            white-space: pre-line;
         }
         
         body {
@@ -359,6 +360,13 @@
         .action-btn:active{
             transform: scale(0.96);
         }
+        #dropItemBtn{
+            height: 44px;
+            border-radius: 14px;
+            font-size: 0.82rem;
+            background: rgba(255,107,107,0.28);
+        }
+        #dropItemBtn[hidden]{ display:none; }
 
         /* ===== 부활 대기 오버레이 ===== */
         #respawnOverlay {
@@ -590,9 +598,9 @@
 
         <div style="margin-top:12px;padding:12px 14px;border-radius:12px;background:rgba(255,255,255,0.08);font-size:0.9rem;line-height:1.45;color:#eef;">
             <div style="font-weight:700;margin-bottom:6px;">조작 설명</div>
-            <div>모바일: 화면 터치 시 위치에 가상 조이스틱 생성(이동), 우측 버튼으로 <b>밀기 / 바닥생성 / 점프</b></div>
-            <div>PC: ← → 이동 / Z 점프 / X 밀기 / C 바닥생성</div>
-            <div style="opacity:.85;margin-top:4px;">목표는 깃발까지 도착! (멀티는 1명만 닿아도 전원 다음 라운드) 화면 밖이면 작은 화살표로 깃발 방향이 표시됩니다. 라운드당 120초 제한.</div>
+            <div>모바일: 이동 조이스틱 / <b>밀기·줍기·사용 / 버리기 / 바닥생성 / 점프</b></div>
+            <div>PC: ← → 이동 / Z 점프 / X 밀기·줍기·사용 / V 버리기 / C 바닥생성</div>
+            <div style="opacity:.85;margin-top:4px;">팀원 모두가 한 번씩 깃발에 닿으면 클리어! 스위치·상자·다리·리프트와 아이템을 함께 활용하세요. 라운드당 120초 제한.</div>
         </div>
     </div>
     
@@ -613,6 +621,7 @@
 
         <div id="actionButtons" aria-label="액션 버튼">
             <button id="pushBtn" class="action-btn" type="button" title="앞에 있는 캐릭터를 밀기">밀기</button>
+            <button id="dropItemBtn" class="action-btn" type="button" title="들고 있는 아이템 버리기" hidden>버리기</button>
             <button id="floorBtn" class="action-btn" type="button" title="발 아래에 발판 생성">바닥 2/2</button>
             <button id="jumpBtn" class="action-btn" type="button" title="점프">점프</button>
         </div>
@@ -693,6 +702,7 @@
         let isHost = false;
         let isGuestMode = false;
         let currentLevel = 1;
+        let expectedTeamSize = 1;
         let levelClearLock = false; // 레벨 클리어 중복 트리거 방지
         let roundTimeLimitSec = 120;
         let roundDeadlineAt = 0;
@@ -750,7 +760,8 @@
             knockbackUntil: 0,
             knockbackVx: 0,
             noHeadBlockUntil: 0,
-            noHeadBlockSids: []
+            noHeadBlockSids: [],
+            goalReached: false
         };
         
         let players = {};
@@ -798,6 +809,25 @@
         const FLOOR_LIMIT_PER_LIFE = 2;
         let floorUsedThisLife = 0;
         let lastPushAt = 0;
+
+        // 라운드 아이템: 맵에는 3~5개를 결정적으로 배치하고, 호스트가 30초마다 보급을 투하한다.
+        const ITEM_DEFS = {
+            gun:        { name:'팝건',       charges:6, color:'#74b9ff' },
+            lightsaber: { name:'광선검',     charges:8, color:'#55efc4' },
+            jetpack:    { name:'점프팩',     charges:5, color:'#fdcb6e' },
+            missile:    { name:'유도미사일', charges:2, color:'#e17055' },
+            grenade:    { name:'수류탄',     charges:2, color:'#636e72' },
+            pan:        { name:'후라이팬',   charges:6, color:'#b2bec3' }
+        };
+        const ITEM_TYPES = Object.keys(ITEM_DEFS);
+        const ITEM_DROP_INTERVAL_MS = 30000;
+        let worldItems = [];
+        let heldItem = null;
+        let itemEffects = [];
+        let itemDropSeq = 0;
+        let nextItemDropAt = 0;
+        let seenItemEvents = new Set();
+        let lastItemUseAt = 0;
 
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
         let remoteHistory = {}; // { sid: [{t,x,y,vx,vy,isDead,color,name}, ...] }
@@ -1798,6 +1828,12 @@
                 lifts: (level.lifts || []).map(l => ({...l, y: (typeof l.y === 'number') ? l.y : (typeof l.maxY === 'number' ? l.maxY : 0)})),
                 bridges: (level.bridges || []).map(b => ({...b, active: false}))
             };
+            worldItems = buildRoundItems(level, lvNum);
+            heldItem = null;
+            itemEffects = [];
+            seenItemEvents.clear();
+            nextItemDropAt = performance.now() + ITEM_DROP_INTERVAL_MS;
+            updateItemButton();
 
             ensureBoxIds();
             if (pendingPuzzleSnapshot && Number(pendingPuzzleSnapshot.level) === Number(currentLevel)) {
@@ -1831,6 +1867,7 @@
             localPlayer.jumpUsed = false;
             localPlayer.deadAt = 0;
             localPlayer.nextRespawnAt = 0;
+            localPlayer.goalReached = false;
             
             // 네트워크(브릿지)로 초기 위치 전송
             bridgeSendState(true);
@@ -2122,8 +2159,189 @@ cameraX = 0;
             updateFloorBtn();
         }
 
-function setupActionButtons(){
+        function itemEvent(action, data={}){
+            const evt = `${mySessionId || 'solo'}:${Date.now()}:${++itemDropSeq}`;
+            const payload = { action, level: currentLevel, evt, ...data };
+            // 멀티 줍기는 서버가 경합 승자를 정한 뒤 에코를 받은 경우에만 적용한다.
+            if (action === 'pick' && EMBED && !isGuestMode){
+                bridgeSend('tg_item', payload);
+                return;
+            }
+            applyItemEvent(payload, true);
+            if (EMBED && !isGuestMode) bridgeSend('tg_item', payload);
+        }
+
+        function buildRoundItems(level, levelNum){
+            const count = 3 + ((levelNum * 7) % 3); // 라운드마다 3~5개
+            const plats = (level.platforms || [])
+                .filter(p => p.width >= 70 && p.height >= 10)
+                .slice().sort((a,b) => b.y - a.y);
+            const result = [];
+            for (let i=0; i<count; i++){
+                const idx = Math.min(plats.length - 1, Math.floor(((i + 0.65) / count) * plats.length));
+                const p = plats[Math.max(0, idx)] || {x:level.spawn.x, y:level.spawn.y+40, width:120};
+                const type = ITEM_TYPES[(levelNum * 3 + i * 5) % ITEM_TYPES.length];
+                const room = Math.max(10, p.width - 42);
+                const offset = 12 + ((levelNum * 47 + i * 83) % room);
+                result.push({ id:`r${levelNum}-i${i}`, type, x:p.x + offset, y:p.y - 24, vx:0, vy:0, landed:true });
+            }
+            return result;
+        }
+
+        function randomSupplyItem(){
+            if (!gameObjects || !gameObjects.platforms?.length) return;
+            const now = performance.now();
+            if (now < nextItemDropAt) return;
+            nextItemDropAt = now + ITEM_DROP_INTERVAL_MS;
+            if (EMBED && !isGuestMode && !isHost) return;
+            const candidates = gameObjects.platforms.filter(p => !p.temp && p.width >= 80);
+            const p = candidates[Math.floor(Math.random() * candidates.length)] || gameObjects.platforms[0];
+            const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
+            const x = p.x + 18 + Math.random() * Math.max(10, p.width - 54);
+            itemEvent('spawn', { item:{ id:`drop-${currentLevel}-${Date.now()}-${itemDropSeq}`, type, x, y:p.y-260, vx:0, vy:0, landed:false } });
+        }
+
+        function nearestPickup(){
+            // 캐릭터 폭과 모바일 입력 오차를 고려한 넉넉한 줍기 범위
+            let best = null, bestD = 86;
+            for (const it of worldItems){
+                const d = Math.hypot((it.x+12)-(localPlayer.x+20), (it.y+12)-(localPlayer.y+20));
+                if (d < bestD){ bestD=d; best=it; }
+            }
+            return best;
+        }
+
+        function updateItemButton(){
+            const btn = document.getElementById('pushBtn');
+            const drop = document.getElementById('dropItemBtn');
+            if (!btn || !drop) return;
+            if (heldItem){
+                const def = ITEM_DEFS[heldItem.type];
+                btn.textContent = `사용\n${def?.name || '아이템'} ${heldItem.charges}`;
+                btn.title = `${def?.name || '아이템'} 사용`;
+                drop.hidden = false;
+            } else {
+                const near = nearestPickup();
+                btn.textContent = near ? `줍기\n${ITEM_DEFS[near.type]?.name || '아이템'}` : '밀기';
+                btn.title = near ? '가까운 아이템 줍기' : '앞에 있는 캐릭터를 밀기';
+                drop.hidden = true;
+            }
+        }
+
+        function handlePrimaryAction(){
+            const near = nearestPickup();
+            if (near){
+                if (heldItem) dropHeldItem(false);
+                itemEvent('pick', { id:near.id, itemType:near.type, charges:ITEM_DEFS[near.type]?.charges || 1 });
+                return;
+            }
+            if (heldItem) return useHeldItem();
+            doPushAction();
+        }
+
+        function dropHeldItem(toss=true){
+            if (!heldItem) return;
+            const it = { id:heldItem.id, type:heldItem.type, x:localPlayer.x+10+(localPlayer.facing||1)*24,
+                y:localPlayer.y+5, vx:toss?(localPlayer.facing||1)*2.5:0, vy:toss?-2:0, landed:false };
+            heldItem = null;
+            itemEvent('drop', { item:it });
+            updateItemButton();
+        }
+
+        function closestRemote(maxDist=260){
+            let best=null, bd=maxDist;
+            for (const [sid,p] of Object.entries(players || {})){
+                if (!p || p.isDead) continue;
+                const pos=getRemotePosForLogic(sid,p);
+                const d=Math.hypot((pos.x||0)-localPlayer.x,(pos.y||0)-localPlayer.y);
+                if(d<bd){bd=d;best={sid,x:pos.x||0,y:pos.y||0};}
+            }
+            return best;
+        }
+
+        function itemSound(type){
+            try{
+                initAudio(); if(!audioCtx) return;
+                const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+                const f={gun:260,lightsaber:120,jetpack:480,missile:90,grenade:65,pan:720}[type]||220;
+                o.type=type==='lightsaber'?'sawtooth':'square'; o.frequency.setValueAtTime(f,audioCtx.currentTime);
+                o.frequency.exponentialRampToValueAtTime(Math.max(35,f*(type==='jetpack'?1.8:.45)),audioCtx.currentTime+.16);
+                g.gain.setValueAtTime(.12,audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.2);
+                o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.21);
+            }catch(_){ }
+        }
+
+        function addItemEffect(kind,x,y,tx=x,ty=y,color='#fff'){
+            itemEffects.push({kind,x,y,tx,ty,color,start:performance.now(),life:kind==='explosion'?520:300});
+        }
+
+        function useHeldItem(){
+            if (!heldItem || localPlayer.isDead) return;
+            const now=performance.now(); if(now-lastItemUseAt<260)return; lastItemUseAt=now;
+            const type=heldItem.type, dir=localPlayer.facing||1, sx=localPlayer.x+20, sy=localPlayer.y+18;
+            const target=closestRemote(type==='missile'?520:(type==='grenade'?190:150));
+            let effect={kind:type,x:sx,y:sy,tx:sx+dir*150,ty:sy,color:ITEM_DEFS[type].color};
+            if(type==='jetpack'){
+                localPlayer.vy=Math.min(localPlayer.vy,-10.5); localPlayer.vx+=dir*1.5; localPlayer.onGround=false;
+                effect.ty=sy+90;
+            } else if(type==='grenade'){
+                const ex=sx+dir*115, ey=sy+20; effect={kind:'explosion',x:ex,y:ey,tx:ex,ty:ey,color:'#fdcb6e'};
+                for(const [sid,p] of Object.entries(players||{})){
+                    const pos=getRemotePosForLogic(sid,p||{}), dx=(pos.x||0)-ex, dy=(pos.y||0)-ey;
+                    if(Math.hypot(dx,dy)<190) bridgeSendPush(sid,Math.sign(dx||dir)*15,-13);
+                }
+                if(Math.hypot(localPlayer.x-ex,localPlayer.y-ey)<150){localPlayer.vx-=dir*5;localPlayer.vy=-7;}
+            } else if(target){
+                const inFront=dir*((target.x||0)-localPlayer.x)>-25;
+                if(type==='missile' || inFront){
+                    const power=type==='pan'?16:type==='lightsaber'?13:type==='missile'?15:9;
+                    bridgeSendPush(target.sid,Math.sign((target.x||0)-localPlayer.x||dir)*power,-(type==='gun'?5:11));
+                    effect.tx=target.x+20; effect.ty=target.y+20;
+                }
+            }
+            localPlayer.pushAnimUntil=now+PUSH_ANIM_MS;
+            itemSound(type); addItemEffect(effect.kind,effect.x,effect.y,effect.tx,effect.ty,effect.color);
+            itemEvent('use',{id:heldItem.id,itemType:type,effect});
+            heldItem.charges--;
+            if(heldItem.charges<=0) heldItem=null;
+            updateItemButton();
+        }
+
+        function applyItemEvent(d, local=false){
+            if(!d || Number(d.level)!==Number(currentLevel))return;
+            if(d.evt){ if(seenItemEvents.has(d.evt))return; seenItemEvents.add(d.evt); if(seenItemEvents.size>300)seenItemEvents.clear(); }
+            if(d.action==='spawn' || d.action==='drop'){
+                const it=d.item||{}; if(!ITEM_DEFS[it.type]||!it.id)return;
+                worldItems=worldItems.filter(x=>x.id!==it.id);
+                worldItems.push({id:String(it.id),type:it.type,x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed});
+            }else if(d.action==='pick'){
+                const found=worldItems.find(x=>x.id===d.id);
+                worldItems=worldItems.filter(x=>x.id!==d.id);
+                if((local || String(d.from||'')===String(mySessionId||'')) && found) heldItem={id:String(d.id),type:found.type,charges:Number(d.charges)||ITEM_DEFS[found.type].charges};
+            }else if(d.action==='use' && !local && d.effect){
+                const e=d.effect; addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color); itemSound(d.itemType);
+            }
+            updateItemButton();
+        }
+
+        function updateWorldItems(){
+            randomSupplyItem();
+            const solids=solidPlatforms();
+            for(const it of worldItems){
+                if(it.landed)continue;
+                const prevBottom=it.y+24; it.vy=Math.min(7,(it.vy||0)+GRAVITY); it.x+=(it.vx||0);it.y+=it.vy;it.vx*=.98;
+                for(const p of solids){
+                    if(it.x+22>p.x&&it.x<p.x+p.width&&prevBottom<=p.y+4&&it.y+24>=p.y){it.y=p.y-24;it.vy=0;it.vx=0;it.landed=true;break;}
+                }
+            }
+            worldItems=worldItems.filter(it=>it.y<stageBounds.maxY+350);
+            itemEffects=itemEffects.filter(e=>performance.now()-e.start<e.life);
+            updateItemButton();
+        }
+
+        function setupActionButtons(){
             const pushBtn = document.getElementById('pushBtn');
+            const dropItemBtn = document.getElementById('dropItemBtn');
             const floorBtn = document.getElementById('floorBtn');
             const jumpBtn = document.getElementById('jumpBtn');
             if (!pushBtn || !floorBtn || !jumpBtn) return;
@@ -2135,9 +2353,13 @@ function setupActionButtons(){
                 const h = (e)=>{
                     try{ e.preventDefault(); e.stopPropagation(); }catch(_){ }
                     initAudio();
-                    doPushAction();
+                    handlePrimaryAction();
                 };
                 pushBtn.addEventListener('pointerdown', h, { passive: false });
+            }
+            if (dropItemBtn && !dropItemBtn._bound){
+                dropItemBtn._bound=true;
+                dropItemBtn.addEventListener('pointerdown',(e)=>{try{e.preventDefault();e.stopPropagation();}catch(_){} initAudio();dropHeldItem(true);},{passive:false});
             }
             if (!jumpBtn._bound){
                 jumpBtn._bound = true;
@@ -2472,7 +2694,8 @@ function setupActionButtons(){
                         jumpKeyDown = true; if (!e.repeat) { initAudio(); doJump(); }
                     }
                 }
-                if (code === 'KeyX') { e.preventDefault(); if (!e.repeat) { initAudio(); doPushAction(); } }
+                if (code === 'KeyX') { e.preventDefault(); if (!e.repeat) { initAudio(); handlePrimaryAction(); } }
+                if (code === 'KeyV') { e.preventDefault(); if (!e.repeat) { initAudio(); dropHeldItem(true); } }
                 if (code === 'KeyC') { e.preventDefault(); if (!e.repeat) { initAudio(); createFloorUnderFoot(); } }
             });
 
@@ -2506,6 +2729,7 @@ function setupActionButtons(){
         // ==================== 게임 물리 ====================
         function updatePhysics() {
             maybeHandleRespawn();
+            updateWorldItems();
             if (localPlayer.isDead){
                 moveDirection = 0;
                 localPlayer.vx = 0;
@@ -2773,11 +2997,19 @@ function setupActionButtons(){
             const goal = gameObjects.goal;
             if (localPlayer.x + 20 > goal.x && localPlayer.x < goal.x + goal.width &&
                 localPlayer.y + 40 > goal.y && localPlayer.y < goal.y + goal.height) {
-                // 1명이라도 닿으면 전원 다음 레벨로 (서버 tg_level 브로드캐스트)
+                if (!localPlayer.goalReached) {
+                    localPlayer.goalReached = true;
+                    sfxLevelClear();
+                    bridgeSendState(true);
+                }
+            }
+            // 각 팀원이 한 번씩 깃발에 닿아야 클리어. 먼저 간 플레이어가 돌아와 역할을 바꿀 수 있다.
+            const activeTeam = Object.values(players || {}).filter(p => !p || !p.level || Number(p.level) === Number(currentLevel));
+            const teamAllReached = !!localPlayer.goalReached && (1 + activeTeam.length >= expectedTeamSize) && activeTeam.every(p => !!p.goalReached);
+            if (teamAllReached) {
                 if (!levelClearLock) {
                     levelClearLock = true;
                     if (!document.getElementById('winScreen').classList.contains('show')) {
-                        sfxLevelClear();
                         document.getElementById('winScreen').classList.add('show');
                     }
 
@@ -2798,9 +3030,10 @@ function setupActionButtons(){
         
         function updateDoors() {
             gameObjects.doors.forEach((door, idx) => {
-                const button = gameObjects.buttons.find(b => b.doorId === idx);
+                const linked = gameObjects.buttons.filter(b => b.doorId === idx);
                 const wasOpen = door.open;
-                door.open = button ? button.pressed : false;
+                // 한 번 팀이 조건을 맞추면 열린 상태를 유지해 뒤에 남은 스위치 담당도 합류할 수 있다.
+                door.open = !!door.open || (linked.length ? linked.every(b => b.pressed) : false);
                 if (!wasOpen && door.open) {
                     sfxDoorOpen();
                 }
@@ -3110,8 +3343,8 @@ function setupActionButtons(){
         function updateLifts() {
             if (!gameObjects || !gameObjects.lifts) return;
             gameObjects.lifts.forEach((lift, idx) => {
-                const btn = (gameObjects.buttons || []).find(b => b.liftId === idx);
-                const active = btn ? !!btn.pressed : false;
+                const linked = (gameObjects.buttons || []).filter(b => b.liftId === idx);
+                const active = linked.length ? linked.every(b => !!b.pressed) : false;
                 const minY = (typeof lift.minY === 'number') ? lift.minY : lift.y;
                 const maxY = (typeof lift.maxY === 'number') ? lift.maxY : lift.y;
                 const targetY = active ? minY : maxY;
@@ -3128,9 +3361,92 @@ function setupActionButtons(){
         function updateBridges() {
             if (!gameObjects || !gameObjects.bridges) return;
             gameObjects.bridges.forEach((br, idx) => {
-                const btn = (gameObjects.buttons || []).find(b => b.bridgeId === idx);
-                br.active = btn ? !!btn.pressed : false;
+                const linked = (gameObjects.buttons || []).filter(b => b.bridgeId === idx);
+                // 협동 성공 뒤 다리가 사라져 마지막 플레이어가 고립되지 않도록 라운드 동안 래치한다.
+                br.active = !!br.active || (linked.length ? linked.every(b => !!b.pressed) : false);
             });
+        }
+
+        function pixelBlock(x,y,w,h,color){
+            ctx.fillStyle=color;
+            ctx.fillRect(Math.round(x),Math.round(y),Math.round(w),Math.round(h));
+        }
+
+        // 아이템 전용 픽셀 아이콘. 캐릭터(drawHamster)와 완전히 분리해 캐릭터 원본은 건드리지 않는다.
+        function drawPixelItemIcon(type,cx,cy,scale=2,facing=1){
+            const s=Math.max(1,Math.round(scale));
+            ctx.save();ctx.translate(Math.round(cx),Math.round(cy));ctx.scale(facing<0?-s:s,s);ctx.imageSmoothingEnabled=false;
+            const p=(x,y,w,h,c)=>pixelBlock(x,y,w,h,c), ink='#172033', hi='#f8f9fa';
+            if(type==='gun'){
+                p(-8,-4,15,2,ink);p(-9,-2,18,5,ink);p(-7,-2,14,3,'#3498db');p(-5,-1,7,1,'#9ee7ff');p(7,-1,4,2,'#ff9f43');
+                p(1,3,6,2,ink);p(2,5,5,5,ink);p(3,5,3,4,'#8d5a3b');p(-3,3,4,2,'#dfe6e9');
+            }else if(type==='lightsaber'){
+                p(-7,5,6,3,ink);p(-5,3,6,3,'#95a5a6');p(-3,1,5,3,ink);p(-1,-1,4,3,'#ecf0f1');
+                p(1,-3,4,3,'#55efc4');p(3,-5,4,3,'#7dffd5');p(5,-7,4,3,hi);p(7,-9,3,3,'#55efc4');
+            }else if(type==='jetpack'){
+                p(-8,-7,7,14,ink);p(1,-7,7,14,ink);p(-6,-6,4,11,'#4aa3df');p(2,-6,4,11,'#4aa3df');
+                p(-5,-5,2,3,'#bcecff');p(3,-5,2,3,'#bcecff');p(-1,-3,2,8,'#596275');p(-6,7,4,3,'#ff9f43');p(2,7,4,3,'#ff9f43');p(-5,10,2,2,'#ffe66d');p(3,10,2,2,'#ffe66d');
+            }else if(type==='missile'){
+                p(-9,-3,14,7,ink);p(-7,-2,11,5,'#ecf0f1');p(-5,-2,3,5,'#ff6b6b');p(4,-2,4,5,'#d63031');p(8,-1,3,3,'#ffeaa7');
+                p(-7,-6,5,3,ink);p(-5,-5,3,3,'#e74c3c');p(-7,4,5,3,ink);p(-5,4,3,2,'#e74c3c');p(-11,-2,3,4,'#ff9f43');p(-13,-1,2,2,'#ffe66d');
+            }else if(type==='grenade'){
+                p(-5,-7,8,3,ink);p(-3,-9,6,2,'#95a5a6');p(2,-10,5,2,'#fdcb6e');p(5,-8,2,4,'#fdcb6e');
+                p(-8,-4,14,10,ink);p(-6,-5,10,12,'#3d6b45');p(-4,-3,7,3,'#78a55a');p(-5,5,9,3,ink);
+            }else if(type==='pan'){
+                p(-9,-7,12,2,ink);p(-11,-5,16,11,ink);p(-9,-5,12,9,'#636e72');p(-7,-4,8,2,'#b2bec3');
+                p(5,0,10,5,ink);p(5,1,8,3,'#8d6e63');p(13,0,3,5,ink);
+            }
+            ctx.restore();
+        }
+
+        function drawHeldPixelItem(type,x,y,facing){
+            if(!ITEM_DEFS[type]) return;
+            const dir=facing<0?-1:1;
+            drawPixelItemIcon(type,Math.round(x+20+dir*25),Math.round(y+24),1,dir);
+        }
+
+        function drawWorldItem(it){
+            const x=Math.round(it.x)+12, baseY=Math.round(it.y)+12;
+            const wave=Math.sin(performance.now()/300+String(it.id).length*1.7);
+            const y=it.landed ? baseY-5+Math.round(wave*3) : baseY;
+            ctx.save();ctx.imageSmoothingEnabled=false;
+            if(it.landed){
+                const shadowW=18-Math.round((wave+1)*2);
+                pixelBlock(x-shadowW/2,baseY+10,shadowW,3,'rgba(7,11,22,.24)');
+            }
+            drawPixelItemIcon(it.type,x,y,1,1);
+            ctx.restore();
+        }
+
+        function drawItemEffects(){
+            const now=performance.now();
+            for(const e of itemEffects){
+                const t=Math.min(1,(now-e.start)/e.life),a=Math.max(0,1-t),x=Math.round(e.x),y=Math.round(e.y),tx=Math.round(e.tx),ty=Math.round(e.ty);
+                ctx.save();ctx.globalAlpha=a;ctx.imageSmoothingEnabled=false;
+                if(e.kind==='explosion' || e.kind==='grenade'){
+                    const colors=['#fff3a3','#ffd32a','#ff9f1a','#e84118','#747d8c'];
+                    for(let i=0;i<16;i++){const q=i*Math.PI/8,r=8+t*(42+(i%3)*14),sz=i%3===0?9:6;pixelBlock(x+Math.cos(q)*r-sz/2,y+Math.sin(q)*r-sz/2,sz,sz,colors[i%colors.length]);}
+                    pixelBlock(x-12*(1-t),y-4,24*(1-t)+4,8,'#fff8c4');pixelBlock(x-4,y-12*(1-t),8,24*(1-t)+4,'#ffd32a');
+                }else if(e.kind==='lightsaber'){
+                    const q=-1+t*2,len=72;
+                    for(let k=0;k<4;k++){const qk=q-k*.13,ex=x+Math.cos(qk)*len,ey=y+Math.sin(qk)*len;ctx.globalAlpha=a*(1-k*.18);ctx.strokeStyle=k===0?'#fff':'#55efc4';ctx.lineWidth=k===0?5:9;ctx.lineCap='butt';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(Math.round(ex),Math.round(ey));ctx.stroke();}
+                    for(let i=0;i<5;i++)pixelBlock(tx+(i-2)*7,ty+(i%2)*8-6,4,4,i%2?'#fff':'#7dffd5');
+                }else if(e.kind==='pan'){
+                    const q=-1.1+t*2.2,px=x+Math.cos(q)*50,py=y+Math.sin(q)*42;ctx.globalAlpha=a*.55;ctx.strokeStyle='#dfe6e9';ctx.lineWidth=12;ctx.lineCap='butt';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(px,py);ctx.stroke();
+                    drawPixelItemIcon('pan',px,py,1,Math.cos(q)<0?-1:1);const star=['#fff','#ffe66d','#ff9f43'];for(let i=0;i<8;i++){const q2=i*Math.PI/4;pixelBlock(tx+Math.cos(q2)*24*t-3,ty+Math.sin(q2)*24*t-3,6,6,star[i%3]);}
+                }else if(e.kind==='jetpack'){
+                    for(let i=0;i<10;i++){const px=x-11+(i%2)*14+((i%3)-1)*3,py=y+12+t*(30+i*5);pixelBlock(px-4,py,8,10,i<4?'#fff3a3':(i<7?'#ff9f43':'#747d8c'));}
+                }else if(e.kind==='missile'){
+                    const travel=Math.min(1,t*1.55),mx=x+(tx-x)*travel,my=y+(ty-y)*travel,dir=tx<x?-1:1;
+                    for(let i=1;i<=6;i++){const trail=travel-i*.045;if(trail>0)pixelBlock(x+(tx-x)*trail-4,y+(ty-y)*trail-4,8,8,i<3?'#ff9f43':'#747d8c');}
+                    drawPixelItemIcon('missile',mx,my,1,dir);pixelBlock(tx-18,ty-2,12,4,'#ff4757');pixelBlock(tx+6,ty-2,12,4,'#ff4757');pixelBlock(tx-2,ty-18,4,12,'#ff4757');pixelBlock(tx-2,ty+6,4,12,'#ff4757');
+                }else{
+                    const travel=Math.min(1,t*4),bx=x+(tx-x)*travel,by=y+(ty-y)*travel;
+                    for(let i=0;i<8;i++){const u=Math.max(0,travel-i*.055);pixelBlock(x+(tx-x)*u-3,y+(ty-y)*u-2,6,4,i<2?'#fff':'#74b9ff');}
+                    pixelBlock(x+8*(tx>=x?1:-1)-5,y-5,10,10,'#ffe66d');if(travel>.82){pixelBlock(bx-10,by-2,20,4,'#fff');pixelBlock(bx-2,by-10,4,20,'#ff9f43');}
+                }
+                ctx.restore();
+            }
         }
 
 // ==================== 렌더링 ====================
@@ -3282,6 +3598,9 @@ function setupActionButtons(){
                 ctx.lineWidth = 2;
                 ctx.strokeRect(bx, by, box.width, box.height);
             });
+
+            // 맵 아이템(캐릭터와 같은 단순 픽셀/도형 스타일)
+            worldItems.forEach(drawWorldItem);
             
             // 골 - 깃발만 표시
             const goal = gameObjects.goal;
@@ -3313,6 +3632,10 @@ function setupActionButtons(){
                 ctx.arc(px, py, 3, 0, Math.PI * 2);
                 ctx.fill();
             }
+            const reachedCount=(localPlayer.goalReached?1:0)+Object.values(players||{}).filter(p=>p&&p.goalReached).length;
+            const teamCount=Math.max(expectedTeamSize,1+Object.keys(players||{}).length);
+            ctx.fillStyle='rgba(15,20,35,.78)';ctx.fillRect(flagX-34,flagY-30,86,22);
+            ctx.fillStyle='#fff';ctx.font='bold 13px sans-serif';ctx.textAlign='center';ctx.fillText(`도착 ${reachedCount}/${teamCount}`,flagX+9,flagY-14);
             
             // 다른 플레이어들 (히스토리 기반 보간/예측 + 스무딩)
             Object.entries(players).forEach(([sid, p]) => {
@@ -3365,6 +3688,7 @@ function setupActionButtons(){
                 sp.vy = (typeof tp.vy === 'number') ? tp.vy : (p.vy || 0);
                 sp.onGround = (typeof tp.onGround === 'boolean') ? tp.onGround : !!p.onGround;
                 sp.pushing = !!tp.pushing;
+                sp.heldItem = tp.heldItem || p.heldItem || null;
 
                 if (!sp.facing) sp.facing = 1;
                 // 원격은 vx가 작은 구간에서 부호가 흔들리며 좌우반전이 깜빡일 수 있어 임계값을 올림
@@ -3378,9 +3702,12 @@ function setupActionButtons(){
                 const ry = sp.ry;
 
                 drawHamster(rx, ry, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing, pushing: sp.pushing });
+                if(!sp.isDead && sp.heldItem?.type) drawHeldPixelItem(sp.heldItem.type,rx,ry,sp.facing);
             });
 // 로컬 플레이어
             drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead, localPlayer);
+            if(!localPlayer.isDead && heldItem?.type) drawHeldPixelItem(heldItem.type,localPlayer.x,localPlayer.y,localPlayer.facing);
+            drawItemEffects();
             
             ctx.restore();
         }
@@ -3764,7 +4091,8 @@ function setupActionButtons(){
                 color: p?.color,
                 name: p?.name,
                 variant: (typeof p?.variant === 'number') ? p.variant : 0,
-                pushing: !!p?.pushing
+                pushing: !!p?.pushing,
+                heldItem: p?.heldItem || null
             });
 
             // 히스토리 정리
@@ -3804,7 +4132,8 @@ function setupActionButtons(){
                     color: b.color,
                     name: b.name,
                     variant: (typeof b.variant === 'number') ? b.variant : 0,
-                    pushing: !!b.pushing
+                    pushing: !!b.pushing,
+                    heldItem: b.heldItem || null
                 };
             }
 
@@ -3823,7 +4152,8 @@ function setupActionButtons(){
                 color: last.color,
                 name: last.name,
                 variant: (typeof last.variant === 'number') ? last.variant : 0,
-                pushing: !!last.pushing
+                pushing: !!last.pushing,
+                heldItem: last.heldItem || null
             };
         }
 
@@ -3858,6 +4188,7 @@ function setupActionButtons(){
                 smoothedPlayers[sid].color = p.color;
                 smoothedPlayers[sid].variant = (typeof p.variant === 'number') ? p.variant : 0;
                 smoothedPlayers[sid].pushing = !!p.pushing;
+                smoothedPlayers[sid].heldItem = p.heldItem || null;
             }
             players = next;
             // prune removed
@@ -4062,7 +4393,9 @@ function setupActionButtons(){
                     level: currentLevel,
                     deathCount,
                     variant: localPlayer.variant,
-                    pushing: (performance.now() < (localPlayer.pushAnimUntil || 0))
+                    goalReached: !!localPlayer.goalReached,
+                    pushing: (performance.now() < (localPlayer.pushAnimUntil || 0)),
+                    heldItem: heldItem ? { type:heldItem.type, charges:heldItem.charges } : null
                 }
             });
         }
@@ -4090,6 +4423,7 @@ function setupActionButtons(){
             if (d.type === "bridge_init"){
                 mySessionId = String(d.sessionId || "");
                 mySeat = typeof d.seat === "number" ? d.seat : 0;
+                expectedTeamSize = Math.max(1, Number(d.expectedHumans || d.humanCount) || (Array.isArray(d.players) ? d.players.length : 1));
                 startEmbedded({
                     nick: d.nick || "햄찌",
                     seat: mySeat,
@@ -4098,7 +4432,7 @@ function setupActionButtons(){
                     roomCode: d.roomCode || "ROOM",
                     practice: !!d.practice
                 });
-                if (d.players) applyRemotePlayers(d.players);
+                if (d.players && !Array.isArray(d.players)) applyRemotePlayers(d.players);
                 if (d.level) {
                     const lv = parseInt(d.level, 10);
                     if (lv) { currentLevel = lv; }
@@ -4197,6 +4531,11 @@ function setupActionButtons(){
                 }
                 try{ sfxPush(); }catch(_){ }
                 bridgeSendState(true);
+                return;
+            }
+
+            if (d.type === "tg_item"){
+                applyItemEvent(d, false);
                 return;
             }
 
