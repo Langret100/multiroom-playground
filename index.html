@@ -5,12 +5,19 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
   <title>로비</title>
   <link rel="icon" href="./favicon.ico"/>
-  <link rel="stylesheet" href="./css/styles.css"/>
+  <link rel="preload" as="image" type="image/webp" href="./assets/images/backgrounds/lobby-world.webp"/>
+  <link rel="stylesheet" href="./css/styles.css?v=20260829-lobby-room-v6"/>
 </head>
 <body class="page-lobby">
   <div class="app">
-    <div class="topbar slim">
-      <span class="badge nickChip"><span class="dot ok"></span><span>닉네임:</span> <b id="myId">-</b></span>
+    <div class="topbar slim lobbyTopbar">
+      <div class="lobbyIdentity">
+        <span class="lobbyMark" aria-hidden="true">MP</span>
+        <div>
+          <b>게임 라운지</b>
+          <span class="nickChip"><span class="dot ok"></span><span class="srOnly">닉네임:</span><b id="myId">-</b></span>
+        </div>
+      </div>
       <div class="actions">
         <button class="iconbtn" id="openCreate" title="방 만들기" aria-label="방 만들기">➕</button>
         <button class="iconbtn" id="refreshRooms" title="새로고침" aria-label="새로고침">🔄</button>
@@ -23,6 +30,14 @@
 
     <div class="main">
       <div class="panel rooms">
+        <div class="lobbySectionHead">
+          <div>
+            <span class="sectionKicker">MATCH LOBBY</span>
+            <h1>함께할 방을 선택하세요</h1>
+            <p>대기 중인 방에 참가하거나 새 게임을 시작할 수 있습니다.</p>
+          </div>
+          <button class="btn primary lobbyCreateBtn" id="openCreate2" type="button"><span aria-hidden="true">＋</span> 새 방 만들기</button>
+        </div>
         <div class="tableWrap">
           <table>
             <colgroup>
@@ -51,11 +66,11 @@
             <span class="badge"><span class="dot danger"></span>게임중</span>
             <span class="badge"><span class="dot warn"></span>만석</span>
           </div>
-          <button class="btn primary small" id="openCreate2" type="button">방만들기</button>
+          <span class="roomListHint">방을 누르면 바로 입장합니다.</span>
         </div>
 </div>
 
-      <div class="panel splitRight">
+      <div class="panel splitRight socialRail">
         <div class="panelHeader">
           <div>
             <h2>채팅</h2>

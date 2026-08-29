@@ -628,6 +628,64 @@ body.tg-mode.in-game #duelFrame{
   body.page-room .playersPanel{ width:auto; min-width:0; max-width:none; }
   body.page-room .pList{ max-height: 120px; }
 
+  /* Room lobby on phones/tablets must scroll instead of squeezing the player
+     panel between the preview and the fixed-height chat.  When it was
+     squeezed, the controls were still painted but their hit area could sit
+     under the following panel on mobile browsers. */
+  body.page-room:not(.in-game){
+    overflow-x:hidden;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    touch-action:pan-y;
+  }
+  body.page-room:not(.in-game) .app{
+    height:auto;
+    min-height:100%;
+  }
+  body.page-room:not(.in-game) .roomGrid{
+    flex:0 0 auto;
+    min-height:calc(100dvh - 58px);
+    overflow:visible;
+  }
+  body.page-room:not(.in-game) .roomTop{
+    flex:0 0 auto;
+    min-height:0;
+    overflow:visible;
+  }
+  body.page-room:not(.in-game) .canvasWrap,
+  body.page-room:not(.in-game) .playersPanel{
+    flex:0 0 auto;
+    min-height:0;
+  }
+  body.page-room:not(.in-game) .playersPanel .pList{
+    flex:0 0 auto;
+    max-height:min(34dvh, 180px);
+  }
+  body.page-room:not(.in-game) .playersPanel .controls{
+    position:relative;
+    z-index:10;
+    flex:0 0 auto;
+    pointer-events:auto;
+    padding-bottom:calc(10px + env(safe-area-inset-bottom));
+  }
+  body.page-room:not(.in-game) .playersPanel .controls .btn{
+    position:relative;
+    z-index:11;
+    flex:1 1 0;
+    min-width:0;
+    min-height:48px;
+    touch-action:manipulation;
+    pointer-events:auto;
+    -webkit-user-select:none;
+    user-select:none;
+  }
+  body.page-room:not(.in-game) .roomBottom{
+    flex:0 0 auto;
+  }
+  body.page-room:not(.in-game) .roomBottom .panel.chat{
+    height:clamp(220px, 34dvh, 340px);
+  }
+
   /* Mobile: while a game is in progress, hide the separate player list panel
      so the play area doesn't get squashed. */
   body.is-playing:not(.mode-togester) .playersPanel{ display:none !important; }
@@ -986,10 +1044,10 @@ tbody td{ padding: 10px 8px; }
 .audioEnableBtn{ display:none !important; }
 
 
-/* Background image (swapable) */
-:root{
-  --bg-image: url("../assets/images/backgrounds/basewall.jpg");
-}
+/* Page-specific lightweight game-world backgrounds */
+:root{ --bg-image: none; }
+body.page-lobby{ --bg-image: url("../assets/images/backgrounds/lobby-world.webp"); }
+body.page-room{ --bg-image: url("../assets/images/backgrounds/room-clubhouse.webp"); }
 
 /* page background */
 body{
@@ -1003,7 +1061,7 @@ body::before{
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  opacity: 0.92;
+  opacity: 0.96;
   z-index: 0;
   pointer-events: none;
 }
@@ -1013,7 +1071,7 @@ body::after{
   inset: 0;
   background: linear-gradient(180deg, var(--bg1), var(--bg2));
   z-index: 0;
-  opacity: 0.22;
+  opacity: 0.16;
   pointer-events: none;
 }
 
@@ -1113,6 +1171,111 @@ body:not(.in-game) .canvasWrap{
   flex: 0 0 auto;
 }
 body.in-game .gamePreview{ display: none !important; }
+body.in-game .gameBriefingBoard{ display:none !important; }
+
+/* Lightweight pre-game briefing: CSS decoration + existing registry text only. */
+.gameBriefingBoard{
+  flex:1 1 auto;
+  min-height:0;
+  display:flex;
+  flex-direction:column;
+  padding:14px;
+  border-top:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(241,249,255,.74), rgba(255,255,255,.42));
+}
+.briefingBoardHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:12px;
+}
+.briefingBoardHead > div{
+  display:flex;
+  align-items:baseline;
+  gap:9px;
+  min-width:0;
+}
+.briefingBoardHead b{
+  color:#18334a;
+  font-size:14px;
+  letter-spacing:-.2px;
+}
+.briefingModeBadge{
+  flex:0 0 auto;
+  padding:5px 9px;
+  border:1px solid rgba(28,140,255,.18);
+  border-radius:999px;
+  background:rgba(255,255,255,.76);
+  color:#2876ad;
+  font-size:11px;
+  font-weight:800;
+}
+.briefingCards{
+  flex:1;
+  min-height:0;
+  display:grid;
+  grid-template-columns:repeat(3, minmax(0, 1fr));
+  gap:12px;
+}
+.briefingCard{
+  position:relative;
+  min-width:0;
+  min-height:130px;
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  padding:16px;
+  overflow:hidden;
+  border:1px solid rgba(26,84,122,.12);
+  border-radius:16px;
+  background:rgba(255,255,255,.78);
+  box-shadow:0 7px 18px rgba(26,74,108,.06), inset 0 1px rgba(255,255,255,.9);
+}
+.briefingCard::after{
+  content:"";
+  position:absolute;
+  right:-25px;
+  bottom:-29px;
+  width:88px;
+  height:88px;
+  border:14px solid rgba(28,140,255,.045);
+  border-radius:50%;
+  pointer-events:none;
+}
+.briefingIcon{
+  position:relative;
+  z-index:1;
+  flex:0 0 38px;
+  width:38px;
+  height:38px;
+  display:grid;
+  place-items:center;
+  border-radius:13px;
+  color:#fff;
+  font-size:17px;
+  font-weight:900;
+  box-shadow:inset 0 1px rgba(255,255,255,.42), 0 5px 12px rgba(31,91,130,.14);
+}
+.briefingCard.flow .briefingIcon{ background:linear-gradient(145deg, #59b8ff, #248ce1); }
+.briefingCard.control .briefingIcon{ background:linear-gradient(145deg, #9d8aff, #6d56df); }
+.briefingCard.tip .briefingIcon{ background:linear-gradient(145deg, #ffc85e, #f09b2d); }
+.briefingCard > div{
+  position:relative;
+  z-index:1;
+  min-width:0;
+}
+.briefingCard b{
+  color:#18334a;
+  font-size:13px;
+}
+.briefingCard p{
+  margin:7px 0 0;
+  color:#5d7080;
+  font-size:13px;
+  line-height:1.5;
+  overflow-wrap:anywhere;
+}
 
 /* Start button styling */
 .btn.start{
@@ -1277,3 +1440,534 @@ body.page-room .topbar .actions .iconbtn{ white-space:nowrap; }
 .roomRow.disabled .modeTag{ filter:grayscale(1); opacity:0.72; }
 .roomRow.disabled .title1, .roomRow.disabled .stateTxt{ color:#a7adb8; }
 .roomRow.disabled .btn.small{ background:#5a616d; border-color:#5a616d; color:#d9dde6; cursor:not-allowed; }
+
+/* ===== Lobby & room information architecture v2 ===== */
+.srOnly{
+  position:absolute !important;
+  width:1px !important;
+  height:1px !important;
+  padding:0 !important;
+  margin:-1px !important;
+  overflow:hidden !important;
+  clip:rect(0,0,0,0) !important;
+  white-space:nowrap !important;
+  border:0 !important;
+}
+
+.sectionKicker{
+  display:block;
+  margin-bottom:3px;
+  color:#1679d2;
+  font-size:10px;
+  font-weight:800;
+  letter-spacing:.12em;
+  line-height:1.1;
+}
+
+body.page-lobby{
+  overflow:hidden;
+}
+body.page-lobby .app,
+body.page-room:not(.in-game) .app{
+  background:
+    radial-gradient(circle at 8% 3%, rgba(79,169,255,.14), transparent 28%),
+    radial-gradient(circle at 88% 90%, rgba(79,220,190,.10), transparent 28%);
+}
+body.page-lobby .main{
+  width:100%;
+  max-width:1480px;
+  margin:0 auto;
+  gap:14px;
+  padding:14px;
+}
+.lobbyTopbar{
+  min-height:56px;
+  padding:8px max(12px, calc((100vw - 1452px) / 2));
+}
+.lobbyIdentity{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  min-width:0;
+}
+.lobbyIdentity > div{
+  display:flex;
+  flex-direction:column;
+  min-width:0;
+  line-height:1.15;
+}
+.lobbyIdentity > div > b{
+  font-size:14px;
+}
+.lobbyMark{
+  display:grid;
+  place-items:center;
+  width:36px;
+  height:36px;
+  flex:0 0 36px;
+  border-radius:12px;
+  color:#fff;
+  background:linear-gradient(145deg, #30a9ff, #1265d7);
+  box-shadow:0 7px 18px rgba(18,101,215,.25), inset 0 1px rgba(255,255,255,.35);
+  font-size:12px;
+  font-weight:900;
+  letter-spacing:-.04em;
+}
+.lobbyIdentity .nickChip{
+  display:flex;
+  align-items:center;
+  gap:5px;
+  max-width:44vw;
+  color:var(--muted);
+  font-size:11px;
+}
+.lobbyIdentity .nickChip .dot{
+  width:7px;
+  height:7px;
+}
+.lobbyIdentity .nickChip b{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  color:var(--text);
+}
+
+.lobbySectionHead{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  padding:22px 22px 18px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(125deg, rgba(239,248,255,.96), rgba(255,255,255,.70));
+}
+.lobbySectionHead h1{
+  margin:0;
+  font-size:clamp(20px, 2.2vw, 28px);
+  letter-spacing:-.045em;
+}
+.lobbySectionHead p{
+  margin:6px 0 0;
+  color:var(--muted);
+  font-size:13px;
+}
+.lobbyCreateBtn{
+  min-width:144px;
+  min-height:46px;
+  flex:0 0 auto;
+  border-color:rgba(22,121,210,.34);
+  color:#07559d;
+  font-weight:800;
+  box-shadow:0 8px 22px rgba(28,140,255,.13), inset 0 1px rgba(255,255,255,.7);
+}
+body.page-lobby .rooms{
+  border-color:rgba(28,140,255,.20);
+}
+body.page-lobby thead th{
+  height:42px;
+  padding-inline:12px;
+  color:#57738c;
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.035em;
+}
+body.page-lobby tbody td{
+  height:58px;
+  padding-inline:12px;
+}
+body.page-lobby .roomRow{
+  transition:background-color 140ms ease, transform 140ms ease;
+}
+body.page-lobby .roomRow:not(.disabled):hover{
+  background:rgba(28,140,255,.065);
+}
+body.page-lobby .roomRow:not(.disabled):focus-visible{
+  outline:2px solid rgba(28,140,255,.50);
+  outline-offset:-2px;
+}
+body.page-lobby .tdTitle .title1{
+  font-size:14px;
+  font-weight:750;
+}
+body.page-lobby .tdJoin .btn{
+  min-height:34px;
+  color:#0c66b8;
+  font-weight:750;
+}
+.legendRow{
+  min-height:50px;
+  background:rgba(246,251,255,.72);
+}
+.roomListHint{
+  color:var(--muted);
+  font-size:11px;
+}
+body.page-lobby .socialRail{
+  width:390px;
+  min-width:330px;
+  border-color:rgba(28,140,255,.17);
+}
+body.page-lobby .socialRail .panelHeader{
+  min-height:42px;
+  padding:8px 12px;
+}
+body.page-lobby .socialRail .chatLog{
+  background:rgba(239,247,255,.56);
+}
+
+body.page-room:not(.in-game) .roomGrid{
+  width:100%;
+  max-width:1480px;
+  margin:0 auto;
+  gap:14px;
+}
+body.page-room:not(.in-game) .roomTop{
+  gap:14px;
+  padding:14px 14px 0;
+}
+body.page-room:not(.in-game) .roomBottom{
+  padding:0 14px 14px;
+}
+body.page-room:not(.in-game) .panelHeader{
+  min-height:54px;
+  padding:9px 12px;
+}
+body.page-room:not(.in-game) .panelHeader h2{
+  font-size:15px;
+  letter-spacing:-.02em;
+}
+body.page-room:not(.in-game) .canvasWrap,
+body.page-room:not(.in-game) .playersPanel,
+body.page-room:not(.in-game) .roomBottom .panel{
+  border-color:rgba(28,140,255,.18);
+}
+body.page-room:not(.in-game) .playersPanel{
+  width:340px;
+  min-width:300px;
+}
+body.page-room:not(.in-game) .pRow{
+  margin-bottom:8px;
+  border-color:rgba(28,140,255,.12);
+  background:rgba(237,247,255,.64);
+}
+body.page-room:not(.in-game) .playersPanel > .controls{
+  gap:10px;
+  padding:12px;
+  background:linear-gradient(180deg, rgba(249,252,255,.94), rgba(238,247,255,.96));
+}
+body.page-room:not(.in-game) .roomActionBtn{
+  flex:1 1 0;
+  min-width:0;
+  min-height:50px;
+  font-size:15px;
+  font-weight:850;
+  touch-action:manipulation;
+  user-select:none;
+}
+body.page-room:not(.in-game) #startBtn:not(:disabled){
+  border-color:rgba(15,157,88,.38);
+  color:#08723e;
+  background:linear-gradient(180deg, rgba(48,224,123,.25), rgba(48,224,123,.10));
+  box-shadow:0 8px 18px rgba(15,157,88,.12), inset 0 1px rgba(255,255,255,.8);
+}
+.roomNavIcon{ display:none; }
+
+@media (max-width: 920px){
+  body.page-lobby{
+    overflow-x:hidden;
+    overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+  }
+  body.page-lobby .app{
+    height:auto;
+    min-height:100%;
+  }
+  body.page-lobby .main{
+    padding:10px;
+    gap:10px;
+  }
+  body.page-lobby .rooms,
+  body.page-lobby .socialRail{
+    flex:0 0 auto;
+  }
+  body.page-lobby .rooms{
+    min-height:min(66dvh, 610px);
+  }
+  body.page-lobby .socialRail{
+    width:100%;
+    min-width:0;
+  }
+  body.page-lobby .socialRail .chatLog{
+    min-height:180px;
+    height:26dvh;
+  }
+  body.page-room:not(.in-game) .roomTop{
+    padding:10px 10px 0;
+    gap:10px;
+  }
+  body.page-room:not(.in-game) .roomBottom{
+    padding:0 10px 10px;
+  }
+  body.page-room:not(.in-game) .playersPanel{
+    width:100%;
+  }
+}
+
+@media (max-width: 600px){
+  body.page-lobby .topbar,
+  body.page-room:not(.in-game) .topbar{
+    position:sticky;
+    top:0;
+    z-index:700;
+  }
+  .lobbyTopbar{
+    min-height:52px;
+    padding:7px 10px;
+  }
+  .lobbyMark{
+    width:34px;
+    height:34px;
+    flex-basis:34px;
+  }
+  body.page-lobby .topbar .actions{
+    gap:5px;
+    flex-wrap:nowrap;
+  }
+  body.page-lobby .topbar .iconbtn{
+    width:34px;
+    height:34px;
+  }
+  .lobbySectionHead{
+    align-items:stretch;
+    flex-direction:column;
+    gap:14px;
+    padding:18px 16px 15px;
+  }
+  .lobbySectionHead h1{
+    font-size:22px;
+  }
+  .lobbySectionHead p{
+    font-size:12px;
+    line-height:1.45;
+  }
+  .lobbyCreateBtn{
+    width:100%;
+    min-height:48px;
+  }
+  body.page-lobby .rooms{
+    min-height:0;
+  }
+  body.page-lobby .tableWrap{
+    flex:0 0 auto;
+    overflow:visible;
+    padding:8px;
+    background:rgba(239,247,255,.46);
+  }
+  body.page-lobby table,
+  body.page-lobby tbody{
+    display:block;
+  }
+  body.page-lobby thead,
+  body.page-lobby colgroup{
+    display:none;
+  }
+  body.page-lobby tbody .roomRow{
+    display:grid;
+    grid-template-columns:auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "state title count"
+      "mode title join";
+    gap:7px 10px;
+    align-items:center;
+    min-height:88px;
+    margin-bottom:8px;
+    padding:11px 12px;
+    border:1px solid rgba(28,140,255,.15);
+    border-radius:13px;
+    background:rgba(255,255,255,.88);
+    box-shadow:0 5px 14px rgba(33,79,113,.07);
+  }
+  body.page-lobby tbody .roomRow:last-child{
+    margin-bottom:0;
+  }
+  body.page-lobby tbody .roomRow td{
+    display:block;
+    width:auto;
+    height:auto;
+    min-width:0;
+    padding:0;
+    border:0;
+    text-align:left;
+    overflow:visible;
+  }
+  body.page-lobby .roomRow .tdState{ grid-area:state; }
+  body.page-lobby .roomRow .tdMode{ grid-area:mode; }
+  body.page-lobby .roomRow .tdTitle{ grid-area:title; }
+  body.page-lobby .roomRow .tdCount{ grid-area:count; text-align:right; }
+  body.page-lobby .roomRow .tdJoin{ grid-area:join; text-align:right; }
+  body.page-lobby .roomRow .tdTitle .title1{
+    white-space:normal;
+    display:-webkit-box;
+    -webkit-line-clamp:2;
+    -webkit-box-orient:vertical;
+    line-height:1.3;
+  }
+  body.page-lobby .roomRow .tdJoin .btn{
+    min-width:62px;
+    min-height:36px;
+    padding:7px 10px;
+  }
+  body.page-lobby tbody tr:not(.roomRow){
+    display:block;
+  }
+  body.page-lobby tbody tr:not(.roomRow) td[colspan]{
+    display:block;
+    height:auto;
+    padding:28px 14px;
+    border:0;
+    text-align:center;
+    white-space:normal;
+  }
+  .legendRow{
+    padding:10px 12px;
+  }
+  .roomListHint{ display:none; }
+
+  body.page-room:not(.in-game){
+    padding-bottom:calc(78px + env(safe-area-inset-bottom));
+  }
+  body.page-room:not(.in-game) .app{
+    padding-bottom:0;
+  }
+  body.page-room:not(.in-game) .topbar{
+    min-height:54px;
+    padding:7px 9px;
+  }
+  body.page-room:not(.in-game) .brand .logo{
+    width:30px;
+    height:30px;
+  }
+  body.page-room:not(.in-game) .topbar .actions{
+    gap:4px;
+  }
+  body.page-room:not(.in-game) .topbar .actions .iconbtn,
+  body.page-room:not(.in-game) .topbar .actions .roomNavBtn{
+    display:inline-grid;
+    place-items:center;
+    width:34px;
+    min-width:34px;
+    height:34px;
+    padding:0;
+  }
+  .roomNavIcon{ display:inline; font-size:15px; }
+  .roomNavLabel{ display:none; }
+  body.page-room:not(.in-game) .playersPanel > .controls{
+    position:fixed;
+    left:8px;
+    right:8px;
+    bottom:calc(8px + env(safe-area-inset-bottom));
+    z-index:900;
+    min-height:64px;
+    padding:7px;
+    border:1px solid rgba(28,140,255,.24);
+    border-radius:17px;
+    background:rgba(248,252,255,.96);
+    box-shadow:0 12px 34px rgba(13,49,79,.24), inset 0 1px rgba(255,255,255,.9);
+    backdrop-filter:blur(14px);
+    pointer-events:auto;
+  }
+  body.page-room:not(.in-game) .roomActionBtn{
+    min-height:50px;
+    pointer-events:auto;
+  }
+  body.page-room:not(.in-game) .roomBottom .panel.chat{
+    height:clamp(240px, 38dvh, 360px);
+  }
+}
+
+@media (max-width: 380px){
+  .lobbyIdentity > div > b{ font-size:12px; }
+  .lobbyIdentity .nickChip{ max-width:84px; }
+  body.page-lobby .topbar .actions{ gap:3px; }
+  body.page-lobby .topbar .iconbtn{
+    width:31px;
+    height:31px;
+    border-radius:10px;
+    font-size:14px;
+  }
+  .legendBadges{ gap:3px; display:flex; }
+  .legendBadges .badge{ padding:3px 6px; font-size:10px; }
+  body.page-room:not(.in-game) .brand .logo{ display:none; }
+  body.page-room:not(.in-game) .topbar .title b{ font-size:13px; }
+}
+
+/* Device-size guarantees
+   - phone/tablet (<=920px): party actions never scroll behind a long roster
+   - compact laptop/Whalebook: reserve more vertical space for game/party info
+   - desktop: keep chat useful without letting it dominate the room */
+body.page-room:not(.in-game) .roomBottom .panel.chat{
+  height:clamp(220px, 30vh, 360px);
+}
+
+@media (max-width: 920px){
+  body.page-room:not(.in-game) .gameBriefingBoard{ display:none !important; }
+  body.page-room:not(.in-game){
+    padding-bottom:calc(78px + env(safe-area-inset-bottom));
+  }
+  body.page-room:not(.in-game) .app{
+    padding-bottom:0;
+  }
+  body.page-room:not(.in-game) .playersPanel .pList{
+    max-height:min(38dvh, 240px);
+    overflow-y:auto;
+    overscroll-behavior:contain;
+  }
+  body.page-room:not(.in-game) .playersPanel > .controls{
+    position:fixed;
+    left:max(8px, env(safe-area-inset-left));
+    right:max(8px, env(safe-area-inset-right));
+    bottom:calc(8px + env(safe-area-inset-bottom));
+    z-index:900;
+    min-height:64px;
+    padding:7px;
+    border:1px solid rgba(28,140,255,.24);
+    border-radius:17px;
+    background:rgba(248,252,255,.96);
+    box-shadow:0 12px 34px rgba(13,49,79,.24), inset 0 1px rgba(255,255,255,.9);
+    backdrop-filter:blur(14px);
+    pointer-events:auto;
+  }
+  body.page-room:not(.in-game) .roomActionBtn{
+    min-height:50px;
+    pointer-events:auto;
+  }
+  body.page-room:not(.in-game) .roomBottom .panel.chat{
+    height:clamp(230px, 34dvh, 340px);
+  }
+}
+
+@media (min-width: 921px) and (max-height: 820px){
+  body.page-room:not(.in-game) .roomTop{
+    min-height:360px;
+  }
+  body.page-room:not(.in-game) .roomBottom .panel.chat{
+    height:clamp(190px, 27vh, 240px);
+  }
+  body.page-room:not(.in-game) .pRow{
+    padding-block:8px;
+    margin-bottom:6px;
+  }
+}
+
+@media (min-width: 921px){
+  body.page-room:not(.in-game) .canvasWrap{
+    flex:1 1 0;
+    min-width:0;
+  }
+}
+
+@media (min-width: 1441px){
+  body.page-room:not(.in-game) .playersPanel{
+    width:380px;
+  }
+}

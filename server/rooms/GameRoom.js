@@ -194,6 +194,7 @@ this.state.maxClients = this.maxClients;
       puzzle: null,          // idx -> pressed
       floors: new Map(),    // id -> {id, owner, x, y, width, height, color, t}
       floorUsed: new Map(), // sessionId -> used count (per-life quota)
+      itemOwners: new Map(),
       level: 1,
       lastBroadcastAt: 0,
       over: false,
@@ -422,7 +423,15 @@ this.sc = {
       if (minGap && (nowMs - lastAt) < minGap) return;
       if (minGap) this.br.rate[rk] = nowMs;
       const pp = this.state.players.get(client.sessionId);
-      const msg = Object.assign({}, inner, {
+      const authoritativeRole = String(this.br?.startPayload?.roles?.[String(client.sessionId)]?.role ||
+        (String(this.br?.startPayload?.monsterSid || "") === String(client.sessionId) ? "monster" : "rabbit"));
+      const cleanInner = kind === "state" ? Object.assign({}, inner, {
+        x: clamp(Number(inner.x)||0, -220, 220), y: clamp(Number(inner.y)||0, -4, 20), z: clamp(Number(inner.z)||0, -220, 220),
+        yaw: clamp(Number(inner.yaw)||0, -Math.PI*4, Math.PI*4), vx: clamp(Number(inner.vx)||0, -30, 30), vz: clamp(Number(inner.vz)||0, -30, 30),
+        seq: Math.max(0, Math.floor(Number(inner.seq)||0)), hasKey: !!inner.hasKey, ghost: !!inner.ghost, trapped: !!inner.trapped,
+        caught: clamp(Math.floor(Number(inner.caught)||0), 0, 2), role: authoritativeRole,
+      }) : inner;
+      const msg = Object.assign({}, cleanInner, {
         from: client.sessionId,
         sid: client.sessionId,
         seat: Number(this.state.order.get(client.sessionId) ?? -1),
@@ -537,8 +546,13 @@ this.sc = {
         onGround: !!s.onGround,
         onButton: !!s.onButton,
         isDead: !!s.isDead,
+        level: clamp(parseInt(s.level ?? 1, 10) || 1, 1, 999),
+        goalReached: !!s.goalReached,
         color: String(s.color || "").slice(0, 16),
         name: String(p.nick || s.name || "Player").slice(0, 16),
+        heldItem: (s.heldItem && ["gun","lightsaber","jetpack","missile","grenade","pan"].includes(String(s.heldItem.type)))
+          ? { type: String(s.heldItem.type), charges: clamp(parseInt(s.heldItem.charges,10)||0, 0, 99) }
+          : null,
       };
       this.tg.players.set(client.sessionId, snap);
 
@@ -608,6 +622,22 @@ this.sc = {
         dy: iy,
         from: String(from || client.sessionId || "").slice(0, 64),
       });
+    });
+
+    this.onMessage("tg_item", (client, payload) => {
+      if (this.state.mode !== "togester" || this.state.phase !== "playing" || this.tg.over) return;
+      const action = String(payload?.action || "");
+      if (!["spawn","pick","drop","use"].includes(action)) return;
+      if (!this.tg.itemOwners) this.tg.itemOwners = new Map();
+      const id = String(payload?.id || payload?.item?.id || "").slice(0,80);
+      if (action === "spawn" && !this.state.players.get(client.sessionId)?.isHost) return;
+      if (action === "pick") {
+        if (!id || this.tg.itemOwners.has(id)) return;
+        this.tg.itemOwners.set(id, client.sessionId);
+      }
+      if ((action === "use" || action === "drop") && (!id || this.tg.itemOwners.get(id) !== client.sessionId)) return;
+      if (action === "drop") this.tg.itemOwners.delete(id);
+      this.broadcast("tg_item", { ...payload, id, from:client.sessionId });
     });
 
     this.onMessage("tg_box_impulse", (client, payload) => {
@@ -743,6 +773,7 @@ this.sc = {
       this.tg.level = lv;
       try{ this.tg.floors.clear(); }catch(_){ }
       try{ this.tg.boxes = {}; this.tg.puzzle = { level: lv, boxes: [], buttons: this.tg.buttons || {}, doors: [], lifts: [], bridges: [] }; }catch(_){ }
+      try{ this.tg.itemOwners.clear(); }catch(_){ }
       this.broadcast("tg_level", { level: lv });
       this.broadcast("tg_floors", { floors: [] });
       this.broadcast("tg_boxes", { level: lv, boxes: [] });
@@ -759,6 +790,7 @@ this.sc = {
       this.tg.buttons = {};
       try{ this.tg.floors.clear(); }catch(_){ }
       try{ this.tg.boxes = {}; this.tg.puzzle = { level: this.tg.level, boxes: [], buttons: this.tg.buttons, doors: [], lifts: [], bridges: [] }; }catch(_){ }
+      try{ this.tg.itemOwners.clear(); }catch(_){ }
       this.broadcast("tg_reset", { t: Number(t)||Date.now() });
       this.broadcast("tg_buttons", { buttons: this.tg.buttons });
       this.broadcast("tg_floors", { floors: [] });

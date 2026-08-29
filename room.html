@@ -6,7 +6,8 @@
 <meta content="width=device-width, initial-scale=1, viewport-fit=cover" name="viewport"/>
 <title>방</title>
 <link rel="icon" href="./favicon.ico"/>
-<link href="./css/styles.css" rel="stylesheet"/>
+<link rel="preload" as="image" type="image/webp" href="./assets/images/backgrounds/room-clubhouse.webp"/>
+<link href="./css/styles.css?v=20260829-lobby-room-v6" rel="stylesheet"/>
 </head>
 <body class="page-room">
 <div class="app">
@@ -21,8 +22,8 @@
 <div class="actions">
 <button class="iconbtn" id="toggleFullscreen" title="전체화면" aria-label="전체화면">⛶</button>
 <button class="iconbtn" id="toggleMute" title="음소거" aria-label="음소거">🔊</button>
-<button class="btn" id="logoutBtn">로그아웃</button>
-<button class="btn" id="leaveBtn">로비로</button>
+<button class="btn roomNavBtn" id="logoutBtn" aria-label="로그아웃" title="로그아웃"><span class="roomNavIcon" aria-hidden="true">🚪</span><span class="roomNavLabel">로그아웃</span></button>
+<button class="btn roomNavBtn" id="leaveBtn" aria-label="로비로" title="로비로"><span class="roomNavIcon" aria-hidden="true">↩</span><span class="roomNavLabel">로비로</span></button>
 </div>
 </div>
 <div class="status" id="statusBanner" style="display:none"></div>
@@ -31,6 +32,7 @@
 <div class="panel canvasWrap">
 <div class="panelHeader">
 <div>
+<span class="sectionKicker">GAME BRIEFING</span>
 <h2>게임 설명</h2>
 <div class="sub muted" id="gamePanelSub"></div>
 </div>
@@ -45,6 +47,30 @@
     <div class="gameControlsHint muted" id="gameControlsHint"></div>
   </div>
 </div>
+
+<section class="gameBriefingBoard" id="gameBriefingBoard" aria-label="게임 시작 전 브리핑">
+  <div class="briefingBoardHead">
+    <div>
+      <span class="sectionKicker">READY CHECK</span>
+      <b>시작 전에 이것만 확인!</b>
+    </div>
+    <span class="briefingModeBadge" id="briefingModeBadge">협동 · 최대 4인</span>
+  </div>
+  <div class="briefingCards">
+    <article class="briefingCard flow">
+      <span class="briefingIcon" aria-hidden="true">★</span>
+      <div><b>한 판의 흐름</b><p id="briefingFlow">준비 → 협동 → 목표 달성</p></div>
+    </article>
+    <article class="briefingCard control">
+      <span class="briefingIcon" aria-hidden="true">✦</span>
+      <div><b>조작 방법</b><p id="briefingControls">게임 안에서 조작 안내를 확인하세요.</p></div>
+    </article>
+    <article class="briefingCard tip">
+      <span class="briefingIcon" aria-hidden="true">!</span>
+      <div><b>플레이 팁</b><p id="briefingTip">준비가 끝나면 팀원과 출발하세요.</p></div>
+    </article>
+  </div>
+</section>
 
 <div class="duel-ui hidden" id="duelUI">
   <div class="duel-info">
@@ -122,6 +148,7 @@
 <div class="panel playersPanel">
 <div class="panelHeader">
 <div>
+<span class="sectionKicker">PARTY</span>
 <h2>입장 인원</h2>
 <div class="sub muted">참가자는 레디 후 방장이 시작</div>
 </div>
@@ -129,8 +156,8 @@
 </div>
 <div class="pList" id="playersList"></div>
 <div class="controls">
-<button class="btn primary" id="readyBtn">준비</button>
-<button class="btn start" disabled="" id="startBtn">시작</button>
+<button class="btn primary roomActionBtn" id="readyBtn">준비</button>
+<button class="btn start roomActionBtn" disabled="" id="startBtn">시작</button>
 </div>
 </div>
 </div>
@@ -138,6 +165,7 @@
 <div class="panel chat">
 <div class="panelHeader">
 <div>
+<span class="sectionKicker">ROOM CHAT</span>
 <h2>채팅</h2>
 </div>
 <span class="badge"><span class="dot ok"></span>ROOM</span>
@@ -219,7 +247,7 @@
 <script defer="" src="./js/core/audio.js"></script>
 <script defer="" src="./js/core/fullscreen-intent.js"></script>
 <script defer="" src="./js/games/registry.js"></script><script defer="defer" src="./js/stackga/engine.js"></script><script defer="defer" src="./js/stackga/touch.js"></script><script defer="defer" src="./js/sim/stackga_tournament.js"></script>
-<script defer="" src="./js/pages/room.js?v=20260819-soccer-v14"></script>
+<script defer="" src="./js/pages/room.js?v=20260829-briefing-v1"></script>
     <audio id="bgmBattle" loop="" preload="auto" src="assets/audio/lobby_battle.mp3"></audio>
     <!-- Game-specific BGM (started/stopped by room.js) -->
     <audio id="bgmGame" loop="" preload="auto"></audio>

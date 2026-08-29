@@ -351,6 +351,36 @@ function setupBgm(audioElId, btnId){
     thumb: document.querySelector("#gamePreview .gpThumb"),
     // NOTE: room.html에서 제목/기본설명 대신 게임별 2줄 설명만 표시
     desc: document.getElementById("previewDesc"),
+    modeBadge: document.getElementById("briefingModeBadge"),
+    flow: document.getElementById("briefingFlow"),
+    controls: document.getElementById("briefingControls"),
+    tip: document.getElementById("briefingTip"),
+  };
+
+  const BRIEFING_FLOW = {
+    stackga: "블록 배치 → 줄 삭제 → 상대 압박",
+    suika: "도형 낙하 → 같은 도형 합치기 → 최고 단계",
+    drawanswer: "출제자 그림 → 채팅 추리 → 연속 정답",
+    togester: "아이템 탐색 → 기믹 협동 → 깃발 도착",
+    suhaktokki: "미션 수행 → 술래 추리 → 제한시간 생존",
+    mathexplorer: "문제 해결 → 전투 보상 → 협동 성장",
+    backrooms3d: "열쇠 탐색 → 잠금 해제 → 출구 탈출",
+    snaketail: "먹이 수집 → 몸집 성장 → 최후까지 생존",
+    soccer: "문제 대결 → 공방전 → 더 많은 득점",
+    geumchikeo: "금칙어 확인 → 대화 유도 → 점수 방어",
+  };
+
+  const BRIEFING_TIP = {
+    stackga: "연속 삭제를 노리되 빈틈이 너무 높아지지 않게 관리하세요.",
+    suika: "큰 도형을 한쪽에 모으면 다음 합체 공간을 만들기 쉽습니다.",
+    drawanswer: "글자 대신 특징과 모양을 크게 그리면 팀원이 빨리 알아봅니다.",
+    togester: "아이템은 장난에도 쓰이지만 버튼·상자 기믹을 풀 때 더 강력합니다.",
+    suhaktokki: "혼자 다니지 말고 미션 상황과 의심 대상을 계속 공유하세요.",
+    mathexplorer: "보상과 레벨업 효과를 역할에 맞춰 나누면 후반이 편해집니다.",
+    backrooms3d: "열쇠 위치와 괴물의 방향을 채팅으로 짧게 공유하세요.",
+    snaketail: "큰 상대의 진행 방향을 피하고 작은 먹이부터 안전하게 모으세요.",
+    soccer: "공을 오래 끌기보다 패스와 태클 타이밍을 맞추는 게 유리합니다.",
+    geumchikeo: "직접적인 질문보다 자연스러운 대화로 상대의 금칙어를 유도하세요.",
   };
 
   // ---- Game BGM (per-game music during play) ----
@@ -439,6 +469,7 @@ function setupBgm(audioElId, btnId){
 function updatePreview(modeId){
   const meta = window.gameById ? window.gameById(modeId) : null;
   const label = meta?.name || modeLabel(modeId) || "-";
+  const gameId = meta?.id || modeId || "";
 
   // 요청사항: 방 화면에 게임별 핵심 규칙 설명을 표시
   try{
@@ -457,13 +488,33 @@ function updatePreview(modeId){
     }
   }catch(_){}
 
+  // 기존 레지스트리 정보만 이용하는 클라이언트 전용 브리핑 영역.
+  try{
+    if (previewEls.modeBadge){
+      const kind = meta?.type === "duel" ? "대결" : "협동";
+      const maxPlayers = Math.max(1, Number(meta?.maxClients || 4));
+      previewEls.modeBadge.textContent = `${kind} · 최대 ${maxPlayers}인`;
+    }
+    if (previewEls.flow){
+      previewEls.flow.textContent = BRIEFING_FLOW[gameId] || "준비 → 게임 시작 → 목표 달성";
+    }
+    if (previewEls.controls){
+      const hints = [meta?.mobileHint, meta?.pcHint]
+        .map(value => (value ?? "").toString().trim())
+        .filter(Boolean);
+      previewEls.controls.textContent = hints.join(" · ") || "게임 안에서 조작 안내를 확인하세요.";
+    }
+    if (previewEls.tip){
+      previewEls.tip.textContent = BRIEFING_TIP[gameId] || "준비가 끝나면 팀원과 목표를 먼저 확인하세요.";
+    }
+  }catch(_){}
+
   try{
     if (previewEls.thumb){
       previewEls.thumb.dataset.game = meta?.id || modeId || "";
       // Mobile: make "그림맞추기" fit by splitting into two lines.
       // Wider mobile threshold so long Korean game titles don't auto-wrap awkwardly
       const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
-      const gameId = meta?.id || modeId || "";
       const hasPreviewArt = ["stackga","suika","drawanswer","togester","suhaktokki","mathexplorer","backrooms3d","snaketail","soccer"].includes(gameId);
       previewEls.thumb.classList.toggle("has-art", hasPreviewArt);
       if ((meta?.id || modeId) === "drawanswer" && isMobileNarrow && !hasPreviewArt){
@@ -1222,6 +1273,11 @@ function updatePreview(modeId){
     if (d.type === "tg_box_impulse"){
       if (!fromMain) return;
       try{ room.send("tg_box_impulse", d); }catch(_){ }
+      return;
+    }
+    if (d.type === "tg_item"){
+      if (!fromMain) return;
+      try{ room.send("tg_item", d); }catch(_){ }
       return;
     }
     if (d.type === "tg_sync"){
@@ -2538,7 +2594,9 @@ function startCoopEmbed(meta){
     const nick = encodeURIComponent(String(myNick || "Player"));
     const host = encodeURIComponent(String(getMyIsHost() ? 1 : 0));
     const seat = encodeURIComponent(String(getMySeat()));
-    return `&roomId=${encodeURIComponent(roomId || "")}&sid=${sid}&nick=${nick}&host=${host}&seat=${seat}`;
+    const mapSeed = encodeURIComponent(String(Number(coop?.startPayload?.seed || 0) >>> 0));
+    const startId = encodeURIComponent(String(coop?.startPayload?.startId || coop?.startPayload?.startedAt || ""));
+    return `&roomId=${encodeURIComponent(roomId || "")}&sid=${sid}&nick=${nick}&host=${host}&seat=${seat}&mapSeed=${mapSeed}&startId=${startId}`;
   })();
   const src = `${meta.embedPath}?embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}&_m=${Date.now()}`;
   if (duel.iframeEl){
@@ -2841,6 +2899,16 @@ try{
         try{ resetBracket(); }catch(_){ }
         coop.level = 1;
         coop.practice = false;
+        // Backrooms3d는 iframe이 생성되는 바로 그 순간 서버 seed로 맵을 만든다.
+        // startSim() 뒤에 저장하면 roomId 임시 seed로 먼저 생성되어 클라이언트별 맵/역할이 어긋날 수 있다.
+        try{
+          const earlyMode = String((m && m.mode) || room?.state?.mode || "");
+          if (earlyMode === "backrooms3d" && m?.startPayload){
+            coop.startPayload = m.startPayload;
+            coop.sentGameStart = false;
+            coop._brGameStartAck = false;
+          }
+        }catch(_){ }
         // Soccer: cache authoritative startedAt from server broadcast
         try{ if ((m?.mode||room?.state?.mode)==='soccer') coop.soccerStartedAt = Number(m?.startedAt||0)||Date.now(); }catch(_){}
         startSim();
@@ -3012,6 +3080,9 @@ try{
       });
       room.onMessage("tg_push", (msg)=>{
         postToMain({ type:"tg_push", to: msg.to, dx: msg.dx, dy: msg.dy, from: msg.from });
+      });
+      room.onMessage("tg_item", (msg)=>{
+        postToMain(Object.assign({ type:"tg_item" }, msg || {}));
       });
 
       room.onMessage("tg_boxes", (msg)=>{

@@ -44,6 +44,33 @@ function safeId(x){
 }
 
 function now(){ return Date.now(); }
+function clampNumber(value,min,max){ const n=Number(value)||0; return Math.max(min,Math.min(max,n)); }
+
+function buildBackroomsStartPayload(rosterInput, seedInput, startedAtInput){
+  const roster = (Array.isArray(rosterInput) ? rosterInput : []).slice()
+    .sort((a,b)=> Number(a?.seat ?? 99)-Number(b?.seat ?? 99) || String(a?.sid||'').localeCompare(String(b?.sid||'')));
+  const seed = Number(seedInput) >>> 0;
+  const startedAt = Number(startedAtInput) || now();
+  const monsterSid = roster.length >= 2 ? String(roster[seed % roster.length]?.sid || '') : null;
+  const monsterSeat = monsterSid ? Number(roster.find(r=>String(r?.sid||'')===monsterSid)?.seat ?? -1) : -1;
+  const roles = {};
+  const rabbitSlots = [
+    {x:-5.4,z:7.6},{x:-3.6,z:6.95},{x:-1.8,z:6.35},{x:0,z:6.15},
+    {x:1.8,z:6.35},{x:3.6,z:6.95},{x:5.4,z:7.6}
+  ];
+  roster.filter(r=>String(r?.sid||'')!==String(monsterSid||'')).forEach((r,idx)=>{
+    const slot=rabbitSlots[Math.min(idx,rabbitSlots.length-1)];
+    roles[String(r.sid)]={role:'rabbit',seat:Number(r.seat??-1),spawn:{x:slot.x,y:0.05,z:slot.z,yaw:Math.PI}};
+  });
+  if(monsterSid){
+    roles[monsterSid]={role:'monster',seat:monsterSeat,spawn:{x:0,y:0.05,z:-161.6,yaw:0}};
+  }
+  return {
+    mode:'backrooms3d',seed,startedAt,releaseAt:startedAt+10000,
+    startId:`br-${startedAt}-${seed}`,playerCount:roster.length,roster,
+    monsterSid,monsterSeat,roles,spawnLockMs:10000,ignoreCaughtMs:10000
+  };
+}
 
 function wsSetAttachment(ws, obj){
   try{ if (ws && typeof ws.serializeAttachment === "function") ws.serializeAttachment(obj); }catch(_){}
@@ -1006,6 +1033,7 @@ export class RoomDO{
 
         this.tg.players = {};
         this.tg.floors = {};
+        this.tg.itemOwners = {};
         if (this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){}
           this.tg.timer = null;
         }
@@ -1119,16 +1147,8 @@ export class RoomDO{
               .map(([uid, u])=>({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99), isHost: !!u?.isHost }))
               .sort((a,b)=> (a.seat??99) - (b.seat??99) || String(a.sid).localeCompare(String(b.sid)));
             const seed = (Math.floor(Math.random() * 0x100000000) >>> 0);
-            const monsterSid = (roster.length >= 2) ? String(roster[seed % roster.length].sid) : null;
             const startedAt = now();
-            const releaseAt = startedAt + 10000;
-            // [FIX] roles 맵 생성: 각 플레이어의 role 명시적으로 포함
-            const roles = {};
-            roster.forEach((r, i) => {
-              const role = (monsterSid && String(r.sid) === monsterSid) ? 'monster' : 'rabbit';
-              roles[String(r.sid)] = { role, seat: r.seat };
-            });
-            const payload = { mode:'backrooms3d', startedAt, releaseAt, seed, playerCount: roster.length, roster, monsterSid, roles };
+            const payload = buildBackroomsStartPayload(roster, seed, startedAt);
             this.br.startPayload = payload;
             this.br.latestStates = {};
             this.br.latestWorld = null;
@@ -1311,13 +1331,22 @@ export class RoomDO{
           return;
         }
 
+        const startRole = String(this.br?.startPayload?.roles?.[String(uid)]?.role ||
+          (String(this.br?.startPayload?.monsterSid||'')===String(uid) ? 'monster' : 'rabbit'));
+        const cleanInner = kind === 'state' ? Object.assign({}, inner, {
+          x:clampNumber(inner.x,-220,220),y:clampNumber(inner.y,-4,20),z:clampNumber(inner.z,-220,220),
+          yaw:clampNumber(inner.yaw,-Math.PI*4,Math.PI*4),vx:clampNumber(inner.vx,-30,30),vz:clampNumber(inner.vz,-30,30),
+          seq:Math.max(0,Math.floor(Number(inner.seq)||0)),hasKey:!!inner.hasKey,ghost:!!inner.ghost,trapped:!!inner.trapped,
+          caught:Math.max(0,Math.min(2,Math.floor(Number(inner.caught)||0))),role:startRole
+        }) : inner;
+
         try{
           if (!this.br) this.br = { startPayload:null, latestStates:{}, latestWorld:null, latestChat:[], ending:false };
           if (kind === "game_end" && this.br.ending) return;
           if (kind === "leave") {
             if (this.br.latestStates) delete this.br.latestStates[String(uid)];
           } else if (kind === "state") {
-            this.br.latestStates[String(uid)] = Object.assign({}, inner, { from:String(uid) });
+            this.br.latestStates[String(uid)] = Object.assign({}, cleanInner, { from:String(uid) });
           } else if (kind === "world") {
             this.br.latestWorld = Object.assign({}, inner, { from:String(uid) });
           } else if (kind === "chat") {
@@ -1328,7 +1357,7 @@ export class RoomDO{
           }
         }catch(_){ }
 
-        const out = Object.assign({}, inner, { from: String(uid), seat: Number(this.users.get(uid)?.seat ?? -1), nick: safeNick(this.users.get(uid)?.nick || "") });
+        const out = Object.assign({}, cleanInner, { from: String(uid), seat: Number(this.users.get(uid)?.seat ?? -1), nick: safeNick(this.users.get(uid)?.nick || "") });
         this._broadcast("br_msg", { msg: out });
         // If the authoritative room host closes Backrooms while staying in the
         // outer room, nobody else can publish world snapshots. End cleanly
@@ -1486,6 +1515,7 @@ export class RoomDO{
           this.tg.boxes = {};
           this.tg.floorUsed = {};
           this.tg.puzzle = null;
+          this.tg.itemOwners = {};
           this._broadcast("tg_floors", { floors: [] });
           this._broadcast("tg_buttons", { buttons: {} });
           this._broadcast("tg_boxes", { level: d.level, boxes: [] });
@@ -1501,6 +1531,7 @@ export class RoomDO{
           this.tg.boxes = {};
           this.tg.floorUsed = {};
           this.tg.puzzle = null;
+          this.tg.itemOwners = {};
           this._broadcast("tg_floors", { floors: [] });
           this._broadcast("tg_boxes", { level: this.tg.level || 1, boxes: [] });
           this._broadcast("tg_puzzle", { level: this.tg.level || 1, boxes: [], buttons: {}, doors: [], lifts: [], bridges: [] });
@@ -1530,6 +1561,33 @@ export class RoomDO{
         if (this.meta.mode !== "togester") return;
         // Broadcast a push impulse (clients will filter by `to`)
         this._broadcast("tg_push", { to: String(d.to||""), dx: Number(d.dx)||0, dy: Number(d.dy)||0, from: uid });
+        return;
+      }
+
+      if (t === "tg_item"){
+        if (this.meta.mode !== "togester") return;
+        const action = String(d.action || "");
+        if (!["spawn","pick","drop","use"].includes(action)) return;
+        if (!this.tg.itemOwners) this.tg.itemOwners = {};
+        const id = String(d.id || d.item?.id || "").slice(0, 80);
+        if (action === "spawn") {
+          const sender = this.users.get(uid);
+          if (!sender?.isHost) return;
+        }
+        if (action === "pick") {
+          if (!id || this.tg.itemOwners[id]) return;
+          this.tg.itemOwners[id] = uid;
+        }
+        if ((action === "use" || action === "drop") && (!id || this.tg.itemOwners[id] !== uid)) return;
+        if (action === "drop") delete this.tg.itemOwners[id];
+        const item = d.item && typeof d.item === "object" ? {
+          id, type:String(d.item.type||"").slice(0,20),
+          x:Math.max(-2000,Math.min(20000,Number(d.item.x)||0)), y:Math.max(-2000,Math.min(20000,Number(d.item.y)||0)),
+          vx:Math.max(-12,Math.min(12,Number(d.item.vx)||0)), vy:Math.max(-16,Math.min(16,Number(d.item.vy)||0)), landed:!!d.item.landed
+        } : undefined;
+        this._broadcast("tg_item", { action, level:Number(d.level)||this.tg.level||1, evt:String(d.evt||"").slice(0,100),
+          id, itemType:String(d.itemType||"").slice(0,20), charges:Math.max(0,Math.min(20,Number(d.charges)||0)), item,
+          effect:d.effect&&typeof d.effect==="object"?d.effect:undefined, from:uid });
         return;
       }
 
