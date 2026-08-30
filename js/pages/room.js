@@ -937,8 +937,6 @@ function updatePreview(modeId){
     const isTogesterPacket = TOGESTER_BRIDGE_TYPES.has(String(d.type||''));
     const togesterModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='togester') || (duel?.iframeEl && /embedGame=togester/.test(String(duel.iframeEl.src || ''))));
     const togesterOriginOk = !e.origin || e.origin === location.origin;
-    // 일부 WebView/iframe 환경에서 postMessage e.source 가 null이어도 gameId+현재 모드+동일 출처가
-    // 모두 투게스터인 패킷만 보조 허용한다. 다른 게임/외부 메시지는 통과시키지 않는다.
     const fromTogesterCoopFallback = !!(isTogesterPacket && d.gameId === 'togester' && togesterModeLikely && togesterOriginOk && !fromCpu);
     const fromMainForTogester = fromMain || fromTogesterCoopFallback;
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
@@ -1353,7 +1351,7 @@ function updatePreview(modeId){
 
     // SnakeTail (coop competitive) iframe -> server relay
     if (d.type === "st_state"){
-      if (!fromMain) return;
+      if (!fromMainForTogester) return;
       const now = Date.now();
       if (!window.__lastStStateSent) window.__lastStStateSent = 0;
       if (now - window.__lastStStateSent >= 120){
@@ -1363,22 +1361,22 @@ function updatePreview(modeId){
       return;
     }
     if (d.type === "st_eat"){
-      if (!fromMain) return;
+      if (!fromMainForTogester) return;
       try{ room.send("st_eat", { id: d.id }); }catch(_){ }
       return;
     }
     if (d.type === "st_spawn"){
-      if (!fromMain) return;
+      if (!fromMainForTogester) return;
       try{ room.send("st_spawn", { foods: d.foods || [] }); }catch(_){ }
       return;
     }
     if (d.type === "st_event"){
-      if (!fromMain) return;
+      if (!fromMainForTogester) return;
       try{ room.send("st_event", { event: d.event || {} }); }catch(_){ }
       return;
     }
     if (d.type === "st_over"){
-      if (!fromMain) return;
+      if (!fromMainForTogester) return;
       try{ room.send("st_over", { reason: d.reason, winnerSid: d.winnerSid }); }catch(_){ }
       return;
     }
@@ -3091,6 +3089,9 @@ try{
       });
       room.onMessage("tg_item", (msg)=>{
         postToMain(Object.assign({ type:"tg_item" }, msg || {}));
+      });
+      room.onMessage("tg_item_ack", (msg)=>{
+        postToMain(Object.assign({ type:"tg_item_ack" }, msg || {}));
       });
 
       room.onMessage("tg_boxes", (msg)=>{

@@ -1575,8 +1575,16 @@ export class RoomDO{
           if (!sender?.isHost) return;
         }
         if (action === "pick") {
-          if (!id || this.tg.itemOwners[id]) return;
+          if (!id) {
+            this._send(ws, "tg_item_ack", { action:"pick", accepted:false, reason:"bad_id", id:"", level:Number(d.level)||this.tg.level||1 });
+            return;
+          }
+          if (this.tg.itemOwners[id]) {
+            this._send(ws, "tg_item_ack", { action:"pick", accepted:false, reason:"already_owned", id, level:Number(d.level)||this.tg.level||1 });
+            return;
+          }
           this.tg.itemOwners[id] = uid;
+          this._send(ws, "tg_item_ack", { action:"pick", accepted:true, id, itemType:String(d.itemType||"").slice(0,20), charges:Math.max(1,Math.min(20,Number(d.charges)||1)), level:Number(d.level)||this.tg.level||1 });
         }
         if ((action === "use" || action === "drop") && (!id || this.tg.itemOwners[id] !== uid)) return;
         if (action === "drop") delete this.tg.itemOwners[id];

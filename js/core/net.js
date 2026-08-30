@@ -201,7 +201,7 @@ if (isDuel && humans.length === 1){
         // DrawAnswer
         "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over","da_sync",
         // Togester
-        "tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_item","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota","tg_over","tg_sync","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
+        "tg_state","tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_item","tg_item_ack","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota","tg_over","tg_sync","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
         // SnakeTail
         "st_state","st_timer","st_foods","st_spawn","st_eat","st_eaten","st_players","st_scores","st_event","st_over",
         // Soccer
@@ -240,7 +240,7 @@ if (isDuel && humans.length === 1){
         // DrawAnswer
         "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over",
         // Togester
-        "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_item","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
+        "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_item","tg_item_ack","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
         // SnakeTail
         "st_timer","st_foods","st_spawn","st_eaten","st_players","st_scores","st_event",
         // SuhakTokki (coop)
@@ -251,6 +251,9 @@ if (isDuel && humans.length === 1){
         "br_msg","br_batch",
         // Soccer (coop) — server → client relays (positions/ball/score/timer/roster/end)
         "sc_timer","sc_players","sc_ball","sc_goal","sc_stun","sc_end","sc_goal_sync","sc_roster",
+        // Current authoritative Soccer Worker protocol
+        "sc_round_state","sc_round_progress","sc_math_ack","sc_score_sync","sc_time_pong",
+        // Legacy compatibility
         "sc_math_start","sc_math_progress","sc_math_result",
         // misc
         "frame"

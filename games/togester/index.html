@@ -667,8 +667,6 @@
         const EMBED_PRACTICE = EMBED && (new URLSearchParams(location.search).get('practice') === '1');
         function bridgeSend(type, payload){
             if (!EMBED) return;
-            // gameId 태그는 부모 브릿지가 e.source 를 잃는 일부 브라우저/WebView에서도
-            // 현재 투게스터 iframe의 패킷만 안전하게 보조 수신할 수 있게 해준다.
             try { window.parent && window.parent.postMessage({ type, gameId:'togester', ...payload }, '*'); } catch(e){}
         }
 
@@ -2319,11 +2317,7 @@ cameraX = 0;
             }else if(d.action==='pick'){
                 const found=worldItems.find(x=>x.id===d.id);
                 worldItems=worldItems.filter(x=>x.id!==d.id);
-                // 서버가 나를 줍기 승자로 확정했다면 로컬 아이템 배열이 한 프레임 먼저
-                // 바뀌었더라도 승인 패킷의 itemType으로 실제 손에 넣어야 한다.
-                const mine=(local || String(d.from||'')===String(mySessionId||''));
-                const pickedType=(found && found.type) || (ITEM_DEFS[d.itemType] ? d.itemType : null);
-                if(mine && pickedType) heldItem={id:String(d.id),type:pickedType,charges:Number(d.charges)||ITEM_DEFS[pickedType].charges};
+                if((local || String(d.from||'')===String(mySessionId||'')) && found) heldItem={id:String(d.id),type:found.type,charges:Number(d.charges)||ITEM_DEFS[found.type].charges};
             }else if(d.action==='use' && !local && d.effect){
                 const e=d.effect; addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color); itemSound(d.itemType);
             }
@@ -4540,6 +4534,18 @@ cameraX = 0;
                 return;
             }
 
+            if (d.type === "tg_item_ack"){
+                if (d.action === 'pick' && d.accepted){
+                    const found = worldItems.find(x => String(x.id) === String(d.id));
+                    const pickedType = (found && found.type) || (ITEM_DEFS[d.itemType] ? d.itemType : null);
+                    if (pickedType){
+                        worldItems = worldItems.filter(x => String(x.id) !== String(d.id));
+                        heldItem = { id:String(d.id), type:pickedType, charges:Number(d.charges)||ITEM_DEFS[pickedType].charges };
+                        updateItemButton();
+                    }
+                }
+                return;
+            }
             if (d.type === "tg_item"){
                 applyItemEvent(d, false);
                 return;
