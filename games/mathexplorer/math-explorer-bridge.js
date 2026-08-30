@@ -67,7 +67,7 @@
     localCharChosen:false, localCharType:'', selectedBySid:{}, gameBooted:false, uiReady:false,
     chat:null, overlay:null, remoteStates:{}, worldSnap:null, labelsCanvas:null, labelsCtx:null, chatSeen:new Set(), chatSeq:0,
     selecting:false, choiceType:'', lastEventId:'', wrapped:false, entitySeq:1, lastWorldSeq:0, worldGhost:null,
-    lastWorldAppliedAt:0, lastPhaseBroadcastAt:0, selectLockPos:null, __mxForceChoiceUi:false, __mxChoiceUiOpened:false, hostEnemySeen:{}, choiceDoneBySid:{}, choiceReqPending:false, choiceAckKey:'', tauntSid:'', tauntOffered:false, tauntChosen:false, lastAttackPulseSent:0, remoteAttackSeen:{}, __mxPendingChoiceCommit:'', __mxPendingChoiceAt:0, localChoiceTracked:{},
+    lastWorldAppliedAt:0, lastPhaseBroadcastAt:0, selectLockPos:null, __mxForceChoiceUi:false, __mxChoiceUiOpened:false, hostEnemySeen:{}, choiceDoneBySid:{}, choiceReqPending:false, choiceAckKey:'', tauntSid:'', tauntOffered:false, tauntChosen:false, lastAttackPulseSent:0, remoteAttackSeen:{}, remoteFxSeen:{}, combatFxSeen:new Set(), __mxPendingChoiceCommit:'', __mxPendingChoiceAt:0, localChoiceTracked:{},
     idMap:{ enemies:new WeakMap(), projectiles:new WeakMap(), enemyProjectiles:new WeakMap(), items:new WeakMap(), effects:new WeakMap() },
     ghostCache:{ monsters:Object.create(null), projectiles:Object.create(null), enemyProjectiles:Object.create(null) }, remoteFx:[], phaseParticipants:[], mapAppliedHash:''
   };
@@ -167,7 +167,7 @@
   const sendPhase=(phase,payload)=>send('mx_phase',Object.assign({phase},payload||{}));
   const sendWorld=(payload)=>send('mx_world',payload||{});
   const sendState=(payload)=>send('mx_state',payload||{});
-  const sendEvent=(evt,payload)=>send('mx_event',Object.assign({evt,id:`${evt}:${now()}:${Math.random().toString(36).slice(2,7)}`,sid:(mySid()||'')},payload||{}));
+  const sendEvent=(evt,payload)=>send('mx_event',Object.assign({evt,id:`${evt}:${now()}:${Math.random().toString(36).slice(2,7)}`,sid:(mySid()||'')},payload||{},{kind:'mx_event'}));
   function markPeer(sid){ sid=String(sid||'').trim(); if(!sid) return; const low=sid.toLowerCase(); if(low==='server'||low==='system'||low==='worker') return; state.peers.add(sid); }
   function activeCount(){ const e=Math.max(1, Number(state.expectedHumans||1)); const r=state.rosterSids.length?state.rosterSids.length:0; const p=Math.max(1, Array.from(state.peers||[]).filter(Boolean).length||0); return Math.min(4, Math.max(e,r,p)); }
   function ensureOverlay(){ if(state.overlay) return state.overlay; const el=document.createElement('div'); el.id='mxBridgeOverlay'; el.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.25);border-radius:10px;padding:7px 12px;color:#fff;font:600 13px/1.2 sans-serif;pointer-events:none;display:none;'; document.body.appendChild(el); state.overlay=el; return el; }
@@ -249,7 +249,7 @@
   function isLocalChoiceLock(){ return !!state.selecting && (state.choiceType==='레벨업' || state.choiceType==='보물' || !!isChoiceVisible()); }
   function setSelecting(v, label){ state.selecting=!!v; state.choiceType=label||''; const g=G(); if(g&&g.player){ g.player.__mxInvuln = !!v; if(v){ try{ state.selectLockPos={ x:safeNum(g.player.x), y:safeNum(g.player.y) }; if('vx' in g.player) g.player.vx=0; if('vy' in g.player) g.player.vy=0; }catch(_){} } else { state.selectLockPos=null; } } else if(!v){ state.selectLockPos=null; } }
   function showSelectingOverlay(label, remain){ const t = (typeof remain==='number'&&remain>=0) ? `${label} ${remain}s` : label; setOverlay(`선택중 · ${t}`); }
-  function randomCharType(){ const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; if(!arr.length) return ''; const item=arr[Math.floor(Math.random()*arr.length)]; return String(item?.type||''); }
+  function randomCharType(){ const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; if(!arr.length) return ''; const me=mySid()||'self'; const taken=new Set(Object.entries(state.selectedBySid||{}).filter(([sid])=>sid!==me).map(([,v])=>String(v||'')).filter(Boolean)); const available=arr.filter(ch=>!taken.has(String(ch?.type||''))); const pool=available.length?available:arr; const item=pool[Math.floor(Math.random()*pool.length)]; return String(item?.type||''); }
   function openCharSelect(){ if(!ensureGlobalsReady()) return false; ensureUi(); hideMainScreen(); try{ G().showCharSelect(); state.gameBooted=true; }catch(_){ } return true; }
   function selectedCount(){ return Object.keys(state.selectedBySid||{}).filter(k=>state.selectedBySid[k]!==undefined&&state.selectedBySid[k]!==null&&String(state.selectedBySid[k])!=='').length; }
   function hasUniqueSelections(){ const vals=Object.values(state.selectedBySid||{}).map(v=>String(v||'')).filter(Boolean); return (new Set(vals)).size===vals.length; }
@@ -485,7 +485,7 @@
         p.poison=true; p.poisonDmg = 3 + 2*p.itemLevels.poison; return true;
       case 'freeze': p.itemLevels.freeze = (p.itemLevels.freeze||0)+1; mxGuestChoiceStats.itemLevels.freeze = p.itemLevels.freeze; p.freeze=true; return true;
       case 'explode': p.itemLevels.explode = (p.itemLevels.explode||0)+1; mxGuestChoiceStats.itemLevels.explode = p.itemLevels.explode; p.explode=true; return true;
-      case 'lightning': p.itemLevels.lightning = (p.itemLevels.lightning||0)+1; mxGuestChoiceStats.itemLevels.lightning = p.itemLevels.lightning; p.lightning = 0.02 * p.itemLevels.lightning; return true;
+      case 'lightning': p.itemLevels.lightning = (p.itemLevels.lightning||0)+1; mxGuestChoiceStats.itemLevels.lightning = p.itemLevels.lightning; p.lightning = 0.30; return true;
       case 'spin': p.itemLevels.spin = (p.itemLevels.spin||0)+1; mxGuestChoiceStats.itemLevels.spin = p.itemLevels.spin; p.spinBlade=true; p.spinDmgMultiplier = 0.15 + 0.1 * p.itemLevels.spin; return true;
       case 'crit': p.itemLevels.crit = (p.itemLevels.crit||0)+1; mxGuestChoiceStats.itemLevels.crit = p.itemLevels.crit; p.crit = 0.08 * p.itemLevels.crit; return true;
       case 'multi': p.itemLevels.multi = (p.itemLevels.multi||0)+1; mxGuestChoiceStats.itemLevels.multi = p.itemLevels.multi; p.multishot = p.itemLevels.multi; return true;
@@ -679,7 +679,27 @@ function hostRetargetAndBuffEnemies(g){
   }
   // 원격 플레이어 공격 판정은 remote_attack 이벤트로만 처리한다.
   // (주기적 자동판정은 공격 불가/중복타격/XP 중복의 주된 원인이 되었음)
+  try{ hostApplyRemotePersistentItems(g); }catch(_){ }
   try{ mirrorTeamProgressToRemotes(); }catch(_){ }
+}
+
+function hostApplyRemotePersistentItems(g){
+  if(!iAmHost()||!g||!Array.isArray(g.enemies)) return;
+  const t=now(); state.remoteItemTimers=state.remoteItemTimers||{};
+  const hit=(enemy,damage,sid)=>{ if(!enemy||safeNum(enemy.hp,0)<=0)return; enemy.hp-=Math.max(0,damage); enemy.__mxLastHitSid=sid; enemy.__mxLastHitAt=t; };
+  const nearest=(x,y,range)=>{ let best=null,dist=range; for(const e of g.enemies){ if(!e||e.__mxGhost||safeNum(e.hp,0)<=0)continue; const d=Math.hypot(safeNum(e.x)-x,safeNum(e.y)-y); if(d<dist){dist=d;best=e;} } return best; };
+  for(const [sid,rs] of Object.entries(state.remoteStates||{})){
+    if(!rs||(t-safeNum(rs.ts,0))>2200) continue;
+    const il=rs.itemLevels||{}, timers=state.remoteItemTimers[sid]||(state.remoteItemTimers[sid]={});
+    const x=safeNum(rs.x),y=safeNum(rs.y),damage=Math.max(1,safeNum(rs.damage,10));
+    const spinLv=Math.max(0,Math.round(safeNum(il.spin,0)));
+    if(spinLv>0&&t-safeNum(timers.spin,0)>=200){ timers.spin=t; const a0=t/180; for(let i=0;i<3;i++){ const a=a0+i*Math.PI*2/3,bx=x+Math.cos(a)*80,by=y+Math.sin(a)*80; const e=nearest(bx,by,38); if(e) hit(e,damage*(0.15+0.1*spinLv),sid); } }
+    const angelLv=Math.max(0,Math.round(safeNum(il.angel,0)));
+    if(angelLv>0&&t-safeNum(timers.angel,0)>=1200){ timers.angel=t; const px=x-40,py=y-30+Math.sin(t/300)*5,e=nearest(px,py,250); if(e){ hit(e,8+angelLv*4,sid); if(Array.isArray(g.effects)) g.effects.push({type:'beam',startX:px,startY:py,x:px,y:py,endX:e.x,endY:e.y,angle:Math.atan2(e.y-py,e.x-px),length:Math.hypot(e.x-px,e.y-py),life:12,width:2}); } }
+    const demonLv=Math.max(0,Math.round(safeNum(il.demon,0)));
+    const demonCd=Math.max(400,1000-demonLv*100);
+    if(demonLv>0&&t-safeNum(timers.demon,0)>=demonCd){ timers.demon=t; const px=x+Math.sin(t/500)*Math.min(200,60+demonLv*15)*0.7,py=y+Math.sin(t/750)*Math.min(200,60+demonLv*15)*0.4,e=nearest(px,py,85); if(e){ hit(e,12+demonLv*5,sid); if(Array.isArray(g.slashes)) g.slashes.push({x:px,y:py,angle:Math.atan2(e.y-py,e.x-px),life:10,opacity:1,color:'#f0f'}); } }
+  }
 }
 
 
@@ -960,7 +980,9 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       const expected = safeNum(cs.baseMaxHp,100) + cs.maxHpBonus;
       if(safeNum(p.maxHp,0) < expected - 0.5) p.maxHp = expected;
     }
-    if(cs.shield){ p.shield = true; if(safeNum(p.shieldHp,0) <= 0) p.shieldHp = Math.max(100,safeNum(cs.shieldHp,0)); }
+    // 보호막은 선택 직후 한 번 부여되고 피해로 소모되어야 한다. 매 틱 100으로
+    // 재충전하면 깨지지 않는 보호막이 되므로 남은 내구도만 보존한다.
+    if(cs.shield){ p.shield = safeNum(p.shieldHp,0) > 0; }
     // 아이템 레벨 보너스 재적용
     if(cs.itemLevels && Object.keys(cs.itemLevels).length > 0){
       p.itemLevels = p.itemLevels || {};
@@ -968,7 +990,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       if(safeNum(il.poison,0) > 0){ p.itemLevels.poison = Math.max(safeNum(p.itemLevels.poison,0), il.poison); p.poison=true; p.poisonDmg = 3 + 2*p.itemLevels.poison; }
       if(safeNum(il.freeze,0) > 0){ p.itemLevels.freeze = Math.max(safeNum(p.itemLevels.freeze,0), il.freeze); p.freeze=true; }
       if(safeNum(il.explode,0) > 0){ p.itemLevels.explode = Math.max(safeNum(p.itemLevels.explode,0), il.explode); p.explode=true; }
-      if(safeNum(il.lightning,0) > 0){ p.itemLevels.lightning = Math.max(safeNum(p.itemLevels.lightning,0), il.lightning); p.lightning = 0.02 * p.itemLevels.lightning; }
+      if(safeNum(il.lightning,0) > 0){ p.itemLevels.lightning = Math.max(safeNum(p.itemLevels.lightning,0), il.lightning); p.lightning = 0.30; }
       if(safeNum(il.spin,0) > 0){ p.itemLevels.spin = Math.max(safeNum(p.itemLevels.spin,0), il.spin); p.spinBlade=true; p.spinDmgMultiplier = 0.15 + 0.1*p.itemLevels.spin; }
       if(safeNum(il.crit,0) > 0){ p.itemLevels.crit = Math.max(safeNum(p.itemLevels.crit,0), il.crit); p.crit = 0.08 * p.itemLevels.crit; }
       if(safeNum(il.multi,0) > 0){ p.itemLevels.multi = Math.max(safeNum(p.itemLevels.multi,0), il.multi); p.multishot = p.itemLevels.multi; }
@@ -976,7 +998,17 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     }
   }
 
-  function applyHostPlayerProgressToGuest(s){ const g=G(); if(!g||!g.player||!s) return; try{ const hp=s.player||{}; const lp=g.player;
+  function showSyncedLevelUpFx(g, p, level){
+    try{
+      const flash=document.getElementById('levelUpFlash');
+      if(flash){ flash.classList.remove('active'); void flash.offsetWidth; flash.classList.add('active'); setTimeout(()=>flash.classList.remove('active'),650); }
+      if(typeof g.textParticle==='function') g.textParticle(safeNum(p.x,0), safeNum(p.y,0)-70, `🆙 LEVEL ${Math.round(level)}!`, '#ffe36e', 1.35);
+      if(Array.isArray(g.particles)){
+        for(let i=0;i<18;i++){ const a=(Math.PI*2*i)/18; g.particles.push({ x:safeNum(p.x,0), y:safeNum(p.y,0)-10, vx:Math.cos(a)*(1.5+Math.random()*2.2), vy:Math.sin(a)*(1.5+Math.random()*2.2), life:34, maxLife:34, color:i%2?'#ffe36e':'#8ee7ff', size:3+Math.random()*3 }); }
+      }
+    }catch(_){ }
+  }
+  function applyHostPlayerProgressToGuest(s){ const g=G(); if(!g||!g.player||!s) return; try{ const hp=s.player||{}; const lp=g.player; const previousLevel=safeNum(lp.level,1);
       // 개별 플레이어 HP/MaxHP는 호스트 값으로 덮어쓰지 않는다.
       // 이 경로가 살아 있으면 피격 대상이 꼬였을 때 엉뚱한 유저가 맞은 것처럼 보인다.
       // Team progress is host-authoritative. Keeping a locally-higher guest
@@ -1000,7 +1032,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         if(safeNum(il.poison,0)>0){ lp.poison=true; lp.poisonDmg = 3 + 2*il.poison; }
         if(safeNum(il.freeze,0)>0){ lp.freeze=true; }
         if(safeNum(il.explode,0)>0){ lp.explode=true; }
-        if(safeNum(il.lightning,0)>0){ lp.lightning = 0.02 * il.lightning; }
+        if(safeNum(il.lightning,0)>0){ lp.lightning = 0.30; }
         if(safeNum(il.spin,0)>0){ lp.spinBlade=true; lp.spinDmgMultiplier = 0.15 + 0.1*il.spin; }
         if(safeNum(il.crit,0)>0){ lp.crit = 0.08 * il.crit; }
         if(safeNum(il.multi,0)>0){ lp.multishot = il.multi; }
@@ -1020,16 +1052,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         ensurePet('angel', desiredAngel);
         ensurePet('demon', desiredDemon);
       }catch(_){}
-      try{
-        if(Array.isArray(g.effects)){
-          const fxTag = `__mx_lvl_${Math.round(safeNum(lp.level,1))}_${Math.round(safeNum(lp.exp,0))}`;
-          if(state.__mxLastGuestProgressFx !== fxTag){
-            state.__mxLastGuestProgressFx = fxTag;
-            g.effects.push({ type:'levelup', x:safeNum(lp.x,0), y:safeNum(lp.y,0), life:24, maxLife:24 });
-            if(g.effects.length > 220) g.effects.splice(0, g.effects.length - 220);
-          }
-        }
-      }catch(_){}
+      if(safeNum(hp.level,previousLevel)>previousLevel) showSyncedLevelUpFx(g,lp,hp.level);
       if(typeof s.score==='number') g.score = s.score; if(typeof s.stage==='number') g.stage = s.stage; if(typeof s.nextBossScore==='number') g.nextBossScore = s.nextBossScore; if(typeof s.bossCount==='number') g.bossCount = s.bossCount;
       // ── 게스트 선택 스탯 보호: worldSnap이 덮어써도 누적 보너스 재적용 ──
       try{ reapplyGuestChoiceStats(lp); }catch(_){}
@@ -1063,6 +1086,20 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     // guest overlay for host-synced monsters/projectiles (disabled by default; game loop injects ghost entities)
     try{ if(false && !iAmHost() && state.worldGhost){ const lp0=g&&g.player; const camX0=lp0?(safeNum(lp0.x)-c.width/2):0; const camY0=lp0?(safeNum(lp0.y)-c.height/2):0; const lpMon=g&&g.player; const camXm=lpMon?(safeNum(lpMon.x)-c.width/2):0; const camYm=lpMon?(safeNum(lpMon.y)-c.height/2):0; for(const mon of (Array.isArray(state.worldGhost.monsters)?state.worldGhost.monsters:[])){ if(!mon) continue; const mx=safeNum(mon.x)-camXm, my=safeNum(mon.y)-camYm; if(mx<-60||my<-60||mx>c.width+60||my>c.height+60) continue; ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=mon.isBoss?'rgba(255,120,40,.8)':'rgba(220,60,60,.8)'; ctx.beginPath(); ctx.arc(mx,my,Math.max(8,safeNum(mon.size,16)),0,Math.PI*2); ctx.fill(); ctx.restore(); } const projs=[...(Array.isArray(state.worldGhost.projectiles)?state.worldGhost.projectiles:[]), ...(Array.isArray(state.worldGhost.enemyProjectiles)?state.worldGhost.enemyProjectiles:[])]; for(const pr of projs){ if(!pr) continue; const x0=safeNum(pr.x)-camX0, y0=safeNum(pr.y)-camY0; if(x0<-40||y0<-40||x0>c.width+40||y0>c.height+40) continue; ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle=(pr&&pr.isBossProjectile)?'rgba(255,120,80,.95)':((pr&&pr.damage)?'rgba(255,210,120,.95)':'rgba(120,220,255,.95)'); ctx.beginPath(); ctx.arc(x0,y0,Math.max(3,safeNum(pr.size,5)),0,Math.PI*2); ctx.fill(); ctx.restore(); } } }catch(_){}
     if(!arr.length) return; const lp=g&&g.player; const camX=lp?(safeNum(lp.x)-c.width/2):0; const camY=lp?(safeNum(lp.y)-c.height/2):0; ctx.font='12px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='bottom'; updateRemoteRenderTracks(); for(const st of arr){ if(!st||!st.sid||st.sid===mySid()) continue; const rx = Number.isFinite(safeNum(st.rx, NaN)) ? safeNum(st.rx) : safeNum(st.x, NaN); const ry = Number.isFinite(safeNum(st.ry, NaN)) ? safeNum(st.ry) : safeNum(st.y, NaN); if(!Number.isFinite(rx) || !Number.isFinite(ry)) continue; const x=rx-camX, y=ry-camY; if(!Number.isFinite(x) || !Number.isFinite(y)) continue; if(x<-100||y<-120||x>c.width+100||y>c.height+100) continue; ctx.save(); ctx.translate(x,y); ctx.globalAlpha=0.94; ctx.fillStyle='rgba(0,0,0,0.30)'; ctx.beginPath(); ctx.ellipse(0,22,18,9,0,0,Math.PI*2); ctx.fill(); const char=(Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]).find(ch=>String(ch?.type||'')===String(st.charType||'')); if(char&&typeof char.draw==='function'){ try{ const frame=(Math.floor((tNow/140))%2); char.draw(ctx, frame, 1.5); }catch(_){ } } else { ctx.fillStyle='rgba(80,180,255,.85)'; ctx.beginPath(); ctx.arc(0,0,12,0,Math.PI*2); ctx.fill(); } ctx.restore();
+        // 다른 플레이어가 획득한 보호막도 모든 클라이언트에서 동일하게 표시한다.
+        try{
+          if(st.shield && safeNum(st.shieldHp,0)>0){
+            const pulse=1+Math.sin(tNow/150)*0.05;
+            ctx.save(); ctx.globalAlpha=0.82; ctx.strokeStyle='#78e6ff'; ctx.lineWidth=3;
+            ctx.shadowColor='#42cfff'; ctx.shadowBlur=10; ctx.beginPath(); ctx.arc(x,y,36*pulse,0,Math.PI*2); ctx.stroke(); ctx.restore();
+          }
+        }catch(_){ }
+        try{
+          const il=st.itemLevels||{}, spinLv=Math.max(0,Math.round(safeNum(il.spin,0)));
+          if(spinLv>0){ for(let i=0;i<3;i++){ const a=tNow/180+i*Math.PI*2/3,bx=x+Math.cos(a)*54,by=y+Math.sin(a)*54; ctx.save();ctx.translate(bx,by);ctx.rotate(a);ctx.fillStyle='#7ff';ctx.shadowColor='#0ff';ctx.shadowBlur=7;ctx.fillRect(-10,-2,20,4);ctx.fillStyle='#fff';ctx.fillRect(-7,-1,14,2);ctx.restore(); } }
+          if(safeNum(il.angel,0)>0){ const px=x-36,py=y-28+Math.sin(tNow/300)*3;ctx.save();ctx.font='18px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.shadowColor='#ffeb72';ctx.shadowBlur=7;ctx.fillText('👼',px,py);ctx.restore(); }
+          if(safeNum(il.demon,0)>0){ const px=x+Math.sin(tNow/500)*38,py=y+Math.sin(tNow/750)*24;ctx.save();ctx.font='18px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';ctx.shadowColor='#f0f';ctx.shadowBlur=7;ctx.fillText('😈',px,py);ctx.restore(); }
+        }catch(_){ }
         // v27: 도발의 방패(taunt) 표시 - 머리 위 말풍선 느낌의 "!" 애니메이션
         try{
           if(state.tauntSid && String(state.tauntSid)===String(st.sid)){
@@ -1112,6 +1149,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         ctx.save(); ctx.globalAlpha=0.25+a*0.75;
         if(fx.kind==='archer'){ const ang=Math.atan2(ty-y,tx-x); const len=Math.max(12,Math.hypot(tx-x,ty-y)*Math.min(1,0.35+a*0.35)); ctx.translate(x,y); ctx.rotate(ang); ctx.strokeStyle='rgba(255,210,120,.95)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(len,0); ctx.stroke(); ctx.beginPath(); ctx.moveTo(len,0); ctx.lineTo(len-6,-3); ctx.lineTo(len-6,3); ctx.closePath(); ctx.fillStyle='rgba(255,220,140,.95)'; ctx.fill(); }
         else if(fx.kind==='mage'){ const px=x+(tx-x)*(0.2+0.6*(1-a)), py=y+(ty-y)*(0.2+0.6*(1-a)); ctx.fillStyle='rgba(170,225,255,.95)'; ctx.beginPath(); ctx.arc(px,py,4+a*3,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='rgba(120,200,255,.7)'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(px,py); ctx.stroke(); }
+        else if(fx.kind==='reward'){ ctx.strokeStyle='rgba(255,225,100,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x,y,24+(1-a)*18,0,Math.PI*2); ctx.stroke(); }
         else { ctx.strokeStyle='rgba(255,255,255,.95)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(x,y,10+a*8,-0.8,0.8); ctx.stroke(); }
         ctx.restore();
       }
@@ -1124,6 +1162,46 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       state.remoteFx.push({ kind:String(kind||'melee'), x:safeNum(x), y:safeNum(y), tx:safeNum(tx,x), ty:safeNum(ty,y), t:now() });
       if(state.remoteFx.length>80) state.remoteFx.splice(0, state.remoteFx.length-80);
     }catch(_){}
+  }
+  function pushSyncedCombatFx(m){
+    try{
+      const id=String(m.id||'');
+      if(id && state.combatFxSeen.has(id)) return;
+      if(id){ state.combatFxSeen.add(id); if(state.combatFxSeen.size>180) state.combatFxSeen=new Set(Array.from(state.combatFxSeen).slice(-100)); }
+      const g=G(); if(!g||!Array.isArray(g.effects)) return;
+      let effect=(m.effect&&typeof m.effect==='object')?Object.assign({},m.effect):null;
+      if(!effect && String(m.fx||'')==='lightning') effect={type:'lightning',x:safeNum(m.x,NaN),y:safeNum(m.y,NaN),level:Math.max(1,safeNum(m.level,1)),life:15};
+      if(!effect) return;
+      const allowed=new Set(['poisoncloud','lightning','meteor','meteorExplosion','icespike','beam','explosion','critical']);
+      if(!allowed.has(String(effect.type||''))) return;
+      if(effect.type==='critical'){
+        if(typeof g.textParticle==='function') g.textParticle(safeNum(effect.x,0),safeNum(effect.y,0),'치명타!','#ff0',1);
+        return;
+      }
+      effect.__mxSynced=true;
+      if(effect.type==='lightning' && (!Array.isArray(effect.segments)||!effect.segments.length)){
+        const x=safeNum(effect.x,NaN), y=safeNum(effect.y,NaN), level=Math.max(1,safeNum(effect.level,1));
+        if(!Number.isFinite(x)||!Number.isFinite(y)) return;
+        effect.segments=typeof g.generateLightningPath==='function'?g.generateLightningPath(x,y-300-level*50,x,y):[{x1:x,y1:y-320,x2:x-8,y2:y-210},{x1:x-8,y1:y-210,x2:x+7,y2:y-105},{x1:x+7,y1:y-105,x2:x,y2:y}];
+      }
+      g.effects.push(effect);
+      if(g.effects.length>220) g.effects.splice(0,g.effects.length-220);
+      const icon={poisoncloud:'☠',lightning:'⚡',meteor:'☄',meteorExplosion:'✹',icespike:'❄',beam:'✦',explosion:'✹'}[effect.type];
+      if(icon&&typeof g.textParticle==='function') g.textParticle(safeNum(effect.x,effect.targetX||0),safeNum(effect.y,effect.targetY||0)-30,icon,'#fff36b',0.75);
+    }catch(_){ }
+  }
+  const REWARD_VIS={
+    hp_up:['❤️','체력 증가'],damage_up:['⚔️','공격력 증가'],atk_speed_up:['⏱️','공격속도 증가'],speed_up:['👟','이동속도 증가'],pierce_up:['🎯','관통'],regen_up:['💊','체력 회복'],shield_up:['🛡️','보호막'],
+    poison:['☠️','독'],freeze:['❄️','얼음'],explode:['💥','레이저'],lightning:['⚡','벼락'],spin:['🌀','회전 검'],crit:['💢','치명타'],multi:['🎯','다중 발사'],meteor:['☄️','운석'],angel:['👼','천사'],demon:['😈','악마'],taunt_shield:['🛡️','도발의 방패']
+  };
+  function showRemoteRewardFx(m){
+    try{
+      const sid=String(m.from||m.sid||''); if(!sid||sid===String(mySid()||'')) return;
+      const rs=state.remoteStates&&state.remoteStates[sid]; if(!rs) return;
+      const v=REWARD_VIS[String(m.key||'')]||['✨','보상'];
+      const g=G(); if(g&&typeof g.textParticle==='function') g.textParticle(safeNum(rs.x,0),safeNum(rs.y,0)-68,`${v[0]} ${v[1]}`,'#ffe36e',1.0);
+      pushRemoteFx('reward',safeNum(rs.x,0),safeNum(rs.y,0),safeNum(rs.x,0),safeNum(rs.y,0));
+    }catch(_){ }
   }
   function drawRemoteFx(){
     // [FIX] main canvas ctx 대신 overlay canvas 사용 → strokeStyle 오염 방지
@@ -1156,6 +1234,9 @@ function simulateRemoteAttackOnHost(rs, meta={}){
           c.fillStyle='rgba(170,225,255,.95)'; c.beginPath(); c.arc(px,py,4+a*3,0,Math.PI*2); c.fill();
           c.strokeStyle='rgba(120,200,255,.7)'; c.lineWidth=2;
           c.beginPath(); c.moveTo(x,y); c.lineTo(px,py); c.stroke();
+        }else if(fx.kind==='reward'){
+          c.strokeStyle='rgba(255,225,100,.95)'; c.lineWidth=3;
+          c.beginPath(); c.arc(x,y,24+(1-a)*18,0,Math.PI*2); c.stroke();
         }else{
           c.strokeStyle='rgba(255,255,255,.95)'; c.lineWidth=3;
           c.beginPath(); c.arc(x,y,10+a*8,-0.8,0.8); c.stroke();
@@ -1203,7 +1284,20 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       return;
     }
     if(k==='phase_sync'||k==='mx_phase'){ dbgBump('in'); handlePhaseSync(m); return; }
-    if(k==='mx_event'){ handleMxEvent(m); return; }
+    if(k==='mx_event'){
+      const evt=String(m.evt||'');
+      if(evt==='combat_fx'){ if(!iAmHost()) pushSyncedCombatFx(m); return; }
+      if(evt==='choice_apply'){
+        if(String(m.from||m.sid||'')===String(mySid()||'')) return;
+        showRemoteRewardFx(m);
+        m.kind=String(m.choiceKind||m.rewardKind||'');
+      }
+      if(evt==='remote_attack'){
+        const sid=String(m.from||m.sid||''), pulse=safeNum(m.pulse,0);
+        if(sid && pulse) state.remoteFxSeen[sid]=pulse;
+      }
+      handleMxEvent(m); return;
+    }
     if(k==='char_selected'){
       dbgBump('in');
       if(from){
@@ -1286,7 +1380,8 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       try{
         if(!iAmHost()){
           const pulseNow=safeNum(m.attackPulse,0), pulsePrev=safeNum(prev.attackPulse,0);
-          if(pulseNow && pulseNow!==pulsePrev){
+          if(pulseNow && pulseNow!==pulsePrev && safeNum(state.remoteFxSeen[from],0)!==pulseNow){
+            state.remoteFxSeen[from]=pulseNow;
             const ct=String(m.charType||prev.charType||'').toLowerCase();
             const rng=safeNum(m.range, safeNum(prev.range, 80));
             const vx=safeNum(state.remoteStates[from].vx,0), vy=safeNum(state.remoteStates[from].vy,0);
@@ -1357,7 +1452,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   window.__mxOnLevelPick = (upName)=>{
     try{
       const key = detectLevelChoiceKey({dataset:{upgradeId:upName},textContent:upName});
-      if(key){ ensureLocalChoiceApplied('level',key); try{ sendEvent('choice_apply',{kind:'level',key}); }catch(_){} }
+      if(key){ ensureLocalChoiceApplied('level',key); try{ sendEvent('choice_apply',{choiceKind:'level',key}); }catch(_){} }
       /* [BUG FIX] queueLocalChoiceCommit으로 타이밍 이슈 보완: broadcastPhaseSync 수신 전 클릭 시에도 choice_done 발송 */
       try{ queueLocalChoiceCommit('level'); }catch(_){}
       if(inChoicePhase()){ try{ markChoiceDoneLocal(true); }catch(_){} }
@@ -1366,7 +1461,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   };
   window.__mxOnItemPick = (itemId)=>{
     try{
-      if(itemId){ ensureLocalChoiceApplied('item',itemId); try{ sendEvent('choice_apply',{kind:'item',key:itemId}); }catch(_){} }
+      if(itemId){ ensureLocalChoiceApplied('item',itemId); try{ sendEvent('choice_apply',{choiceKind:'item',key:itemId}); }catch(_){} }
       /* [BUG FIX] queueLocalChoiceCommit으로 타이밍 이슈 보완 */
       try{ queueLocalChoiceCommit('item'); }catch(_){}
       if(inChoicePhase()){ try{ markChoiceDoneLocal(true); }catch(_){} }
@@ -1375,6 +1470,29 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   };
   const origSelect=g.selectChar?.bind(g); const origStart=g.start?.bind(g); const origUpdate=g.update?.bind(g); const origLoop=g.loop?.bind(g); const origShowLevel=g.showLevelUp?.bind(g); const origShowMath=g.showMathScreen?.bind(g); const origShowItem=g.showItemScreen?.bind(g); const origCloseMath=g.closeMath?.bind(g); const origSpawnBoss=g.spawnBoss?.bind(g); const origCheckBossSpawn=g.checkBossSpawn?.bind(g);
     if(origStart){ g.start=function(){ const r=origStart(); if(state.phase!==PHASES.PLAYING) pauseGame(true); try{ applyCoopScaling(); }catch(_){ } return r; }; }
+    if(typeof g.textParticle==='function' && !g.__mxCriticalTextWrapped){
+      const originalTextParticle=g.textParticle.bind(g);
+      g.textParticle=function(x,y,textValue,color,scale){ const r=originalTextParticle(x,y,textValue,color,scale); if(iAmHost()&&String(textValue||'')==='치명타!') sendEvent('combat_fx',{effect:{type:'critical',x:safeNum(x,0),y:safeNum(y,0)}}); return r; };
+      g.__mxCriticalTextWrapped=true;
+    }
+    if(Array.isArray(g.effects) && !g.effects.__mxNetPushWrapped){
+      const effects=g.effects, originalPush=effects.push.bind(effects);
+      effects.push=function(...entries){
+        const result=originalPush(...entries);
+        if(iAmHost()){
+          const allowed=new Set(['poisoncloud','lightning','meteor','meteorExplosion','icespike','beam','explosion']);
+          const keys=['type','x','y','startX','startY','endX','endY','targetX','targetY','angle','length','life','width','radius','maxRadius','damage','size','level','height','maxHeight','progress'];
+          for(const src of entries){
+            if(!src||src.__mxSynced||!allowed.has(String(src.type||''))) continue;
+            const effect={}; for(const key of keys){ if(typeof src[key]==='number'||typeof src[key]==='string') effect[key]=src[key]; }
+            if(Array.isArray(src.segments)) effect.segments=src.segments.slice(0,32).map(s=>({x1:safeNum(s.x1),y1:safeNum(s.y1),x2:safeNum(s.x2),y2:safeNum(s.y2)}));
+            sendEvent('combat_fx',{effect});
+          }
+        }
+        return result;
+      };
+      effects.__mxNetPushWrapped=true;
+    }
     const origShowCharSelect=g.showCharSelect?.bind(g); if(origShowCharSelect && !g.__mxShowCharSelectWrapped){ g.__mxShowCharSelectWrapped=true; g.showCharSelect=function(){ const r=origShowCharSelect(); try{ const grid=document.getElementById('charSelectGrid'); const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; Array.from(grid?.children||[]).forEach((el,idx)=>{ if(el&&el.dataset) el.dataset.charType=String(arr[idx]?.type||''); }); refreshCharSelectLocks(); }catch(_){ } return r; }; }
     if(origSelect){ g.selectChar=function(type){ const t=String(type||''); if(isCharTakenByOther(t)){ setOverlay('이미 다른 플레이어가 선택한 캐릭터입니다'); refreshCharSelectLocks(); return; } const sid=mySid()||'self'; state.localCharChosen=true; state.localCharType=t; state.selectedBySid[sid]=state.localCharType; refreshCharSelectLocks(); /* [FIX] 캐릭터 선택 시 스탯 초기화 제거 - 레벨업/아이템 선택 결과는 게임 종료까지 누적 유지 */ const r=origSelect(type); pauseGame(true); send('char_selected',{ character: state.localCharType }); if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); return r; }; }
     if(origUpdate){ g.update=function(){ const pl=g&&g.player; const lock=isLocalChoiceLock(); const sx=lock&&pl?safeNum(pl.x):0, sy=lock&&pl?safeNum(pl.y):0; const savedPaused=g.paused; if(lock) g.paused=true; if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(!iAmHost() && state.phase!==PHASES.PLAYING) g.paused=true; const r=origUpdate(); if(iAmHost()){ try{ hostRetargetAndBuffEnemies(g); }catch(_){} } if(lock&&pl){ try{ pl.x=sx; pl.y=sy; if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; }catch(_){} } if(lock){ g.paused=savedPaused||true; }  return r; }; }

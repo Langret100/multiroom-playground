@@ -651,7 +651,7 @@ function prepareAuthoritativeKickoff(d){
   if(owner){
     owner.x=owner.netX=FX+FW/2+(String(d.winner||'')==='A'?-DRIBBLE_DISTANCE:DRIBBLE_DISTANCE);
     owner.y=owner.netY=KICKOFF_Y;owner.dir=defaultDir(owner.team);
-    const t=dribbleTargetForPlayer(owner,0,0,Date.now());ball.x=t.x;ball.y=t.y;ball.owner=ownerSid;ball.ownerUntil=Number(d.kickoffAt||Date.now())+1200;ball.ownerSince=Date.now();
+    const t=dribbleTarget(owner);ball.x=t.x;ball.y=t.y;ball.owner=ownerSid;ball.ownerUntil=Number(d.kickoffAt||Date.now())+1200;ball.ownerSince=Date.now();
   }
   netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:ball.owner,samples:[],lastKicker:null,noPickupUntil:0};
 }
@@ -2842,6 +2842,9 @@ window.addEventListener('message', e=>{
     if (gameInitialized){
       applyRoster(incoming);
       flushPendingSoccerSnapshot();
+      // 부모가 bridge_init 직후 보낸 sync 응답은 느린 iframe에서 초기화보다
+      // 먼저 도착할 수 있다. iframe 자신도 매 init마다 권위 상태를 재요청한다.
+      bridgeSend('sc_sync',{});
       return;
     }
     gameInitialized = true;
@@ -2850,6 +2853,8 @@ window.addEventListener('message', e=>{
     startTs = sAt>0 ? sAt : Date.now();
     initGame();
     flushPendingSoccerSnapshot();
+    bridgeSend('sc_sync',{});
+    setTimeout(()=>{ if(!mathKickoff.roundId) bridgeSend('sc_sync',{}); },180);
     return;
   }
 
@@ -3067,6 +3072,12 @@ window.addEventListener('message', e=>{
 });
 
 bridgeSend('bridge_ready', {});
+// 모바일/느린 기기에서 첫 ready가 부모 리스너보다 먼저 전송되면 경기장만
+// 보이고 로스터·수학 라운드가 오지 않는 상태가 된다. 초기화가 끝날 때까지만
+// 제한적으로 재요청해 항상 bridge_init → sc_sync 경로를 완성한다.
+[140,420,900,1800,3200].forEach(delayMs=>setTimeout(()=>{
+  if(!gameInitialized || !mathKickoff.roundId) bridgeSend('bridge_ready',{retry:true});
+},delayMs));
 // Establish a low-jitter server clock estimate early. Each round state also triggers
 // another sample, so long sessions naturally refresh the estimate.
 setTimeout(requestSoccerClockSync,80);

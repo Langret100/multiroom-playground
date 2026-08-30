@@ -908,7 +908,6 @@ function updatePreview(modeId){
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_math_submit","sc_time_ping"]);
-  const TOGESTER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","tg_state","tg_button","tg_buttons","tg_puzzle","tg_boxes","tg_box_impulse","tg_item","tg_sync","tg_level","tg_reset","tg_push","tg_floor","tg_floor_remove","tg_over","tg_quit"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -918,6 +917,7 @@ function updatePreview(modeId){
     const fromCpu  = !!(cpuFrame.iframeEl && srcWin === cpuFrame.iframeEl.contentWindow);
     const isMxPacket = (d.type === "bridge_ready" || d.type === "mx_game_start_ack" || d.type === "mx_msg" || d.type === "mx_quit");
     const isBrPacket = (d.type === "bridge_ready" || d.type === "br_game_start_ack" || d.type === "br_msg" || d.type === "br_batch") && (!d.gameId || d.gameId === 'backrooms3d');
+    const isTgPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("tg_")) && d.gameId === "togester";
     const isSoccerPacket = SOCCER_BRIDGE_TYPES.has(String(d.type||""));
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
     const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
@@ -927,18 +927,21 @@ function updatePreview(modeId){
     const fromMxCoopFallback = !!(isMxPacket && mxGameTagOk && !fromCpu && (fromMain || (mxModeLikely && srcWin)));
     const fromMainForMx = fromMain || fromStoredMxWin || fromMxCoopFallback;
     const brModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='backrooms3d') || (duel?.iframeEl && /embedGame=backrooms3d/.test(String(duel.iframeEl.src || ''))));
+    const tgModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='togester') || (duel?.iframeEl && /embedGame=togester/.test(String(duel.iframeEl.src || ''))));
     const soccerModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='soccer') || (duel?.iframeEl && /embedGame=soccer/.test(String(duel.iframeEl.src || ''))));
+    const coopOriginOk = !e.origin || e.origin === location.origin;
+    // 일부 모바일 WebView는 iframe postMessage의 e.source를 null로 전달한다.
+    // 현재 게임 모드 + 동일 출처 + 명시적 gameId가 모두 일치할 때만 보조 경로를 연다.
+    const fromBrCoopFallback = !!(isBrPacket && d.gameId === 'backrooms3d' && brModeLikely && coopOriginOk && !fromCpu);
+    const fromTgCoopFallback = !!(isTgPacket && tgModeLikely && coopOriginOk && !fromCpu);
+    const fromMainForBr = fromMain || fromBrCoopFallback;
+    const fromMainForTg = fromMain || fromTgCoopFallback;
     const soccerOriginOk = !e.origin || e.origin === location.origin;
     const fromStoredSoccerWin = !!(coop && coop.soccerFrameWin && srcWin === coop.soccerFrameWin);
     // 일부 모바일 WebView는 iframe postMessage의 e.source를 null로 넘긴다.
     // 현재 게임/동일 출처/gameId 태그가 모두 맞는 축구 패킷만 보조 경로로 받는다.
     const fromSoccerCoopFallback = !!(isSoccerPacket && d.gameId === 'soccer' && soccerModeLikely && soccerOriginOk && !fromCpu);
     const fromMainForSoccer = fromMain || fromStoredSoccerWin || fromSoccerCoopFallback;
-    const isTogesterPacket = TOGESTER_BRIDGE_TYPES.has(String(d.type||''));
-    const togesterModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='togester') || (duel?.iframeEl && /embedGame=togester/.test(String(duel.iframeEl.src || ''))));
-    const togesterOriginOk = !e.origin || e.origin === location.origin;
-    const fromTogesterCoopFallback = !!(isTogesterPacket && d.gameId === 'togester' && togesterModeLikely && togesterOriginOk && !fromCpu);
-    const fromMainForTogester = fromMain || fromTogesterCoopFallback;
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
     }
@@ -995,7 +998,7 @@ function updatePreview(modeId){
 
     if (d.type === "bridge_ready"){
       // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
-      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromTogesterCoopFallback){
+      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback){
         duel.iframeReady = true;
         coop.iframeReady = true;
       }
@@ -1011,12 +1014,12 @@ function updatePreview(modeId){
         sendCpuBridgeInit();
       }
       const isGkFrame = !!(coop.active && coop.meta && coop.meta.id === "geumchikeo" && fromMain);
-      if ((fromMainForMx || fromMainForSoccer || fromMainForTogester || fromMain || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
+      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
         sendCoopBridgeInit();
-        if (fromMain){
+        if (fromMainForBr){
           try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
         } else {
           try{ setTimeout(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 80); }catch(_){ }
@@ -1032,7 +1035,7 @@ function updatePreview(modeId){
       return;
     }
     if (d.type === "br_game_start_ack"){
-      if (!fromMain) return;
+      if (!fromMainForBr) return;
       try{ coop._brGameStartAck = true; coop.sentGameStart = true; }catch(_){ }
       return;
     }
@@ -1048,7 +1051,7 @@ function updatePreview(modeId){
     
     // In-game "나가기" from embedded togester iframe (end coop & return to room UI)
     if (d.type === "tg_quit"){
-      if (!fromMain) return;
+      if (!fromMainForTg) return;
       // 방 안 연습 모드에서는 서버에 결과를 보내지 않고 바로 방으로 복귀
       if (coop.practice){
         try{
@@ -1165,7 +1168,7 @@ function updatePreview(modeId){
     }
 
     if (d.type === "br_exit_to_lobby"){
-      if (!fromMain) return;
+      if (!fromMainForBr) return;
       try{ exitGameFullscreen(); }catch(_){ }
       try{ stopGameBgm(); }catch(_){ }
       hideResultOverlay();
@@ -1187,7 +1190,7 @@ function updatePreview(modeId){
 
     // Backrooms3d iframe -> server relay
     if (d.type === "br_msg"){
-      if (!fromMain) return;  // 투게스터와 동일하게 fromMain 단순 체크
+      if (!fromMainForBr) return;
       try{
         const msg = d.msg || {};
         const kind = String(msg.kind || msg.t || '');
@@ -1248,7 +1251,7 @@ function updatePreview(modeId){
 
 // Togester (coop) iframe -> server relay
     if (d.type === "tg_state"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       const now = Date.now();
       if (now - lastTgStateSent >= 50){
         lastTgStateSent = now;
@@ -1257,53 +1260,53 @@ function updatePreview(modeId){
       return;
     }
     if (d.type === "tg_button"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       room.send("tg_button", { idx: d.idx, pressed: d.pressed });
       return;
     }
     if (d.type === "tg_buttons"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_buttons", { buttons: d.buttons || {} }); }catch(_){ }
       return;
     }
     if (d.type === "tg_puzzle"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_puzzle", d); }catch(_){ }
       return;
     }
     if (d.type === "tg_boxes"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_boxes", d); }catch(_){ }
       return;
     }
     if (d.type === "tg_box_impulse"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_box_impulse", d); }catch(_){ }
       return;
     }
     if (d.type === "tg_item"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_item", d); }catch(_){ }
       return;
     }
     if (d.type === "tg_sync"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_sync", {}); }catch(_){ }
       return;
     }
 
     if (d.type === "tg_level"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       room.send("tg_level", { level: d.level });
       return;
     }
     if (d.type === "tg_reset"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       room.send("tg_reset", { t: d.t });
       return;
     }
     if (d.type === "tg_push"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       // relay a push impulse to the target player (server will broadcast)
       try{
         room.send("tg_push", { to: d.to, dx: d.dx, dy: d.dy, from: mySessionId });
@@ -1312,7 +1315,7 @@ function updatePreview(modeId){
     }
 
     if (d.type === "tg_floor"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{
         room.send("tg_floor", {
           id: d.id,
@@ -1329,19 +1332,19 @@ function updatePreview(modeId){
 
 
     if (d.type === "tg_floor_remove"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{
         room.send("tg_floor_remove", { owner: d.owner || mySessionId, ids: Array.isArray(d.ids) ? d.ids : null });
       }catch(_){ }
       return;
     }
     if (d.type === "tg_sync"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       try{ room.send("tg_sync", {}); }catch(_){ }
       return;
     }
     if (d.type === "tg_over"){
-      if (!fromMainForTogester) return;
+      if (!fromMainForTg) return;
       room.send("tg_over", {
         success: !!d.success,
         reason: d.reason
@@ -1351,7 +1354,7 @@ function updatePreview(modeId){
 
     // SnakeTail (coop competitive) iframe -> server relay
     if (d.type === "st_state"){
-      if (!fromMainForTogester) return;
+      if (!fromMain) return;
       const now = Date.now();
       if (!window.__lastStStateSent) window.__lastStStateSent = 0;
       if (now - window.__lastStStateSent >= 120){
@@ -1361,22 +1364,22 @@ function updatePreview(modeId){
       return;
     }
     if (d.type === "st_eat"){
-      if (!fromMainForTogester) return;
+      if (!fromMain) return;
       try{ room.send("st_eat", { id: d.id }); }catch(_){ }
       return;
     }
     if (d.type === "st_spawn"){
-      if (!fromMainForTogester) return;
+      if (!fromMain) return;
       try{ room.send("st_spawn", { foods: d.foods || [] }); }catch(_){ }
       return;
     }
     if (d.type === "st_event"){
-      if (!fromMainForTogester) return;
+      if (!fromMain) return;
       try{ room.send("st_event", { event: d.event || {} }); }catch(_){ }
       return;
     }
     if (d.type === "st_over"){
-      if (!fromMainForTogester) return;
+      if (!fromMain) return;
       try{ room.send("st_over", { reason: d.reason, winnerSid: d.winnerSid }); }catch(_){ }
       return;
     }
@@ -3089,9 +3092,6 @@ try{
       });
       room.onMessage("tg_item", (msg)=>{
         postToMain(Object.assign({ type:"tg_item" }, msg || {}));
-      });
-      room.onMessage("tg_item_ack", (msg)=>{
-        postToMain(Object.assign({ type:"tg_item_ack" }, msg || {}));
       });
 
       room.onMessage("tg_boxes", (msg)=>{

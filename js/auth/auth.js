@@ -5,6 +5,8 @@
   // Response expected: { ok:true, user_id, nickname } or { ok:false, error }
   // Caches non-guest user to localStorage("ghostUser") for convenience.
 
+  const MESSENGER_SESSION_KEY = "miniTalk.v3.session.user";
+
   function safeText(x, max){
     return String(x ?? "").replace(/[\r\n\t]/g, " ").slice(0, max || 200);
   }
@@ -41,8 +43,33 @@
   function writeGhostUser(user){
     try { localStorage.setItem("ghostUser", JSON.stringify(user)); } catch(e){}
   }
+  function normalizeAccountUser(value){
+    if (!value || typeof value !== "object" || value.isGuest) return null;
+    const userId = safeText(value.user_id || value.userId || value.uid || "", 120).trim();
+    const username = safeText(value.username || value.loginId || "", 60).trim();
+    const nickname = safeText(value.nickname || value.nick || value.displayName || username, 24).trim();
+    if (!userId || (!username && !nickname)) return null;
+    return { user_id:userId, username, nickname:nickname || username || "Player", isGuest:false };
+  }
+  function readMessengerUser(){
+    try {
+      const raw = localStorage.getItem(MESSENGER_SESSION_KEY);
+      if (!raw) return null;
+      return normalizeAccountUser(JSON.parse(raw));
+    } catch(e){ return null; }
+  }
+  function writeSharedAccountUser(user){
+    const account = normalizeAccountUser(user);
+    if (!account) return;
+    writeGhostUser({ user_id:account.user_id, username:account.username, nickname:account.nickname });
+    try { localStorage.setItem(MESSENGER_SESSION_KEY, JSON.stringify(account)); } catch(e){}
+  }
   function clearGhostUser(){
     try { localStorage.removeItem("ghostUser"); } catch(e){}
+  }
+  function clearSharedAccountUser(){
+    clearGhostUser();
+    try { localStorage.removeItem(MESSENGER_SESSION_KEY); } catch(e){}
   }
 
   function setSessionUser(user){
@@ -126,7 +153,7 @@
       nickname: String(json.nickname || username),
       isGuest: false,
     };
-    writeGhostUser({ user_id: user.user_id, username: user.username, nickname: user.nickname });
+    writeSharedAccountUser(user);
     setSessionUser(user);
     return user;
   }
@@ -144,7 +171,7 @@
       nickname: String(json.nickname || nickname || username),
       isGuest: false,
     };
-    writeGhostUser({ user_id: user.user_id, username: user.username, nickname: user.nickname });
+    writeSharedAccountUser(user);
     setSessionUser(user);
     return user;
   }
@@ -166,7 +193,7 @@
     if (!els.btnLogout || els.btnLogout._wired) return;
     els.btnLogout._wired = true;
     els.btnLogout.addEventListener("click", ()=>{
-      clearGhostUser();
+      clearSharedAccountUser();
       try { sessionStorage.clear(); } catch(e){}
 
       // If we're inside an embedded room iframe, reloading only the iframe
@@ -208,6 +235,16 @@
     if (existing && existing.nickname){
       hideModal();
       return Promise.resolve(existing);
+    }
+
+    // 메신저 HTML과 플레이그라운드 HTML이 같은 origin에서 열렸다면
+    // 메신저의 비게스트 로그인 세션을 그대로 가져와 재로그인을 생략한다.
+    const messengerUser = readMessengerUser();
+    if (messengerUser){
+      setSessionUser(messengerUser);
+      writeGhostUser(messengerUser);
+      hideModal();
+      return Promise.resolve(messengerUser);
     }
 
     showModal();
@@ -313,6 +350,7 @@
     requireLogin,
     postToSheet,
     readGhostUser,
-    clearGhostUser,
+    readMessengerUser,
+    clearGhostUser: clearSharedAccountUser,
   };
 })();

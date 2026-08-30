@@ -1429,7 +1429,8 @@ const G = {
              p.itemLevels.lightning++;
              // 적 타격시 30% 확률로 벼락 발동
              // 레벨당 1개씩 추가! (레벨 3 = 번개 3개 동시 발동)
-             p.lightning = 0.02 * p.itemLevels.lightning;
+             // 실제 발동 판정(적 타격 시 30%)과 동기화 데이터가 같은 값을 쓰도록 유지
+             p.lightning = 0.30;
          }},
         {name: "회전 검", icon: "🌀", id: "spin",
          apply: function(p) { 

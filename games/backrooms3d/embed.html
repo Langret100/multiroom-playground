@@ -358,6 +358,11 @@ function sendChat(){
   const v = chatIn.value.trim();
   if(!v) return false;
   addChat("나: "+v);
+  try{
+    // 채팅은 게임 초기화 순서와 무관하게 부모 방 브리지로 바로 보낸다.
+    // 서버가 실제 WebSocket 발신자와 닉네임을 다시 인증한다.
+    parent.postMessage({gameId:'backrooms3d',type:'br_msg',msg:{kind:'chat',text:v,nick:playerName||'Player'}},'*');
+  }catch(_){ }
   chatIn.value="";
   return true;
 }
@@ -2907,7 +2912,8 @@ let last=performance.now();
 // [FIX] 호스트만 타이머를 감소시키고, world sync로 비호스트에 전달
 if(monsterReleaseLeft>0){
   if(bridge.start && Number(bridge.start.playerCount||0)>=2 && Number(bridge.start.startedAt||0)>0){
-    const releaseAt=Number(bridge.start.releaseAt||0) || (Number(bridge.start.startedAt)+Number(bridge.start.spawnLockMs||10000));
+    // 시작 패킷이 여러 번 도착해도 봉인은 시작 시각부터 정확히 10초만 유지한다.
+    const releaseAt=Number(bridge.start.startedAt)+10000;
     monsterReleaseLeft=Math.max(0,(releaseAt-Date.now())/1000);
   }else{
     monsterReleaseLeft = Math.max(0, monsterReleaseLeft - dt);
@@ -3388,7 +3394,7 @@ if(monsterReleaseLeft>0){
     seedRemotesFromStart(start);
     const nowMs = performance.now();
     bridge.startId = String(start.startId || start.startedAt || '');
-    const spawnLockMs = Math.max(9500, Number(start.spawnLockMs || 10000));
+    const spawnLockMs = 10000;
     const ignoreCaughtMs = Math.max(2500, Number(start.ignoreCaughtMs || 10000));
     const startedAtMs = Number(start.startedAt || Date.now());
     bridge.forceSpawnUntil = nowMs + Math.max(250, spawnLockMs - Math.max(0, Date.now() - startedAtMs));
@@ -3766,7 +3772,9 @@ if(monsterReleaseLeft>0){
         if(w.huntActive !== undefined) huntActive = !!w.huntActive;
         if(w.huntLeft !== undefined) huntLeft = Math.max(0, Number(w.huntLeft||0) - 0.05);
         if(w.releaseLeft !== undefined){
-          monsterReleaseLeft = Math.max(0, Number(w.releaseLeft||0) - 0.05);
+          // 지연된 호스트 스냅샷으로 봉인 시간이 다시 늘어나지 않게 한다.
+          const releaseAt=Number(bridge?.start?.startedAt||Date.now())+10000;
+          monsterReleaseLeft = Math.max(0, (releaseAt-Date.now())/1000);
           if(monsterGate) monsterGate.visible = monsterReleaseLeft > 0.01;
         }
       }
@@ -3826,19 +3834,6 @@ if(monsterReleaseLeft>0){
     if(bridge.isHost) relay('world', snap);
     else relay('world_req', {});
   }
-  const _sendChat = sendChat;
-  sendChat = function(){
-    const msgText = String(chatIn.value||'').trim();
-    if(!msgText) return false;
-    const ok = _sendChat.apply(this, arguments);
-    try{
-      if(ok && bridge.sid){
-        // bridge.active 없어도 sid 있으면 채팅 전송 (타이밍 문제 방지)
-        relay('chat', { text:msgText, nick: bridge.nick || 'Player' });
-      }
-    }catch(_){ }
-    return ok;
-  };
   const _updatePanicMusic = (typeof window.updatePanicMusic === 'function' ? window.updatePanicMusic : (typeof updatePanicMusic === 'function' ? updatePanicMusic : null));
   if(_updatePanicMusic){ window.updatePanicMusic = function(dist){ if(playerRole==='monster') return; return _updatePanicMusic(dist); }; try{ updatePanicMusic = window.updatePanicMusic; }catch(_){ } }
   const _doInteract = (typeof window.doInteract === 'function' ? window.doInteract : (typeof doInteract === 'function' ? doInteract : null));
@@ -4029,7 +4024,7 @@ if(monsterReleaseLeft>0){
         r.obj.visible=true;
         setAvatarGhostVisual(r.obj, !!st.ghost, 0.38);
         // 스냅샷 버퍼를 약간 늦춰 재생해 네트워크 지터를 흡수한다.
-        const renderAt=performance.now()-85;
+        const renderAt=performance.now()-48;
         const samples=Array.isArray(r.samples)?r.samples:[];
         while(samples.length>2 && samples[1].t<=renderAt) samples.shift();
         let predX=Number(r.targetX ?? st.x)||0, predY=Number(r.targetY ?? st.y)||0, predZ=Number(r.targetZ ?? st.z)||0;
@@ -4045,7 +4040,7 @@ if(monsterReleaseLeft>0){
         }
         const snapDist = Math.hypot(predX - r.obj.position.x, predZ - r.obj.position.z);
         if(snapDist>8){ r.obj.position.set(predX,predY,predZ); }
-        const lerpSpeed = snapDist > 3.0 ? 26.0 : (snapDist > 1.2 ? 18.0 : 12.0);
+        const lerpSpeed = snapDist > 3.0 ? 30.0 : (snapDist > 1.2 ? 23.0 : 17.0);
         const lerpA = 1 - Math.exp(-bridgeDt * lerpSpeed);
         r.obj.position.x += (predX - r.obj.position.x) * lerpA;
         r.obj.position.y += (predY - r.obj.position.y) * lerpA;

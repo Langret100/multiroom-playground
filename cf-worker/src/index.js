@@ -541,14 +541,14 @@ export class RoomDO{
     this.tg = { players:{}, floors:{}, buttons:{}, boxes:{}, lastBroadcast:0, timer:null }; // coop state aggregation
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
     // Soccer (수학축구): authoritative player/ball/score aggregation, mirrors GameRoom.js (Colyseus) implementation.
-    this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
+    this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, posBroadcastTimer:null, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
     this._soccerDisconnectTimers = new Map(); // uid -> reconnect grace timer
 
     // SuhakTokki: authoritative game_start payload (seed/roster/practice/teacher) is decided once per match.
     // Stored here so late-joiners can be synced.
     this.sk = { startPayload: null };
     this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, latestEvent: null, lastActiveAt: 0 };
-    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [], ending:false };
+    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [], ending:false, catchCooldown:{}, caughtCounts:{} };
 
     // DrawAnswer (Pictionary-like): minimal server = relays + round/timer/score authority
     this.da = {
@@ -1059,6 +1059,7 @@ export class RoomDO{
         this.sc.kickoffOwnerSid = "";
         this.sc.roundSerial = 0;
         this.sc.lastPosBroadcastAt = 0;
+        if (this.sc.posBroadcastTimer){ try{ clearTimeout(this.sc.posBroadcastTimer); }catch(_){ } this.sc.posBroadcastTimer = null; }
         if (this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
         if (this.sc.transitionTimer){ try{ clearTimeout(this.sc.transitionTimer); }catch(_){ } this.sc.transitionTimer = null; }
 
@@ -1154,8 +1155,10 @@ export class RoomDO{
             this.br.latestWorld = null;
             this.br.latestChat = [];
             this.br.ending = false;
+            this.br.catchCooldown = {};
+            this.br.caughtCounts = {};
           }catch(_){
-            try{ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; }catch(_e){}
+            try{ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; this.br.catchCooldown = {}; this.br.caughtCounts = {}; }catch(_e){}
           }
         }
 
@@ -1279,7 +1282,15 @@ export class RoomDO{
         const sender = this.users.get(uid);
         const senderSeat = Number(sender?.seat ?? 99);
         const isAuthoritativeSender = !!sender?.isHost || senderSeat === 0;
-        if ((kind === "phase_sync" || kind === "world" || kind === "mx_phase" || kind === "mx_world" || kind === "mx_event") && !isAuthoritativeSender) {
+        const mxEventName = String(inner.evt || inner.event || "");
+        const guestMxEvents = new Set([
+          "remote_attack", "choice_done", "choice_apply", "choice_request",
+          "chest_touch", "taunt_shield_pick"
+        ]);
+        if ((kind === "phase_sync" || kind === "world" || kind === "mx_phase" || kind === "mx_world") && !isAuthoritativeSender) {
+          return;
+        }
+        if (kind === "mx_event" && !isAuthoritativeSender && !guestMxEvents.has(mxEventName)) {
           return;
         }
 
@@ -1298,7 +1309,15 @@ export class RoomDO{
           }
         }catch(_){ }
 
-        const out = Object.assign({}, inner, { from: String(uid), seat: Number(this.users.get(uid)?.seat ?? -1), nick: safeNick(this.users.get(uid)?.nick || "") });
+        const out = Object.assign({}, inner, {
+          from: String(uid),
+          seat: Number(this.users.get(uid)?.seat ?? -1),
+          nick: safeNick(this.users.get(uid)?.nick || "")
+        });
+        // Guest-originated gameplay events always belong to the authenticated socket.
+        // Do not trust a client-provided sid: it caused rewards/attacks to be applied
+        // to the wrong player and made per-client effects diverge.
+        if (kind === "mx_event" && !isAuthoritativeSender) out.sid = String(uid);
         this._broadcast("mx_msg", { msg: out });
         if (kind === "mx_event" && String(inner.evt || "") === "game_over_all") {
           this._endAndBackToLobby(2300);
@@ -1310,6 +1329,8 @@ export class RoomDO{
         if (this.meta.mode !== "backrooms3d" || this.meta.phase !== "playing") return;
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
         let kind = String(inner.kind || inner.t || "");
+        // 포획은 아래 최신 위치 기반 서버 판정만 허용한다.
+        if (kind === "caught") return;
 
         if (kind === "state" || kind === "world") {
           const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0, mxWorldTs:0, brTs:0, brWorldTs:0 };
@@ -1341,12 +1362,13 @@ export class RoomDO{
         }) : inner;
 
         try{
-          if (!this.br) this.br = { startPayload:null, latestStates:{}, latestWorld:null, latestChat:[], ending:false };
+          if (!this.br) this.br = { startPayload:null, latestStates:{}, latestWorld:null, latestChat:[], ending:false, catchCooldown:{}, caughtCounts:{} };
           if (kind === "game_end" && this.br.ending) return;
           if (kind === "leave") {
             if (this.br.latestStates) delete this.br.latestStates[String(uid)];
           } else if (kind === "state") {
             this.br.latestStates[String(uid)] = Object.assign({}, cleanInner, { from:String(uid) });
+            this._checkBackroomsCatches();
           } else if (kind === "world") {
             this.br.latestWorld = Object.assign({}, inner, { from:String(uid) });
           } else if (kind === "chat") {
@@ -1575,16 +1597,8 @@ export class RoomDO{
           if (!sender?.isHost) return;
         }
         if (action === "pick") {
-          if (!id) {
-            this._send(ws, "tg_item_ack", { action:"pick", accepted:false, reason:"bad_id", id:"", level:Number(d.level)||this.tg.level||1 });
-            return;
-          }
-          if (this.tg.itemOwners[id]) {
-            this._send(ws, "tg_item_ack", { action:"pick", accepted:false, reason:"already_owned", id, level:Number(d.level)||this.tg.level||1 });
-            return;
-          }
+          if (!id || this.tg.itemOwners[id]) return;
           this.tg.itemOwners[id] = uid;
-          this._send(ws, "tg_item_ack", { action:"pick", accepted:true, id, itemType:String(d.itemType||"").slice(0,20), charges:Math.max(1,Math.min(20,Number(d.charges)||1)), level:Number(d.level)||this.tg.level||1 });
         }
         if ((action === "use" || action === "drop") && (!id || this.tg.itemOwners[id] !== uid)) return;
         if (action === "drop") delete this.tg.itemOwners[id];
@@ -1967,13 +1981,10 @@ export class RoomDO{
           p.headerBallY = Number(d.headerBallY ?? p.headerBallY ?? 0);
         }
         if (d.tackleAt) p.tackleAt = Number(d.tackleAt) || p.tackleAt || 0;
-        const n = now();
         const urgentSoccerAction=!!(d.kickAt||d.headerAt||d.tackleAt||d.claimAt);
-        // 게스트 킥/헤딩/태클 엣지는 30Hz 위치 쓰로틀을 타면 최대 한 프레임 이상 늦어진다.
-        // 액션은 즉시 방송하고, 일반 이동만 기존 33ms 제한을 유지한다.
-        if (!urgentSoccerAction && n - (this.sc.lastPosBroadcastAt || 0) < 33) return;
-        this.sc.lastPosBroadcastAt = n;
-        this._broadcast("sc_players", { players: this.sc.players });
+        // 여러 플레이어의 위치 패킷이 같은 33ms 창에 도착해도 마지막 상태를 버리지
+        // 않고, 남은 시간 뒤 한 번 더 방송한다. 액션 엣지는 즉시 내보낸다.
+        this._scheduleSoccerPlayersBroadcast(urgentSoccerAction);
         return;
       }
       if (t === "sc_ball"){
@@ -2300,6 +2311,7 @@ export class RoomDO{
     try{ if (this.st && this.st._timer){ clearTimeout(this.st._timer); } }catch(_){}
     try{ if (this.sc && this.sc.timer){ clearTimeout(this.sc.timer); } }catch(_){}
     try{ if (this.sc?.transitionTimer){ clearTimeout(this.sc.transitionTimer); } }catch(_){}
+    try{ if (this.sc?.posBroadcastTimer){ clearTimeout(this.sc.posBroadcastTimer); } }catch(_){}
     try{ if (this.da && this.da.timer){ clearTimeout(this.da.timer); } }catch(_){}
 
     try{ this.sockets = new Map(); }catch(_){}
@@ -2311,10 +2323,10 @@ export class RoomDO{
     this.tour = null;
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null };
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} };
-    this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
+    this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, posBroadcastTimer:null, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
     this.sk = { startPayload: null };
     this.mx = { startPayload: null, latestStates: {}, latestWorld: null, latestPhase: null, latestEvent: null, lastActiveAt: 0 };
-    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [], ending:false };
+    this.br = { startPayload: null, latestStates: {}, latestWorld: null, latestChat: [], ending:false, catchCooldown:{}, caughtCounts:{} };
     this.da = { active:false, round:0, maxRounds:5, order:[], drawerIdx:0, drawerUid:'', word:'', endAt:0, timer:null, scores:{}, ops:[] };
     this._cpu = { active:false };
 
@@ -2368,6 +2380,37 @@ export class RoomDO{
       this.tg.timer = null;
       this._broadcast("tg_players", { players: this.tg.players });
     }, 50);
+  }
+
+  _checkBackroomsCatches(){
+    try{
+      if(this.meta.mode!=="backrooms3d"||this.meta.phase!=="playing"||!this.br?.startPayload)return;
+      const start=this.br.startPayload;
+      if(now()<Number(start.startedAt||0)+10000)return;
+      const states=this.br.latestStates||{};
+      const roles=start.roles||{};
+      if(!this.br.catchCooldown)this.br.catchCooldown={};
+      if(!this.br.caughtCounts)this.br.caughtCounts={};
+      const roleOf=(sid)=>String(roles[String(sid)]?.role||
+        (String(start.monsterSid||'')===String(sid)?'monster':'rabbit'));
+      const hunters=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='monster'&&!st?.ghost);
+      const rabbits=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='rabbit'&&!st?.ghost&&!st?.trapped);
+      const stamp=now();
+      for(const [,hunter] of hunters){
+        for(const [target,rabbit] of rabbits){
+          if(stamp-Number(this.br.catchCooldown[target]||0)<3000)continue;
+          const dx=Number(rabbit?.x||0)-Number(hunter?.x||0);
+          const dz=Number(rabbit?.z||0)-Number(hunter?.z||0);
+          if(dx*dx+dz*dz>2.1*2.1)continue;
+          const count=Math.min(2,Math.max(Number(this.br.caughtCounts[target]||0),Number(rabbit?.caught||0))+1);
+          this.br.catchCooldown[target]=stamp;
+          this.br.caughtCounts[target]=count;
+          this.br.latestStates[target]=Object.assign({},rabbit,{caught:count,trapped:count<2,ghost:count>=2,hasKey:false});
+          this._broadcast("br_msg",{msg:{kind:"caught",target:String(target),caught:count,from:"server",nick:"SYSTEM"}});
+          return;
+        }
+      }
+    }catch(_){ }
   }
 
   // -------- Soccer helpers --------
@@ -2678,6 +2721,27 @@ export class RoomDO{
     this._broadcastSoccerState();
   }
 
+  _scheduleSoccerPlayersBroadcast(urgent=false){
+    if(!this.sc||this.meta.mode!=="soccer"||this.meta.phase!=="playing")return;
+    const broadcast=()=>{
+      if(!this.sc||this.meta.mode!=="soccer"||this.meta.phase!=="playing")return;
+      this.sc.lastPosBroadcastAt=now();
+      this._broadcast("sc_players",{players:this.sc.players});
+    };
+    if(urgent){
+      if(this.sc.posBroadcastTimer){try{clearTimeout(this.sc.posBroadcastTimer);}catch(_){ }this.sc.posBroadcastTimer=null;}
+      broadcast();
+      return;
+    }
+    const wait=Math.max(0,33-(now()-Number(this.sc.lastPosBroadcastAt||0)));
+    if(wait===0){broadcast();return;}
+    if(this.sc.posBroadcastTimer)return;
+    this.sc.posBroadcastTimer=setTimeout(()=>{
+      if(this.sc)this.sc.posBroadcastTimer=null;
+      broadcast();
+    },wait);
+  }
+
   _initSoccer(){
     try{ for(const t of this._soccerDisconnectTimers?.values?.()||[]) clearTimeout(t); }catch(_){ }
     this._soccerDisconnectTimers = new Map();
@@ -2685,7 +2749,8 @@ export class RoomDO{
     if(this.sc.transitionTimer){try{clearTimeout(this.sc.transitionTimer);}catch(_){ }}
     this.sc.players={};this.sc.ball=null;this.sc.score={A:0,B:0};this.sc.over=false;
     this.sc.phase="idle";this.sc.round=null;this.sc.playedMs=0;this.sc.playStartedAt=0;
-    this.sc.matchDurationMs=120000;this.sc.lastPosBroadcastAt=0;this.sc.timer=null;this.sc.transitionTimer=null;
+    if(this.sc.posBroadcastTimer){try{clearTimeout(this.sc.posBroadcastTimer);}catch(_){ }}
+    this.sc.matchDurationMs=120000;this.sc.lastPosBroadcastAt=0;this.sc.posBroadcastTimer=null;this.sc.timer=null;this.sc.transitionTimer=null;
     this.sc.kickoffOwnerSid="";this.sc.roundSerial=0;this.sc.seenGoalIds=[];
 
     const cpu=this._cpuUid();
