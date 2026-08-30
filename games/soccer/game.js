@@ -651,7 +651,7 @@ function prepareAuthoritativeKickoff(d){
   if(owner){
     owner.x=owner.netX=FX+FW/2+(String(d.winner||'')==='A'?-DRIBBLE_DISTANCE:DRIBBLE_DISTANCE);
     owner.y=owner.netY=KICKOFF_Y;owner.dir=defaultDir(owner.team);
-    const t=dribbleTargetForPlayer(owner,owner.vx||0,owner.vy||0,Date.now());ball.x=t.x;ball.y=t.y;ball.owner=ownerSid;ball.ownerUntil=Number(d.kickoffAt||Date.now())+1200;ball.ownerSince=Date.now();
+    const t=dribbleTarget(owner);ball.x=t.x;ball.y=t.y;ball.owner=ownerSid;ball.ownerUntil=Number(d.kickoffAt||Date.now())+1200;ball.ownerSince=Date.now();
   }
   netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:ball.owner,samples:[],lastKicker:null,noPickupUntil:0};
 }
