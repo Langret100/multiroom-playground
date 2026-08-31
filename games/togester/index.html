@@ -761,6 +761,7 @@
             pushAnimUntil: 0,
             knockbackUntil: 0,
             knockbackVx: 0,
+            stunUntil: 0,
             noHeadBlockUntil: 0,
             noHeadBlockSids: [],
             goalReached: false
@@ -814,10 +815,10 @@
 
         // 라운드 아이템: 맵에는 3~5개를 결정적으로 배치하고, 호스트가 30초마다 보급을 투하한다.
         const ITEM_DEFS = {
-            gun:        { name:'팝건',       charges:6, color:'#74b9ff' },
-            lightsaber: { name:'광선검',     charges:8, color:'#55efc4' },
-            jetpack:    { name:'점프팩',     charges:5, color:'#fdcb6e' },
-            missile:    { name:'유도미사일', charges:2, color:'#e17055' },
+            gun:        { name:'총',         charges:6, color:'#74b9ff' },
+            lightsaber: { name:'칼',         charges:8, color:'#55efc4' },
+            jetpack:    { name:'백팩',       charges:5, color:'#fdcb6e' },
+            missile:    { name:'로켓',       charges:2, color:'#e17055' },
             grenade:    { name:'수류탄',     charges:2, color:'#636e72' },
             pan:        { name:'후라이팬',   charges:6, color:'#b2bec3' }
         };
@@ -1861,6 +1862,16 @@
             heldItem = null;
             itemEffects = [];
             seenItemEvents.clear();
+            // Every round owns a fresh authoritative item snapshot. Previously the
+            // host snapshot had no level tag, so a delayed tg_players heartbeat from
+            // round N could overwrite the freshly generated round N+1 items.
+            itemCompatRequest = null;
+            if (EMBED && !isGuestMode && isHost){
+                itemCompatHostVersion++;
+                itemCompatHostEvent = null;
+                itemCompatHostEvents = [];
+                itemCompatSeenRequests.clear();
+            }
             nextItemDropAt = performance.now() + ITEM_DROP_INTERVAL_MS;
             updateItemButton();
 
@@ -2215,6 +2226,7 @@ cameraX = 0;
         }
         function itemCompatApplyHostState(st){
             const sync=st&&st.itemCompat;if(!sync||!sync.authority)return;
+            if(Number(sync.level)!==Number(currentLevel))return;
             const version=Math.max(0,Number(sync.version)||0);
             if(Array.isArray(sync.world) && version>=itemCompatAppliedVersion){
                 worldItems=sync.world.filter(it=>it&&ITEM_DEFS[it.type]&&it.id).map(it=>({id:String(it.id),type:String(it.type),x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed}));
@@ -2227,8 +2239,18 @@ cameraX = 0;
                     if(ev.accepted!==false){
                         if(ev.action==='pick'){
                             if(String(ev.from||'')===String(mySessionId) && ITEM_DEFS[ev.itemType]) heldItem={id:String(ev.id),type:String(ev.itemType),charges:Number(ev.charges)||ITEM_DEFS[ev.itemType].charges};
-                        }else if(ev.action==='use' && String(ev.from||'')!==String(mySessionId) && ev.effect){
-                            const e=ev.effect;addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color);itemSound(ev.itemType);
+                        }else if(ev.action==='use'){
+                            if(String(ev.from||'')!==String(mySessionId) && ev.effect){
+                                const e=ev.effect;addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color);itemSound(ev.itemType);
+                            }
+                            const hit=(Array.isArray(ev.impacts)?ev.impacts:[]).find(h=>String(h?.sid||'')===String(mySessionId||''));
+                            if(hit){
+                                itemHitSound(hit.kind||ev.itemType||'hit');
+                                if(Number(hit.stunMs)>0){
+                                    localPlayer.stunUntil=Math.max(localPlayer.stunUntil||0,performance.now()+Math.min(5000,Number(hit.stunMs)||0));
+                                    moveDirection=0;
+                                }
+                            }
                         }
                     }
                     if(itemCompatRequest && String(itemCompatRequest.evt||'')===String(ev.evt||'')) itemCompatRequest=null;
@@ -2334,16 +2356,60 @@ cameraX = 0;
             return best;
         }
 
-        function itemSound(type){
+        function _itemTone(freq,dur=.12,type='square',vol=.12,endFreq=null,delay=0){
             try{
-                initAudio(); if(!audioCtx) return;
-                const o=audioCtx.createOscillator(), g=audioCtx.createGain();
-                const f={gun:260,lightsaber:120,jetpack:480,missile:90,grenade:65,pan:720}[type]||220;
-                o.type=type==='lightsaber'?'sawtooth':'square'; o.frequency.setValueAtTime(f,audioCtx.currentTime);
-                o.frequency.exponentialRampToValueAtTime(Math.max(35,f*(type==='jetpack'?1.8:.45)),audioCtx.currentTime+.16);
-                g.gain.setValueAtTime(.12,audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.2);
-                o.connect(g);g.connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+.21);
+                initAudio(); if(!audioCtx)return;
+                const t=audioCtx.currentTime+Math.max(0,delay);
+                const o=audioCtx.createOscillator(),g=audioCtx.createGain();
+                o.type=type;o.frequency.setValueAtTime(Math.max(20,freq),t);
+                if(endFreq!=null)o.frequency.exponentialRampToValueAtTime(Math.max(20,endFreq),t+dur);
+                g.gain.setValueAtTime(Math.max(.001,vol),t);g.gain.exponentialRampToValueAtTime(.001,t+dur);
+                o.connect(g);g.connect(audioCtx.destination);o.start(t);o.stop(t+dur+.01);
             }catch(_){ }
+        }
+
+        // Item use SFX are deliberately short and arcade-like so repeated multiplayer
+        // events stay readable instead of turning into a long wall of sound.
+        function itemSound(type){
+            if(type==='gun'){
+                _itemTone(720,.045,'square',.13,260);
+                _itemTone(150,.07,'triangle',.08,85,.025);
+            }else if(type==='lightsaber'){
+                _itemTone(150,.16,'sawtooth',.10,520);
+                _itemTone(95,.12,'triangle',.055,180,.045);
+            }else if(type==='jetpack'){
+                _itemTone(120,.20,'sawtooth',.075,360);
+                _itemTone(70,.18,'triangle',.055,160,.035);
+            }else if(type==='missile'){
+                _itemTone(105,.22,'sawtooth',.105,310);
+                _itemTone(55,.16,'square',.06,95,.06);
+            }else if(type==='grenade'){
+                _itemTone(170,.10,'square',.08,90);
+            }else if(type==='pan'){
+                _itemTone(920,.08,'square',.10,520);
+            }else{
+                _itemTone(260,.10,'square',.08,150);
+            }
+        }
+
+        function itemHitSound(kind){
+            if(kind==='gun'){
+                // compact hit + dizzy chirp; the visual stars carry the rest of the stun cue
+                _itemTone(180,.065,'square',.13,85);
+                _itemTone(740,.07,'sine',.07,980,.055);
+                _itemTone(900,.07,'sine',.06,690,.125);
+            }else if(kind==='sword'){
+                _itemTone(360,.055,'square',.13,155);
+                _itemTone(980,.055,'triangle',.065,620,.025);
+            }else if(kind==='rocket'){
+                _itemTone(85,.20,'square',.15,38);
+                _itemTone(48,.24,'triangle',.10,30,.025);
+                _itemTone(220,.07,'square',.055,70,.015);
+            }else if(kind==='pan'){
+                _itemTone(1050,.07,'square',.13,480);
+            }else{
+                _itemTone(210,.07,'square',.10,105);
+            }
         }
 
         function addItemEffect(kind,x,y,tx=x,ty=y,color='#fff'){
@@ -2354,8 +2420,9 @@ cameraX = 0;
             if (!heldItem || localPlayer.isDead) return;
             const now=performance.now(); if(now-lastItemUseAt<260)return; lastItemUseAt=now;
             const type=heldItem.type, dir=localPlayer.facing||1, sx=localPlayer.x+20, sy=localPlayer.y+18;
-            const target=closestRemote(type==='missile'?520:(type==='grenade'?190:150));
+            const target=closestRemote((type==='gun'||type==='missile')?620:170);
             let effect={kind:type,x:sx,y:sy,tx:sx+dir*150,ty:sy,color:ITEM_DEFS[type].color};
+            const impacts=[];
             if(type==='jetpack'){
                 localPlayer.vy=Math.min(localPlayer.vy,-10.5); localPlayer.vx+=dir*1.5; localPlayer.onGround=false;
                 effect.ty=sy+90;
@@ -2366,17 +2433,43 @@ cameraX = 0;
                     if(Math.hypot(dx,dy)<190) bridgeSendPush(sid,Math.sign(dx||dir)*15,-13);
                 }
                 if(Math.hypot(localPlayer.x-ex,localPlayer.y-ey)<150){localPlayer.vx-=dir*5;localPlayer.vy=-7;}
-            } else if(target){
-                const inFront=dir*((target.x||0)-localPlayer.x)>-25;
-                if(type==='missile' || inFront){
-                    const power=type==='pan'?16:type==='lightsaber'?13:type==='missile'?15:9;
-                    bridgeSendPush(target.sid,Math.sign((target.x||0)-localPlayer.x||dir)*power,-(type==='gun'?5:11));
+            } else if(type==='lightsaber'){
+                // Sword = exactly 1.5x the ordinary push impulse.
+                if(target && dir*((target.x||0)-localPlayer.x)>-25){
+                    const dx=dir*PUSH_IMPULSE_X*1.5;
+                    bridgeSendPush(target.sid,dx,PUSH_IMPULSE_Y*1.15,24);
+                    impacts.push({sid:String(target.sid),kind:'sword'});
                     effect.tx=target.x+20; effect.ty=target.y+20;
+                }
+            } else if(type==='gun'){
+                // Ranged shot: normal push force + 2 second movement stun on hit.
+                if(target && dir*((target.x||0)-localPlayer.x)>0){
+                    bridgeSendPush(target.sid,dir*PUSH_IMPULSE_X,PUSH_IMPULSE_Y*.45,20);
+                    impacts.push({sid:String(target.sid),kind:'gun',stunMs:2000});
+                    effect.tx=target.x+20; effect.ty=target.y+18;
+                } else { effect.tx=sx+dir*560; }
+            } else if(type==='missile'){
+                // Rocket flies to the aimed point then explodes; everyone in the blast
+                // is launched radially with 2x the normal push strength.
+                const ex=target?(target.x+20):(sx+dir*420), ey=target?(target.y+20):sy;
+                effect={kind:'missile',x:sx,y:sy,tx:ex,ty:ey,color:ITEM_DEFS[type].color,explode:true};
+                for(const [sid,p] of Object.entries(players||{})){
+                    const pos=getRemotePosForLogic(sid,p||{}), dx=(pos.x+20)-ex, dy=(pos.y+20)-ey, dist=Math.hypot(dx,dy);
+                    if(dist<=210){
+                        const nx=dist>1?dx/dist:dir, ny=dist>1?dy/dist:-.3;
+                        const pvx=nx*(PUSH_IMPULSE_X*2), pvy=Math.min(-6,ny*(Math.abs(PUSH_IMPULSE_Y)*1.65)-5);
+                        bridgeSendPush(sid,pvx,pvy,32);
+                        impacts.push({sid:String(sid),kind:'rocket'});
+                    }
+                }
+            } else if(type==='pan'){
+                if(target && dir*((target.x||0)-localPlayer.x)>-25){
+                    bridgeSendPush(target.sid,dir*16,-11); impacts.push({sid:String(target.sid),kind:'pan'}); effect.tx=target.x+20;effect.ty=target.y+20;
                 }
             }
             localPlayer.pushAnimUntil=now+PUSH_ANIM_MS;
             itemSound(type); addItemEffect(effect.kind,effect.x,effect.y,effect.tx,effect.ty,effect.color);
-            itemEvent('use',{id:heldItem.id,itemType:type,effect});
+            itemEvent('use',{id:heldItem.id,itemType:type,effect,impacts});
             heldItem.charges--;
             if(heldItem.charges<=0) heldItem=null;
             updateItemButton();
@@ -2398,8 +2491,16 @@ cameraX = 0;
                 if((local || String(d.from||'')===String(mySessionId||'')) && ITEM_DEFS[pickedType]){
                     heldItem={id:String(d.id),type:pickedType,charges:Number(d.charges)||ITEM_DEFS[pickedType].charges};
                 }
-            }else if(d.action==='use' && !local && d.effect){
-                const e=d.effect; addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color); itemSound(d.itemType);
+            }else if(d.action==='use'){
+                if(!local && d.effect){ const e=d.effect; addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color); itemSound(d.itemType); }
+                const hit=(Array.isArray(d.impacts)?d.impacts:[]).find(h=>String(h?.sid||'')===String(mySessionId||''));
+                if(hit){
+                    itemHitSound(hit.kind||d.itemType||'hit');
+                    if(Number(hit.stunMs)>0){
+                        localPlayer.stunUntil=Math.max(localPlayer.stunUntil||0,performance.now()+Math.min(5000,Number(hit.stunMs)||0));
+                        moveDirection=0;
+                    }
+                }
             }
             updateItemButton();
         }
@@ -2824,8 +2925,13 @@ cameraX = 0;
             const wasOnGround = !!localPlayer.onGround;
             let vx = (typeof localPlayer.vx === 'number') ? localPlayer.vx : 0;
 
+            // Gun stun: input is locked for the authoritative 2 second window,
+            // while knockback/gravity still continue so the hit does not look frozen.
+            const stunnedNow = _now < (localPlayer.stunUntil || 0);
+            if (stunnedNow) moveDirection = 0;
+
             // Input acceleration / friction (Mario-like)
-            if (moveDirection !== 0) {
+            if (!stunnedNow && moveDirection !== 0) {
                 const desired = moveDirection * MOVE_MAX_SPEED;
                 // skidding when reversing direction on ground
                 const reversing = wasOnGround && (Math.sign(desired) !== Math.sign(vx)) && Math.abs(vx) > 0.5;
@@ -3277,7 +3383,7 @@ cameraX = 0;
         // 플레이어-플레이어 충돌 해결 (옆 충돌 시 상대를 '밀기')
         // NOTE: 각 플레이어는 자신의 상태만 서버로 전송하므로,
         //       밀림은 'push impulse' 이벤트를 상대에게 전달해 적용합니다.
-        function bridgeSendPush(toSid, dx, dy){
+        function bridgeSendPush(toSid, dx, dy, maxImpulse=32){
             if (!EMBED || isGuestMode) return;
             const sid = String(toSid || "");
             if (!sid || sid === mySessionId) return;
@@ -3287,8 +3393,9 @@ cameraX = 0;
             if (now - last < 120) return; // throttle
             bridgeSendPush._last[sid] = now;
 
-            const vx = clamp(Number(dx) || 0, -16, 16);
-            const vy = clamp(Number(dy) || 0, -16, 16);
+            const lim=Math.max(16,Math.min(32,Number(maxImpulse)||32));
+            const vx = clamp(Number(dx) || 0, -lim, lim);
+            const vy = clamp(Number(dy) || 0, -lim, lim);
             if (!vx && !vy) return;
             bridgeSend("tg_push", { to: sid, dx: vx, dy: vy });
         }
@@ -3479,10 +3586,29 @@ cameraX = 0;
             ctx.restore();
         }
 
+        function drawBackPixelItem(type,x,y,facing){
+            if(type!=='jetpack') return;
+            const dir=facing<0?-1:1;
+            // Backpack sits behind the hamster body rather than floating in its hand.
+            drawPixelItemIcon(type,Math.round(x+20-dir*12),Math.round(y+23),1,dir);
+        }
+
         function drawHeldPixelItem(type,x,y,facing){
-            if(!ITEM_DEFS[type]) return;
+            if(!ITEM_DEFS[type] || type==='jetpack') return;
             const dir=facing<0?-1:1;
             drawPixelItemIcon(type,Math.round(x+20+dir*25),Math.round(y+24),1,dir);
+        }
+
+        function drawDizzyPixels(x,y,seed=0){
+            const t=performance.now()/190 + seed;
+            const cy=Math.round(y-12), cx=Math.round(x+20);
+            const cols=['#fff3a3','#ffd32a','#ff9f43'];
+            for(let i=0;i<3;i++){
+                const q=t+i*Math.PI*2/3, px=Math.round(cx+Math.cos(q)*16), py=Math.round(cy+Math.sin(q)*5);
+                pixelBlock(px-3,py-3,7,7,cols[i]);
+                pixelBlock(px-1,py-6,3,13,cols[i]);
+                pixelBlock(px-6,py-1,13,3,cols[i]);
+            }
         }
 
         function drawWorldItem(it){
@@ -3519,7 +3645,8 @@ cameraX = 0;
                 }else if(e.kind==='missile'){
                     const travel=Math.min(1,t*1.55),mx=x+(tx-x)*travel,my=y+(ty-y)*travel,dir=tx<x?-1:1;
                     for(let i=1;i<=6;i++){const trail=travel-i*.045;if(trail>0)pixelBlock(x+(tx-x)*trail-4,y+(ty-y)*trail-4,8,8,i<3?'#ff9f43':'#747d8c');}
-                    drawPixelItemIcon('missile',mx,my,1,dir);pixelBlock(tx-18,ty-2,12,4,'#ff4757');pixelBlock(tx+6,ty-2,12,4,'#ff4757');pixelBlock(tx-2,ty-18,4,12,'#ff4757');pixelBlock(tx-2,ty+6,4,12,'#ff4757');
+                    drawPixelItemIcon('missile',mx,my,1,dir);
+                    if(travel>.82){const cols=['#fff3a3','#ffd32a','#ff9f1a','#e84118'];for(let i=0;i<16;i++){const q=i*Math.PI/8,r=(travel-.82)*180+(i%3)*5;pixelBlock(tx+Math.cos(q)*r-4,ty+Math.sin(q)*r-4,8,8,cols[i%cols.length]);}}
                 }else{
                     const travel=Math.min(1,t*4),bx=x+(tx-x)*travel,by=y+(ty-y)*travel;
                     for(let i=0;i<8;i++){const u=Math.max(0,travel-i*.055);pixelBlock(x+(tx-x)*u-3,y+(ty-y)*u-2,6,4,i<2?'#fff':'#74b9ff');}
@@ -3768,6 +3895,7 @@ cameraX = 0;
                 sp.vy = (typeof tp.vy === 'number') ? tp.vy : (p.vy || 0);
                 sp.onGround = (typeof tp.onGround === 'boolean') ? tp.onGround : !!p.onGround;
                 sp.pushing = !!tp.pushing;
+                sp.stunned = !!tp.stunned;
                 sp.heldItem = tp.heldItem || p.heldItem || null;
 
                 if (!sp.facing) sp.facing = 1;
@@ -3781,12 +3909,16 @@ cameraX = 0;
                 const rx = sp.rx;
                 const ry = sp.ry;
 
+                if(!sp.isDead && sp.heldItem?.type==='jetpack') drawBackPixelItem('jetpack',rx,ry,sp.facing);
                 drawHamster(rx, ry, sp.color, sp.name, false, sp.isDead, { vx: sp.vx, vy: sp.vy, onGround: sp.onGround, facing: sp.facing, pushing: sp.pushing });
                 if(!sp.isDead && sp.heldItem?.type) drawHeldPixelItem(sp.heldItem.type,rx,ry,sp.facing);
+                if(!sp.isDead && sp.stunned) drawDizzyPixels(rx,ry,String(sid).length);
             });
 // 로컬 플레이어
+            if(!localPlayer.isDead && heldItem?.type==='jetpack') drawBackPixelItem('jetpack',localPlayer.x,localPlayer.y,localPlayer.facing);
             drawHamster(localPlayer.x, localPlayer.y, localPlayer.color, localPlayer.name, true, localPlayer.isDead, localPlayer);
             if(!localPlayer.isDead && heldItem?.type) drawHeldPixelItem(heldItem.type,localPlayer.x,localPlayer.y,localPlayer.facing);
+            if(!localPlayer.isDead && performance.now() < (localPlayer.stunUntil||0)) drawDizzyPixels(localPlayer.x,localPlayer.y,1);
             drawItemEffects();
             
             ctx.restore();
@@ -4213,6 +4345,7 @@ cameraX = 0;
                     name: b.name,
                     variant: (typeof b.variant === 'number') ? b.variant : 0,
                     pushing: !!b.pushing,
+                    stunned: !!b.stunned,
                     heldItem: b.heldItem || null
                 };
             }
@@ -4233,6 +4366,7 @@ cameraX = 0;
                 name: last.name,
                 variant: (typeof last.variant === 'number') ? last.variant : 0,
                 pushing: !!last.pushing,
+                stunned: !!last.stunned,
                 heldItem: last.heldItem || null
             };
         }
@@ -4270,6 +4404,7 @@ cameraX = 0;
                 smoothedPlayers[sid].color = p.color;
                 smoothedPlayers[sid].variant = (typeof p.variant === 'number') ? p.variant : 0;
                 smoothedPlayers[sid].pushing = !!p.pushing;
+                smoothedPlayers[sid].stunned = !!p.stunned;
                 smoothedPlayers[sid].heldItem = p.heldItem || null;
             }
             players = next;
@@ -4477,10 +4612,11 @@ cameraX = 0;
                     variant: localPlayer.variant,
                     goalReached: !!localPlayer.goalReached,
                     pushing: (performance.now() < (localPlayer.pushAnimUntil || 0)),
+                    stunned: (performance.now() < (localPlayer.stunUntil || 0)),
                     heldItem: heldItem ? { type:heldItem.type, charges:heldItem.charges } : null,
                     itemRequest: itemCompatRequest ? { ...itemCompatRequest } : null,
                     itemCompat: isHost ? {
-                        authority:true, version:itemCompatHostVersion,
+                        authority:true, level:currentLevel, version:itemCompatHostVersion,
                         event:itemCompatHostEvent ? { ...itemCompatHostEvent } : null,
                         events:itemCompatHostEvents.map(e=>({...e})),
                         world:itemCompatNormalizeWorld()
@@ -4611,8 +4747,8 @@ cameraX = 0;
             if (d.type === "tg_push"){
                 const to = String(d.to || "");
                 if (to && mySessionId && to !== mySessionId) return;
-                const dx = clamp(Number(d.dx) || 0, -16, 16);
-                const dy = clamp(Number(d.dy) || 0, -16, 16);
+                const dx = clamp(Number(d.dx) || 0, -32, 32);
+                const dy = clamp(Number(d.dy) || 0, -32, 32);
                 const now = performance.now();
                 // Remember knockback so it is not immediately overwritten by local movement input
                 localPlayer.knockbackUntil = now + 320;

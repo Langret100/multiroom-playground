@@ -2906,6 +2906,11 @@ function soccerCompatAcceptSubmit(sid,p){
 }
 function soccerCompatHandlePlayers(map){
   map=map||{};
+  // Movement also rides the legacy tg_state relay. This fixes the old-Worker race
+  // where each browser moved only its own avatar because sc_pos registration was lost.
+  const legacyPos={};
+  for(const [sid,st] of Object.entries(map)){ if(st&&st.__soccerPos) legacyPos[sid]=st.__soccerPos; }
+  if(Object.keys(legacyPos).length) applyRemotePlayers(legacyPos);
   if(isHost){
     for(const [sid,st] of Object.entries(map)){
       const p=st&&st.__soccerCompat;if(p&&p.kind==='submit')soccerCompatAcceptSubmit(sid,p);

@@ -1,0 +1,28 @@
+import fs from 'node:fs';
+const read=p=>fs.readFileSync(new URL('../'+p, import.meta.url),'utf8');
+const tg=read('games/togester/index.html');
+const room=read('js/pages/room.js');
+const soccer=read('games/soccer/game.js');
+const must=(cond,msg)=>{if(!cond)throw new Error(msg)};
+must(tg.includes('authority:true, level:currentLevel'), 'item authority snapshot lacks round level');
+must(tg.includes('Number(sync.level)!==Number(currentLevel)'), 'stale round item snapshot is not rejected');
+must(tg.includes('itemCompatHostVersion++'), 'new round does not advance item authority version');
+must(tg.includes("name:'백팩'"), 'backpack display name missing');
+must(tg.includes("drawBackPixelItem('jetpack'"), 'backpack is not drawn on back layer');
+must(tg.includes('PUSH_IMPULSE_X*1.5'), 'sword is not 1.5x normal push');
+must(tg.includes('stunMs:2000'), 'gun 2 second stun missing');
+must(tg.includes('drawDizzyPixels'), 'gun dizzy pixel effect missing');
+must(tg.includes('PUSH_IMPULSE_X*2'), 'rocket is not 2x normal push');
+must(tg.includes('dist<=210'), 'rocket area blast missing');
+
+must(tg.includes('function itemHitSound(kind)'), 'item hit sound dispatcher missing');
+must(tg.includes("if(type==='gun')") && tg.includes("if(kind==='gun')"), 'gun use/hit SFX missing');
+must(tg.includes("type==='lightsaber'") && tg.includes("kind==='sword'"), 'sword use/hit SFX missing');
+must(tg.includes("type==='jetpack'"), 'backpack ignition SFX missing');
+must(tg.includes("type==='missile'") && tg.includes("kind==='rocket'"), 'rocket use/hit SFX missing');
+must(tg.includes("itemHitSound(hit.kind||ev.itemType||'hit')"), 'authoritative remote hit SFX missing');
+must(tg.includes("itemHitSound(hit.kind||d.itemType||'hit')"), 'direct compat hit SFX missing');
+must(room.includes('__soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos'), 'soccer math+position relay not merged');
+must(!room.includes('room.send("sc_pos"'), 'soccer still sends Worker-specific sc_pos');
+must(soccer.includes('if(st&&st.__soccerPos) legacyPos[sid]=st.__soccerPos'), 'soccer remote positions not applied from legacy relay');
+console.log('TOGESTER_ITEM_SOCCER_SYNC_REGRESSION_OK');

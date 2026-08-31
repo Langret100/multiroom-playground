@@ -908,6 +908,10 @@ function updatePreview(modeId){
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
+  const soccerLegacyRelayState = { round:null, pos:null };
+  function sendSoccerLegacyRelay(){
+    try{ room.send("tg_state", { state:{ __soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos } }); }catch(_){ }
+  }
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -1383,7 +1387,8 @@ function updatePreview(modeId){
     // transport so math-round synchronization does not require a Worker upgrade.
     if (d.type === "sc_compat") {
       if (!fromMainForSoccer) return;
-      try{ room.send("tg_state", { state: { __soccerCompat: d.packet || {} } }); }catch(_){ }
+      soccerLegacyRelayState.round = d.packet || {};
+      sendSoccerLegacyRelay();
       return;
     }
 
@@ -1396,19 +1401,21 @@ function updatePreview(modeId){
         if(n-window.__scDirectPosTs<30)return;
         window.__scDirectPosTs=n;
       }
-      try{
-        room.send("sc_pos", {
-          stateSeq:Number(d.stateSeq||0), x:Number(d.x||0), y:Number(d.y||0), dir:Number(d.dir||0),
-          vx:Number(d.vx||0), vy:Number(d.vy||0),
-          dribble:d.dribble==null?undefined:!!d.dribble, dribbleBallX:d.dribbleBallX, dribbleBallY:d.dribbleBallY,
-          claimAt:d.claimAt, claimBallX:d.claimBallX, claimBallY:d.claimBallY,
-          kickAt:d.kickAt, kickCharge:d.kickCharge, tackle:d.tackle,
-          kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir, kickVX:d.kickVX, kickVY:d.kickVY,
-          kickBallX:d.kickBallX, kickBallY:d.kickBallY,
-          headerAt:d.headerAt, headerX:d.headerX, headerY:d.headerY, headerDir:d.headerDir,
-          headerBallX:d.headerBallX, headerBallY:d.headerBallY, tackleAt:d.tackleAt
-        });
-      }catch(_){ }
+      // Old Workers can drop soccer-specific sc_pos for players that missed their
+      // registration window. Carry movement through the long-standing tg_state relay
+      // instead, merged with the math-round packet so neither overwrites the other.
+      soccerLegacyRelayState.pos = {
+        stateSeq:Number(d.stateSeq||0), x:Number(d.x||0), y:Number(d.y||0), dir:Number(d.dir||0),
+        vx:Number(d.vx||0), vy:Number(d.vy||0),
+        dribble:d.dribble==null?undefined:!!d.dribble, dribbleBallX:d.dribbleBallX, dribbleBallY:d.dribbleBallY,
+        claimAt:d.claimAt, claimBallX:d.claimBallX, claimBallY:d.claimBallY,
+        kickAt:d.kickAt, kickCharge:d.kickCharge, tackle:d.tackle,
+        kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir, kickVX:d.kickVX, kickVY:d.kickVY,
+        kickBallX:d.kickBallX, kickBallY:d.kickBallY,
+        headerAt:d.headerAt, headerX:d.headerX, headerY:d.headerY, headerDir:d.headerDir,
+        headerBallX:d.headerBallX, headerBallY:d.headerBallY, tackleAt:d.tackleAt
+      };
+      sendSoccerLegacyRelay();
       return;
     }
     if (d.type === "sc_ball"){

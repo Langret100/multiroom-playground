@@ -13,7 +13,9 @@ for (const forbidden of [
   if (room.includes(forbidden)) throw new Error(`obsolete Worker-specific room path remains: ${forbidden}`);
 }
 if (/bridgeSend\(['"](?:tg_item|sc_math_submit|sc_time_ping)['"]/.test(tg+soccer)) throw new Error('obsolete Worker-specific iframe send path remains');
-if(!room.includes('room.send("tg_state", { state: { __soccerCompat: d.packet || {} } })')) throw new Error('soccer compatibility tunnel missing');
+if(!room.includes('__soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos')) throw new Error('soccer merged legacy tunnel missing');
+if(room.includes('room.send("sc_pos"')) throw new Error('soccer position still depends on Worker sc_pos path');
+if(!soccer.includes('if(st&&st.__soccerPos) legacyPos[sid]=st.__soccerPos')) throw new Error('soccer legacy position aggregate receiver missing');
 if(!room.includes('type:"sc_compat_players"')) throw new Error('soccer compatibility receive bridge missing');
 if(!soccer.includes("bridgeSend('sc_compat'")) throw new Error('soccer compat sender missing');
 if(soccer.includes("bridgeSend('sc_math_submit'")) throw new Error('soccer still depends on new sc_math_submit Worker API');
