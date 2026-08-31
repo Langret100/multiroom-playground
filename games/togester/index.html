@@ -692,6 +692,24 @@
             const recentPuzzle = (now - (lastTgPuzzleSnapshotAt || 0)) < 1200;
             return recentPuzzle;
         }
+        // 게스트가 박스를 계속 밀 때 매 렌더 프레임마다 impulse를 보내면
+        // 네트워크 지연/버퍼링에 따라 힘이 들쭉날쭉해질 수 있다.
+        // 짧은 고정 간격의 push lease만 보내고, 호스트가 그 lease 동안 동일 힘을 유지한다.
+        const BOX_PUSH_SEND_INTERVAL_MS = 110;
+        const BOX_PUSH_LEASE_MS = 170;
+        const boxPushSendState = new Map();
+        function sendRemoteBoxPush(box, vx){
+            if (!EMBED || isHost || !box) return false;
+            const id = String(box.id || '');
+            if (!id) return false;
+            const now = performance.now();
+            const dir = vx < 0 ? -1 : 1;
+            const prev = boxPushSendState.get(id);
+            if (prev && prev.dir === dir && (now - prev.at) < BOX_PUSH_SEND_INTERVAL_MS) return false;
+            boxPushSendState.set(id, { at: now, dir });
+            bridgeSend('tg_box_impulse', { level: currentLevel, id, vx: dir * 3, pushLeaseMs: BOX_PUSH_LEASE_MS });
+            return true;
+        }
         function isAuthoritativePuzzleSim(){
             return !EMBED || !!isHost;
         }
@@ -813,14 +831,19 @@
         let floorUsedThisLife = 0;
         let lastPushAt = 0;
 
-        // 라운드 아이템: 맵에는 3~5개를 결정적으로 배치하고, 호스트가 30초마다 보급을 투하한다.
+        // 라운드 아이템: 매 라운드 안전 동선 위에 정확히 5개를 분산 배치하고,
+        // 호스트가 30초마다 추가 보급을 투하한다. 아이템 판정은 기존 tg_state 호환 릴레이만 사용한다.
         const ITEM_DEFS = {
             gun:        { name:'총',         charges:6, color:'#74b9ff' },
             lightsaber: { name:'칼',         charges:8, color:'#55efc4' },
             jetpack:    { name:'백팩',       charges:5, color:'#fdcb6e' },
             missile:    { name:'로켓',       charges:2, color:'#e17055' },
             grenade:    { name:'수류탄',     charges:2, color:'#636e72' },
-            pan:        { name:'후라이팬',   charges:6, color:'#b2bec3' }
+            pan:        { name:'후라이팬',   charges:6, color:'#b2bec3' },
+            hammer:     { name:'망치',       charges:4, color:'#ff7675' },
+            spring:     { name:'스프링부츠', charges:4, color:'#ffeaa7' },
+            ice:        { name:'빙결탄',     charges:3, color:'#81ecec' },
+            boomerang:  { name:'부메랑',     charges:5, color:'#fab1a0' }
         };
         const ITEM_TYPES = Object.keys(ITEM_DEFS);
         const ITEM_DROP_INTERVAL_MS = 30000;
@@ -1135,9 +1158,9 @@
             doors.push({ x: 0, y: yDoor, width: TG_STAGE_W, height: 30, open: false, color: '#d63031' });
             // 버튼 발판
             const btnSideLeft = rng() < 0.5;
-            const btnPlatW = _rint(rng, 140, 190);
+            const btnPlatW = _rint(rng, 165, 205);
             const btnPlatX = btnSideLeft ? 35 : (TG_STAGE_W - 35 - btnPlatW);
-            const btnPlatY = yApproach + _rint(rng, 70, 110);
+            const btnPlatY = yApproach + _rint(rng, 105, 145);
             _addPlatform(platforms, btnPlatX, btnPlatY, btnPlatW, 20);
             buttons.push({ x: btnSideLeft ? 55 : (TG_STAGE_W - 55 - 70), y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#e17055' });
 
@@ -1161,19 +1184,19 @@
 
         function _chunkBridge({rng, platforms, bridges, buttons, spikes, y, step, diff}){
             const yGap = y - step;
-            _addPlatform(platforms, 40, yGap, 160, 20);
-            _addPlatform(platforms, 320, yGap, 160, 20);
-            bridges.push({ x: 200, y: yGap, width: 120, height: 20, color: '#00cec9', active: false });
+            _addPlatform(platforms, 35, yGap, 175, 20);
+            _addPlatform(platforms, 335, yGap, 150, 20);
+            bridges.push({ x: 210, y: yGap, width: 125, height: 20, color: '#00cec9', active: false });
 
             // 버튼은 아래쪽에
-            const btnPlatY = yGap + _rint(rng, 130, 170);
-            const btnPlatX = rng() < 0.5 ? 60 : 300;
-            _addPlatform(platforms, btnPlatX, btnPlatY, 160, 20);
+            const btnPlatY = yGap + _rint(rng, 160, 205);
+            const btnPlatX = rng() < 0.5 ? 45 : 285;
+            _addPlatform(platforms, btnPlatX, btnPlatY, 190, 20);
             buttons.push({ x: btnPlatX + 45, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
 
             // 밑에 스파이크(중반 이후)
             if (diff > 0.35){
-                spikes.push({ x: 150, y: yGap + 60, width: 220, height: 40 });
+                spikes.push({ x: 175, y: yGap + 78, width: 170, height: 36 });
             }
 
             // 위쪽 진행 발판
@@ -1191,14 +1214,14 @@
             lifts.push({ x: 360, y: bottomY, width: 120, height: 20, minY: topY, maxY: bottomY, speed: _lerp(2.6, 3.4, diff), color: '#6c5ce7' });
             // 버튼 발판
             const btnPlatY = bottomY + _rint(rng, 130, 170);
-            _addPlatform(platforms, 50, btnPlatY, 170, 20);
+            _addPlatform(platforms, 40, btnPlatY, 195, 20);
             buttons.push({ x: 85, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
             // 리프트 상단 하차 발판
             _addPlatform(platforms, 250 + _rint(rng,-20,20), topY - 60, 220, 20);
 
             // 후반: 리프트 아래에 스파이크 압박
             if (diff > 0.6 && rng() < 0.65){
-                spikes.push({ x: 250, y: bottomY + 45, width: 220, height: 40 });
+                spikes.push({ x: 285, y: bottomY + 62, width: 165, height: 36 });
             }
 
             return y - step*3;
@@ -1215,8 +1238,8 @@
             // 버튼 포켓
             const pocketLeft = rng() < 0.5;
             const pocketX = pocketLeft ? 40 : 330;
-            const pocketY = yApproach + _rint(rng, 120, 150);
-            _addPlatform(platforms, pocketX, pocketY, 150, 20);
+            const pocketY = yApproach + _rint(rng, 155, 190);
+            _addPlatform(platforms, pocketX, pocketY, 175, 20);
             buttons.push({ x: pocketX + 40, y: _buttonOn(pocketY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#fdcb6e' });
 
             // 상자 (접근 발판 위)
@@ -1224,7 +1247,7 @@
 
             // 함정: 상자 길목 스파이크
             if (diff > 0.45){
-                spikes.push({ x: 120 + _rint(rng,-30,30), y: yApproach + 35, width: 280, height: 40 });
+                spikes.push({ x: 155 + _rint(rng,-20,20), y: yApproach + 58, width: 210, height: 36 });
             }
 
             // 문 위 진행 발판
@@ -1235,12 +1258,12 @@
         function _chunkGap({rng, platforms, spikes, y, step, diff}){
             // 큰 갭: 점프만으로는 빡빡(바닥 1~2개 활용하면 쉬워짐)
             const yGap = y - step;
-            _addPlatform(platforms, 40, yGap, 170, 20);
-            _addPlatform(platforms, 310, yGap, 170, 20);
+            _addPlatform(platforms, 35, yGap, 180, 20);
+            _addPlatform(platforms, 335, yGap, 150, 20);
 
             // 갭 아래에 스파이크(중반 이후)
             if (diff > 0.28){
-                spikes.push({ x: 160, y: yGap + 70, width: 220, height: 40 });
+                spikes.push({ x: 180, y: yGap + 88, width: 165, height: 36 });
             }
 
             // 위쪽 연결 발판
@@ -1259,8 +1282,8 @@
             _addPlatform(platforms, 340, yA, 150, 20);
             bridges.push({ x: 180, y: yA, width: 160, height: 20, color: '#00cec9', active: false });
 
-            const btn1PlatY = yA + 130;
-            _addPlatform(platforms, 40, btn1PlatY, 170, 20);
+            const btn1PlatY = yA + 165;
+            _addPlatform(platforms, 35, btn1PlatY, 195, 20);
             buttons.push({ x: 85, y: _buttonOn(btn1PlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
 
             doors.push({ x: 0, y: yB - 40, width: TG_STAGE_W, height: 26, open: false, color: '#d63031' });
@@ -1271,8 +1294,8 @@
             const liftTop = yC - 80;
             _addPlatform(platforms, 35, yC + 40, 160, 20);
             lifts.push({ x: 355, y: liftBottom, width: 120, height: 20, minY: liftTop, maxY: liftBottom, speed: _lerp(2.4, 3.6, diff), color: '#6c5ce7' });
-            _addPlatform(platforms, 40, yC + 170, 170, 20);
-            buttons.push({ x: 90, y: _buttonOn(yC + 170), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
+            _addPlatform(platforms, 35, yC + 195, 195, 20);
+            buttons.push({ x: 95, y: _buttonOn(yC + 195), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
 
             _addPlatform(platforms, 230, liftTop - 40, 220, 20);
             if (diff > 0.35) spikes.push({ x: 170, y: yA + 58, width: 180, height: 34 });
@@ -1287,11 +1310,11 @@
             _addPlatform(platforms, 35, y0, 150, 20);
             _addPlatform(platforms, 345, y0, 150, 20);
             bridges.push({ x: 185, y: y0, width: 160, height: 20, color: '#00cec9', active: false });
-            const b1y = y0 + 135; _addPlatform(platforms, 45, b1y, 170, 20);
+            const b1y = y0 + 165; _addPlatform(platforms, 35, b1y, 195, 20);
             buttons.push({ x: 95, y: _buttonOn(b1y), width:70, height:12, pressed:false, bridgeId: bridges.length-1, color:'#00b894' });
             doors.push({ x: 0, y: y1, width: TG_STAGE_W, height: 26, open:false, color:'#d63031' });
             _addPlatform(platforms, 140, y1 - 85, 220, 20);
-            const b2y = y1 + 85; _addPlatform(platforms, 320, b2y, 160, 20);
+            const b2y = y1 + 120; _addPlatform(platforms, 300, b2y, 185, 20);
             buttons.push({ x: 365, y: _buttonOn(b2y), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#e17055' });
             _addPlatform(platforms, 60, y2, 150, 20);
             _addPlatform(platforms, 300, y2, 150, 20);
@@ -1304,15 +1327,15 @@
             _addPlatform(platforms, 90, yA, 300, 20);
             boxes.push({ x: 210, y: yA - 40, width:40, height:40 });
             const pocketX = (rng() < 0.5) ? 40 : 330;
-            _addPlatform(platforms, pocketX, yA + 120, 150, 20);
+            _addPlatform(platforms, pocketX, yA + 155, 175, 20);
             doors.push({ x:0, y:yB, width:TG_STAGE_W, height:26, open:false, color:'#d35400' });
-            buttons.push({ x:pocketX + 40, y:_buttonOn(yA + 120), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#fdcb6e' });
+            buttons.push({ x:pocketX + 48, y:_buttonOn(yA + 155), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#fdcb6e' });
             _addPlatform(platforms, 150, yB - 85, 220, 20);
             lifts.push({ x: 350, y: yC + 80, width: 120, height: 20, minY: yC - 90, maxY: yC + 80, speed: _lerp(2.5,3.7,diff), color:'#6c5ce7' });
-            _addPlatform(platforms, 55, yC + 155, 170, 20);
-            buttons.push({ x: 105, y: _buttonOn(yC + 155), width:70, height:12, pressed:false, liftId: lifts.length-1, color:'#a29bfe' });
+            _addPlatform(platforms, 40, yC + 190, 195, 20);
+            buttons.push({ x: 105, y: _buttonOn(yC + 190), width:70, height:12, pressed:false, liftId: lifts.length-1, color:'#a29bfe' });
             _addPlatform(platforms, 220, yC - 120, 220, 20);
-            if (diff > 0.5) spikes.push({ x: 155, y: yA + 42, width: 210, height: 34 });
+            if (diff > 0.5) spikes.push({ x: 180, y: yA + 68, width: 160, height: 34 });
             return y - step*4;
         }
 
@@ -1336,9 +1359,9 @@
             const rng = _mulberry32(0x51F15 + lv * 1337);
             const diff = clamp((lv - 1) / 19, 0, 1);
 
-            const step = Math.round(_lerp(170, 135, diff));
-            const wMax = Math.round(_lerp(290, 175, diff));
-            const wMin = Math.round(_lerp(210, 120, diff));
+            const step = Math.round(_lerp(185, 155, diff));
+            const wMax = Math.round(_lerp(305, 220, diff));
+            const wMin = Math.round(_lerp(225, 155, diff));
 
             const platforms = [];
             const spikes = [];
@@ -1470,7 +1493,32 @@
             };
         }
 
-        const LEVELS = Array.from({ length: 20 }, (_, i) => _genLevel(i + 1));
+        function _polishLevelGeometry(level){
+            if(!level || !Array.isArray(level.platforms)) return level;
+            const src=level.platforms.map(p=>({...p}));
+            // 1~29px짜리 틈은 플레이 중 '틈인지 한 판인지' 애매하므로 같은 높이의 발판끼리 연결한다.
+            let changed=true;
+            while(changed){
+                changed=false;
+                outer: for(let i=0;i<src.length;i++){
+                    const a=src[i]; if(!a || a.height>35)continue;
+                    for(let j=i+1;j<src.length;j++){
+                        const b=src[j]; if(!b || b.height>35 || Math.abs(a.y-b.y)>8)continue;
+                        const left=a.x<=b.x?a:b, right=a.x<=b.x?b:a;
+                        const gap=right.x-(left.x+left.width);
+                        if(gap>0 && gap<30){
+                            const nx=Math.min(a.x,b.x), nr=Math.max(a.x+a.width,b.x+b.width);
+                            src[i]={...a,x:Math.round(nx),y:Math.round((a.y+b.y)/2),width:Math.round(nr-nx)};
+                            src.splice(j,1); changed=true; break outer;
+                        }
+                    }
+                }
+            }
+            level.platforms=src;
+            return level;
+        }
+
+        const LEVELS = Array.from({ length: 20 }, (_, i) => _polishLevelGeometry(_genLevel(i + 1)));
 
 // ==================== 라운드/맵 처리 ====================
         // 20라운드 고정: 맵 반복 없이(LEVELS=25), 라운드 표기로 진행
@@ -2269,20 +2317,50 @@ cameraX = 0;
         }
 
         function buildRoundItems(level, levelNum){
-            const count = 3 + ((levelNum * 7) % 3); // 라운드마다 3~5개
-            const plats = (level.platforms || [])
-                .filter(p => p.width >= 70 && p.height >= 10)
-                .slice().sort((a,b) => b.y - a.y);
-            const result = [];
-            for (let i=0; i<count; i++){
-                const idx = Math.min(plats.length - 1, Math.floor(((i + 0.65) / count) * plats.length));
-                const p = plats[Math.max(0, idx)] || {x:level.spawn.x, y:level.spawn.y+40, width:120};
-                const type = ITEM_TYPES[(levelNum * 3 + i * 5) % ITEM_TYPES.length];
-                const room = Math.max(10, p.width - 42);
-                const offset = 12 + ((levelNum * 47 + i * 83) % room);
-                result.push({ id:`r${levelNum}-i${i}`, type, x:p.x + offset, y:p.y - 24, vx:0, vy:0, landed:true });
+            const itemCount = 5;
+            const buttons = level.buttons || [];
+            const spikes = level.spikes || [];
+            const goal = level.goal || {x:-9999,y:-9999,width:0,height:0};
+            const nearRect = (p, r, padX=28, padY=60) => {
+                const px=p.x+p.width/2, py=p.y;
+                const rx=r.x+(r.width||0)/2, ry=r.y;
+                return Math.abs(px-rx) < (p.width+(r.width||0))/2 + padX && Math.abs(py-ry) < padY;
+            };
+            // 아이템은 퍼즐 버튼/가시/골 바로 위가 아니라, 폭이 충분한 실제 진행 발판에 둔다.
+            let plats = (level.platforms || []).filter(p => {
+                if(!p || p.width < 150 || p.height > 35) return false;
+                if(Math.abs(p.y-TG_GROUND_Y)<8) return false;
+                if(p.y < (goal.y - 80) || p.y > (level.spawn.y + 90)) return false;
+                if(buttons.some(b=>nearRect(p,b,18,55))) return false;
+                if(spikes.some(sp=>nearRect(p,sp,20,72))) return false;
+                if(nearRect(p,goal,35,100)) return false;
+                return true;
+            });
+            if(plats.length < itemCount){
+                plats=(level.platforms||[]).filter(p=>p&&p.width>=125&&p.height<=35&&Math.abs(p.y-TG_GROUND_Y)>8&&p.y>=(goal.y-100)&&p.y<=(level.spawn.y+90));
             }
-            return result;
+            plats.sort((a,b)=>b.y-a.y || a.x-b.x); // 시작점 -> 골 방향
+            if(!plats.length) plats=[{x:level.spawn.x-30,y:level.spawn.y+40,width:180}];
+            const picked=[];
+            for(let i=0;i<itemCount;i++){
+                const t=itemCount===1?0:i/(itemCount-1);
+                let idx=Math.round(t*(plats.length-1));
+                // 같은 발판이 반복 선택되면 가까운 미사용 발판을 찾는다.
+                let best=idx;
+                for(let d=0;d<plats.length;d++){
+                    for(const cand of [idx-d,idx+d]){
+                        if(cand>=0&&cand<plats.length&&!picked.includes(cand)){best=cand;d=plats.length;break;}
+                    }
+                }
+                picked.push(best);
+            }
+            return picked.map((idx,i)=>{
+                const p=plats[idx]||plats[0];
+                const type=ITEM_TYPES[(levelNum*4+i*3+(i%2?2:0))%ITEM_TYPES.length];
+                const usable=Math.max(28,p.width-56);
+                const offset=28+((levelNum*53+i*97)%usable);
+                return {id:`r${levelNum}-i${i}`,type,x:Math.round(p.x+offset),y:Math.round(p.y-24),vx:0,vy:0,landed:true};
+            });
         }
 
         function randomSupplyItem(){
@@ -2383,10 +2461,29 @@ cameraX = 0;
             }else if(type==='missile'){
                 _itemTone(105,.22,'sawtooth',.105,310);
                 _itemTone(55,.16,'square',.06,95,.06);
+            }else if(type==='hammer'){
+                p(-10,-5,13,10,ink);p(-8,-4,10,8,'#ff7675');p(-6,-3,6,2,'#ffb3b3');p(2,-2,4,4,ink);p(4,-1,11,3,'#8d6e63');p(13,-2,3,5,ink);
+            }else if(type==='spring'){
+                p(-8,-7,16,4,ink);p(-6,-6,12,2,'#ffeaa7');p(-7,5,14,4,ink);p(-5,6,10,2,'#e17055');
+                p(-4,-3,8,2,'#81ecec');p(-6,-1,12,2,'#55efc4');p(-4,1,8,2,'#81ecec');p(-6,3,12,2,'#55efc4');
+            }else if(type==='ice'){
+                p(-9,-3,14,7,ink);p(-7,-2,11,5,'#81ecec');p(-4,-1,5,2,'#dff9fb');p(4,-2,5,5,'#00cec9');p(9,-1,4,3,'#dff9fb');
+                p(-2,4,5,3,ink);p(-1,6,4,4,'#74b9ff');
+            }else if(type==='boomerang'){
+                p(-8,-8,5,4,ink);p(-6,-6,5,4,'#fab1a0');p(-4,-4,5,4,'#e17055');p(-2,-2,5,4,'#fab1a0');
+                p(0,0,5,4,'#e17055');p(2,2,5,4,'#fab1a0');p(4,4,5,4,ink);p(2,6,7,3,'#8d6e63');
             }else if(type==='grenade'){
                 _itemTone(170,.10,'square',.08,90);
             }else if(type==='pan'){
                 _itemTone(920,.08,'square',.10,520);
+            }else if(type==='hammer'){
+                _itemTone(180,.10,'square',.14,72); _itemTone(70,.12,'triangle',.09,42,.035);
+            }else if(type==='spring'){
+                _itemTone(260,.08,'sine',.09,680); _itemTone(480,.09,'square',.07,960,.055);
+            }else if(type==='ice'){
+                _itemTone(1080,.07,'sine',.09,540); _itemTone(760,.11,'triangle',.07,420,.045);
+            }else if(type==='boomerang'){
+                _itemTone(520,.07,'triangle',.08,760); _itemTone(760,.08,'triangle',.07,430,.07);
             }else{
                 _itemTone(260,.10,'square',.08,150);
             }
@@ -2407,6 +2504,12 @@ cameraX = 0;
                 _itemTone(220,.07,'square',.055,70,.015);
             }else if(kind==='pan'){
                 _itemTone(1050,.07,'square',.13,480);
+            }else if(kind==='hammer'){
+                _itemTone(130,.09,'square',.16,48); _itemTone(620,.045,'square',.07,210,.025);
+            }else if(kind==='ice'){
+                _itemTone(1200,.06,'sine',.10,650); _itemTone(590,.11,'triangle',.08,330,.04);
+            }else if(kind==='boomerang'){
+                _itemTone(470,.055,'square',.10,260); _itemTone(830,.055,'triangle',.06,520,.035);
             }else{
                 _itemTone(210,.07,'square',.10,105);
             }
@@ -2420,7 +2523,7 @@ cameraX = 0;
             if (!heldItem || localPlayer.isDead) return;
             const now=performance.now(); if(now-lastItemUseAt<260)return; lastItemUseAt=now;
             const type=heldItem.type, dir=localPlayer.facing||1, sx=localPlayer.x+20, sy=localPlayer.y+18;
-            const target=closestRemote((type==='gun'||type==='missile')?620:170);
+            const target=closestRemote((type==='gun'||type==='missile')?620:(type==='ice'?500:(type==='boomerang'?440:180)));
             let effect={kind:type,x:sx,y:sy,tx:sx+dir*150,ty:sy,color:ITEM_DEFS[type].color};
             const impacts=[];
             if(type==='jetpack'){
@@ -2462,6 +2565,27 @@ cameraX = 0;
                         impacts.push({sid:String(sid),kind:'rocket'});
                     }
                 }
+            } else if(type==='hammer'){
+                if(target && dir*((target.x||0)-localPlayer.x)>-30){
+                    bridgeSendPush(target.sid,dir*PUSH_IMPULSE_X*2,PUSH_IMPULSE_Y*1.35,32);
+                    impacts.push({sid:String(target.sid),kind:'hammer'});
+                    effect={kind:'hammer',x:sx,y:sy,tx:target.x+20,ty:target.y+20,color:ITEM_DEFS[type].color};
+                }
+            } else if(type==='spring'){
+                localPlayer.vy=Math.min(localPlayer.vy,-13.5);localPlayer.vx+=dir*4.5;localPlayer.onGround=false;
+                effect={kind:'spring',x:localPlayer.x+20,y:localPlayer.y+36,tx:localPlayer.x+20,ty:localPlayer.y+78,color:ITEM_DEFS[type].color};
+            } else if(type==='ice'){
+                if(target && dir*((target.x||0)-localPlayer.x)>0){
+                    bridgeSendPush(target.sid,dir*PUSH_IMPULSE_X*.65,PUSH_IMPULSE_Y*.25,18);
+                    impacts.push({sid:String(target.sid),kind:'ice',stunMs:1200});
+                    effect={kind:'ice',x:sx,y:sy,tx:target.x+20,ty:target.y+18,color:ITEM_DEFS[type].color};
+                }else effect={kind:'ice',x:sx,y:sy,tx:sx+dir*470,ty:sy,color:ITEM_DEFS[type].color};
+            } else if(type==='boomerang'){
+                if(target && dir*((target.x||0)-localPlayer.x)>-10){
+                    bridgeSendPush(target.sid,dir*PUSH_IMPULSE_X*1.25,PUSH_IMPULSE_Y*.75,24);
+                    impacts.push({sid:String(target.sid),kind:'boomerang'});
+                    effect={kind:'boomerang',x:sx,y:sy,tx:target.x+20,ty:target.y+18,color:ITEM_DEFS[type].color};
+                }else effect={kind:'boomerang',x:sx,y:sy,tx:sx+dir*380,ty:sy-12,color:ITEM_DEFS[type].color};
             } else if(type==='pan'){
                 if(target && dir*((target.x||0)-localPlayer.x)>-25){
                     bridgeSendPush(target.sid,dir*16,-11); impacts.push({sid:String(target.sid),kind:'pan'}); effect.tx=target.x+20;effect.ty=target.y+20;
@@ -3045,6 +3169,14 @@ cameraX = 0;
                 if (box.vy > MAX_FALL_SPEED) box.vy = MAX_FALL_SPEED;
 
                 // 수평/수직 분리 적분 (터널링·충돌 떨림 방지)
+                // 게스트의 지속 밀기 요청은 호스트에서 짧은 lease로 유지한다.
+                // 패킷 횟수와 관계없이 로컬 호스트가 직접 미는 것과 같은 ±3 힘을 사용한다.
+                if (hostAuthBoxes && box._remotePushUntil && performance.now() < box._remotePushUntil) {
+                    box.vx = box._remotePushVx < 0 ? -3 : 3;
+                } else if (box._remotePushUntil) {
+                    box._remotePushUntil = 0;
+                    box._remotePushVx = 0;
+                }
                 // -- 수평
                 box.x += box.vx;
                 const solids = solidPlatforms();
@@ -3081,6 +3213,7 @@ cameraX = 0;
                 if (Math.abs(box.vy) < 0.05 && box._onGround) box.vy = 0;
             }
             if (hostAuthBoxes) maybeBroadcastPuzzleState();
+            if (!isAuthoritativePuzzleSim()) updateRemotePuzzleMotion();
             
             // 플레이어-박스 충돌 (밀기 + 상자 위 안정 착지/이동 상자 탑승)
             for (let box of gameObjects.boxes) {
@@ -3492,15 +3625,22 @@ cameraX = 0;
             
             if (overlapX < overlapY) {
                 // 옆에서 충돌 - 박스 밀기
-                sfxPush();
                 if (player.x < box.x) {
                     box.vx = remoteAuthBoxes ? box.vx : 3;
                     player.x = box.x - 40;
-                    if (remoteAuthBoxes) bridgeSend('tg_box_impulse', { level: currentLevel, id: String(box.id || ''), vx: 3, fromLeft: true });
+                    if (remoteAuthBoxes) {
+                        if (sendRemoteBoxPush(box, 3)) sfxPush();
+                    } else {
+                        sfxPush();
+                    }
                 } else {
                     box.vx = remoteAuthBoxes ? box.vx : -3;
                     player.x = box.x + box.width;
-                    if (remoteAuthBoxes) bridgeSend('tg_box_impulse', { level: currentLevel, id: String(box.id || ''), vx: -3, fromLeft: false });
+                    if (remoteAuthBoxes) {
+                        if (sendRemoteBoxPush(box, -3)) sfxPush();
+                    } else {
+                        sfxPush();
+                    }
                 }
             } else {
                 // 위아래 충돌
@@ -3551,6 +3691,30 @@ cameraX = 0;
                 const linked = (gameObjects.buttons || []).filter(b => b.bridgeId === idx);
                 // 협동 성공 뒤 다리가 사라져 마지막 플레이어가 고립되지 않도록 라운드 동안 래치한다.
                 br.active = !!br.active || (linked.length ? linked.every(b => !!b.pressed) : false);
+            });
+        }
+
+        function updateRemotePuzzleMotion(){
+            if (isAuthoritativePuzzleSim() || !gameObjects) return;
+            // Network snapshots arrive at a much lower rate than rendering. Move toward
+            // their targets every frame so lifts/boxes glide instead of hopping between
+            // rounded packet coordinates.
+            (gameObjects.lifts || []).forEach((lift) => {
+                if (!Number.isFinite(lift._netTargetY)) return;
+                const dy = lift._netTargetY - lift.y;
+                if (Math.abs(dy) < 0.25) lift.y = lift._netTargetY;
+                else lift.y += clamp(dy * 0.32, -5.2, 5.2);
+            });
+            (gameObjects.boxes || []).forEach((box) => {
+                if (!Number.isFinite(box._netTargetX) || !Number.isFinite(box._netTargetY)) return;
+                box.prevX = box.x;
+                box.prevY = box.y;
+                const dx = box._netTargetX - box.x;
+                const dy = box._netTargetY - box.y;
+                if (Math.abs(dx) < 0.25) box.x = box._netTargetX;
+                else box.x += clamp(dx * 0.35, -6, 6);
+                if (Math.abs(dy) < 0.25) box.y = box._netTargetY;
+                else box.y += clamp(dy * 0.35, -6, 6);
             });
         }
 
@@ -3647,6 +3811,20 @@ cameraX = 0;
                     for(let i=1;i<=6;i++){const trail=travel-i*.045;if(trail>0)pixelBlock(x+(tx-x)*trail-4,y+(ty-y)*trail-4,8,8,i<3?'#ff9f43':'#747d8c');}
                     drawPixelItemIcon('missile',mx,my,1,dir);
                     if(travel>.82){const cols=['#fff3a3','#ffd32a','#ff9f1a','#e84118'];for(let i=0;i<16;i++){const q=i*Math.PI/8,r=(travel-.82)*180+(i%3)*5;pixelBlock(tx+Math.cos(q)*r-4,ty+Math.sin(q)*r-4,8,8,cols[i%cols.length]);}}
+                }else if(e.kind==='hammer'){
+                    const q=-1.2+t*2.45,px=x+Math.cos(q)*55,py=y+Math.sin(q)*46;drawPixelItemIcon('hammer',px,py,1,tx<x?-1:1);
+                    for(let i=0;i<10;i++){const q2=i*Math.PI/5,r=8+t*34;pixelBlock(tx+Math.cos(q2)*r-4,ty+Math.sin(q2)*r-4,8,8,i%2?'#ff7675':'#ffeaa7');}
+                }else if(e.kind==='spring'){
+                    for(let i=0;i<5;i++){const yy=y+8+i*8+t*18;pixelBlock(x-10+(i%2?5:0),yy,20-(i%2?10:0),4,i%2?'#55efc4':'#ffeaa7');}
+                    for(let i=0;i<6;i++)pixelBlock(x-16+i*7,y+38+t*42,5,5,i%2?'#fff3a3':'#81ecec');
+                }else if(e.kind==='ice'){
+                    const travel=Math.min(1,t*3.2),bx=x+(tx-x)*travel,by=y+(ty-y)*travel;
+                    for(let i=0;i<7;i++){const u=Math.max(0,travel-i*.07);pixelBlock(x+(tx-x)*u-3,y+(ty-y)*u-3,6,6,i<2?'#dff9fb':'#81ecec');}
+                    if(travel>.78){for(let i=0;i<8;i++){const q=i*Math.PI/4,r=9+t*20;pixelBlock(bx+Math.cos(q)*r-3,by+Math.sin(q)*r-3,7,7,i%2?'#74b9ff':'#dff9fb');}}
+                }else if(e.kind==='boomerang'){
+                    const travel=Math.min(1,t*2.2),arc=Math.sin(travel*Math.PI)*36,bx=x+(tx-x)*travel,by=y+(ty-y)*travel-arc;
+                    ctx.save();ctx.translate(bx,by);ctx.rotate(t*9);drawPixelItemIcon('boomerang',0,0,1,1);ctx.restore();
+                    for(let i=1;i<=5;i++){const u=Math.max(0,travel-i*.08);pixelBlock(x+(tx-x)*u-2,y+(ty-y)*u-Math.sin(u*Math.PI)*36-2,5,5,'#fab1a0');}
                 }else{
                     const travel=Math.min(1,t*4),bx=x+(tx-x)*travel,by=y+(ty-y)*travel;
                     for(let i=0;i<8;i++){const u=Math.max(0,travel-i*.055);pixelBlock(x+(tx-x)*u-3,y+(ty-y)*u-2,6,4,i<2?'#fff':'#74b9ff');}
@@ -4452,6 +4630,10 @@ cameraX = 0;
         }
 
         function applyBoxSnapshot(payload){
+            // Host is authoritative. The Worker broadcasts the host snapshot back to the
+            // sender too, so re-applying it on the host creates a local-sim <-> stale-net
+            // feedback loop that looks like vibrating puzzle objects.
+            if (isAuthoritativeBoxSim()) return;
             lastTgPuzzleSnapshotAt = performance.now();
             const level = parseInt(payload?.level, 10) || currentLevel;
             const incoming = normalizeBoxArrayForSync(payload?.boxes || []);
@@ -4468,26 +4650,18 @@ cameraX = 0;
             for (const src of incoming) {
                 const dst = localMap.get(String(src.id));
                 if (!dst) continue;
-                // 큰 불연속(순간이동)이면 즉시 적용, 작은 차이면 부드럽게 보정
                 const dx = src.x - dst.x;
                 const dy = src.y - dst.y;
                 const dist = Math.sqrt(dx*dx + dy*dy);
                 dst.prevX = dst.x;
                 dst.prevY = dst.y;
-                if (dist > 80) {
-                    // 순간이동 수준 → 즉시 스냅
+                dst._netTargetX = src.x;
+                dst._netTargetY = src.y;
+                if (dist > 90) {
+                    // Genuine teleport / level correction: snap once, not every packet.
                     dst.x = src.x;
                     dst.y = src.y;
-                } else if (dist > 4) {
-                    // 중간 오차 → 60% 보정 (너무 급격하지 않게)
-                    dst.x += dx * 0.6;
-                    dst.y += dy * 0.6;
-                } else {
-                    // 작은 오차 → 20% 보정 (떨림 방지)
-                    dst.x += dx * 0.2;
-                    dst.y += dy * 0.2;
                 }
-                // velocity는 호스트 값으로 교체 (방향 정보)
                 dst.vx = src.vx;
                 dst.vy = src.vy;
                 if (src.width) dst.width = src.width;
@@ -4536,12 +4710,10 @@ cameraX = 0;
                     if (!gameObjects.lifts[idx]) return;
                     const lift = gameObjects.lifts[idx];
                     const dy = y - lift.y;
-                    // 큰 점프면 즉시, 작은 차이면 보간
-                    if (Math.abs(dy) > 60) {
-                        lift.y = y;
-                    } else {
-                        lift.y += dy * 0.5;
-                    }
+                    lift._netTargetY = y;
+                    // Only a genuine large discontinuity snaps. Normal lift motion is
+                    // interpolated every frame by updateRemotePuzzleMotion().
+                    if (Math.abs(dy) > 120) lift.y = y;
                 });
             }
             if (Array.isArray(gameObjects.bridges) && Array.isArray(snap.bridges)) {
@@ -4705,11 +4877,12 @@ cameraX = 0;
             }
 
             if (d.type === "tg_buttons"){
-                applyButtons(d.buttons || {});
+                if (!isAuthoritativePuzzleSim()) applyButtons(d.buttons || {});
                 return;
             }
 
             if (d.type === "tg_button"){
+                if (isAuthoritativePuzzleSim()) return;
                 if (gameObjects?.buttons && gameObjects.buttons[d.idx]){
                     gameObjects.buttons[d.idx].pressed = !!d.pressed;
                     updateDoors();
@@ -4720,12 +4893,12 @@ cameraX = 0;
             }
 
             if (d.type === "tg_puzzle"){
-                applyPuzzleSnapshot(d);
+                if (!isAuthoritativePuzzleSim()) applyPuzzleSnapshot(d);
                 return;
             }
 
             if (d.type === "tg_boxes"){
-                applyBoxSnapshot(d);
+                if (!isAuthoritativeBoxSim()) applyBoxSnapshot(d);
                 return;
             }
 
@@ -4738,9 +4911,14 @@ cameraX = 0;
                 if (!box) return;
                 const ivx = clamp(Number(d.vx) || 0, -8, 8);
                 if (!ivx) return;
-                // 호스트만 박스 물리를 실제로 업데이트한다.
-                // 게스트는 곧 tg_puzzle/tg_boxes 스냅샷이 오므로 여기서 물리 상태를 덮어쓰지 않는다.
-                if (isAuthoritativeBoxSim()) box.vx = ivx;
+                // 호스트만 박스 물리를 실제로 업데이트한다. 반복 패킷을 힘으로 누적하지 않고,
+                // 마지막 유효 방향의 고정 ±3 push lease만 갱신한다.
+                if (isAuthoritativeBoxSim()) {
+                    const lease = clamp(Number(d.pushLeaseMs) || BOX_PUSH_LEASE_MS, 100, 260);
+                    box._remotePushVx = ivx < 0 ? -3 : 3;
+                    box._remotePushUntil = performance.now() + lease;
+                    box.vx = box._remotePushVx;
+                }
                 return;
             }
 
