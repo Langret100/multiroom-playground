@@ -1,9 +1,9 @@
 // Firebase dependency removed.
 import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
-import { StackGame, drawBoard, drawNext, COLS } from "./game.js?v=20260831-jellyfocus6";
+import { StackGame, drawBoard, drawNext, COLS } from "./game.js?v=20260831-stackclean1";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-jellyfocus6";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-stackclean1";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -36,25 +36,20 @@ const ui = {
   btnFull: $("btnFull"),
 };
 
-const EMBED = new URLSearchParams(location.search).get("embed") === "1";
+const _query = new URLSearchParams(location.search);
+const EMBED = _query.get("embed") === "1";
+const CPU_EMBED = _query.get("cpu") === "1";
 
 // --- Focus helper (keyboard input in iframe)
-// 일부 브라우저/환경에서 iframe 내부가 자동으로 포커스를 얻지 못해
-// 키 입력이 무시되는 경우가 있어, 첫 탭/클릭 시 캔버스로 포커스를 유도합니다.
+// Only the visible player iframe may request focus. The hidden CPU iframe uses
+// the same game page, so allowing it to focus steals keyboard input until click.
 try{
-  if (ui.cvMe){
+  if (!CPU_EMBED && ui.cvMe){
     ui.cvMe.tabIndex = 0;
     ui.cvMe.style.outline = "none";
-    const focusMe = ()=>{
-      try{ window.focus(); }catch(_){}
-      try{ ui.cvMe.focus({ preventScroll:true }); }catch(_){ try{ ui.cvMe.focus(); }catch(__){} }
-    };
-    window.addEventListener("load", ()=>{ focusMe(); setTimeout(focusMe,80); setTimeout(focusMe,260); });
-    window.addEventListener("focus", ()=>setTimeout(focusMe,0));
-    document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setTimeout(focusMe,30); });
-    window.addEventListener("message", (e)=>{ if(e?.data?.type === "focus_game") setTimeout(focusMe,0); });
+    const focusMe = ()=>{ try{ ui.cvMe.focus({ preventScroll:true }); }catch(_){ try{ ui.cvMe.focus(); }catch(__){} } };
+    window.addEventListener("load", focusMe);
     ui.cvMe.addEventListener("pointerdown", focusMe, { passive:true });
-    document.body?.addEventListener?.("pointerdown", ()=>{ try{ window.focus(); }catch(_){} }, true);
   }
 }catch(_){ }
 
@@ -165,7 +160,7 @@ function showOverlay(title, desc, {showCpuBtn=false}={}){
   ui.overlay.classList.remove("hidden");
   ui.btnStartCpu.style.display = showCpuBtn ? "" : "none";
 }
-function hideOverlay(){ ui.overlay.classList.add("hidden"); }
+function hideOverlay(){ ui.overlay.classList.add("hidden"); ui.overlay.classList.remove("stackStartCue","readyPhase","startPhase"); }
 
 // Restart = reload
 ui.btnRestart?.addEventListener("click", ()=>{
@@ -269,25 +264,6 @@ document.addEventListener("keyup", (e)=>{
   else if(e.code==="ArrowLeft") stopHorizontal("left");
   else if(e.code==="ArrowRight") stopHorizontal("right");
 });
-// Parent room page forwards keyboard events too, so gameplay never depends on
-// whether the browser has already focused this iframe.
-window.addEventListener('message',(e)=>{
-  const d=e?.data||{};
-  if(d.type!=='stackga_key'||d.gameId!=='stackga')return;
-  const code=String(d.code||'');
-  if(d.down){
-    if(code==='ArrowDown'){ if(!downHeld){ downHeld=true; performAction('down'); downTimer=setInterval(()=>{if(downHeld)performAction('down');},30); } return; }
-    if(code==='ArrowLeft'||code==='ArrowRight'){ if(!d.repeat) startHorizontal(code==='ArrowLeft'?'left':'right'); return; }
-    if(d.repeat)return;
-    if(code==='ArrowUp') performAction('rotate');
-    else if(code==='Space') performAction('drop');
-    else if(code==='KeyP') performAction('pause');
-  }else{
-    if(code==='ArrowDown') stopDownHold();
-    else if(code==='ArrowLeft') stopHorizontal('left');
-    else if(code==='ArrowRight') stopHorizontal('right');
-  }
-});
 window.addEventListener("blur", stopAllHeld);
 initTouchControls(ui.cvMe, performAction);
 
@@ -327,6 +303,8 @@ let roomUnsub=null, oppUnsub=null, evUnsub=null;
 let metaRef=null, playersRef=null, statesRef=null, eventsRef=null;
 
 let started=false;
+let startCuePending=false;
+let startCueTimers=[];
 let finished=false;
 let raf=0;
 let meGame=null;
@@ -342,6 +320,9 @@ let lastJellyLockSfxAt = 0;
 function stopLoop(){
   try{ if (raf) cancelAnimationFrame(raf); }catch(_){ }
   raf = 0;
+  for(const t of startCueTimers){ try{ clearTimeout(t); }catch(_){ } }
+  startCueTimers = [];
+  startCuePending = false;
   started = false;
 }
 
@@ -402,10 +383,35 @@ function render(){
 }
 
 function startLoop(){
-  if(started) return;
-  started = true;
-  hideOverlay();
+  if(started || startCuePending) return;
+  startCuePending = true;
   safeSetText(ui.mode, mode==="online"?"온라인":"PC");
+  ui.overlay.classList.remove("hidden","startPhase");
+  ui.overlay.classList.add("stackStartCue","readyPhase");
+  safeSetText(ui.overlayTitle, "READY");
+  safeSetText(ui.overlayDesc, "");
+  ui.btnStartCpu.style.display = "none";
+  ui.btnRestart.style.display = "none";
+  startCueTimers = [
+    setTimeout(()=>{
+      if(started || !startCuePending) return;
+      ui.overlay.classList.remove("readyPhase");
+      ui.overlay.classList.add("startPhase");
+      safeSetText(ui.overlayTitle, "START!");
+    }, 520),
+    setTimeout(()=>{
+      if(started || !startCuePending) return;
+      startCueTimers = [];
+      startCuePending = false;
+      started = true;
+      hideOverlay();
+      ui.btnRestart.style.display = "";
+      beginLoop();
+    }, 900)
+  ];
+}
+
+function beginLoop(){
 
   // 첫 프레임이 렌더되지 않으면(iframe/브라우저 이슈) 화면이 멈춘 것처럼 보일 수 있어
   // 즉시 1회 렌더를 시도합니다.

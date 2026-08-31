@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+const room=fs.readFileSync('js/pages/room.js','utf8');
+const tg=fs.readFileSync('games/togester/index.html','utf8');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+ok(tg.includes("code === 'Enter'") && tg.includes("type: 'tg_chat_focus'"),'togester Enter-to-chat signal missing');
+ok(tg.includes('moveDirection = 0') && tg.includes('jumpKeyDown = false'),'held movement is not released before chat focus');
+ok(room.includes('focusTogesterDockChat') && room.includes('t === "tg_chat_focus"'),'room dock chat focus receiver missing');
+ok(room.includes('returnFocusToTogesterGame') && room.includes('sendDockChat();\n            returnFocusToTogesterGame();'),'Enter send does not return focus to gameplay');
+ok(room.includes('els.tgDockSend.addEventListener("click", ()=>{ sendDockChat(); returnFocusToTogesterGame(); })'),'send-button path does not return focus');
+console.log('TOGESTER_ENTER_CHAT_REGRESSION_OK');

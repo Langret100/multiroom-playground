@@ -482,3 +482,24 @@ body.embed .matchBtn, body.embed .exitBtn{
   body.embed .hudRight{flex:0 0 auto;min-width:max-content}
   body.embed .matchBtn, body.embed .exitBtn{min-width:58px!important;font-size:11px!important;padding-inline:8px!important}
 }
+
+/* Stackga start cue: compact, playful READY -> START! */
+.overlay.stackStartCue{background:rgba(24,53,96,.18);backdrop-filter:blur(3px)}
+.overlay.stackStartCue .overlayCard{
+  width:auto;min-width:210px;padding:18px 32px;border-radius:28px;
+  background:linear-gradient(155deg,rgba(255,255,255,.96),rgba(213,239,255,.93));
+  border:2px solid rgba(159,211,255,.62);
+  box-shadow:0 18px 46px rgba(32,73,137,.22),inset 0 1px 0 rgba(255,255,255,.98);
+}
+.overlay.stackStartCue .big{
+  font-size:clamp(34px,5vw,64px);font-weight:1000;letter-spacing:.08em;line-height:1;
+  background:linear-gradient(180deg,#55def1 0%,#6186f6 55%,#a06af1 100%);
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 4px 10px rgba(74,111,224,.22));
+}
+.overlay.stackStartCue.readyPhase .overlayCard{animation:stackReadyPop .42s cubic-bezier(.2,.85,.25,1.18)}
+.overlay.stackStartCue.startPhase .overlayCard{animation:stackStartPop .34s cubic-bezier(.2,.9,.25,1.2)}
+.overlay.stackStartCue.startPhase .big{letter-spacing:.04em}
+@keyframes stackReadyPop{0%{opacity:0;transform:scale(.72)}65%{opacity:1;transform:scale(1.08)}100%{transform:scale(1)}}
+@keyframes stackStartPop{0%{transform:scale(.86)}55%{transform:scale(1.13)}100%{transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){.overlay.stackStartCue .overlayCard{animation:none!important}}

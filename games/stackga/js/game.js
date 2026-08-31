@@ -419,59 +419,64 @@ export function drawBoard(ctx, board, cell, opts={}){
   ctx.restore();
 
   const active = new Set();
-  // Line-clear celebration overlay: flash -> centre-out jelly pop -> spark burst.
-  // The actual board has already been cleared; this is visual-only and never serialized.
+  // Line-clear celebration: the completed row dissolves as one surface.
+  // No per-cell timing/scale; gameplay state is already cleared immediately.
   const clearAge=now-lastClearAt;
-  if(!ghost && lastClearAt && clearAge>=0 && clearAge<360 && Array.isArray(lastClearCells)){
-    const white={rgb:[248,252,255],a:.98};
+  if(!ghost && lastClearAt && clearAge>=0 && clearAge<390 && Array.isArray(lastClearCells)){
+    const white={rgb:[250,253,255],a:.98};
     for(const row of lastClearCells){
       const y=row.y|0, cells=row.cells||[];
-      for(let x=0;x<COLS;x++){
-        const v=cells[x]||1;
-        const dist=Math.abs(x-(COLS-1)/2);
-        const delay=dist*11;
-        const local=clearAge-delay;
-        if(local<0) continue;
-        const base=settledColor(y,v,false);
-        let color=base, sx=1, sy=1, dy=0;
-        if(local<95){
-          const pulse=Math.sin((local/95)*Math.PI);
-          color=mixColor(base,white,.45+.45*pulse);
-          sx=1+.055*pulse; sy=1-.08*pulse;
-        }else{
-          const k=Math.max(0,Math.min(1,(local-95)/175));
-          const e=k*k*(3-2*k);
-          color=mixColor(base,white,.55*(1-e));
-          color={rgb:color.rgb,a:Math.max(0,.98*(1-e))};
-          sx=Math.max(.05,1-e*.96);
-          sy=1+.22*Math.sin(k*Math.PI)*(1-k);
-          dy=-cell*.07*Math.sin(k*Math.PI);
-        }
-        if(color.a>.02) drawJellyCell(ctx,x*cell,y*cell,cell,color,{sx,sy,dy,sparkle:false,t:now,x,y,settleGlow:1});
-      }
-      // A fast luminous sweep makes the completed row read instantly.
-      if(clearAge<210){
-        const beam=Math.max(0,Math.min(1,(clearAge-25)/150));
-        if(beam>0){
-          const half=ctx.canvas.width*.5*beam;
-          const cy=(y+.5)*cell;
-          const g=ctx.createLinearGradient(ctx.canvas.width/2-half,0,ctx.canvas.width/2+half,0);
-          g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(.5,'rgba(225,248,255,.80)'); g.addColorStop(1,'rgba(255,255,255,0)');
-          ctx.fillStyle=g; ctx.fillRect(ctx.canvas.width/2-half,cy-Math.max(1,cell*.045),half*2,Math.max(2,cell*.09));
+      const cy=(y+.5)*cell;
+      const flashT=Math.max(0,Math.min(1,clearAge/90));
+      const dissolveT=Math.max(0,Math.min(1,(clearAge-75)/210));
+      const fade=1-(dissolveT*dissolveT*(3-2*dissolveT));
+
+      // Keep the entire completed line coherent: every cell brightens/fades together.
+      if(fade>.02){
+        for(let x=0;x<COLS;x++){
+          const v=cells[x]||1;
+          const base=settledColor(y,v,false);
+          const pulse=Math.sin(flashT*Math.PI);
+          let color=mixColor(base,white,.38+.50*pulse);
+          color={rgb:color.rgb,a:Math.max(0,.98*fade)};
+          drawJellyCell(ctx,x*cell,y*cell,cell,color,{sx:1,sy:1,dy:-cell*.025*dissolveT,sparkle:false,t:now,x,y,settleGlow:1});
         }
       }
-      // Deterministic little star chips; no particle state or server data required.
-      if(clearAge>105 && clearAge<335){
-        const p=(clearAge-105)/230;
+
+      // One soft light ribbon sweeps through the whole line before it dissolves.
+      if(clearAge<225){
+        const sweep=Math.max(0,Math.min(1,(clearAge-20)/155));
+        const x0=-ctx.canvas.width*.25 + ctx.canvas.width*1.5*sweep;
+        const band=ctx.createLinearGradient(x0-cell*2,0,x0+cell*2,0);
+        band.addColorStop(0,'rgba(255,255,255,0)');
+        band.addColorStop(.42,'rgba(220,248,255,.18)');
+        band.addColorStop(.5,'rgba(255,255,255,.96)');
+        band.addColorStop(.58,'rgba(255,241,176,.34)');
+        band.addColorStop(1,'rgba(255,255,255,0)');
+        ctx.fillStyle=band;
+        ctx.fillRect(0,cy-cell*.18,ctx.canvas.width,cell*.36);
+      }
+
+      // Sparkles lift from across the whole row, so it reads as one dissolving line.
+      if(clearAge>72 && clearAge<390){
+        const p=(clearAge-72)/318;
         ctx.save();
-        for(let i=0;i<14;i++){
-          const dir=i%2?-1:1;
-          const seed=(i*47+y*23)%97;
-          const px=ctx.canvas.width*.5 + dir*(cell*(.35+i*.24))*p;
-          const py=(y+.5)*cell + Math.sin((seed+i)*1.7)*cell*.22*p - cell*.18*p;
-          const rr=Math.max(1,cell*(.025+.018*((seed%5)/4)))*(1-p*.55);
-          ctx.globalAlpha=Math.max(0,.9-p*.7); ctx.fillStyle=i%3===0?'#fff6a7':'#d8f7ff';
-          ctx.beginPath(); ctx.arc(px,py,rr,0,Math.PI*2); ctx.fill();
+        for(let i=0;i<28;i++){
+          const seed=(i*61+y*37)%101;
+          const baseX=((i+.35+(seed%7)*.035)/28)*ctx.canvas.width;
+          const side=((seed%9)-4)*cell*.028*p;
+          const px=baseX+side;
+          const py=cy - cell*(.10+.72*p) + Math.sin(seed*.83+i)*cell*.16*(1-p);
+          const r=Math.max(1,cell*(.018+.018*((seed%5)/4)))*(1-p*.55);
+          const alpha=Math.max(0,.92-p*.82);
+          ctx.globalAlpha=alpha;
+          ctx.fillStyle=(i%4===0)?'#fff0a8':(i%3===0?'#bff7ff':'#ffffff');
+          ctx.translate(px,py);
+          ctx.rotate((seed+i)*.17);
+          ctx.beginPath();
+          ctx.moveTo(0,-r*1.8); ctx.lineTo(r*.45,-r*.45); ctx.lineTo(r*1.8,0); ctx.lineTo(r*.45,r*.45);
+          ctx.lineTo(0,r*1.8); ctx.lineTo(-r*.45,r*.45); ctx.lineTo(-r*1.8,0); ctx.lineTo(-r*.45,-r*.45); ctx.closePath(); ctx.fill();
+          ctx.setTransform(1,0,0,1,0,0);
         }
         ctx.restore();
       }

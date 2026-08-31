@@ -2996,6 +2996,18 @@ cameraX = 0;
             document.addEventListener('keydown', (e) => {
                 if (!shouldHandleKeys()) return;
                 const code = e.code || '';
+                if (code === 'Enter') {
+                    // In the embedded room game, Enter hands keyboard control to the dock chat.
+                    // Clear held gameplay state first so opening chat cannot leave movement stuck.
+                    if (window.parent && window.parent !== window) {
+                        e.preventDefault();
+                        moveDirection = 0;
+                        jumpKeyDown = false;
+                        try { handleJumpRelease(); } catch (_) {}
+                        try { window.parent.postMessage({ type: 'tg_chat_focus' }, '*'); } catch (_) {}
+                        return;
+                    }
+                }
                 if (code === 'ArrowLeft') { e.preventDefault(); moveDirection = -1; }
                 if (code === 'ArrowRight') { e.preventDefault(); moveDirection = 1; }
                 if (code === 'KeyZ') {

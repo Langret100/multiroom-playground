@@ -11,6 +11,6 @@ ok(touch.includes('const isWide = shellW >= 900'), 'runtime wide branch missing'
 ok(touch.includes('two equally important full-size boards'), 'equal full board sizing missing');
 ok(touch.includes('Mobile/tablet: preserve the existing compact right rail'), 'mobile compatibility path missing');
 ok(main.includes('HORIZ_DAS_MS = 115') && main.includes('HORIZ_ARR_MS = 34'), 'keyboard DAS/ARR missing');
-ok(main.includes('./touch.js?v=20260831-jellyfocus6'), 'touch cache bust missing');
-ok(html.includes('game.css?v=20260831-jellyfocus6') && html.includes('main.js?v=20260831-jellyfocus6'), 'asset cache bust missing');
+ok(main.includes('./touch.js?v=20260831-stackclean1'), 'touch cache bust missing');
+ok(html.includes('game.css?v=20260831-stackclean1') && html.includes('main.js?v=20260831-stackclean1'), 'asset cache bust missing');
 console.log('STACKGA_WIDE_DUAL_BOARD_REGRESSION_OK');

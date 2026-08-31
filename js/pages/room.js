@@ -934,30 +934,6 @@ function updatePreview(modeId){
     }
   }
 
-  function forwardStackgaKeyToGame(code, down, repeat=false){
-    try{
-      const fr=duel?.iframeEl || document.getElementById('duelFrame');
-      const activeId=String(duel?.meta?.id||coop?.meta?.id||'');
-      const src=String(fr?.getAttribute?.('src')||fr?.src||'');
-      const active=(activeId==='stackga') || /(?:^|\/)games\/stackga\//.test(src) || document.body.classList.contains('mode-stackga');
-      if(!active||!fr?.contentWindow)return false;
-      const key=String(code||'');
-      if(!['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space','KeyP'].includes(key))return false;
-      fr.contentWindow.postMessage({type:'stackga_key',gameId:'stackga',code:key,down:!!down,repeat:!!repeat},'*');
-      return true;
-    }catch(_){ return false; }
-  }
-
-  // When room.html itself is inside the fullscreen-preserving lobby iframe,
-  // physical key events can remain on the top-level lobby document. The lobby
-  // forwards them here; room.html then relays them to the actual Stackga iframe.
-  window.addEventListener('message',(e)=>{
-    const d=e?.data||{};
-    if(d.type!=='embedded_room_key') return;
-    if(!isEmbedded || e.source !== window.parent) return;
-    forwardStackgaKeyToGame(d.code, d.down, d.repeat);
-  });
-
   // iframe -> parent bridge
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
@@ -1710,6 +1686,7 @@ function updatePreview(modeId){
         try{
           const t = ev && ev.data && ev.data.type;
           if (t === "tg_iframe_tap" || t === "dock_iframe_tap") blurInput();
+          else if (t === "tg_chat_focus") focusTogesterDockChat();
         }catch(_){ }
       });
 
@@ -1737,21 +1714,11 @@ function updatePreview(modeId){
         postToMain({type:'tg_key',gameId:'togester',code,down:!!down,repeat:!!e.repeat});
       }catch(_){ }
     };
-    const forwardStackgaPhysicalKey=(e,down)=>{
-      const sent=forwardStackgaKeyToGame(e?.code, down, e?.repeat);
-      if(sent && ['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(String(e?.code||''))) e.preventDefault?.();
-      return sent;
-    };
     window.addEventListener("keydown", (e)=>{
-      // Stackga must never depend on a click-to-focus recovery. During an active
-      // block-stacking match, forward physical keys before the generic text-input
-      // guard: a chat/input element can remain focused when the host starts the match.
-      forwardStackgaPhysicalKey(e,true);
       if (shouldIgnoreKeyEvent(e)) return;
       setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true);
     }, { passive:false, capture:true });
     window.addEventListener("keyup", (e)=>{
-      forwardStackgaPhysicalKey(e,false);
       if (shouldIgnoreKeyEvent(e)) return;
       setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false);
     }, { passive:false, capture:true });
@@ -1819,6 +1786,27 @@ function updatePreview(modeId){
 
   function sendRoomChat(){ sendChatFrom(els.roomChatInput); }
   function sendDockChat(){ sendChatFrom(els.tgDockInput); }
+
+  function focusTogesterDockChat(){
+    try{
+      if (!isTogesterActive() || !document.body.classList.contains("tg-mode")) return false;
+      const input = els.tgDockInput;
+      if (!input) return false;
+      input.focus({ preventScroll:true });
+      try{ input.setSelectionRange(input.value.length, input.value.length); }catch(_){ }
+      return true;
+    }catch(_){ return false; }
+  }
+
+  function returnFocusToTogesterGame(){
+    try{
+      const input = els.tgDockInput;
+      if (input && document.activeElement === input) input.blur();
+      const fr = duel?.iframeEl || document.getElementById("duelFrame");
+      fr?.focus?.({ preventScroll:true });
+      try{ fr?.contentWindow?.focus?.(); }catch(_){ }
+    }catch(_){ }
+  }
 
   function modeLabel(modeId){
     const g = window.gameById ? window.gameById(modeId) : null;
@@ -2590,7 +2578,7 @@ function handleDuelMatch(m){
   if (isPlayer){
     duel.ui.frameWrap?.classList.remove("hidden");
     duel.ui.spectate?.classList.add("hidden");
-    setDuelFrameLoading(true, duel.meta?.id || m.gameId || "");
+    if ((duel.meta?.id || m.gameId) === "stackga") setDuelFrameLoading(true, "stackga");
     // Load iframe fresh
     const src = `${duel.meta.embedPath}?embed=1&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
     duel.iframeLoaded = false;
@@ -2601,7 +2589,7 @@ function handleDuelMatch(m){
         // wait for bridge_ready or init anyway
         sendBridgeInit();
         focusGameIframeSoon();
-        revealDuelFrameSoon(180);
+        if ((duel.meta?.id || m.gameId) === "stackga") revealDuelFrameSoon(180);
       };
       duel.iframeEl.src = src;
     }
@@ -2611,6 +2599,10 @@ function handleDuelMatch(m){
       if (!cpuFrame.iframeEl){
         const fr = document.createElement("iframe");
         fr.setAttribute("title", "CPU");
+        if ((duel.meta?.id || m.gameId) === "stackga"){
+          fr.setAttribute("tabindex", "-1");
+          fr.setAttribute("aria-hidden", "true");
+        }
         fr.style.position = "absolute";
         fr.style.width = "1px";
         fr.style.height = "1px";
@@ -2627,7 +2619,7 @@ function handleDuelMatch(m){
         cpuFrame.iframeLoaded = true;
         sendCpuBridgeInit();
       };
-      cpuFrame.iframeEl.src = src;
+      cpuFrame.iframeEl.src = ((duel.meta?.id || m.gameId) === "stackga") ? `${src}&cpu=1` : src;
     } else {
       // Not a solo CPU match -> tear down hidden CPU iframe
       if (cpuFrame.iframeEl){
@@ -2638,7 +2630,7 @@ function handleDuelMatch(m){
       }
     }
   } else {
-    setDuelFrameLoading(false, duel.meta?.id || m.gameId || "");
+    if ((duel.meta?.id || m.gameId) === "stackga") setDuelFrameLoading(false, "stackga");
     duel.ui.frameWrap?.classList.add("hidden");
     duel.ui.spectate?.classList.remove("hidden");
     // spectator: ensure CPU iframe is not running
@@ -2675,7 +2667,6 @@ function startCoopEmbed(meta){
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
-  setDuelFrameLoading(true, meta?.id || "");
   // coop에서는 관전/대진 UI를 숨기고 iframe만 사용
   duel.ui.spectate?.classList.add("hidden");
   duel.ui.frameWrap?.classList.remove("hidden");
@@ -2701,8 +2692,6 @@ function startCoopEmbed(meta){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
       sendCoopBridgeInit();
-      focusGameIframeSoon();
-      revealDuelFrameSoon(180);
     };
     duel.iframeEl.src = src;
   }
@@ -2726,7 +2715,6 @@ function startCoopPractice(meta){
   
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
-  setDuelFrameLoading(true, meta?.id || "");
   duel.ui.spectate?.classList.add("hidden");
   duel.ui.frameWrap?.classList.remove("hidden");
   if (duel.ui.duelLine) duel.ui.duelLine.textContent = (meta?.name || "협동") + " · 연습";
@@ -2737,8 +2725,6 @@ function startCoopPractice(meta){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
       sendCoopBridgeInit();
-      focusGameIframeSoon();
-      revealDuelFrameSoon(180);
     };
     duel.iframeEl.src = src;
   }
@@ -3318,7 +3304,7 @@ try{
       els.roomChatInput.addEventListener("keydown", (e)=>{ if (e.key==="Enter"){ e.preventDefault(); sendRoomChat(); } });
 
       // togester in-game dock chat ui (shown only in fullscreen)
-      if (els.tgDockSend) els.tgDockSend.addEventListener("click", sendDockChat);
+      if (els.tgDockSend) els.tgDockSend.addEventListener("click", ()=>{ sendDockChat(); returnFocusToTogesterGame(); });
       if (els.tgDockInput){
         // Prevent gameplay key handling while typing.
         els.tgDockInput.addEventListener("keydown", (e)=>{
@@ -3326,6 +3312,7 @@ try{
           if (e.key === "Enter"){
             e.preventDefault();
             sendDockChat();
+            returnFocusToTogesterGame();
           }
         });
         els.tgDockInput.addEventListener("keyup", (e)=>{ try{ e.stopPropagation(); }catch(_){ } });
