@@ -113,16 +113,17 @@ function merge(board, piece){
 }
 
 function clearLines(board){
-  let cleared = 0;
-  for(let y=ROWS-1;y>=0;y--){
-    if(board[y].every(v=>v!==0)){
-      board.splice(y,1);
-      board.unshift(Array.from({length:COLS},()=>0));
-      cleared++;
-      y++; // recheck same row index after shift
-    }
-  }
-  return cleared;
+  // Capture row indexes before mutating the board so freshly locked cells can
+  // keep their jelly/morph animation attached to the same physical blocks.
+  const rows = [];
+  for(let y=0;y<ROWS;y++) if(board[y].every(v=>v!==0)) rows.push(y);
+  if(!rows.length) return { cleared:0, rows };
+
+  const rowSet = new Set(rows);
+  const kept = board.filter((_,y)=>!rowSet.has(y));
+  while(kept.length<ROWS) kept.unshift(Array.from({length:COLS},()=>0));
+  board.splice(0, board.length, ...kept);
+  return { cleared:rows.length, rows };
 }
 
 export class StackGame {
@@ -145,6 +146,14 @@ export class StackGame {
 
     // RNG for garbage-hole positions
     this._garbageRnd = mulberry32(((this.seed ^ 0xA5A5A5A5)>>>0) || 1);
+    this._colorRnd = mulberry32(((this.seed ^ 0x3F91C2D7)>>>0) || 1);
+    this.lastLockAt = 0;
+    this.lastLockCells = [];
+    // Purely local render events. These never enter multiplayer/server snapshots.
+    this.lastContactAt = 0;
+    this.lastContactCells = [];
+    this.lastCascadeAt = 0;
+    this.lastCascadeCells = [];
 
     this.current = null;
     this.next = this._makePiece();
@@ -155,8 +164,9 @@ export class StackGame {
 
   _makePiece(){
     const type = this.getNextType();
-    const idMap = {I:1,O:2,T:3,S:4,Z:5,J:6,L:7};
-    return { type, id: idMap[type], x:3, y:-1, rot:0 };
+    // Shape and color are intentionally independent: every falling piece gets a fresh jelly color.
+    const id = 1 + Math.floor(this._colorRnd()*7);
+    return { type, id, x:3, y:-1, rot:0 };
   }
 
   spawn(){
@@ -277,8 +287,65 @@ export class StackGame {
   }
 
   _lock(){
+    const shape = SHAPES[this.current.type][this.current.rot];
+    const now = Date.now();
+    this.lastLockCells = [];
+    const pieceCells = [];
+    for(let y=0;y<4;y++) for(let x=0;x<4;x++) if(shape[y][x]){
+      const bx=this.current.x+x, by=this.current.y+y;
+      if(by>=0 && by<ROWS && bx>=0 && bx<COLS){
+        this.lastLockCells.push([bx,by]);
+        pieceCells.push([bx,by]);
+      }
+    }
+
+    // Existing blocks directly touched by the landing piece get a small secondary jelly reaction.
+    const pieceSet = new Set(pieceCells.map(([x,y])=>`${x},${y}`));
+    const contact = new Map();
+    for(const [bx,by] of pieceCells){
+      for(const [dx,dy] of [[0,1],[-1,0],[1,0],[0,-1]]){
+        const x=bx+dx, y=by+dy;
+        if(x<0 || x>=COLS || y<0 || y>=ROWS || pieceSet.has(`${x},${y}`)) continue;
+        if(this.board[y][x]) contact.set(`${x},${y}`,[x,y]);
+      }
+    }
+    this.lastContactAt = now;
+    this.lastContactCells = [...contact.values()];
+    this.lastLockAt = now;
+
     merge(this.board,this.current);
-    const cleared = clearLines(this.board);
+
+    // Capture where every surviving pre-clear block will settle. This powers only
+    // client-side jelly/recolour animation after a line clear.
+    const fullRows = [];
+    for(let y=0;y<ROWS;y++) if(this.board[y].every(v=>v!==0)) fullRows.push(y);
+    const fullSet = new Set(fullRows);
+    const cascade = [];
+    if(fullRows.length){
+      for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+        const id=this.board[y][x];
+        if(!id || fullSet.has(y)) continue;
+        const shift=fullRows.filter(r=>r>y).length;
+        if(shift>0) cascade.push({x, fromY:y, toY:y+shift, id});
+      }
+    }
+
+    const clearResult = clearLines(this.board);
+    const cleared = clearResult.cleared;
+    if(cleared>0){
+      const clearedSet = new Set(clearResult.rows);
+      this.lastLockCells = this.lastLockCells
+        .filter(([,y])=>!clearedSet.has(y))
+        .map(([x,y])=>[x, y + clearResult.rows.filter(r=>r>y).length]);
+      this.lastContactCells = this.lastContactCells
+        .filter(([,y])=>!clearedSet.has(y))
+        .map(([x,y])=>[x, y + clearResult.rows.filter(r=>r>y).length]);
+      this.lastCascadeAt = now;
+      this.lastCascadeCells = cascade;
+    } else {
+      this.lastCascadeAt = 0;
+      this.lastCascadeCells = [];
+    }
     this.lastCleared = cleared;
     if(cleared>0){
       const pts = [0,100,250,450,700][cleared] || (cleared*250);
@@ -311,61 +378,152 @@ export class StackGame {
 }
 
 export function drawBoard(ctx, board, cell, opts={}){
-  const { ghost=false } = opts;
+  const { ghost=false, activePiece=null, lastLockAt=0, lastLockCells=[], lastContactAt=0, lastContactCells=[], lastCascadeAt=0, lastCascadeCells=[] } = opts;
+  const now = Date.now();
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
-  // background grid
-  ctx.globalAlpha = 1;
-  ctx.fillStyle = "rgba(255,255,255,0.95)";
-  ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
+  const bg = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
+  bg.addColorStop(0,"rgba(235,248,255,.97)");
+  bg.addColorStop(.55,"rgba(244,250,255,.98)");
+  bg.addColorStop(1,"rgba(230,246,255,.99)");
+  ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
 
-  for(let y=0;y<ROWS;y++){
-    for(let x=0;x<COLS;x++){
-      const v = board[y][x];
-      if(v){
-        ctx.fillStyle = colorOf(v, ghost);
-        ctx.fillRect(x*cell, y*cell, cell-1, cell-1);
-      } else {
-        // faint grid
-        ctx.fillStyle = "rgba(15,23,42,0.06)";
-        ctx.fillRect(x*cell, y*cell, cell-1, cell-1);
+  const active = new Set();
+  if(activePiece){
+    const sh=SHAPES[activePiece.type][activePiece.rot];
+    for(let yy=0;yy<4;yy++) for(let xx=0;xx<4;xx++) if(sh[yy][xx]) active.add(`${activePiece.x+xx},${activePiece.y+yy}`);
+  }
+  const lockedSet = new Set((lastLockCells||[]).map(([x,y])=>`${x},${y}`));
+  const contactSet = new Set((lastContactCells||[]).map(([x,y])=>`${x},${y}`));
+  const cascadeMap = new Map((lastCascadeCells||[]).map(c=>[`${c.x},${c.toY}`,c]));
+  const age = now-lastLockAt;
+  const contactAge = now-lastContactAt;
+  const cascadeAge = now-lastCascadeAt;
+  const wobble = age>=0 && age<430 ? Math.sin(age/36)*Math.exp(-age/230) : 0;
+
+  for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
+    const v=board[y][x];
+    if(!v){
+      ctx.fillStyle="rgba(80,145,190,.055)";
+      roundRect(ctx,x*cell+1,y*cell+1,cell-2,cell-2,Math.max(2,cell*.14)); ctx.fill();
+      continue;
+    }
+    const key=`${x},${y}`;
+    const isActive=active.has(key);
+    let sx=1, sy=1, dy=0;
+    const isFreshLock=!ghost && !isActive && lockedSet.has(key);
+    const isContact=!ghost && !isActive && !isFreshLock && contactSet.has(key);
+    const cascadeInfo=!ghost && !isActive ? cascadeMap.get(key) : null;
+    if(isFreshLock && age<430){
+      sx=1+wobble*.085; sy=1-wobble*.12; dy=wobble*cell*.035;
+    } else if(isContact && contactAge>=0 && contactAge<300){
+      const cw=Math.sin(contactAge/31)*Math.exp(-contactAge/165);
+      sx=1+cw*.032; sy=1-cw*.05; dy=cw*cell*.018;
+    } else if(cascadeInfo && cascadeAge>=0){
+      // Bottom blocks react first, producing a soft downward settling wave.
+      const delay=Math.max(0,(ROWS-1-y))*9;
+      const ca=cascadeAge-delay;
+      if(ca>=0 && ca<520){
+        const cw=Math.sin(ca/39)*Math.exp(-ca/260);
+        sx=1+cw*.045; sy=1-cw*.072; dy=cw*cell*.026;
       }
+    }
+
+    // Keep the falling jelly color for a beat, then let the block naturally
+    // absorb the palette of the layer it landed in instead of snapping.
+    const targetColor=isActive ? fallingColor(v,ghost) : settledColor(y,v,ghost);
+    let cellColor=targetColor;
+    let settleMix=1;
+    if(isFreshLock && age>=0 && age<820 && v!==8){
+      const raw=Math.max(0,Math.min(1,(age-120)/700));
+      settleMix=raw*raw*(3-2*raw);
+      cellColor=mixColor(fallingColor(v,false),targetColor,settleMix);
+    } else if(cascadeInfo && cascadeAge>=0 && cascadeAge<650 && v!==8){
+      // A block that physically moved down after a clear keeps its former layer
+      // colour briefly and then re-dyes into the palette of its new height.
+      const raw=Math.max(0,Math.min(1,(cascadeAge-70)/560));
+      const k=raw*raw*(3-2*raw);
+      cellColor=mixColor(settledColor(cascadeInfo.fromY,v,false),targetColor,k);
+    }
+    drawJellyCell(ctx,x*cell,y*cell,cell,cellColor,{
+      sx,sy,dy,
+      sparkle:!isActive && v!==8 && (ROWS-y)>=9 && (!isFreshLock || settleMix>.58),
+      t:now,x,y,
+      settleGlow:isFreshLock ? Math.sin(Math.min(1,Math.max(0,(age-80)/620))*Math.PI) : 0
+    });
+  }
+  if(activePiece){
+    const sh=SHAPES[activePiece.type][activePiece.rot];
+    for(let yy=0;yy<4;yy++) for(let xx=0;xx<4;xx++) if(sh[yy][xx]){
+      const bx=activePiece.x+xx, by=activePiece.y+yy;
+      if(by<0 || by>=ROWS || bx<0 || bx>=COLS) continue;
+      drawJellyCell(ctx,bx*cell,by*cell,cell,fallingColor(activePiece.id,ghost),{sx:1,sy:1,dy:0,sparkle:false,t:now,x:bx,y:by});
     }
   }
 }
 
-// Draw next-piece preview in a 4x4 grid (no labels)
 export function drawNext(ctx, piece, cell){
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
-  ctx.fillStyle = "rgba(255,255,255,0.95)";
-  ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
+  const bg=ctx.createLinearGradient(0,0,0,ctx.canvas.height); bg.addColorStop(0,"#effaff"); bg.addColorStop(1,"#e5f4ff");
+  ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
   if(!piece) return;
-  const shape = SHAPES[piece.type][0];
-  // Center within the 4x4 preview
-  for(let y=0;y<4;y++){
-    for(let x=0;x<4;x++){
-      if(!shape[y][x]){
-        ctx.fillStyle = "rgba(15,23,42,0.06)";
-        ctx.fillRect(x*cell, y*cell, cell-1, cell-1);
-        continue;
-      }
-      ctx.fillStyle = colorOf(piece.id, false);
-      ctx.fillRect(x*cell, y*cell, cell-1, cell-1);
-    }
-  }
+  const shape=SHAPES[piece.type][0];
+  for(let y=0;y<4;y++) for(let x=0;x<4;x++) if(shape[y][x]) drawJellyCell(ctx,x*cell,y*cell,cell,fallingColor(piece.id,false),{sx:1,sy:1,dy:0,sparkle:false,t:0,x,y});
 }
 
-function colorOf(v, ghost){
-  const base = [
-    "#000000",
-    "rgba(110,231,255,0.95)",
-    "rgba(124,255,178,0.95)",
-    "rgba(255,215,110,0.95)",
-    "rgba(179,142,255,0.95)",
-    "rgba(255,110,170,0.95)",
-    "rgba(255,140,110,0.95)",
-    "rgba(180,255,110,0.95)",
-    "rgba(148,163,184,0.92)"
-  ][v] || "rgba(255,255,255,0.9)";
-  if(!ghost) return base;
-  return base.replace("0.95","0.55");
+function roundRect(ctx,x,y,w,h,r){ r=Math.min(r,w/2,h/2); ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+function fallingColor(v,ghost){
+  const c=[[0,0,0],[58,201,255],[70,225,175],[255,196,79],[168,115,255],[255,102,170],[255,137,78],[102,151,255]][v]||[110,200,255];
+  return {rgb:c,a:ghost?.55:.94};
+}
+function lerp(a,b,t){ return a+(b-a)*t; }
+function mixColor(a,b,t){
+  const k=Math.max(0,Math.min(1,t));
+  return {
+    rgb:[
+      Math.round(lerp(a.rgb[0],b.rgb[0],k)),
+      Math.round(lerp(a.rgb[1],b.rgb[1],k)),
+      Math.round(lerp(a.rgb[2],b.rgb[2],k))
+    ],
+    a:lerp(a.a,b.a,k)
+  };
+}
+function paletteAt(t){
+  // bottom -> fresh mint/green -> violet -> cobalt -> deep starry blue
+  const stops=[
+    [0.00,[132,239,174]],
+    [0.22,[87,220,194]],
+    [0.43,[147,116,244]],
+    [0.64,[78,120,240]],
+    [0.82,[43,91,200]],
+    [1.00,[20,43,116]]
+  ];
+  const x=Math.max(0,Math.min(1,t));
+  for(let i=1;i<stops.length;i++){
+    if(x<=stops[i][0]){
+      const [p0,c0]=stops[i-1], [p1,c1]=stops[i];
+      const k=(x-p0)/(p1-p0 || 1);
+      return c0.map((v,j)=>Math.round(lerp(v,c1[j],k)));
+    }
+  }
+  return stops[stops.length-1][1].slice();
+}
+function settledColor(y,v,ghost){
+  if(v===8) return {rgb:[137,160,186],a:ghost?.42:.72};
+  const h=ROWS-y;
+  const t=Math.min(1,Math.max(0,(h-1)/14));
+  const rgb=paletteAt(t);
+  const upper=Math.max(0,Math.min(1,(h-8)/8));
+  const a=lerp(.95,.71,upper)*(ghost?.58:1);
+  return {rgb,a};
+}
+function drawJellyCell(ctx,px,py,cell,color,o){
+  const pad=Math.max(1.4,cell*.06), w=cell-pad*2, h=cell-pad*2;
+  ctx.save(); ctx.translate(px+cell/2,py+cell/2+(o.dy||0)); ctx.scale(o.sx||1,o.sy||1); ctx.translate(-cell/2,-cell/2);
+  const [r,g,b]=color.rgb; const grad=ctx.createLinearGradient(0,pad,0,cell-pad);
+  grad.addColorStop(0,`rgba(${Math.min(255,r+42)},${Math.min(255,g+42)},255,${color.a})`); grad.addColorStop(.52,`rgba(${r},${g},${b},${color.a})`); grad.addColorStop(1,`rgba(${Math.max(0,r-18)},${Math.max(0,g-20)},${Math.max(0,b-14)},${color.a})`);
+  ctx.fillStyle=grad; ctx.shadowColor=`rgba(${r},${g},${b},${.28+.18*(o.settleGlow||0)})`; ctx.shadowBlur=cell*(.16+.10*(o.settleGlow||0)); roundRect(ctx,pad,pad,w,h,Math.max(3,cell*.23)); ctx.fill(); ctx.shadowBlur=0;
+  const gloss=ctx.createLinearGradient(0,pad,0,cell*.48); gloss.addColorStop(0,"rgba(255,255,255,.62)"); gloss.addColorStop(1,"rgba(255,255,255,0)"); ctx.fillStyle=gloss; roundRect(ctx,pad+cell*.09,pad+cell*.07,w-cell*.18,h*.4,Math.max(2,cell*.16)); ctx.fill();
+  ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=Math.max(1,cell*.035); roundRect(ctx,pad+.5,pad+.5,w-1,h-1,Math.max(3,cell*.23)); ctx.stroke();
+  if(o.sparkle){ const phase=(o.t/260 + o.x*1.7 + o.y*.9); if(Math.sin(phase)>0.2){ ctx.fillStyle=`rgba(255,255,255,${.32+.28*Math.sin(phase)})`; const cx=cell*(.25+((o.x*37+o.y*17)%48)/100), cy=cell*(.25+((o.x*13+o.y*29)%42)/100), rr=Math.max(1.1,cell*.055); ctx.beginPath(); ctx.moveTo(cx,cy-rr*1.8); ctx.lineTo(cx+rr*.5,cy-rr*.5); ctx.lineTo(cx+rr*1.8,cy); ctx.lineTo(cx+rr*.5,cy+rr*.5); ctx.lineTo(cx,cy+rr*1.8); ctx.lineTo(cx-rr*.5,cy+rr*.5); ctx.lineTo(cx-rr*1.8,cy); ctx.lineTo(cx-rr*.5,cy-rr*.5); ctx.closePath(); ctx.fill(); } }
+  ctx.restore();
 }

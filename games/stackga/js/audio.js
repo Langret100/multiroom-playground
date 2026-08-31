@@ -25,6 +25,18 @@ export function createAudio({ musicUrl } = {}) {
     musicVol: 0.35,
     sfxVol: 0.90,
   };
+  const sampleUrls = {
+    jellyLand: "https://upload.wikimedia.org/wikipedia/commons/8/82/Slime_wet_smacking.ogg",
+    sparkle: "https://upload.wikimedia.org/wikipedia/commons/0/09/Windchimes.ogg"
+  };
+  const samples = new Map();
+  function playSample(name,{volume=.10,start=0,stopAfter=.34}={}){
+    if(muted || !started) return false;
+    const url=sampleUrls[name]; if(!url) return false;
+    let a=samples.get(name);
+    if(!a){ a=new Audio(url); a.preload="auto"; a.crossOrigin="anonymous"; samples.set(name,a); }
+    try{ a.pause(); a.currentTime=start; a.volume=volume; const pr=a.play(); if(pr?.catch) pr.catch(()=>{}); setTimeout(()=>{try{a.pause()}catch{}},stopAfter*1000); return true; }catch{return false;}
+  }
 
   function ensureGraph() {
     if (ctx && master) return true;
@@ -135,6 +147,14 @@ export function createAudio({ musicUrl } = {}) {
         break;
       case "hard":
         beep({ f1: 140, f2: 60, dur: 0.12, type: "sawtooth", gain: 0.12 });
+        break;
+      case "jellyLand":
+        playSample("jellyLand",{volume:.055,start:.05,stopAfter:.22});
+        beep({ f1: 180, f2: 110, dur: 0.075, type: "sine", gain: 0.07 });
+        break;
+      case "sparkle":
+        playSample("sparkle",{volume:.045,start:.10,stopAfter:.45});
+        beep({ f1: 1380, f2: 1940, dur: 0.10, type: "triangle", gain: 0.025 });
         break;
       case "clear":
         beep({ f1: 620, f2: 780, dur: 0.08, type: "triangle", gain: 0.08, delay: 0.00 });

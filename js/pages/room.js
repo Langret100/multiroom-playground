@@ -354,6 +354,8 @@ function setupBgm(audioElId, btnId){
     modeBadge: document.getElementById("briefingModeBadge"),
     flow: document.getElementById("briefingFlow"),
     controls: document.getElementById("briefingControls"),
+    controlVisual: document.getElementById("briefingControlVisual"),
+    gameHero: document.getElementById("briefingGameHero"),
     tip: document.getElementById("briefingTip"),
   };
 
@@ -466,10 +468,28 @@ function setupBgm(audioElId, btnId){
       : "stackga";
   }
 
+function renderControlGuide(meta){
+  try{
+    if (previewEls.gameHero){
+      const img = meta?.cardImage ? `./${meta.cardImage}` : '';
+      previewEls.gameHero.innerHTML = img
+        ? `<img src="${img}" alt=""><div><b>${safeText(meta?.name || '게임',30)}</b><span>${safeText(meta?.category || '',40)}</span></div>`
+        : '';
+    }
+    if (!previewEls.controlVisual) return;
+    const section = (title, icon, rows, mobile=false)=>{
+      const list = Array.isArray(rows) ? rows : [];
+      return `<section class="controlDeviceCard${mobile?' mobile':''}"><div class="controlDeviceHead"><span aria-hidden="true">${icon}</span>${title}</div><div class="controlRows">${list.map(row=>`<div class="controlRow"><span class="controlKey">${safeText(row?.[0]||'',18)}</span><span class="controlAction">${safeText(row?.[1]||'',42)}</span></div>`).join('')}</div></section>`;
+    };
+    previewEls.controlVisual.innerHTML = section('PC 조작', '▣', meta?.pcControls || []) + section('모바일 조작', '▤', meta?.mobileControls || [], true);
+  }catch(_){ }
+}
+
 function updatePreview(modeId){
   const meta = window.gameById ? window.gameById(modeId) : null;
   const label = meta?.name || modeLabel(modeId) || "-";
   const gameId = meta?.id || modeId || "";
+  renderControlGuide(meta);
 
   // 요청사항: 방 화면에 게임별 핵심 규칙 설명을 표시
   try{
@@ -499,10 +519,7 @@ function updatePreview(modeId){
       previewEls.flow.textContent = BRIEFING_FLOW[gameId] || "준비 → 게임 시작 → 목표 달성";
     }
     if (previewEls.controls){
-      const hints = [meta?.mobileHint, meta?.pcHint]
-        .map(value => (value ?? "").toString().trim())
-        .filter(Boolean);
-      previewEls.controls.textContent = hints.join(" · ") || "게임 안에서 조작 안내를 확인하세요.";
+      previewEls.controls.textContent = "기기별 버튼과 조작을 아래에서 확인하세요.";
     }
     if (previewEls.tip){
       previewEls.tip.textContent = BRIEFING_TIP[gameId] || "준비가 끝나면 팀원과 목표를 먼저 확인하세요.";
@@ -515,15 +532,13 @@ function updatePreview(modeId){
       // Mobile: make "그림맞추기" fit by splitting into two lines.
       // Wider mobile threshold so long Korean game titles don't auto-wrap awkwardly
       const isMobileNarrow = window.matchMedia && window.matchMedia("(max-width: 820px)").matches;
-      const hasPreviewArt = ["stackga","suika","drawanswer","togester","suhaktokki","mathexplorer","backrooms3d","snaketail","soccer"].includes(gameId);
+      const hasPreviewArt = !!meta?.cardImage;
       previewEls.thumb.classList.toggle("has-art", hasPreviewArt);
-      if ((meta?.id || modeId) === "drawanswer" && isMobileNarrow && !hasPreviewArt){
-        previewEls.thumb.classList.add("label-drawanswer-mobile");
-        previewEls.thumb.dataset.label = "그림맞추기";
-      } else {
-        previewEls.thumb.classList.remove("label-drawanswer-mobile");
-        previewEls.thumb.dataset.label = hasPreviewArt ? "" : (label || "").slice(0, 6);
-      }
+      previewEls.thumb.style.backgroundImage = hasPreviewArt ? `url("./${meta.cardImage}")` : "";
+      previewEls.thumb.style.backgroundSize = hasPreviewArt ? "cover" : "";
+      previewEls.thumb.style.backgroundPosition = hasPreviewArt ? "center" : "";
+      previewEls.thumb.classList.remove("label-drawanswer-mobile");
+      previewEls.thumb.dataset.label = hasPreviewArt ? "" : (label || "").slice(0, 6);
     }
   }catch(_){}
 

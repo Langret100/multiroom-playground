@@ -182,15 +182,15 @@ function performAction(action){
   const right = invert ? -1 : 1;
 
   if(action==="left"){
-    if(meGame.move(left) && !EMBED) audio.sfx("move");
+    if(meGame.move(left)) audio.sfx("move");
   }else if(action==="right"){
-    if(meGame.move(right) && !EMBED) audio.sfx("move");
+    if(meGame.move(right)) audio.sfx("move");
   }else if(action==="down"){
-    meGame.softDrop(); if(!EMBED) audio.sfx("soft");
+    meGame.softDrop(); audio.sfx("soft");
   }else if(action==="rotate"){
-    if(meGame.rotate(1) && !EMBED) audio.sfx("rotate");
+    if(meGame.rotate(1)) audio.sfx("rotate");
   }else if(action==="drop"){
-    meGame.hardDrop(); if(!EMBED) audio.sfx("hard");
+    meGame.hardDrop(); audio.sfx("hard");
   }else if(action==="pause"){
     meGame.paused = !meGame.paused;
   }
@@ -282,6 +282,7 @@ let oppLastBoard=null;
 let seenEvents=new Set();
 let waitTimer=null, waitRemain=0;
 let cleanupTimer=null;
+let lastJellyLockSfxAt = 0;
 
 function stopLoop(){
   try{ if (raf) cancelAnimationFrame(raf); }catch(_){ }
@@ -311,6 +312,11 @@ function render(){
 
   if(meGame){
     const now = Date.now();
+    if(meGame.lastLockAt && meGame.lastLockAt !== lastJellyLockSfxAt){
+      lastJellyLockSfxAt = meGame.lastLockAt;
+      audio.sfx("jellyLand");
+      if((meGame.lastLockCells||[]).some(([,y]) => (23-y)>=9) ) audio.sfx("sparkle");
+    }
     // shrink effect: scale only the main board column
     if(boardColEl){
       if(meGame._isShrinkActive(now)){
@@ -320,7 +326,12 @@ function render(){
         boardColEl.style.transform = "none";
       }
     }
-    drawBoard(ctxMe, meGame.snapshot(), cellMe);
+    drawBoard(ctxMe, meGame.board, cellMe, {
+      activePiece: meGame.current,
+      lastLockAt: meGame.lastLockAt, lastLockCells: meGame.lastLockCells,
+      lastContactAt: meGame.lastContactAt, lastContactCells: meGame.lastContactCells,
+      lastCascadeAt: meGame.lastCascadeAt, lastCascadeCells: meGame.lastCascadeCells
+    });
     const mult = meGame._isBigNextActive(now) ? 1.55 : 1;
     const cellNext = Math.floor((ui.cvNext.width / 4) * mult);
     drawNext(ctxNext, meGame.next, cellNext);

@@ -65,6 +65,11 @@ function setupBgm(audioElId, btnId){
     gameMode: document.querySelector("#gameMode"),
     maxClientsLabel: document.querySelector("#maxClientsLabel"),
     maxClients: document.querySelector("#maxClients"),
+    gameCardGrid: document.querySelector("#gameCardGrid"),
+    gameHoldTip: document.querySelector("#gameHoldTip"),
+    playerCountChips: document.querySelector("#playerCountChips"),
+    selectedGameSummary: document.querySelector("#selectedGameSummary"),
+    roomTitleCount: document.querySelector("#roomTitleCount"),
     chatLog: document.querySelector("#chatLog"),
     chatInput: document.querySelector("#chatInput"),
     chatSend: document.querySelector("#chatSend"),
@@ -361,6 +366,84 @@ function statusDot(room){
     }
   }
 
+  function currentGameMeta(){
+    const id = els.gameMode?.value || window.GAME_REGISTRY?.[0]?.id || "stackga";
+    return window.gameById ? window.gameById(id) : null;
+  }
+
+  function renderSelectedGameSummary(meta){
+    if (!els.selectedGameSummary || !meta) return;
+    const pc = (meta.pcHint || '').replace(/^PC:\s*/,'');
+    const mobile = (meta.mobileHint || '').replace(/^모바일:\s*/,'');
+    els.selectedGameSummary.innerHTML = `
+      <img src="./${meta.cardImage || ''}" alt="" aria-hidden="true"/>
+      <div><b>${safeText(meta.name,30)}</b><span>${safeText(meta.lobbyDesc || (meta.descLines||[])[0] || '',120)}</span>
+      <small><strong>PC</strong> ${safeText(pc,90)} <em>·</em> <strong>모바일</strong> ${safeText(mobile,90)}</small></div>`;
+  }
+
+  function renderPlayerChips(meta, preferred){
+    const wrap = els.playerCountChips;
+    const sel = els.maxClients;
+    if (!wrap || !sel || !meta) return;
+    const cap = Math.max(1, Number(meta.maxClients || 4));
+    const min = meta.id === 'mathexplorer' ? 1 : 2;
+    const evenOnly = meta.id === 'soccer';
+    let options=[];
+    for(let n=min;n<=cap;n++) if(!evenOnly || n%2===0) options.push(n);
+    const fallback = options.includes(4) ? 4 : options[options.length-1];
+    let chosen = Number(preferred || sel.value || fallback);
+    if(!options.includes(chosen)) chosen=fallback;
+    sel.innerHTML=''; wrap.innerHTML='';
+    options.forEach(n=>{
+      const o=document.createElement('option'); o.value=String(n); o.textContent=String(n); o.selected=n===chosen; sel.appendChild(o);
+      const b=document.createElement('button'); b.type='button'; b.className='playerCountChip'+(n===chosen?' selected':'');
+      b.dataset.count=String(n); b.setAttribute('role','radio'); b.setAttribute('aria-checked',n===chosen?'true':'false');
+      b.innerHTML=`<span aria-hidden="true">${n===1?'●':n<=4?'●●':'●●●'}</span><b>${n}명</b>`;
+      b.addEventListener('click',()=>{ maxClientsTouched=true; sel.value=String(n); wrap.querySelectorAll('.playerCountChip').forEach(x=>{const on=x===b;x.classList.toggle('selected',on);x.setAttribute('aria-checked',on?'true':'false');}); });
+      wrap.appendChild(b);
+    });
+    if (els.maxClientsLabel) els.maxClientsLabel.textContent = evenOnly ? `수학축구는 짝수 인원만 가능 · 최대 ${cap}명` : `${min}~${cap}명 선택 가능`;
+  }
+
+  function selectGameCard(id, animate=true){
+    const meta = window.gameById ? window.gameById(id) : null;
+    if(!meta || meta.disabled) return;
+    els.gameMode.value=id;
+    els.gameCardGrid?.querySelectorAll('.createGameCard').forEach(card=>{
+      const on=card.dataset.game===id; card.classList.toggle('selected',on); card.setAttribute('aria-checked',on?'true':'false');
+      if(on && animate){ card.classList.remove('pickPop'); void card.offsetWidth; card.classList.add('pickPop'); }
+    });
+    renderPlayerChips(meta, maxClientsTouched ? Number(els.maxClients.value) : null);
+    renderSelectedGameSummary(meta);
+    try{ if(els.createConfirm) els.createConfirm.disabled=!!meta.disabled; }catch(_){ }
+  }
+
+  function showGameHoldInfo(meta, card){
+    if(!els.gameHoldTip || !meta) return;
+    els.gameHoldTip.hidden=false;
+    els.gameHoldTip.innerHTML=`<div class="holdInfoArt"><img src="./${meta.cardImage || ''}" alt=""/></div><div><b>${safeText(meta.name,30)}</b><span>${safeText(meta.lobbyDesc || '',150)}</span><small><strong>PC</strong> ${safeText((meta.pcHint||'').replace(/^PC:\s*/,''),100)}<br><strong>모바일</strong> ${safeText((meta.mobileHint||'').replace(/^모바일:\s*/,''),100)}</small></div>`;
+    card?.classList.add('holdOpen');
+  }
+
+  function buildGameCards(){
+    if(!els.gameCardGrid) return;
+    els.gameCardGrid.innerHTML='';
+    const games=(window.GAME_REGISTRY||[]);
+    games.forEach((g,idx)=>{
+      const card=document.createElement('button'); card.type='button'; card.className='createGameCard'+(g.disabled?' disabled':'');
+      card.dataset.game=g.id; card.setAttribute('role','radio'); card.setAttribute('aria-checked','false'); card.disabled=!!g.disabled;
+      card.innerHTML=`<span class="gameCardArt"><img src="./${g.cardImage||''}" alt="" loading="eager"/></span><span class="gameCardText"><b>${safeText(g.name,30)}</b><small>${safeText(g.category||'',30)}</small></span><span class="gameCardCheck" aria-hidden="true">✓</span>${g.disabled?`<span class="gameCardDisabled">${safeText(g.disabledLabel||'준비중',20)}</span>`:''}`;
+      let holdTimer=null, longPressed=false;
+      const cancel=()=>{ if(holdTimer){clearTimeout(holdTimer);holdTimer=null;} };
+      card.addEventListener('pointerdown',()=>{ longPressed=false; cancel(); holdTimer=setTimeout(()=>{longPressed=true; showGameHoldInfo(g,card);},520); });
+      ['pointerup','pointercancel','pointerleave'].forEach(ev=>card.addEventListener(ev,cancel));
+      card.addEventListener('click',(e)=>{ if(longPressed){e.preventDefault();longPressed=false;return;} if(els.gameHoldTip){els.gameHoldTip.hidden=true;els.gameHoldTip.innerHTML='';} els.gameCardGrid?.querySelectorAll('.createGameCard').forEach(x=>x.classList.remove('holdOpen')); selectGameCard(g.id,true); });
+      card.addEventListener('contextmenu',e=>e.preventDefault());
+      els.gameCardGrid.appendChild(card);
+    });
+    const initial=els.gameMode.value || games.find(g=>!g.disabled)?.id; if(initial) selectGameCard(initial,false);
+  }
+
   function openModal(){
     els.modal.classList.add("show");
     const def = defaultRoomTitle();
@@ -369,6 +452,9 @@ function statusDot(room){
     // Reset touched state every time the modal opens so game defaults apply naturally.
     maxClientsTouched = false;
     try{ els.roomTitle.dataset.defaultTitle = def; }catch(_){ }
+    try{ if(els.roomTitleCount) els.roomTitleCount.textContent=`${els.roomTitle.value.length}/30`; }catch(_){ }
+    try{ els.gameHoldTip.hidden=true; els.gameHoldTip.innerHTML=''; }catch(_){ }
+    try{ selectGameCard(els.gameMode.value || window.GAME_REGISTRY?.find(g=>!g.disabled)?.id || 'stackga', false); }catch(_){ }
     try{ els.roomTitle.focus(); els.roomTitle.select(); }catch(_){ }
   }
   function closeModal(){
@@ -406,66 +492,11 @@ function statusDot(room){
   function wireUI(){
     els.gameMode.innerHTML = "";
     for (const g of (window.GAME_REGISTRY || [])){
-      const opt = document.createElement("option");
-      opt.value = g.id;
-      opt.textContent = g.disabled ? `${g.name} (${g.disabledLabel || "수정중"})` : `${g.name}`;
-      if (g.disabled) {
-        // Backrooms3D maintenance gate:
-        // only disable selection in the create-room dropdown.
-        // Re-enable by removing this block or setting registry.disabled=false.
-        opt.disabled = true;
-        opt.dataset.disabledGame = "1";
-      }
-      els.gameMode.appendChild(opt);
+      const opt = document.createElement("option"); opt.value=g.id; opt.textContent=g.name; opt.disabled=!!g.disabled; els.gameMode.appendChild(opt);
     }
-
-    // maxClients options depend on selected game (e.g., 꼬리잡기 supports up to 8)
-    // 수학축구는 짝수 인원만 가능하므로 홀수 선택지를 숨긴다.
-    const updateMaxClientsOptions = ()=>{
-      try{
-        const mode = els.gameMode.value || "stackga";
-        const meta = (window.gameById ? window.gameById(mode) : null);
-        const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
-        const evenOnly = (mode === "soccer");
-        // Keep create disabled when the currently selected game is marked disabled
-        // in the registry. To re-enable Backrooms3D creation, set registry.disabled=false.
-        try{ if (els.createConfirm) els.createConfirm.disabled = !!meta?.disabled; }catch(_){ }
-
-        // label hint
-        const minCap = (mode === "mathexplorer") ? 1 : 2;
-        if (els.maxClientsLabel) els.maxClientsLabel.textContent = evenOnly
-          ? `최대 인원 (짝수, ${minCap}~${cap}명)`
-          : `최대 인원 (${minCap}~${cap})`;
-
-        const sel = els.maxClients;
-        if (!sel) return;
-        const defaultVal = Math.max(2, Math.min(cap, Math.min(4, cap)));
-        const prev = parseInt(sel.value || "", 10);
-        let next = (!maxClientsTouched || Number.isNaN(prev))
-          ? defaultVal
-          : Math.max(2, Math.min(cap, prev));
-        // soccer: 홀수면 짝수로 보정
-        if (evenOnly && next % 2 !== 0) next = Math.max(2, next - 1);
-
-        sel.innerHTML = "";
-        for (let n = cap; n >= 2; n--){
-          if (evenOnly && n % 2 !== 0) continue; // 홀수 옵션 제외
-          const o = document.createElement("option");
-          o.value = String(n);
-          o.textContent = String(n);
-          if (n === next) o.selected = true;
-          sel.appendChild(o);
-        }
-      }catch(_){ }
-    };
-
-    updateMaxClientsOptions();
-    try{ els.gameMode.addEventListener("change", updateMaxClientsOptions); }catch(_){ }
-    try{
-      // Mark as touched only when the user explicitly changes the select.
-      // This prevents carrying over "2" from stackga/suika when switching games unless the user wanted it.
-      els.maxClients?.addEventListener("change", ()=>{ maxClientsTouched = true; });
-    }catch(_){ }
+    buildGameCards();
+    try{ els.gameMode.addEventListener('change',()=>selectGameCard(els.gameMode.value,false)); }catch(_){ }
+    try{ els.roomTitle?.addEventListener('input',()=>{ if(els.roomTitleCount) els.roomTitleCount.textContent=`${els.roomTitle.value.length}/30`; }); }catch(_){ }
 
     els.refreshBtn.addEventListener("click", ()=> refreshRooms());
 
@@ -496,7 +527,14 @@ function statusDot(room){
     els.createBtn2 && els.createBtn2.addEventListener("click", openModal);
     els.modalClose.addEventListener("click", closeModal);
     els.createCancel.addEventListener("click", closeModal);
-    els.createConfirm.addEventListener("click", async ()=>{ closeModal(); await createRoom(); });
+    els.createConfirm.addEventListener("click", async ()=>{
+      if(els.createConfirm.disabled) return;
+      els.createConfirm.classList.add("launching");
+      await new Promise(r=>setTimeout(r,150));
+      closeModal();
+      els.createConfirm.classList.remove("launching");
+      await createRoom();
+    });
 
     const sendChat = ()=>{
       if (!lobbyRoom) return;
