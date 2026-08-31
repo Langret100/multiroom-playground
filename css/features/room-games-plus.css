@@ -1,0 +1,85 @@
+/* Chat-room mini game refinements: ladder, invitations, lifecycle, chess pieces. */
+.room-game-invite-card .room-game-invite-actions{display:flex;gap:7px;flex-wrap:wrap}
+.room-game-ended-card{display:grid;gap:6px;text-align:center;padding-block:24px}.room-game-ended-card strong{font-size:16px}.room-game-ended-card small{color:var(--muted)}
+
+/* Tall, readable amidakuji ladder. Keep intrinsic ratio: never stretch the rails sideways. */
+.ladder-game-card{--ladder-rail:#a9b3c3;--ladder-rung:#5c76f6}
+.ladder-stage{padding:10px;overflow:hidden;background:linear-gradient(180deg,#fff,#f8faff)}
+.ladder-scroll{width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}.ladder-scroll::-webkit-scrollbar{display:none}
+.ladder-svg{display:block;width:100%;height:auto;min-height:390px;max-height:560px;overflow:visible}
+.ladder-panel-bg{fill:#fff;stroke:#e4eaf4;stroke-width:1.5}
+.ladder-rail{stroke:var(--ladder-rail);stroke-width:3.3;opacity:.92}
+.ladder-rung{stroke:var(--ladder-rung);stroke-width:4;opacity:.96;stroke-linecap:round}
+.ladder-trace-path{stroke-width:6;transition:none;opacity:.92}
+.ladder-runner{fill:var(--trace-color,#7c3aed);stroke:#fff;stroke-width:3;filter:drop-shadow(0 2px 5px rgba(26,35,58,.32))}
+.ladder-runner.arrived{animation:ladder-arrive .45s cubic-bezier(.2,.9,.2,1.2)}
+.ladder-result-slot.active{transform:translateY(-2px) scale(1.025);background:color-mix(in srgb,var(--accent) 7%,#fff);transition:transform .18s ease,box-shadow .18s ease}
+@keyframes ladder-arrive{0%{transform:scale(.75)}55%{transform:scale(1.55)}100%{transform:scale(1)}}
+.chat-room-game-window .ladder-game-card{width:min(760px,calc(100vw - 48px))}.chat-room-game-window .ladder-svg{min-height:470px;max-height:650px}
+.chat-room-game-window .ladder-top-row,.chat-room-game-window .ladder-result-slots{grid-template-columns:repeat(auto-fit,minmax(70px,1fr))}
+
+/* Crisp original vector Staunton-style chess set. */
+.chess-square{font-size:0!important}
+.chess-piece-svg{position:relative;z-index:2;width:82%;height:82%;overflow:visible;filter:drop-shadow(0 2px 1px rgba(38,28,19,.16));transition:transform .14s ease}
+.chess-square:hover .chess-piece-svg{transform:translateY(-2%)}
+.chess-piece-svg.white{fill:#fff8e9;stroke:#43382e;stroke-width:2.15;stroke-linejoin:round;stroke-linecap:round}
+.chess-piece-svg.black{fill:#45382e;stroke:#1d1713;stroke-width:2.1;stroke-linejoin:round;stroke-linecap:round}
+.chess-piece-svg .piece-base,.chess-piece-svg .piece-body{stroke-width:2.25}.chess-piece-svg .piece-cut{fill:none;stroke-width:3.2}.chess-piece-svg .piece-eye{fill:#f8d36b;stroke-width:1}
+.chess-square.selected .chess-piece-svg{transform:translateY(-5%) scale(1.05)}
+.chess-square.moved .chess-piece-svg{animation:chess-vector-land .3s cubic-bezier(.2,.85,.24,1.12)}
+@keyframes chess-vector-land{0%{transform:translateY(-16%) scale(1.12)}60%{transform:translateY(3%) scale(.97)}100%{transform:none}}
+@media(max-width:420px){.ladder-svg{min-height:360px!important;max-height:470px}.ladder-top-row,.ladder-result-slots{grid-template-columns:repeat(auto-fit,minmax(58px,1fr))}.chess-piece-svg{width:86%;height:86%}}
+@media(prefers-reduced-motion:reduce){.ladder-runner.arrived,.chess-square.moved .chess-piece-svg{animation:none!important}}
+
+
+/* Popup stability/full-window pass: game content uses the available popup instead of a narrow chat card. */
+.chat-room-game-window .chat-room-game-desktop-stage{width:100%;min-width:0;min-height:100%;display:block}
+.chat-room-game-window .chat-room-game-desktop-stage>.room-game-card{width:100%;max-width:none;min-height:calc(100dvh - 90px);margin:0;padding:clamp(16px,2.2vw,28px);border-radius:24px}
+.chat-room-game-window .chat-room-game-desktop-stage>.mafia-game-card{align-content:start}
+.chat-room-game-window .chat-room-game-desktop-stage>.mafia-game-card .mafia-role-draw{min-height:min(44vh,360px);align-content:center}
+.chat-room-game-window .chat-room-game-desktop-stage>.mafia-game-card .mafia-card-deck{width:clamp(96px,12vw,138px);height:clamp(126px,16vw,182px)}
+.chat-room-game-window .chat-room-game-desktop-stage>.mafia-game-card .mafia-role-draw-button{width:min(420px,70%);max-width:none;min-height:52px;font-size:14px}
+.chat-room-game-window .chat-room-game-desktop-stage>.mafia-game-card .mafia-event-text{font-size:11px}
+@media(max-width:760px){.chat-room-game-window .chat-room-game-desktop-stage>.room-game-card{width:100%;min-height:calc(100dvh - 82px);border-radius:18px}.chat-room-game-window .chat-room-game-desktop-stage>.mafia-game-card .mafia-role-draw-button{width:100%}}
+
+/* Popup board sizing audit: make ladder/chess use the available game window, while preserving their geometry. */
+.chat-room-game-window .chat-room-game-desktop-stage>.ladder-game-card .ladder-stage{min-height:calc(100dvh - 250px);display:flex;align-items:stretch}
+.chat-room-game-window .chat-room-game-desktop-stage>.ladder-game-card .ladder-scroll{display:flex;align-items:stretch;min-height:0}
+.chat-room-game-window .chat-room-game-desktop-stage>.ladder-game-card .ladder-svg{width:100%;height:calc(100dvh - 270px);min-height:470px;max-height:none}
+.chat-room-game-window .chat-room-game-desktop-stage>.chess-game-card{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto auto;align-content:start}
+.chat-room-game-window .chat-room-game-desktop-stage>.chess-game-card .chess-board{width:min(100%,calc(100dvh - 255px));max-width:none;align-self:center;justify-self:center}
+@media(max-height:700px){.chat-room-game-window .chat-room-game-desktop-stage>.ladder-game-card .ladder-stage{min-height:0}.chat-room-game-window .chat-room-game-desktop-stage>.ladder-game-card .ladder-svg{height:auto;min-height:360px}.chat-room-game-window .chat-room-game-desktop-stage>.chess-game-card .chess-board{width:min(100%,max(280px,calc(100dvh - 300px)))}}
+
+
+/* Compact chat cards: game lifecycle stays on the game bus, not as oversized chat UI. */
+.message-list .game-bubble .room-game-launch-card{width:min(292px,76vw);min-height:0;padding:8px 9px;display:flex;align-items:center;gap:8px;border-radius:14px}
+.message-list .game-bubble .room-game-launch-main{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.message-list .game-bubble .room-game-launch-icon{display:grid;place-items:center;width:28px;height:28px;flex:0 0 28px;border-radius:9px;background:rgba(99,102,241,.10);font-size:15px}
+.message-list .game-bubble .room-game-launch-copy{display:grid;gap:1px;min-width:0}
+.message-list .game-bubble .room-game-launch-copy strong{font-size:11px;line-height:1.25}
+.message-list .game-bubble .room-game-launch-copy small{font-size:8px;color:var(--muted);line-height:1.2}
+.message-list .game-bubble .room-game-open-button{width:auto;min-width:50px;min-height:30px;height:30px;padding:0 11px;border-radius:10px;font-size:10px;flex:0 0 auto}
+.message-list .game-bubble .room-game-ended-chat-card{width:min(270px,72vw);min-height:0;padding:7px 9px;display:flex;align-items:center;gap:8px;border-radius:13px;background:rgba(100,116,139,.07);border-color:rgba(100,116,139,.16);box-shadow:none;color:inherit}
+.message-list .game-bubble .room-game-ended-icon{display:grid;place-items:center;width:22px;height:22px;flex:0 0 22px;border-radius:50%;background:rgba(100,116,139,.13);font-size:10px;font-weight:900}
+.message-list .game-bubble .room-game-ended-copy{display:grid;gap:1px;min-width:0}
+.message-list .game-bubble .room-game-ended-copy strong{font-size:10px;line-height:1.25}
+.message-list .game-bubble .room-game-ended-copy small{font-size:8px;line-height:1.25;color:var(--muted)}
+.message-list .game-bubble .room-game-invite-card{width:min(310px,78vw);padding:10px;gap:7px;border-radius:15px}
+.message-list .game-bubble .room-game-invite-card .room-game-head strong{font-size:11px}
+.message-list .game-bubble .room-game-invite-card .room-game-head small{font-size:8px}
+.message-list .game-bubble .room-game-invite-card .room-game-badge{min-width:48px;padding:4px 7px;font-size:7px}
+.message-list .game-bubble .room-game-invite-card .room-game-pills{gap:4px}
+.message-list .game-bubble .room-game-invite-card .room-game-pill{padding:4px 6px;font-size:8px}
+.message-list .game-bubble .room-game-invite-card .room-game-invite-people{gap:4px}
+.message-list .game-bubble .room-game-invite-card .room-game-invite-person{padding:5px 7px}
+.message-list .game-bubble .room-game-invite-card .room-game-invite-actions .button,.message-list .game-bubble .room-game-invite-card>.button{min-height:30px;padding:5px 10px;font-size:9px}
+
+/* Ultra-compact invitation row: prevents chat horizontal overflow. */
+.message-list .game-bubble .room-game-invite-compact{box-sizing:border-box;width:min(244px,100%);max-width:100%;min-width:0;min-height:0;padding:7px 8px;display:flex;align-items:center;gap:7px;border-radius:12px;overflow:hidden}
+.message-list .game-bubble .room-game-invite-compact-main{display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto;overflow:hidden}
+.message-list .game-bubble .room-game-invite-compact-icon{display:grid;place-items:center;width:25px;height:25px;flex:0 0 25px;border-radius:8px;background:rgba(99,102,241,.09);font-size:13px}
+.message-list .game-bubble .room-game-invite-compact-copy{display:grid;gap:0;min-width:0;overflow:hidden}
+.message-list .game-bubble .room-game-invite-compact-copy strong{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:1.2}
+.message-list .game-bubble .room-game-invite-compact-copy small{font-size:8px;line-height:1.2;color:var(--muted);white-space:nowrap}
+.message-list .game-bubble .room-game-invite-compact-action{box-sizing:border-box;width:auto;max-width:76px;min-width:46px;min-height:27px;height:27px;margin:0;padding:0 9px;flex:0 0 auto;border-radius:9px;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.message-list .game-bubble{max-width:100%;min-width:0}

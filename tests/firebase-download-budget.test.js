@@ -1,0 +1,30 @@
+const fs=require('fs'),path=require('path'),root=path.resolve(__dirname,'..');
+const read=p=>fs.readFileSync(path.join(root,p),'utf8'),ok=(v,m)=>{if(!v)throw new Error(m)};
+const feed=read('js/features/feed.js'),rt=read('js/adapters/realtime.js'),chat=read('js/features/chats.js'),att=read('js/chat/attachments.js'),profile=read('js/tools/profile-editor.js'),classInfo=read('js/tools/class-info.js'),cache=read('js/adapters/data-cache.js'),rules=JSON.parse(read('database.rules.json')),html=read('index.html'),sw=read('sw.js'),app=read('js/app.js');
+ok(feed.includes('MAX_POSTS=30')&&feed.includes('PAGE_SIZE=5'),'feed must retain 30 posts and page by 5');
+ok(feed.includes('cloudQueryChildren(POSTS_PATH,{orderByChild:"createdAt",limitToLast:PAGE_SIZE})'),'feed initial server read must be latest 5 only');
+ok(feed.includes('endAt:Number(oldest.createdAt)')&&feed.includes('limitToLast:PAGE_SIZE+1'),'feed older page cursor query missing');
+ok(feed.includes('reconcileFeedCacheAndLimit()')&&feed.includes('cloudKeys(POSTS_PATH)')&&feed.includes('limitToFirst:excess'),'feed 30-post server pruning/cache reconciliation must avoid whole-body reads');
+ok(feed.includes('PHOTO_LIMIT=60*1024')&&feed.includes('PHOTO_BLOB_TARGET=44*1024'),'feed photo Firebase budget missing');
+ok(feed.includes('VIDEO_LIMIT=700*1024')&&feed.includes('VIDEO_BLOB_LIMIT=500*1024')&&feed.includes('videoBitsPerSecond:420000'),'camera video must be constrained at capture time');
+ok(feed.includes('cachedPostRows')&&feed.includes('takeCachedOlder(oldest,PAGE_SIZE)'),'feed older pages must reuse device cache before Firebase');
+ok(feed.includes('THUMB_CACHE="feed-thumb"')&&feed.includes('VIDEO_THUMB_LIMIT=18*1024')&&feed.includes('cloudGet(`${MEDIA_PATH}/${id}/thumbnail`'),'video thumbnail must load separately from the full video payload');
+ok(feed.includes('captureFrame(video,video.videoWidth,video.videoHeight)')&&feed.includes('thumbnailPromise'),'camera video must create its preview frame without decoding the recorded blob');
+
+ok(att.includes('CHAT_IMAGE_DATA_LIMIT=60*1024')&&att.includes('CHAT_IMAGE_BLOB_TARGET=44*1024'),'chat image 60KB Firebase budget missing');
+ok(profile.includes('PROFILE_DATA_LIMIT=15*1024'),'profile 15KB Firebase budget missing');
+ok(rt.includes('avatar.length>15*1024'),'profile server-side client validation budget missing');
+ok(rt.includes('const CHAT_PAGE_SIZE=25')&&rt.includes('base.limitToLast(CHAT_PAGE_SIZE)')&&rt.includes('function loadOlderMessages'),'chat message pagination missing');
+ok(chat.includes('list.scrollTop<=72')&&chat.includes('MiniTalk.Realtime.loadOlderMessages'),'chat scroll-up paging hook missing');
+ok(cache.includes('function getMessagesBefore')||cache.includes('async function getMessagesBefore'),'chat cache-before paging missing');
+ok(!rt.includes('presenceListRef.once("value")'),'presence must not be downloaded once then replayed through child_added');
+ok(rt.includes('orderByChild("updatedAt").startAt(latest+1)'),'cached profile boundary must not be downloaded again on startup');
+ok(classInfo.includes('TIMETABLE_CACHE="class-timetable"')&&classInfo.includes('cloudGet(`${TIMETABLE}/updatedAt`,null)')&&classInfo.includes('cachedUpdatedAt===Number(serverVersion)'),'unchanged timetable image must be reused from device cache');
+ok(rules.rules.socialChat.$msgId['.validate'].includes('<= 61440')&&rules.rules.socialChatRooms.$roomId.$msgId['.validate'].includes('<= 61440'),'chat image rules must enforce the 60KB stored-string budget');
+ok(rules.rules.profiles.$nickname['.validate'].includes('<= 15360')&&rules.rules.moaru.v3.profiles.$userId['.validate'].includes('<= 15360'),'profile image rules must enforce the 15KB budget');
+ok(rules.rules.moaru.v3.feedMedia.$postId['.validate'].includes('<= 61440')&&rules.rules.moaru.v3.feedMedia.$postId['.validate'].includes('<= 716800')&&rules.rules.moaru.v3.feedMedia.$postId['.validate'].includes('<= 18432'),'feed media rules must enforce image/video/thumbnail budgets');
+
+ok((rules.rules.moaru.v3.feedState.posts['.indexOn']||[]).includes('createdAt'),'feed createdAt query index missing');
+for(const ref of ['data-cache.js?v=64.5.25','realtime.js?v=64.5.47','attachments.js?v=65.0.1','chats.js?v=64.5.25','feed.js?v=65.0.21','profile-editor.js?v=64.4.2'])ok(html.includes(ref),`cache version missing: ${ref}`);
+ok(sw.includes('moaru-moa-dialogue-fusion-final')&&app.includes('sw.js?v=64.5.60'),'service worker version missing');
+console.log('FIREBASE_DOWNLOAD_BUDGET_OK');

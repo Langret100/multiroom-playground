@@ -1,0 +1,17 @@
+const fs=require('fs'),path=require('path');
+const root=path.resolve(__dirname,'..'),read=f=>fs.readFileSync(path.join(root,f),'utf8');
+const rt=read('js/adapters/realtime.js'),shell=read('js/ui/shell.js'),index=read('index.html'),sw=read('sw.js'),app=read('js/app.js');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+ok(rt.includes('async function prepareRoomIndexes()'),'room summary/index bootstrap missing');
+ok(rt.includes('async function ensureCurrentUserRoomIndex()'),'joined-room index fallback missing');
+ok(rt.includes('roomIndexReady=prepareRoomIndexes()'),'initial joined-room summary bootstrap missing');
+ok(!rt.includes('waitForConnected('),'Firebase connection must not gate login/workspace entry');
+ok(rt.includes('function watchConnection(database)'),'Firebase connection should be observed without gating login');
+ok(rt.includes('db=firebase.database();nextMode="firebase";watchConnection(db);startFirebase();'),'Firebase bootstrap should attach without waiting for .info/connected');
+ok(shell.includes('MiniTalk.Realtime.init(user).then('),'workspace entry must not await realtime initialization');
+ok(!shell.includes('const transport=await MiniTalk.Realtime.init(user)'),'workspace is still blocked by realtime initialization');
+ok(rt.includes('if(JSON.stringify(presenceCache[s.key])===JSON.stringify(next))return'),'presence initial child replay should be deduped');
+ok(rt.includes('JSON.stringify((kind==="legacy"?legacyProfiles:currentProfiles)[key])===JSON.stringify(value)'), 'profile delta replay should be deduped');
+ok(index.includes('realtime.js?v=64.5.47')&&index.includes('app.js?v=64.5.46'),'login-room cache version stale');
+ok(sw.includes('moaru-moa-dialogue-fusion-final')&&app.includes('sw.js?v=64.5.60'),'service worker cache version stale');
+console.log('LOGIN_ROOM_INITIALIZATION_OK');

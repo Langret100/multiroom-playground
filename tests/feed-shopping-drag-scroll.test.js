@@ -1,0 +1,15 @@
+const fs=require('fs');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+const html=fs.readFileSync('index.html','utf8');
+const helper=fs.readFileSync('js/ui/drag-scroll.js','utf8');
+const feed=fs.readFileSync('js/features/feed.js','utf8');
+const shopping=fs.readFileSync('js/features/shopping.js','utf8');
+const css=fs.readFileSync('css/features/shopping-store.css','utf8');
+ok(html.includes('js/ui/drag-scroll.js?v=11'),'drag-scroll helper missing');
+ok(html.includes('feed.js?v=65.0.21')&&html.includes('shopping.js?v=64.5.42')&&html.includes('shopping-store.css?v=64.5.18'),'drag-scroll cache versions stale');
+ok(helper.includes('pointerType!=="mouse"')&&helper.includes('scrollTop=startTop-dy'),'mouse drag scrolling missing');
+ok(helper.includes('suppressClick')&&helper.includes('.shop-product-card'),'drag/click separation missing');
+ok(feed.includes('DragScroll?.bind?.(scroller)'),'feed drag scroll binding missing');
+ok(shopping.includes('DragScroll?.bind?.(wrap)'),'shopping drag scroll binding missing');
+ok(css.includes('.shopping-screen::-webkit-scrollbar')&&css.includes('scrollbar-width: none'),'shopping scrollbar hiding missing');
+console.log('FEED_SHOPPING_DRAG_SCROLL_OK');

@@ -1,0 +1,14 @@
+const fs=require('fs');
+const html=fs.readFileSync('index.html','utf8');
+const chats=fs.readFileSync('js/features/chats.js','utf8');
+const drag=fs.readFileSync('js/ui/drag-scroll.js','utf8');
+const css=fs.readFileSync('css/app.css','utf8');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+ok(html.includes('js/ui/drag-scroll.js?v=11'),'drag-scroll v4 cache ref missing');
+ok(html.includes('js/features/chats.js?v=64.5.25'),'chats cache ref stale');
+ok(chats.includes('DragScroll?.bind?.(list,{keepScrollbar:true})'),'message list drag-scroll binding missing');
+ok(drag.includes('drag-scroll-keep-scrollbar'),'visible scrollbar exception missing');
+ok(drag.includes('event.clientX>=rect.right-gutter'),'native scrollbar gutter protection missing');
+ok(/\.message-list\{[^}]*overflow:auto/.test(css),'message list native scroll missing');
+ok(/\.message-list::\-webkit\-scrollbar\{width:9px\}/.test(css),'message scrollbar should remain visible');
+console.log('CHAT_ROOM_DIRECT_SCROLL_OK');

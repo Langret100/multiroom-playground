@@ -1,0 +1,15 @@
+const fs=require('fs'),path=require('path'),root=path.resolve(__dirname,'..');
+const read=p=>fs.readFileSync(path.join(root,p),'utf8'),ok=(v,m)=>{if(!v)throw new Error(m)};
+const cfg=read('js/config.js'),rt=read('js/adapters/realtime.js'),chats=read('js/features/chats.js'),css=read('css/app.css'),mobile=read('js/adapters/mobile-immersive.js'),rules=read('database.rules.json'),html=read('index.html'),sw=read('sw.js'),app=read('js/app.js');
+ok(cfg.includes('roomSummaries:"moaru/v3/roomSummaries"')&&cfg.includes('userRooms:"moaru/v3/userRooms"'),'room summary paths missing');
+ok(rt.includes('function roomSummaryValue(room={})')&&rt.includes('function startMemberRoomIndexSubscription()'),'member room summary layer missing');
+ok(rt.includes('orderByChild("lastMessageAt").startAt(1)'),'group summaries are not loaded on demand');
+ok(rt.includes('roomListRequested=true;await awaitTransport();await roomIndexReady'),'group list does not wait for summary index');
+ok(rt.includes('[`${roomSummariesPath()}/${roomId}/lastMessage`]'),'message send does not update lightweight summary');
+ok(rt.includes('async function getRoom(roomId)')&&chats.includes('if(!room?._detail)room=await MiniTalk.Realtime.getRoom(roomId)'),'room detail is not loaded on demand');
+ok(rules.includes('"roomSummaries"')&&rules.includes('"userRooms"'),'Firebase rules missing summary/index paths');
+ok(css.includes('min-height:calc(100dvh + 72px);overflow-y:auto')&&css.includes('.app-shell{position:sticky;top:0}'),'mobile root scroll allowance missing');
+ok(mobile.includes('touchStartY-y>22')&&mobile.includes('nudgeBrowserChrome()'),'mobile chrome gesture assist missing');
+ok(html.includes('js/adapters/realtime.js?v=64.5.47')&&html.includes('js/adapters/mobile-immersive.js?v=57')&&html.includes('js/features/chats.js?v=64.5.25')&&html.includes('js/app.js?v=64.5.46'),'v5.24 cache versions stale');
+ok(sw.includes('moaru-moa-dialogue-fusion-final')&&app.includes('sw.js?v=64.5.60'),'v5.24 service worker stale');
+console.log('ROOM_SUMMARY_MOBILE_CHROME_OK');

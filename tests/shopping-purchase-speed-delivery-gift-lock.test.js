@@ -1,0 +1,17 @@
+const fs=require('fs'),path=require('path'),vm=require('vm');
+const root=path.resolve(__dirname,'..'),read=f=>fs.readFileSync(path.join(root,f),'utf8'),ok=(v,m)=>{if(!v)throw new Error(m)};
+const shopping=read('js/features/shopping.js'),server=read('docs/apps-script/coin-shopping-extension.gs'),html=read('index.html');
+ok(html.includes('js/features/shopping.js?v=64.5.42'),'shopping cache version stale');
+const cardStart=shopping.indexOf('function inventoryCard'),cardEnd=shopping.indexOf('async function requestDelivery',cardStart),card=shopping.slice(cardStart,cardEnd);
+ok(card.includes("const deliveryLocked = status === 'requested' || status === 'shipping'"),'delivery lock status missing');
+ok(card.includes('if (!deliveryLocked)'),'gift action is still rendered while delivery is active');
+const giftStart=shopping.indexOf('async function openGift'),giftEnd=shopping.indexOf('function leave()',giftStart),gift=shopping.slice(giftStart,giftEnd);
+ok(gift.includes('status === "requested" || status === "shipping"'),'stale gift UI has no delivery guard');
+const purchaseStart=shopping.indexOf('function openPurchase'),purchaseEnd=shopping.indexOf('function deliverySummary',purchaseStart),purchase=shopping.slice(purchaseStart,purchaseEnd);
+ok(purchase.includes('confirm.textContent = "구매 처리 중…"'),'purchase click has no immediate pending feedback');
+ok(purchase.includes('if (confirm.disabled) return'),'purchase double-click guard missing');
+const handler=server.slice(server.indexOf('function handleShopPurchase'),server.indexOf('\n}',server.indexOf('function handleShopPurchase'))+2);
+ok(!server.includes('cacheKey = "SHOP_REWARD_ROW_"'),'regressed reward-row cache purchase fast path is still active');
+ok(/function findRewardUserForShop_\(userId\)/.test(server),'stable reward lookup contract missing');
+ok(/createFreshPurchasedInventory_\(userId, inventoryProduct, purchaseKey(?:,|\))/.test(server),'purchase fresh inventory award contract changed');
+console.log('SHOPPING_PURCHASE_SPEED_DELIVERY_GIFT_LOCK_OK');

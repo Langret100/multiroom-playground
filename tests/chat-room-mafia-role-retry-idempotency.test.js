@@ -1,0 +1,17 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert'),webcrypto=require('crypto').webcrypto;
+let source=fs.readFileSync('js/chat/room-games.js','utf8');
+let current={user_id:'u1',nickname:'U1'},seq=0,failRoleOnce=true;const storage=new Map(),sent=[];
+const localStorage={getItem:k=>storage.has(k)?storage.get(k):null,setItem:(k,v)=>storage.set(k,String(v)),removeItem:k=>storage.delete(k)};
+const sandbox={MiniTalk:{Chat:{},Store:{get:k=>k==='user'?current:{}},UI:{Dom:{doc:()=>({defaultView:{}})},Shell:{toast:()=>{}}},Realtime:{sendMessage:async(roomId,payload)=>{if(payload.game?.kind==='mafia-role'&&failRoleOnce&&sent.filter(m=>m.game?.kind==='mafia-role').length===1){failRoleOnce=false;throw new Error('injected role send failure')}const m={id:'m'+(++seq),roomId,user_id:current.user_id,nickname:current.nickname,type:'game',ts:Date.now()+seq,clientTs:Date.now()+seq,...payload};sent.push(m);sandbox.MiniTalk.Chat.RoomGames.ingest(m);return m},removeGameMessages:async()=>{}}},TextEncoder,TextDecoder,crypto:webcrypto,localStorage,document:{querySelectorAll:()=>[]},navigator:{userAgent:'Mobile'},CSS:{escape:s=>s},btoa:s=>Buffer.from(s,'binary').toString('base64'),atob:s=>Buffer.from(s,'base64').toString('binary'),requestAnimationFrame:fn=>fn(),setTimeout:()=>0,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},window:{},console};
+vm.createContext(sandbox);vm.runInContext(source,sandbox);const RG=sandbox.MiniTalk.Chat.RoomGames,Q=RG._qa;
+function ingest(id,user,game){RG.ingest({id,roomId:'r1',user_id:user,type:'game',ts:Date.now()+seq,clientTs:Date.now()+seq,game})}
+(async()=>{
+ const people=['u1','u2','u3','u4'].map(id=>({user_id:id,nickname:id.toUpperCase()})),game={kind:'mafia-lobby',id:'g-role-retry',hostId:'u1',participants:people};ingest('l1','u1',game);
+ const pubs={};for(const p of people){const kp=await webcrypto.subtle.generateKey({name:'RSA-OAEP',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']);pubs[p.user_id]=await webcrypto.subtle.exportKey('jwk',kp.publicKey);ingest('k'+p.user_id,p.user_id,{kind:'mafia-key',id:game.id,userId:p.user_id,publicKey:pubs[p.user_id]})}
+ localStorage.setItem('chat.roomGames.mafiaHost.'+game.id,JSON.stringify({privateKey:null,roles:null,living:people.map(p=>p.user_id),round:1}));
+ let failed=false;try{await Q.assignRoles('r1',game)}catch(e){failed=true}assert(failed,'first role assignment should hit injected network failure');
+ const afterFail=JSON.parse(localStorage.getItem('chat.roomGames.mafiaHost.'+game.id));assert(afterFail.roles,'role map must be persisted before role packets are sent');const frozen=JSON.stringify(afterFail.roles);assert.strictEqual(sent.filter(m=>m.game?.kind==='mafia-role').length,1,'exactly one role packet should have been saved before injected failure');
+ await Q.assignRoles('r1',game);const afterRetry=JSON.parse(localStorage.getItem('chat.roomGames.mafiaHost.'+game.id));assert.strictEqual(JSON.stringify(afterRetry.roles),frozen,'retry must reuse the exact same role map');
+ const roles=sent.filter(m=>m.game?.kind==='mafia-role');assert.strictEqual(roles.length,4,'retry must fill only missing role packets');assert.strictEqual(new Set(roles.map(m=>m.game.target)).size,4,'role retry must not duplicate recipients');assert(sent.some(m=>m.game?.kind==='mafia-phase'&&m.game.phase==='night'),'retry must finish by starting the night phase');
+ console.log('CHAT_ROOM_MAFIA_ROLE_RETRY_IDEMPOTENCY_OK');
+})().catch(e=>{console.error(e);process.exit(1)});

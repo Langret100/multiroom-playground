@@ -1,200 +1,174 @@
 <!doctype html>
 <html lang="ko">
 <head>
-  <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
-  <title>로비</title>
-  <link rel="icon" href="./favicon.ico"/>
-  <link rel="preload" as="image" type="image/webp" href="./assets/images/backgrounds/lobby-world.webp"/>
-  <link rel="stylesheet" href="./css/styles.css?v=20260829-lobby-room-v6"/>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ffffff">
+  <title>모아루</title>
+  <link rel="manifest" href="manifest.webmanifest?v=64.5.3">
+  <link rel="icon" type="image/png" href="assets/mascot-avatar.png?v=64.5.1">
+  <link rel="shortcut icon" type="image/png" href="assets/mascot-avatar.png?v=64.5.1">
+  <link rel="apple-touch-icon" sizes="180x180" href="assets/icons/apple-touch-icon-180.png">
+  <link rel="stylesheet" href="css/tokens.css?v=7">
+  <link rel="stylesheet" href="css/app.css?v=64.5.23">
+  <link rel="stylesheet" href="css/features/room-chess.css?v=2">
+  <link rel="stylesheet" href="css/features/room-games-plus.css?v=7">
+  <link rel="stylesheet" href="css/chat-link-capture-polish.css?v=64.5.8">
+  <link rel="stylesheet" href="css/features/tools.css?v=23">
+  <link rel="stylesheet" href="css/features/links.css?v=1">
+  <link rel="stylesheet" href="css/features/face-toy.css?v=6">
+  <link rel="stylesheet" href="css/features/lookalike-play.css?v=5">
+  <link rel="stylesheet" href="css/features/tarot.css?v=64.5.4">
+  <link rel="stylesheet" href="css/features/chat-background.css?v=59">
+  <link rel="stylesheet" href="css/features/game-community.css?v=19">
+  <link rel="stylesheet" href="css/features/math-quest.css?v=23">
+  <link rel="stylesheet" href="css/features/quest-accordion.css?v=29">
+  <link rel="stylesheet" href="css/features/tasks-assignment.css?v=64.3">
+  <link rel="stylesheet" href="css/features/coin-wallet.css?v=24">
+  <link rel="stylesheet" href="css/features/shopping-store.css?v=64.5.18">
+  <link rel="stylesheet" href="css/features/display-clarity.css?v=64.5.6">
+  <link rel="stylesheet" href="css/features/feed-classinfo-weekly.css?v=65.0.31">
+  <!-- MOA_CHAT_INTEGRATION_START: 기능 제거 시 이 CSS와 아래 모아 JS 2개 로드 태그를 삭제 -->
+  <link rel="stylesheet" href="css/features/moa-chat.css?v=6">
 </head>
-<body class="page-lobby">
-  <div class="app">
-    <div class="topbar slim lobbyTopbar">
-      <div class="lobbyIdentity">
-        <span class="lobbyMark" aria-hidden="true">MP</span>
-        <div>
-          <b>게임 라운지</b>
-          <span class="nickChip"><span class="dot ok"></span><span class="srOnly">닉네임:</span><b id="myId">-</b></span>
+<body>
+  <!-- 앱의 고정 뼈대. 기능 화면은 각 feature 모듈이 #viewHost에 렌더링합니다. -->
+  <main id="launchView" class="launch-view">
+    <section class="launch-card">
+      <div id="launchDefault">
+        <div class="app-mark app-mark-mascot"><img src="assets/mascot-avatar.png?v=64.5.1" alt=""></div>
+        <h1>모아루</h1>
+        <p>대화와 일상을 한곳에 모아주는 작은 공간</p>
+        <button id="openPopupBtn" class="button primary">별도 창으로 열기</button>
+        <button id="openPiPBtn" class="button secondary">항상 위로 열기</button>
+        <div class="launch-inline">
+          <button id="openHereBtn" class="button text">현재 창</button>
+          <button id="installBtn" class="button text hidden">앱 설치(선택)</button>
         </div>
       </div>
-      <div class="actions">
-        <button class="iconbtn" id="openCreate" title="방 만들기" aria-label="방 만들기">➕</button>
-        <button class="iconbtn" id="refreshRooms" title="새로고침" aria-label="새로고침">🔄</button>
-        <button class="iconbtn" id="toggleFullscreen" title="전체화면" aria-label="전체화면">⛶</button>
-        <button class="iconbtn" id="toggleMute" title="음소거" aria-label="음소거">🔊</button>
-        <button class="iconbtn" id="logoutBtn" title="로그아웃" aria-label="로그아웃">🚪</button>
+      <div id="launchTransferred" class="launch-transferred hidden" role="status">
+        <div class="transfer-mark" aria-hidden="true">↗</div>
+        <h1>모아루가 새 창에서<br>실행 중이에요</h1>
+        <p><span>이 페이지는 그대로 두고 자유롭게 인터넷을 이용하세요.</span><span>메신저는 새 창에서 계속 실행됩니다.</span></p>
       </div>
-    </div>
-    <div id="statusBanner" class="status" style="display:none"></div>
-
-    <div class="main">
-      <div class="panel rooms">
-        <div class="lobbySectionHead">
-          <div>
-            <span class="sectionKicker">MATCH LOBBY</span>
-            <h1>함께할 방을 선택하세요</h1>
-            <p>대기 중인 방에 참가하거나 새 게임을 시작할 수 있습니다.</p>
-          </div>
-          <button class="btn primary lobbyCreateBtn" id="openCreate2" type="button"><span aria-hidden="true">＋</span> 새 방 만들기</button>
-        </div>
-        <div class="tableWrap">
-          <table>
-            <colgroup>
-              <col style="width:66px">
-              <col style="width:110px">
-              <col>
-              <col style="width:56px">
-              <col style="width:66px">
-            </colgroup>
-            <thead>
-              <tr>
-                <th class="col-status">상태</th>
-                <th class="col-game">게임</th>
-                <th class="col-title">방 제목</th>
-                <th class="col-count">인원</th>
-                <th class="col-join"></th>
-              </tr>
-            </thead>
-            <tbody id="roomsBody"></tbody>
-          </table>
-        </div>
-
-        <div class="legendRow">
-          <div class="legendBadges">
-            <span class="badge"><span class="dot ok"></span>대기</span>
-            <span class="badge"><span class="dot danger"></span>게임중</span>
-            <span class="badge"><span class="dot warn"></span>만석</span>
-          </div>
-          <span class="roomListHint">방을 누르면 바로 입장합니다.</span>
-        </div>
-</div>
-
-      <div class="panel splitRight socialRail">
-        <div class="panelHeader">
-          <div>
-            <h2>채팅</h2>
-</div>
-          <span class="badge"><span class="dot ok"></span>LIVE</span>
-        </div>
-        <div class="chatLog" id="chatLog"></div>
-        <div class="chatInput">
-          <input id="chatInput" placeholder="메시지 입력…" autocomplete="off"/>
-          <button class="btn primary" id="chatSend">전송</button>
-        </div>
-
-        <div class="panelHeader" style="border-top:1px solid rgba(43,91,134,.55);">
-          <div>
-            <h2>접속자</h2>
-</div>
-          <div class="kpi" id="onlineKpi">접속 인원: <b>0</b>명</div>
-        </div>
-        <div class="userList" id="usersWrap"></div>
+      <div id="popupControls" class="popup-controls hidden">
+        <button id="focusPopupBtn" class="mini-action">창 앞으로</button>
+        <button id="closePopupBtn" class="mini-action danger-lite">창 닫기</button>
       </div>
-    </div>
-  </div>
+      <small id="launchMessage" class="muted"></small>
+    </section>
+  </main>
 
-  <!-- 방 만들기 -->
-  <div class="modalBackdrop" id="createModal" aria-hidden="true">
-    <div class="modal">
-      <div class="modalHeader">
-        <b>방 만들기</b>
-        <button class="btn" id="modalClose">닫기</button>
+  <section id="appShell" class="app-shell hidden" aria-label="모아루">
+    <header class="app-header">
+      <button id="backBtn" class="icon-button hidden" aria-label="뒤로">‹</button>
+      <div class="header-title">
+        <button id="headerProfileButton" class="header-profile-button hidden" type="button" aria-label="내 프로필 설정" title="내 프로필 설정">
+          <img class="header-profile-avatar" src="assets/mascot-avatar.png" alt="내 프로필">
+        </button>
+        <strong id="headerTitle">모아루</strong><span id="connectionBadge" class="connection-badge">준비</span>
       </div>
-      <div class="modalBody">
-        <div class="field">
-          <label>방 제목</label>
-          <input id="roomTitle" placeholder="예) SUPER NO SPEED" maxlength="30"/>
-        </div>
-        <div class="field">
-          <label>게임 모드</label>
-          <select id="gameMode"></select>
-        </div>
-        <div class="field">
-          <label id="maxClientsLabel">최대 인원</label>
-          <select id="maxClients">
-            <option value="4" selected>4</option>
-            <option value="3">3</option>
-            <option value="2">2</option>
-          </select>
-        </div>
-        <small>방 생성 후 자동으로 입장합니다. (게임/채팅 기록 저장 없음)</small>
-      </div>
-      <div class="modalFooter">
-        <button class="btn" id="createCancel">취소</button>
-        <button class="btn primary" id="createConfirm">생성</button>
-      </div>
-    </div>
-  </div>
+      <div id="headerActions" class="header-actions"></div>
+    </header>
 
-    <!-- 로그인(필수) -->
-  <div class="modalBackdrop" id="loginModal" aria-hidden="true">
-    <div class="loginBrand" aria-hidden="true">
-      <img src="./assets/images/myparty-logo.png" alt="마이파티" />
-    </div>
-    <div class="modal">
-      <div class="modalHeader">
-        <b>로그인</b>
-        <span class="badge">최근 닉: <b id="lastNick">(없음)</b></span>
-      </div>
-      <div class="modalBody">
-        <form id="loginForm" class="authForm">
-          <div class="field">
-            <label>아이디</label>
-            <input id="loginUsername" autocomplete="username" placeholder="아이디"/>
-          </div>
-          <div class="field">
-            <label>비밀번호</label>
-            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="비밀번호"/>
-          </div>
-          <div class="authRow three">
-            <button class="btn primary" type="submit">로그인</button>
-            <button class="btn" type="button" id="guestBtn">게스트</button>
-            <button class="btn" type="button" id="signupToggleBtn">회원가입</button>
-          </div>
-          <div id="loginStatus" class="muted" style="margin-top:8px;"></div>
-          
-        </form>
+    <section id="authHost" class="auth-host"></section>
 
-        <div id="signupArea" class="signupArea hidden">
-          <hr style="border:none;border-top:1px solid rgba(43,91,134,.55); margin:10px 0;">
-          <form id="signupForm" class="authForm">
-            <div class="field">
-              <label>회원가입 아이디</label>
-              <input id="signupUsername" autocomplete="username" placeholder="아이디"/>
-            </div>
-            <div class="field">
-              <label>회원가입 비밀번호</label>
-              <input id="signupPassword" type="password" autocomplete="new-password" placeholder="비밀번호"/>
-            </div>
-            <div class="field">
-              <label>닉네임(선택)</label>
-              <input id="signupNickname" placeholder="채팅/게임 닉네임"/>
-            </div>
-            <div class="authRow">
-              <button class="btn primary" type="submit">회원가입 완료</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-  </div>
+    <section id="workspace" class="workspace hidden">
+      <nav id="sideRail" class="side-rail" aria-label="주요 메뉴"></nav>
+      <main id="viewHost" class="view-host"></main>
+      <nav id="bottomNav" class="bottom-nav" aria-label="주요 메뉴"></nav>
+    </section>
+  </section>
 
-  <!-- Fullscreen 지속을 위해: 전체화면 상태에서 방 입장 시 top-level 이동 대신 iframe 오버레이로 room.html을 표시 -->
-  <div id="embedRoomOverlay" class="embedRoomOverlay hidden" aria-hidden="true">
-    <iframe id="embedRoomFrame" title="room" allow="autoplay; fullscreen" allowfullscreen></iframe>
-  </div>
+  <div id="toastHost" class="toast-host" aria-live="polite"></div>
+  <div id="notificationHost" class="notification-host" aria-live="assertive"></div>
+  <div id="overlayHost" class="overlay-host" aria-live="assertive"></div>
+  <div id="modalHost" class="modal-host hidden"></div>
 
-  <script src="./js/core/config.js" defer></script>
-  <script src="./js/auth/sheet-config.js" defer></script>
-  <script src="./js/auth/auth.js" defer></script>
-  <script src="./js/core/net.js?v=20260831-multigame1" defer></script>
-  <script src="./js/core/audio.js" defer></script>
-  <script src="./js/core/fullscreen-intent.js" defer></script>
-  <script src="./js/games/registry.js" defer></script>
-  <script src="./js/pages/lobby.js" defer></script>
+  <!-- CORE: 앱 뼈대와 공통 기반 -->
+  <script src="js/config.js?v=64.5.4"></script>
+  <script src="js/core/namespace.js"></script>
+  <script src="js/core/events.js"></script>
+  <script src="js/core/store.js?v=57"></script>
+  <script src="js/core/registry.js?v=3"></script>
+  <script src="js/core/router.js"></script>
 
-  <audio id="bgmLobby" src="assets/audio/lobby_music.mp3" preload="auto" loop></audio>
+  <!-- ADAPTERS: 외부 서비스/브라우저 기능과의 경계 -->
+  <script src="js/adapters/persistence.js"></script>
+  <script src="js/adapters/data-cache.js?v=64.5.25"></script>
+  <script src="js/adapters/auth-api.js?v=64.5.40"></script>
+  <script src="js/core/user-directory.js?v=64.5.9"></script>
+  <script src="js/adapters/realtime.js?v=64.5.47"></script>
+  <script src="js/adapters/window-mode.js?v=64.5.40"></script>
+  <script src="js/adapters/mobile-immersive.js?v=57"></script>
+  <script src="js/admin/session.js?v=26"></script>
 
+  <!-- CHAT SUBMODULES: 토리 실시간-챗에서 선별 이식한 독립 기능 -->
+  <script src="js/chat/emoji.js?v=59"></script>
+  <script src="js/chat/linkify.js?v=64.5.8"></script>
+  <script src="js/chat/attachments.js?v=65.0.1"></script>
+  <script src="js/chat/qr.js"></script>
+  <script src="js/chat/voice.js"></script>
+  <script src="js/chat/unread.js"></script>
+  <script src="js/chat/server-backup.js?v=41"></script>
+
+  <!-- UI 공통 -->
+  <script src="js/ui/dom.js?v=64.5.6"></script>
+  <script src="js/ui/shell.js?v=64.5.34"></script>
+  <script src="js/ui/interaction-guard.js?v=64.5.1"></script>
+  <script src="js/ui/drag-scroll.js?v=11"></script>
+
+  <!-- ECONOMY: 코인 조회와 과목별 일일 퀘스트 보상을 분리 관리 -->
+  <script src="js/economy/coin-wallet.js?v=64.5.10"></script>
+  <script src="js/economy/quest-reward.js?v=27"></script>
+  <script src="js/shopping/store-service.js?v=64.5.25"></script>
+
+  <!-- GAME MODULES: 점수 저장, 랭킹, 게시판, iframe 통신 -->
+  <script src="js/games/score-service.js?v=20"></script>
+  <script src="js/games/ranking.js?v=18"></script>
+  <script src="js/games/board.js?v=64.5"></script>
+  <script src="js/game-bridge/game-host.js?v=24"></script>
+
+  <!-- TASK MODULES: 과제 화면에 결합되는 독립 일일 퀘스트 -->
+  <script src="js/tasks/quest-accordion.js?v=26"></script>
+  <script src="js/tasks/daily-quest-clock.js?v=24"></script>
+  <script src="js/tasks/daily-math-quest.js?v=64.5.7"></script>
+  <script src="js/tasks/daily-korean-quest.js?v=64.4.2"></script>
+  <script src="js/tasks/friday-grade6-mission.js?v=65.0.19"></script>
+  <script src="js/tasks/task-service.js?v=64.5.26"></script>
+  <script src="js/tasks/task-window.js?v=64.5.10"></script>
+
+  <!-- MOA AI: Firebase와 분리된 로컬/Apps Script 학습형 대화 -->
+  <script src="js/ai/moa-communication-engine.js?v=50"></script>
+
+  <!-- FEATURES: 삭제/교체 가능한 독립 기능 -->
+  <script src="js/features/auth.js?v=64.5.35"></script>
+  <script src="js/features/moa-chat.js?v=14"></script>
+  <!-- MOA_CHAT_INTEGRATION_END -->
+  <script src="js/chat/room-games.js?v=26"></script>
+  <script src="js/features/chats.js?v=64.5.25"></script>
+  <script src="js/features/feed.js?v=65.0.21"></script>
+  <script src="js/features/games.js?v=18"></script>
+  <script src="js/tarot.js?v=17"></script>
+  <!-- TOOL MODULES: 각 도구의 상태와 UI를 독립적으로 관리 -->
+  <script src="js/tools/notifications.js?v=64.5.4"></script>
+  <script src="js/tools/timer-alarm.js?v=17"></script>
+  <script src="js/tools/tarot-view.js?v=64.5.4"></script>
+  <script src="js/tools/profile-editor.js?v=64.4.2"></script>
+  <script src="js/tools/capture.js?v=64.5.8"></script>
+  <script src="js/tools/class-info.js?v=65.0.3"></script>
+  <script src="js/tools/face-toy.js?v=7"></script>
+  <script src="js/tools/lookalike-play.js?v=5"></script>
+  <script src="js/features/tools.js?v=64.5.15"></script>
+  <script src="js/features/tasks.js?v=64.5.4"></script>
+  <script src="js/features/links.js?v=3"></script>
+  <script src="js/features/shopping.js?v=64.5.42"></script>
+  <script src="js/features/layout.js?v=19"></script>
+  <script src="js/features/settings.js?v=45"></script>
+  <script src="js/features/admin.js?v=64.5.38"></script>
+
+
+  <!-- BOOTSTRAP: 초기화 순서만 담당 -->
+  <script src="js/app.js?v=64.5.46"></script>
 </body>
 </html>

@@ -1,0 +1,18 @@
+const fs=require('fs');
+const path=require('path');
+const root=path.resolve(__dirname,'..');
+const read=p=>fs.readFileSync(path.join(root,p),'utf8');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+const html=read('index.html');
+const drag=read('js/ui/drag-scroll.js');
+const chats=read('js/features/chats.js');
+const tasks=read('js/features/tasks.js');
+ok(html.includes('js/ui/drag-scroll.js?v=11'),'drag-scroll v3 cache ref missing');
+ok(html.includes('js/features/chats.js?v=64.5.25'),'chats cache ref stale');
+ok(html.includes('js/features/tasks.js?v=64.5.4'),'tasks cache ref stale');
+ok(drag.includes('drag-scroll-surface')&&drag.includes('scrollbar-width:none')&&drag.includes('::-webkit-scrollbar'),'scrollbar-free drag surface missing');
+ok(drag.includes('event.pointerType!=="mouse"'),'touch must keep native swipe scrolling');
+ok(chats.includes('MiniTalk.UI.DragScroll?.bind?.(list)'),'conversation list drag scrolling missing');
+ok(tasks.includes('MiniTalk.UI.DragScroll?.bind?.(list)'),'task list drag scrolling missing');
+ok(drag.includes('suppressClick')&&drag.includes('stopImmediatePropagation'),'drag must suppress accidental card click');
+console.log('CHAT_TASK_DRAG_SCROLL_OK');
