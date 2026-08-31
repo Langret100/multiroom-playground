@@ -3,7 +3,7 @@ import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
 import { StackGame, drawBoard, drawNext, COLS } from "./game.js";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-dualboard1";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-nightduel2";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -198,6 +198,11 @@ function performAction(action){
 
 let downHeld = false;
 let downTimer = null;
+let horizDelayTimer = null;
+let horizRepeatTimer = null;
+let horizDir = null;
+const HORIZ_DAS_MS = 115;
+const HORIZ_ARR_MS = 34;
 
 function stopDownHold(){
   downHeld = false;
@@ -206,6 +211,26 @@ function stopDownHold(){
     downTimer = null;
   }
 }
+function stopHorizontal(dir=null){
+  if(dir && horizDir!==dir) return;
+  horizDir = null;
+  if(horizDelayTimer){ clearTimeout(horizDelayTimer); horizDelayTimer=null; }
+  if(horizRepeatTimer){ clearInterval(horizRepeatTimer); horizRepeatTimer=null; }
+}
+function startHorizontal(dir){
+  if(horizDir===dir) return;
+  stopHorizontal();
+  horizDir = dir;
+  performAction(dir);
+  horizDelayTimer = setTimeout(()=>{
+    horizDelayTimer=null;
+    if(horizDir!==dir) return;
+    horizRepeatTimer=setInterval(()=>{
+      if(horizDir===dir) performAction(dir);
+    }, HORIZ_ARR_MS);
+  }, HORIZ_DAS_MS);
+}
+function stopAllHeld(){ stopDownHold(); stopHorizontal(); }
 
 function onKey(e){
   if(e.code==="ArrowDown"){
@@ -214,26 +239,31 @@ function onKey(e){
       downHeld = true;
       performAction("down");
       downTimer = setInterval(()=>{
-        // keep dropping while held
         if(!downHeld) return;
         performAction("down");
       }, 30);
     }
     return;
   }
+  if(e.code==="ArrowLeft" || e.code==="ArrowRight"){
+    e.preventDefault();
+    if(!e.repeat) startHorizontal(e.code==="ArrowLeft" ? "left" : "right");
+    return;
+  }
 
   if(e.repeat) return;
-  if(e.code==="ArrowLeft") performAction("left");
-  else if(e.code==="ArrowRight") performAction("right");
-  else if(e.code==="ArrowUp") performAction("rotate");
+  if(e.code==="ArrowUp") performAction("rotate");
   else if(e.code==="Space"){ e.preventDefault(); performAction("drop"); }
   else if(e.code==="KeyP") performAction("pause");
 }
 
-
 document.addEventListener("keydown", onKey);
-document.addEventListener("keyup", (e)=>{ if(e.code==="ArrowDown") stopDownHold(); });
-window.addEventListener("blur", stopDownHold);
+document.addEventListener("keyup", (e)=>{
+  if(e.code==="ArrowDown") stopDownHold();
+  else if(e.code==="ArrowLeft") stopHorizontal("left");
+  else if(e.code==="ArrowRight") stopHorizontal("right");
+});
+window.addEventListener("blur", stopAllHeld);
 initTouchControls(ui.cvMe, performAction);
 
 

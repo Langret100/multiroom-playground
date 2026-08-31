@@ -382,10 +382,10 @@ export function drawBoard(ctx, board, cell, opts={}){
   const now = Date.now();
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
   const bg = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
-  // Pale night-sky board: cool blue at the top, misty near the floor.
-  bg.addColorStop(0,"rgba(185,207,244,.98)");
-  bg.addColorStop(.42,"rgba(210,225,249,.985)");
-  bg.addColorStop(1,"rgba(235,244,255,.995)");
+  // Soft night-sky board: visibly blue, but still bright enough for jelly blocks.
+  bg.addColorStop(0,"rgba(35,58,104,.985)");
+  bg.addColorStop(.48,"rgba(48,82,132,.985)");
+  bg.addColorStop(1,"rgba(74,112,154,.99)");
   ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
   // Tiny fixed stars keep the sky readable without distracting from cells.
   ctx.save();
@@ -414,7 +414,7 @@ export function drawBoard(ctx, board, cell, opts={}){
   for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
     const v=board[y][x];
     if(!v){
-      ctx.fillStyle="rgba(68,103,160,.055)";
+      ctx.fillStyle="rgba(220,236,255,.065)";
       roundRect(ctx,x*cell+1,y*cell+1,cell-2,cell-2,Math.max(2,cell*.14)); ctx.fill();
       continue;
     }
@@ -474,7 +474,7 @@ export function drawBoard(ctx, board, cell, opts={}){
 
 export function drawNext(ctx, piece, cell){
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
-  const bg=ctx.createLinearGradient(0,0,0,ctx.canvas.height); bg.addColorStop(0,"#dce9fb"); bg.addColorStop(1,"#edf5ff");
+  const bg=ctx.createLinearGradient(0,0,0,ctx.canvas.height); bg.addColorStop(0,"#263f72"); bg.addColorStop(1,"#466f9d");
   ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
   if(!piece) return;
   const shape=SHAPES[piece.type][0];
@@ -529,7 +529,7 @@ function settledColor(y,v,ghost){
 }
 function drawJellyCell(ctx,px,py,cell,color,o){
   // Keep pieces visually connected: only a hairline gutter between cells.
-  const pad=Math.max(.55,cell*.018), w=cell-pad*2, h=cell-pad*2;
+  const pad=Math.max(.28,cell*.008), w=cell-pad*2, h=cell-pad*2;
   ctx.save(); ctx.translate(px+cell/2,py+cell/2+(o.dy||0)); ctx.scale(o.sx||1,o.sy||1); ctx.translate(-cell/2,-cell/2);
   const [r,g,b]=color.rgb; const grad=ctx.createLinearGradient(0,pad,0,cell-pad);
   grad.addColorStop(0,`rgba(${Math.min(255,r+35)},${Math.min(255,g+35)},${Math.min(255,b+38)},${color.a})`);
@@ -538,13 +538,13 @@ function drawJellyCell(ctx,px,py,cell,color,o){
   ctx.fillStyle=grad;
   // A tighter shadow keeps the jelly crisp instead of looking low-resolution/blurred.
   ctx.shadowColor=`rgba(${r},${g},${b},${.18+.12*(o.settleGlow||0)})`;
-  ctx.shadowBlur=cell*(.065+.035*(o.settleGlow||0));
-  roundRect(ctx,pad,pad,w,h,Math.max(2.2,cell*.16)); ctx.fill(); ctx.shadowBlur=0;
+  ctx.shadowBlur=cell*(.038+.022*(o.settleGlow||0));
+  roundRect(ctx,pad,pad,w,h,Math.max(1.8,cell*.125)); ctx.fill(); ctx.shadowBlur=0;
   const gloss=ctx.createLinearGradient(0,pad,0,cell*.42);
   gloss.addColorStop(0,"rgba(255,255,255,.58)"); gloss.addColorStop(1,"rgba(255,255,255,0)");
   ctx.fillStyle=gloss; roundRect(ctx,pad+cell*.055,pad+cell*.045,w-cell*.11,h*.34,Math.max(1.8,cell*.11)); ctx.fill();
   ctx.strokeStyle="rgba(255,255,255,.52)"; ctx.lineWidth=Math.max(1,cell*.027);
-  roundRect(ctx,pad+.5,pad+.5,w-1,h-1,Math.max(2.2,cell*.16)); ctx.stroke();
+  roundRect(ctx,pad+.5,pad+.5,w-1,h-1,Math.max(1.8,cell*.125)); ctx.stroke();
   if(o.sparkle){
     const phase=(o.t/260 + o.x*1.7 + o.y*.9);
     if(Math.sin(phase)>0.2){

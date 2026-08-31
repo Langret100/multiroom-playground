@@ -46,22 +46,22 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
     canvas.height = Math.floor(cssH * dpr);
     canvas.style.width = cssW + 'px';
     canvas.style.height = cssH + 'px';
-    return c;
+    return {cell:c, cssW, cssH};
   }
 
-  // Main board uses its actual card size in both layouts.
-  const boardInnerW = Math.max(180, (boardCard?.clientWidth || (shellW*(isWide ? .47 : .74))) - 20);
-  const boardInnerH = Math.max(260, (boardCard?.clientHeight || shellH) - 20);
-  const cell = sizeBoard(cvMe, boardInnerW, boardInnerH, 56);
-
   if(isWide){
-    // Desktop/Whalebook: opponent gets a full-height board instead of a tiny minimap.
-    const oppInnerW = Math.max(220, (oppCard?.clientWidth || shellW*.34) - 20);
-    const oppInnerH = Math.max(300, (oppCard?.clientHeight || shellH) - 20);
-    sizeBoard(cvOpp, oppInnerW, oppInnerH, 56);
+    // Wide screens: two equally important full-size boards with a slim center rail.
+    const gap = shellW >= 1400 ? 18 : 12;
+    const centerW = clamp(Math.floor(shellW * .075), 104, 142);
+    const boardSlotW = Math.max(260, Math.floor((shellW - centerW - gap*2) / 2));
+    const boardInnerH = Math.max(320, shellH - 16);
+    const meSize = sizeBoard(cvMe, boardSlotW - 16, boardInnerH - 16, 56);
+    const oppSize = sizeBoard(cvOpp, boardSlotW - 16, boardInnerH - 16, 56);
+    if(boardCard){ boardCard.style.width=(meSize.cssW+16)+'px'; boardCard.style.height=(meSize.cssH+16)+'px'; }
+    if(oppCard){ oppCard.style.width=(oppSize.cssW+16)+'px'; oppCard.style.height=(oppSize.cssH+16)+'px'; }
 
     // NEXT stays compact in the center information rail.
-    const nextInnerW = Math.max(60, (nextCard?.clientWidth || 130) - 16);
+    const nextInnerW = Math.max(60, centerW - 14);
     const nextInnerH = Math.max(60, Math.min(nextInnerW, Math.floor(shellH*.20)));
     const nextCss = clamp(Math.floor(Math.min(nextInnerW, nextInnerH)), 60, 126);
     cvNext.width = Math.floor(nextCss * dpr);
@@ -69,10 +69,16 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
     cvNext.style.width = nextCss + 'px';
     cvNext.style.height = nextCss + 'px';
     if(nextCard) nextCard.style.height = (nextCss + 16) + 'px';
-    return { rows:rowsVal, cell };
+    return { rows:rowsVal, cell:meSize.cell };
   }
 
   // Mobile/tablet: preserve the existing compact right rail.
+  if(boardCard){ boardCard.style.width=''; boardCard.style.height=''; }
+  if(oppCard){ oppCard.style.width=''; }
+  const boardInnerW = Math.max(180, (boardCard?.clientWidth || shellW*.74) - 20);
+  const boardInnerH = Math.max(260, (boardCard?.clientHeight || shellH) - 20);
+  const meSize = sizeBoard(cvMe, boardInnerW, boardInnerH, 56);
+  const cell = meSize.cell;
   const sideW  = sideCol?.clientWidth || clamp(Math.floor(shellW * 0.26), 104, 180);
   const sideH = sideCol?.clientHeight || shellH;
   const gap = 10;

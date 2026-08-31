@@ -410,3 +410,59 @@ body{
     column-gap:18px;
   }
 }
+
+/* ===== 2026-08-31 wide-night duel refinement ===== */
+.gamePanel{position:relative;background:transparent}
+body{
+  background:
+    radial-gradient(circle at 10% 16%,rgba(255,255,255,.55) 0 1px,transparent 1.8px),
+    radial-gradient(circle at 78% 22%,rgba(200,228,255,.42) 0 1px,transparent 1.8px),
+    radial-gradient(circle at 45% 68%,rgba(255,255,255,.25) 0 1px,transparent 1.7px),
+    linear-gradient(180deg,#1f315d 0%,#2c4c7a 52%,#496f98 100%);
+  background-size:190px 190px,250px 250px,310px 310px,100% 100%;
+}
+/* HUD no longer consumes a full row: float the information over unused corner space. */
+.hud{
+  position:absolute;inset:0;z-index:25;height:0;min-height:0;padding:0;
+  border:0;background:transparent;box-shadow:none;backdrop-filter:none;
+  pointer-events:none;overflow:visible;
+}
+.hudLeft{position:absolute;left:14px;top:12px;gap:6px;pointer-events:none}
+.hudRight{position:absolute;right:14px;top:12px;gap:6px;pointer-events:auto}
+.hudLeft>div{
+  min-width:0;padding:6px 9px;border-color:rgba(190,220,255,.22);
+  background:rgba(19,42,78,.58);color:#bcd4ef;box-shadow:0 5px 14px rgba(4,17,43,.18);
+  backdrop-filter:blur(8px);
+}
+.hudLeft b{color:#eef7ff;text-shadow:0 0 10px rgba(111,183,255,.35)}
+.iconBtn{background:rgba(20,44,80,.62);color:#eff8ff;border-color:rgba(190,220,255,.24);box-shadow:0 5px 16px rgba(3,16,39,.22)}
+.playShell{padding-top:6px}
+.boardCard,.nextCard,.oppCard{
+  background:rgba(23,48,86,.34);
+  border-color:rgba(180,211,247,.18);
+  box-shadow:0 14px 34px rgba(4,19,46,.24),inset 0 1px 0 rgba(255,255,255,.12);
+  backdrop-filter:blur(7px) saturate(1.08);
+}
+.cardTag{color:#d9eaff;background:rgba(18,43,82,.62);border-color:rgba(182,216,255,.20);text-shadow:none}
+.comboArea{color:#d8e8ff}.comboTxt{color:#b8cdef}
+
+@media (min-width:900px){
+  .playShell{
+    display:grid;
+    grid-template-columns:minmax(0,1fr) clamp(104px,7.5vw,142px) minmax(0,1fr);
+    gap:clamp(12px,1vw,18px);
+    align-items:center;
+    justify-items:center;
+    padding:6px clamp(12px,2vw,34px) calc(6px + env(safe-area-inset-bottom));
+  }
+  .boardCol{grid-column:1;justify-self:center;align-self:center;min-width:0;max-width:100%;}
+  .sideCol{display:contents}
+  .nextCard{grid-column:2;grid-row:1;align-self:start;justify-self:stretch;margin-top:2px;width:100%}
+  .comboArea{grid-column:2;grid-row:1;align-self:center;justify-self:stretch;width:100%;height:auto!important;min-height:82px}
+  .oppCard{grid-column:3;grid-row:1;justify-self:center;align-self:center;max-width:100%;padding:8px}
+  .boardCard{padding:8px}
+  .boardCard canvas,.oppCard canvas{max-width:100%;max-height:100%}
+}
+@media (min-width:1400px){
+  .hudLeft{left:22px;top:16px}.hudRight{right:22px;top:16px}
+}
