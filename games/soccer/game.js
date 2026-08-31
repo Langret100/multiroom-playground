@@ -213,7 +213,13 @@ function applyWorldCamera(){
 
 /* ── 아주 작은 자체 SFX (부모 window.SFX는 iframe이라 접근 불가라서 자체 구현) ── */
 let sfxCtx = null;
+let soccerAudioAllowed=(()=>{try{return localStorage.getItem('audio_enabled')==='1';}catch(_){return false;}})();
+function setSoccerAudioAllowed(enabled){
+  soccerAudioAllowed=!!enabled;
+  if(!soccerAudioAllowed&&sfxCtx&&sfxCtx.state==='running'){try{sfxCtx.suspend();}catch(_){ }}
+}
 function getSfxCtx(){
+  if(!soccerAudioAllowed)return null;
   if (sfxCtx) return sfxCtx;
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) return null;
@@ -419,6 +425,22 @@ function applySoccerClockSample(d){
 // 경기 시작(10초)과 득점 후 재시작(5초)에 사용하는 초3 덧셈·뺄셈 퀴즈
 const mkEl=document.getElementById('mathKickoff'),mkPanel=document.getElementById('mkPanel'),mkTitle=document.getElementById('mkTitle'),mkPhase=document.getElementById('mkPhase'),mkSub=document.getElementById('mkSub'),mkTimer=document.getElementById('mkTimer'),mkProblem=document.getElementById('mkProblem'),mkChoices=document.getElementById('mkChoices'),mkMe=document.getElementById('mkMe'),mkHelp=document.getElementById('mkHelp'),mkResult=document.getElementById('mkResult'),mkCoin=document.getElementById('mkCoin'),mkTeamA=document.getElementById('mkTeamA'),mkTeamB=document.getElementById('mkTeamB'),mkTeamALabel=document.getElementById('mkTeamALabel'),mkTeamBLabel=document.getElementById('mkTeamBLabel'),mkFeedback=document.getElementById('mkFeedback');
 let mathKickoff={roundId:'',kind:'initial',phase:'idle',seed:0,beginsAt:0,endsAt:0,kickoffAt:0,questionIndex:0,correct:0,confirmedCorrect:0,solved:false,submitted:false,current:null,result:null,raf:0,feedbackBusy:false,feedbackTimer:0,feedbackHideTimer:0,revealTimers:[],feedbackToken:0};
+let soccerRoundSyncWatchdog=0;
+
+function armSoccerRoundSyncWatchdog(){
+  if(soccerRoundSyncWatchdog)clearTimeout(soccerRoundSyncWatchdog);
+  soccerRoundSyncWatchdog=setTimeout(()=>{
+    soccerRoundSyncWatchdog=0;
+    if(mathKickoff.roundId||soccerRoundController.hasSnapshot)return;
+    gameActive=false;startTs=0;
+    showOverlay('실시간 서버 업데이트 필요','수학축구 라운드 정보가 오지 않았습니다. Cloudflare Worker를 이 소스와 함께 배포해 주세요.');
+  },3500);
+}
+
+function clearSoccerRoundSyncWatchdog(){
+  if(!soccerRoundSyncWatchdog)return;
+  clearTimeout(soccerRoundSyncWatchdog);soccerRoundSyncWatchdog=0;
+}
 function seededRand(seed){let x=(seed|0)||123456789;return()=>{x^=x<<13;x^=x>>>17;x^=x<<5;return((x>>>0)%1000000)/1000000;};}
 function hashText(t){let h=2166136261;for(const ch of String(t||'')){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return h>>>0;}
 function clearMathTimeouts(){
@@ -657,6 +679,7 @@ function prepareAuthoritativeKickoff(d){
 }
 
 function applySoccerRoundSnapshot(raw){
+  clearSoccerRoundSyncWatchdog();
   const accepted=soccerRoundController.accept(raw,durationMs);
   if(!accepted.accepted)return false;
   const d=accepted.next;
@@ -2822,6 +2845,9 @@ window.addEventListener('message', e=>{
   const d = e.data;
   if (!d || typeof d !== 'object') return;
 
+  if(d.type==='audio_pref'){setSoccerAudioAllowed(!!d.enabled);return;}
+  if(d.type==='stop_audio'){setSoccerAudioAllowed(false);return;}
+
   if (d.type === 'bridge_init'){
     // 협동게임용 정식 초기화에는 sessionId가 반드시 있다.
     // 다른 게임의 범용 bridge_init이 먼저 들어오면 빈 sid로 초기화되어
@@ -2850,10 +2876,14 @@ window.addEventListener('message', e=>{
     gameInitialized = true;
     roster = incoming;
     const sAt = Number(d.startedAt||0);
-    startTs = sAt>0 ? sAt : Date.now();
+    // startedAt=0 means the Worker-owned quiz has not opened play yet. Treating it
+    // as Date.now() made the match clock count down on a permanently locked field
+    // whenever an old Worker failed to send sc_round_state.
+    startTs = sAt>0 ? sAt : 0;
     initGame();
     flushPendingSoccerSnapshot();
     bridgeSend('sc_sync',{});
+    armSoccerRoundSyncWatchdog();
     setTimeout(()=>{ if(!mathKickoff.roundId) bridgeSend('sc_sync',{}); },180);
     return;
   }

@@ -873,6 +873,19 @@
         // 배경음악 (첨부 mp3) - 게임 진행 중 반복 재생
         let bgmEl = null;
         let bgmWanted = false;
+        let audioAllowed = (()=>{
+            try { return localStorage.getItem('audio_enabled') === '1'; } catch (_) { return false; }
+        })();
+
+        function setGameAudioAllowed(enabled){
+            audioAllowed=!!enabled;
+            if(!audioAllowed){
+                try{ if(bgmEl){bgmEl.muted=true;bgmEl.pause();} }catch(_){ }
+                try{ if(audioCtx&&audioCtx.state==='running')audioCtx.suspend(); }catch(_){ }
+            }else{
+                try{ if(bgmEl)bgmEl.muted=false; }catch(_){ }
+            }
+        }
 
         function initBGM() {
             if (!bgmEl) bgmEl = document.getElementById('bgm');
@@ -885,6 +898,7 @@
         }
 
         async function startBGM() {
+            if(!audioAllowed)return;
             initBGM();
             if (!bgmEl) return;
             bgmWanted = true;
@@ -920,6 +934,7 @@
         })();
         
         function initAudio() {
+            if(!audioAllowed)return;
             if (!audioCtx) {
                 audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             }
@@ -929,6 +944,7 @@
         }
         
         function playTone(frequency, duration, type = 'square', volume = 0.3, slide = 0) {
+            if(!audioAllowed)return;
             if (!audioCtx) return;
             
             const oscillator = audioCtx.createOscillator();
@@ -2319,7 +2335,12 @@ cameraX = 0;
             }else if(d.action==='pick'){
                 const found=worldItems.find(x=>x.id===d.id);
                 worldItems=worldItems.filter(x=>x.id!==d.id);
-                if((local || String(d.from||'')===String(mySessionId||'')) && found) heldItem={id:String(d.id),type:found.type,charges:Number(d.charges)||ITEM_DEFS[found.type].charges};
+                // The server echo is authoritative. Use its itemType even when a
+                // simultaneous remote update removed the local world object first.
+                const pickedType=String(found?.type||d.itemType||'');
+                if((local || String(d.from||'')===String(mySessionId||'')) && ITEM_DEFS[pickedType]){
+                    heldItem={id:String(d.id),type:pickedType,charges:Number(d.charges)||ITEM_DEFS[pickedType].charges};
+                }
             }else if(d.action==='use' && !local && d.effect){
                 const e=d.effect; addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color); itemSound(d.itemType);
             }
@@ -4420,6 +4441,15 @@ cameraX = 0;
         window.addEventListener("message", (e)=>{
             const d = e.data || {};
             if (!d || typeof d !== "object") return;
+            if(d.type==='audio_pref'){
+                setGameAudioAllowed(!!d.enabled);
+                return;
+            }
+            if(d.type==='stop_audio'){
+                setGameAudioAllowed(false);
+                stopBGM();
+                return;
+            }
             if (typeof d.type === 'string' && d.type.startsWith('tg_')) lastTgAnyNetAt = performance.now();
 
             if (d.type === "bridge_init"){
@@ -4538,6 +4568,30 @@ cameraX = 0;
 
             if (d.type === "tg_item"){
                 applyItemEvent(d, false);
+                return;
+            }
+
+            // When focus is on the room shell (for example after clicking chat or a
+            // fullscreen control), the parent forwards the physical PC action key.
+            // This keeps X/V/C working without synthesizing DOM KeyboardEvents.
+            if (d.type === "tg_key"){
+                const code=String(d.code||'');
+                if(d.down===false){
+                    if(code==='ArrowLeft'&&moveDirection===-1)moveDirection=0;
+                    if(code==='ArrowRight'&&moveDirection===1)moveDirection=0;
+                    if(code==='KeyZ'){jumpKeyDown=false;handleJumpRelease();}
+                    return;
+                }
+                if(d.repeat)return;
+                if(code==='ArrowLeft')moveDirection=-1;
+                else if(code==='ArrowRight')moveDirection=1;
+                else if(code==='KeyX'){initAudio();handlePrimaryAction();}
+                else if(code==='KeyV'){initAudio();dropHeldItem(true);}
+                else if(code==='KeyC'){initAudio();createFloorUnderFoot();}
+                else if(code==='KeyZ'){
+                    if(localPlayer.isDead&&!isGuestMode){const mp=document.getElementById('mathPopup');if(mp&&mp.classList.contains('hidden'))openMathPopup();}
+                    else{jumpKeyDown=true;initAudio();doJump();}
+                }
                 return;
             }
 

@@ -1203,6 +1203,16 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       pushRemoteFx('reward',safeNum(rs.x,0),safeNum(rs.y,0),safeNum(rs.x,0),safeNum(rs.y,0));
     }catch(_){ }
   }
+  function showLocalRewardFx(key){
+    try{
+      const g=G(), p=g&&g.player; if(!p) return;
+      const v=REWARD_VIS[String(key||'')]||['✨','보상'];
+      if(typeof g.textParticle==='function') g.textParticle(safeNum(p.x,0),safeNum(p.y,0)-68,`${v[0]} ${v[1]}`,'#ffe36e',1.0);
+      // The overlay keeps rendering while the shared choice screen pauses the game,
+      // so the chooser can see the reward immediately as well as the other players.
+      pushRemoteFx('reward',safeNum(p.x,0),safeNum(p.y,0),safeNum(p.x,0),safeNum(p.y,0));
+    }catch(_){ }
+  }
   function drawRemoteFx(){
     // [FIX] main canvas ctx 대신 overlay canvas 사용 → strokeStyle 오염 방지
     try{
@@ -1452,7 +1462,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   window.__mxOnLevelPick = (upName)=>{
     try{
       const key = detectLevelChoiceKey({dataset:{upgradeId:upName},textContent:upName});
-      if(key){ ensureLocalChoiceApplied('level',key); try{ sendEvent('choice_apply',{choiceKind:'level',key}); }catch(_){} }
+      if(key){ ensureLocalChoiceApplied('level',key); showLocalRewardFx(key); try{ sendEvent('choice_apply',{kind:'level',choiceKind:'level',key}); }catch(_){} }
       /* [BUG FIX] queueLocalChoiceCommit으로 타이밍 이슈 보완: broadcastPhaseSync 수신 전 클릭 시에도 choice_done 발송 */
       try{ queueLocalChoiceCommit('level'); }catch(_){}
       if(inChoicePhase()){ try{ markChoiceDoneLocal(true); }catch(_){} }
@@ -1461,7 +1471,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   };
   window.__mxOnItemPick = (itemId)=>{
     try{
-      if(itemId){ ensureLocalChoiceApplied('item',itemId); try{ sendEvent('choice_apply',{choiceKind:'item',key:itemId}); }catch(_){} }
+      if(itemId){ ensureLocalChoiceApplied('item',itemId); showLocalRewardFx(itemId); try{ sendEvent('choice_apply',{kind:'item',choiceKind:'item',key:itemId}); }catch(_){} }
       /* [BUG FIX] queueLocalChoiceCommit으로 타이밍 이슈 보완 */
       try{ queueLocalChoiceCommit('item'); }catch(_){}
       if(inChoicePhase()){ try{ markChoiceDoneLocal(true); }catch(_){} }
@@ -1635,7 +1645,10 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       for(const el of all){
         if(!el) continue;
         if(el===card){
-          el.dataset.mxPicked='1';
+          // Visual selection is marked during the capture phase, before the
+          // card's onclick runs. Keep it separate from mxPicked, which the onclick
+          // wrapper uses as its actual apply-once guard.
+          el.dataset.mxSelected='1';
           el.style.opacity='1';
           el.style.filter='none';
           el.style.outline = el.style.outline || '2px solid rgba(255,255,255,.7)';
@@ -1650,8 +1663,8 @@ function simulateRemoteAttackOnHost(rs, meta={}){
   function localPickedCardInVisibleChoice(){
     try{
       const rid=isChoiceVisible();
-      if(rid==='levelUpScreen') return !!document.querySelector('#levelUpScreen .upgradeCard[data-mx-picked="1"]');
-      if(rid==='itemScreen') return !!document.querySelector('#itemScreen .upgradeCard[data-mx-picked="1"]');
+      if(rid==='levelUpScreen') return !!document.querySelector('#levelUpScreen .upgradeCard[data-mx-selected="1"]');
+      if(rid==='itemScreen') return !!document.querySelector('#itemScreen .upgradeCard[data-mx-selected="1"]');
     }catch(_){}
     return false;
   }
@@ -1780,6 +1793,18 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     if(d.type==='mx_set_difficulty') return applyDifficulty(d.difficulty||1);
     if(d.type==='mx_msg') return handleMxMsg(d.msg||{});
     if(d.type==='mx_show_gameover') return showGameOverThenQuit(String(d.reason||'game_over'));
+    if(d.type==='audio_pref'){
+      try{
+        if(window.SoundManager){
+          window.SoundManager.enabled=!!d.enabled;
+          window.SoundManager.musicEnabled=!!d.enabled;
+          if(!d.enabled)window.SoundManager.ctx?.suspend?.();
+          else window.SoundManager.ctx?.resume?.();
+        }
+      }catch(_){ }
+      if(!d.enabled)stopAllAudio();
+      return;
+    }
     if(d.type==='stop_audio') return stopAllAudio();
   });
   function patchGlobalCombatGuards(){ try{ const PlayerCtor=getGlobalCtor('Player') || window.Player; if(PlayerCtor&&PlayerCtor.prototype&&!PlayerCtor.prototype.__mxBridgeGuardPatched){ const oTD=PlayerCtor.prototype.takeDamage; if(typeof oTD==='function'){ PlayerCtor.prototype.takeDamage=function(d){
@@ -1793,7 +1818,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       return oGE.call(this,v);
     }; } PlayerCtor.prototype.__mxBridgeGuardPatched=true; } }catch(_){} }
   function raf(){ try{ updateRemoteRenderTracks(); forceEmbedScreens(); patchGlobalCombatGuards(); if(ensureGlobalsReady()) wrapGameHooks();
-const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectTauntShieldCard(); }catch(_){} } if(choiceId && state.phase!==PHASES.CHAR_SELECT){ if(!state.selecting || (state.choiceType!==choiceLabelById(choiceId))){ setSelecting(true, choiceLabelById(choiceId)); } } else if(state.selecting && state.phase!==PHASES.CHAR_SELECT && !choiceId){ try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); pauseGame(true); } else { setSelecting(false,''); } } const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); try{ const g=G(); if(g){ g.paused=false; } }catch(_){} } try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); if(localChoiceFinished() && (now()-safeNum(state.lastChoiceAckSentAt,0))>700){ try{ markChoiceDoneLocal(!!((state.choiceDoneBySid||{})[(mySid()||'')])); }catch(_){} } if(localPickedCardInVisibleChoice() && !localChoiceFinished()){ try{ markChoiceDoneLocal(true); setOverlay('다른 플레이어 선택 대기'); }catch(_){} } pauseGame(true); const blockChestReopen = (state.phase===PHASES.CHEST_CHOICE && state.__mxChestAbortedLocal); if(!isChoiceVisible() && !localChoiceFinished() && !blockChestReopen) { try{ forceOpenChoiceUiForPhase(); }catch(_){} } } if(state.selecting){ try{ const g=G(); const pl=g&&g.player; const lp=state.selectLockPos; if(pl&&lp){ pl.x=safeNum(lp.x); pl.y=safeNum(lp.y); if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; } }catch(_){} } try{ if(iAmHost() && state.phase===PHASES.PLAYING){ hostChestTouchFallback(); } }catch(_){} try{ if(iAmHost() && inChoicePhase() && safeNum(state.phaseDeadline,0)>0 && now()>=safeNum(state.phaseDeadline,0)+500){ const parts=getExpectedChoiceParticipants(); for(const sid of parts){ if(!Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid)) state.choiceDoneBySid[sid]=false; } maybeFinishSharedChoice(); if(inChoicePhase() && now()>=safeNum(state.phaseDeadline,0)+2000){ endChoicePhase(); } } }catch(_){} drawRemoteLabels(); drawRemoteFx(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
+const choiceId=isChoiceVisible(); if(choiceId==='itemScreen'){ try{ maybeInjectTauntShieldCard(); }catch(_){} } if(choiceId && state.phase!==PHASES.CHAR_SELECT){ if(!state.selecting || (state.choiceType!==choiceLabelById(choiceId))){ setSelecting(true, choiceLabelById(choiceId)); } } else if(state.selecting && state.phase!==PHASES.CHAR_SELECT && !choiceId){ try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); pauseGame(true); } else { setSelecting(false,''); } } const cutoff=now()-6000; for(const [sid,st] of Object.entries(state.remoteStates)){ if(!st||(st.ts||0)<cutoff) delete state.remoteStates[sid]; } if(!iAmHost() && state.phase===PHASES.PLAYING && state.worldGhost && (now()-safeNum(state.lastWorldAppliedAt,0)>1200)){ setOverlay('호스트 월드 동기화 지연…'); } else if(state.phase===PHASES.PLAYING && !state.selecting){ setOverlay(''); try{ const g=G(); if(g){ g.paused=false; } }catch(_){} } try{ if(iAmHost() && !state.__mxTeamGameOverSent){ const g=G(); const localDead = !!(g&&g.player&&safeNum(g.player.hp,1)<=0); const remoteDead = Object.values(state.remoteStates||{}).some(rs=>rs && (now()-safeNum(rs.ts,0))<2500 && safeNum(rs.hp,1)<=0); if(localDead||remoteDead){ state.__mxTeamGameOverSent=true; sendEvent('game_over_all',{}); try{ if(g){ g.paused=true; g.gameOver=true; } }catch(_){} } } }catch(_){} if(inChoicePhase()){ flushPendingLocalChoiceCommit(); if(localChoiceFinished() && (now()-safeNum(state.lastChoiceAckSentAt,0))>700){ try{ markChoiceDoneLocal(!!((state.choiceDoneBySid||{})[(mySid()||'')])); }catch(_){} } if(localPickedCardInVisibleChoice() && !localChoiceFinished()){ try{ markChoiceDoneLocal(true); setOverlay('다른 플레이어 선택 대기'); }catch(_){} } pauseGame(true); const blockChestReopen = (state.phase===PHASES.CHEST_CHOICE && state.__mxChestAbortedLocal); if(!isChoiceVisible() && !localChoiceFinished() && !blockChestReopen) { try{ forceOpenChoiceUiForPhase(); }catch(_){} } } if(state.selecting){ try{ const g=G(); const pl=g&&g.player; const lp=state.selectLockPos; if(pl&&lp){ pl.x=safeNum(lp.x); pl.y=safeNum(lp.y); if('vx' in pl) pl.vx=0; if('vy' in pl) pl.vy=0; } }catch(_){} } try{ if(iAmHost() && state.phase===PHASES.PLAYING){ hostChestTouchFallback(); } }catch(_){} try{ if(iAmHost() && inChoicePhase() && safeNum(state.phaseDeadline,0)>0 && now()>=safeNum(state.phaseDeadline,0)+500){ const parts=getExpectedChoiceParticipants(); for(const sid of parts){ if(!Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid)) state.choiceDoneBySid[sid]=false; } maybeFinishSharedChoice(); if(inChoicePhase() && now()>=safeNum(state.phaseDeadline,0)+2000){ endChoicePhase(); } } }catch(_){} drawRemoteLabels(); }catch(_){ } requestAnimationFrame(raf); } requestAnimationFrame(raf);
   setInterval(()=>{ try{ if(mySid()) send('hello',{}); }catch(_){ } },4000);
   setInterval(()=>{ try{ postLocalState(); }catch(_){ } },33);
   setInterval(()=>{

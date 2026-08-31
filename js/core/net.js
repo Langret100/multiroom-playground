@@ -65,6 +65,7 @@
       this.kind = kind; // "lobby" or "room"
       this.sessionId = opts.sessionId || "";
       this.id = opts.roomId || ""; // for create() return compatibility
+      this.protocolVersion = "";
       this.state = buildRoomState();
       this._handlers = new Map(); // type -> [fn]
       this._helloOk = new Promise((res)=>{ this._helloResolve = res; });
@@ -152,7 +153,6 @@ if (isDuel && humans.length === 1){
     _onWsMessage(ev){
       let msg;
       try{ msg = JSON.parse(ev.data); }catch(_){ return; }
-
       // handle state snapshots internally
       if(msg.t === "room_state" && this.kind === "room"){
         this._applyStateSnapshot(msg.d || {});
@@ -164,6 +164,7 @@ if (isDuel && humans.length === 1){
 
       if(translated.__sessionId){
         this.sessionId = translated.__sessionId;
+        this.protocolVersion = String(translated.__protocolVersion || "");
         if (this._helloResolve) { try{ this._helloResolve(this.sessionId); }catch(_){ } this._helloResolve = null; }
         return;
       }
@@ -217,7 +218,7 @@ if (isDuel && humans.length === 1){
 
   function translateIn(kind, msg){
     if(kind === "lobby"){
-      if(msg.t === "hello_ok") return { __sessionId: msg.d?.userId || "" };
+      if(msg.t === "hello_ok") return { __sessionId: msg.d?.userId || "", __protocolVersion: msg.d?.protocolVersion || "" };
       if(msg.t === "lobby_chat") return { type:"chat", payload: msg.d };
       if(msg.t === "system") return { type:"system", payload: msg.d };
       if(msg.t === "presence") return { type:"presence", payload: msg.d };
@@ -226,7 +227,7 @@ if (isDuel && humans.length === 1){
       return null;
     }
     if(kind === "room"){
-      if(msg.t === "hello_ok") return { __sessionId: msg.d?.userId || "" };
+      if(msg.t === "hello_ok") return { __sessionId: msg.d?.userId || "", __protocolVersion: msg.d?.protocolVersion || "" };
       // room_state handled internally
       if(msg.t === "room_chat") return { type:"chat", payload: msg.d };
       if(msg.t === "system") return { type:"system", payload: msg.d };

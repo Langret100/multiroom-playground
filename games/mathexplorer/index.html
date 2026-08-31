@@ -1341,6 +1341,11 @@ const CHAR_DESIGNS = [
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
 const MAX_ENEMIES = 20;
+// A chest pauses the whole cooperative round, so it must be a rare event rather
+// than a 10%-per-kill interruption. At most one can exist and successful drops
+// are separated by at least 45 seconds.
+const CHEST_DROP_CHANCE = 0.025;
+const CHEST_DROP_COOLDOWN_MS = 45000;
 
 const G = {
     player: null,
@@ -4141,13 +4146,13 @@ class Player {
             G.score += enemy.score;
             this.gainExp(enemy.exp);
             
-            // 보물상자 최대 1개 + 최소 10초 쿨타임
+            // 보물상자 최대 1개 + 최소 45초 쿨타임
             const currentChests = G.items.filter(item => item.type === 'chest').length;
             const nowChest = Date.now();
-            const chestReady = !this.lastChestSpawnTime || (nowChest - this.lastChestSpawnTime >= 10000);
+            const chestReady = !this.lastChestSpawnTime || (nowChest - this.lastChestSpawnTime >= CHEST_DROP_COOLDOWN_MS);
             
             // 보물상자 또는 경험치 아이템 드롭
-            if (Math.random() < 0.1 && currentChests < 1 && chestReady) {
+            if (Math.random() < CHEST_DROP_CHANCE && currentChests < 1 && chestReady) {
                 G.items.push({x: enemy.x, y: enemy.y, type: 'chest'});
                 this.lastChestSpawnTime = nowChest;
             } else if (Math.random() < 0.3) {
@@ -5848,8 +5853,18 @@ class Projectile {
 
 window.G = G;
 window.CHAR_DESIGNS = CHAR_DESIGNS;
+window.SoundManager = SoundManager;
+try{
+  const audioAllowed = localStorage.getItem('audio_enabled') === '1';
+  SoundManager.enabled = audioAllowed;
+  SoundManager.musicEnabled = audioAllowed;
+  if(!audioAllowed && SoundManager.ctx?.state === 'running') SoundManager.ctx.suspend();
+}catch(_){
+  SoundManager.enabled = false;
+  SoundManager.musicEnabled = false;
+}
 G.init();
 </script>
-  <script src="./math-explorer-bridge.js?v=20260828-v7"></script>
+  <script src="./math-explorer-bridge.js?v=20260831-sync1"></script>
 </body>
 </html>

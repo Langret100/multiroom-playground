@@ -13,6 +13,8 @@
  *   POST /api/rooms
  */
 
+const PROTOCOL_VERSION = "20260831-multigame1";
+
 function corsHeaders(){
   return {
     "Access-Control-Allow-Origin": "*",
@@ -88,6 +90,10 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+
+    if (path === "/api/version" && request.method === "GET") {
+      return json({ ok:true, protocolVersion:PROTOCOL_VERSION });
+    }
 
     const upgrade = request.headers.get("Upgrade") || "";
     if (upgrade.toLowerCase() === "websocket"){
@@ -228,7 +234,7 @@ export class LobbyDO{
         // Register as online in lobby (roomId=""). RoomDO can override roomId later.
         this.presence.set(wantUid, { nick, roomId:"", lastSeen: now() });
 
-        this._send(ws, "hello_ok", { userId: wantUid, nick });
+        this._send(ws, "hello_ok", { userId: wantUid, nick, protocolVersion:PROTOCOL_VERSION });
         this._send(ws, "rooms", { list: this._roomsList() });
         this._broadcast("system", { text: `${nick} 접속`, ts: now() });
         this._broadcastPresence();
@@ -848,7 +854,7 @@ export class RoomDO{
 
         wsSetAttachment(ws, { uid: wantUid, nick, ready: !!this.users.get(wantUid).ready, seat: this.users.get(wantUid).seat });
 
-        this._send(ws, "hello_ok", { userId: wantUid });
+        this._send(ws, "hello_ok", { userId: wantUid, protocolVersion:PROTOCOL_VERSION });
         this._broadcast("system", { text: `${nick} 입장`, ts: now() });
 
         this.meta.status = (this.meta.phase === "playing") ? "playing" : "waiting";
@@ -1166,13 +1172,13 @@ export class RoomDO{
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
         if (this.meta.mode === "suhaktokki"){
-          this._broadcast("started", { mode: this.meta.mode, startPayload: skStartPayload });
+          this._broadcast("started", { mode: this.meta.mode, startPayload: skStartPayload, protocolVersion:PROTOCOL_VERSION });
         } else if (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer"){
-          this._broadcast("started", { mode: this.meta.mode, startPayload: mxStartPayload });
+          this._broadcast("started", { mode: this.meta.mode, startPayload: mxStartPayload, protocolVersion:PROTOCOL_VERSION });
         } else if (this.meta.mode === "backrooms3d"){
-          this._broadcast("started", { mode: this.meta.mode, startPayload: this.br && this.br.startPayload });
+          this._broadcast("started", { mode: this.meta.mode, startPayload: this.br && this.br.startPayload, protocolVersion:PROTOCOL_VERSION });
         } else {
-          this._broadcast("started", { mode: this.meta.mode });
+          this._broadcast("started", { mode: this.meta.mode, protocolVersion:PROTOCOL_VERSION });
         }
 
         // SnakeTail: start 3-minute round timer (server is source of truth)

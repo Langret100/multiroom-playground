@@ -52,6 +52,12 @@ cd cf-worker
 wrangler deploy
 ```
 
+정적 파일만 GitHub Pages에 올리면 실시간 서버는 갱신되지 않습니다. 이번 버전은
+`/api/version`이 `20260831-multigame1`을 반환해야 하며, 수학축구의
+`sc_round_state`, 수학탐험대의 `mx_msg`, 투게스터의 `tg_item` 처리가 모두 이
+Worker 배포에 포함됩니다. 프런트 파일과 `cf-worker/src/index.js`를 반드시 같은
+릴리스에서 함께 배포하세요.
+
 Workers 엔드포인트 및 라우팅은 `cf-worker/README.md`를 참고하세요.
 
 ## 기능

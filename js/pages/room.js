@@ -1669,8 +1669,16 @@ function updatePreview(modeId){
   }
 
   function wireInputs(){
-    window.addEventListener("keydown", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, true); maybeSendInputDelta(); }, { passive:true });
-    window.addEventListener("keyup", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, false); maybeSendInputDelta(); }, { passive:true });
+    const forwardTogesterPhysicalKey=(e,down)=>{
+      try{
+        if(!coop?.active||String(coop?.meta?.id||'')!=='togester')return;
+        const code=String(e.code||'');
+        if(!['ArrowLeft','ArrowRight','KeyZ','KeyX','KeyV','KeyC'].includes(code))return;
+        postToMain({type:'tg_key',gameId:'togester',code,down:!!down,repeat:!!e.repeat});
+      }catch(_){ }
+    };
+    window.addEventListener("keydown", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true); }, { passive:true });
+    window.addEventListener("keyup", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false); }, { passive:true });
 
     // Mobile overlay buttons
     const btns = document.querySelectorAll("[data-key]");
