@@ -1159,16 +1159,16 @@ body::after{
   transform: rotate(12deg);
   opacity: .55;
 }
-.gamePreview .gpThumb[data-game="stackga"]{ background-image:url("../assets/images/game_thumbs/stackga.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="suika"]{ background-image:url("../assets/images/game_thumbs/suika.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="drawanswer"]{ background-image:url("../assets/images/game_thumbs/drawanswer.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="togester"]{ background-image:url("../assets/images/game_thumbs/togester.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="suhaktokki"]{ background-image:url("../assets/images/game_thumbs/suhaktokki.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="mathexplorer"]{ background-image:url("../assets/images/game_thumbs/mathexplorer.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="backrooms3d"]{ background-image:url("../assets/images/game_thumbs/backrooms3d.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="snaketail"]{ background-image:url("../assets/images/game_thumbs/snaketail.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="geumchikeo"]{ background-image:url("../assets/images/game_thumbs/geumchikeo.webp"); background-size:cover; background-position:center; }
-.gamePreview .gpThumb[data-game="soccer"]{ background-image:url("../assets/images/game_thumbs/soccer.webp"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="stackga"]{ background-image:url("../assets/images/game_thumbs/stackga.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="suika"]{ background-image:url("../assets/images/game_thumbs/suika.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="drawanswer"]{ background-image:url("../assets/images/game_thumbs/drawanswer.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="togester"]{ background-image:url("../assets/images/game_thumbs/togester.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="suhaktokki"]{ background-image:url("../assets/images/game_thumbs/suhaktokki.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="mathexplorer"]{ background-image:url("../assets/images/game_thumbs/mathexplorer.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="backrooms3d"]{ background-image:url("../assets/images/game_thumbs/backrooms3d.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="snaketail"]{ background-image:url("../assets/images/game_thumbs/snaketail.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="geumchikeo"]{ background-image:url("../assets/images/game_thumbs/geumchikeo.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
+.gamePreview .gpThumb[data-game="soccer"]{ background-image:url("../assets/images/game_thumbs/soccer.webp?v=20260831-cards7"); background-size:cover; background-position:center; }
 /* In room lobby: hide the heavy game area, keep just preview */
 body:not(.in-game) #duelUI,
 body:not(.in-game) #stackgaUI,

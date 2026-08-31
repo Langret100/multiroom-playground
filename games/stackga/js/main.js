@@ -1,9 +1,9 @@
 // Firebase dependency removed.
 import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
-import { StackGame, drawBoard, drawNext, COLS } from "./game.js";
+import { StackGame, drawBoard, drawNext, COLS } from "./game.js?v=20260831-jellyfocus6";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-jellyfocus5";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-jellyfocus6";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -40,20 +40,20 @@ const EMBED = new URLSearchParams(location.search).get("embed") === "1";
 
 // --- Focus helper (keyboard input in iframe)
 // 일부 브라우저/환경에서 iframe 내부가 자동으로 포커스를 얻지 못해
-// 키 입력이 무시되는 경우가 있어, 게임 시작/복귀 시 캔버스로 포커스를 강하게 회복합니다.
-function focusBoardInput(){
-  try{ window.focus(); }catch(_){}
-  try{ ui.cvMe?.focus?.({ preventScroll:true }); }catch(_){ try{ ui.cvMe?.focus?.(); }catch(__){} }
-}
+// 키 입력이 무시되는 경우가 있어, 첫 탭/클릭 시 캔버스로 포커스를 유도합니다.
 try{
   if (ui.cvMe){
     ui.cvMe.tabIndex = 0;
     ui.cvMe.style.outline = "none";
-    window.addEventListener("load", ()=>{ focusBoardInput(); setTimeout(focusBoardInput,80); setTimeout(focusBoardInput,260); });
-    window.addEventListener("focus", ()=>setTimeout(focusBoardInput,0));
-    document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setTimeout(focusBoardInput,30); });
-    window.addEventListener("message", (e)=>{ if(e?.data?.type === "focus_game") setTimeout(focusBoardInput,0); });
-    ui.cvMe.addEventListener("pointerdown", focusBoardInput, { passive:true });
+    const focusMe = ()=>{
+      try{ window.focus(); }catch(_){}
+      try{ ui.cvMe.focus({ preventScroll:true }); }catch(_){ try{ ui.cvMe.focus(); }catch(__){} }
+    };
+    window.addEventListener("load", ()=>{ focusMe(); setTimeout(focusMe,80); setTimeout(focusMe,260); });
+    window.addEventListener("focus", ()=>setTimeout(focusMe,0));
+    document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setTimeout(focusMe,30); });
+    window.addEventListener("message", (e)=>{ if(e?.data?.type === "focus_game") setTimeout(focusMe,0); });
+    ui.cvMe.addEventListener("pointerdown", focusMe, { passive:true });
     document.body?.addEventListener?.("pointerdown", ()=>{ try{ window.focus(); }catch(_){} }, true);
   }
 }catch(_){ }
@@ -406,8 +406,6 @@ function startLoop(){
   started = true;
   hideOverlay();
   safeSetText(ui.mode, mode==="online"?"온라인":"PC");
-  setTimeout(focusBoardInput, 0);
-  setTimeout(focusBoardInput, 90);
 
   // 첫 프레임이 렌더되지 않으면(iframe/브라우저 이슈) 화면이 멈춘 것처럼 보일 수 있어
   // 즉시 1회 렌더를 시도합니다.

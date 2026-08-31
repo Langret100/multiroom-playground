@@ -662,17 +662,6 @@ function updatePreview(modeId){
 
   function setText(el, t){ if(el) el.textContent = String(t ?? ""); }
 
-  function blurGameBlockingInputs(){
-    try{
-      const ae = document.activeElement;
-      if(!ae) return;
-      const tag = String(ae.tagName || '').toUpperCase();
-      if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || ae.isContentEditable){
-        ae.blur?.();
-      }
-    }catch(_){ }
-  }
-
   function setDuelFrameLoading(active, gameId=''){
     try{
       const wrap = duel?.ui?.frameWrap;
@@ -945,12 +934,35 @@ function updatePreview(modeId){
     }
   }
 
+  function forwardStackgaKeyToGame(code, down, repeat=false){
+    try{
+      const fr=duel?.iframeEl || document.getElementById('duelFrame');
+      const activeId=String(duel?.meta?.id||coop?.meta?.id||'');
+      const src=String(fr?.getAttribute?.('src')||fr?.src||'');
+      const active=(activeId==='stackga') || /(?:^|\/)games\/stackga\//.test(src) || document.body.classList.contains('mode-stackga');
+      if(!active||!fr?.contentWindow)return false;
+      const key=String(code||'');
+      if(!['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space','KeyP'].includes(key))return false;
+      fr.contentWindow.postMessage({type:'stackga_key',gameId:'stackga',code:key,down:!!down,repeat:!!repeat},'*');
+      return true;
+    }catch(_){ return false; }
+  }
+
+  // When room.html itself is inside the fullscreen-preserving lobby iframe,
+  // physical key events can remain on the top-level lobby document. The lobby
+  // forwards them here; room.html then relays them to the actual Stackga iframe.
+  window.addEventListener('message',(e)=>{
+    const d=e?.data||{};
+    if(d.type!=='embedded_room_key') return;
+    if(!isEmbedded || e.source !== window.parent) return;
+    forwardStackgaKeyToGame(d.code, d.down, d.repeat);
+  });
+
   // iframe -> parent bridge
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   function focusGameIframeSoon(){
-    blurGameBlockingInputs();
     const fr = duel?.iframeEl;
     if(!fr) return;
     const poke = ()=>{
@@ -1726,19 +1738,9 @@ function updatePreview(modeId){
       }catch(_){ }
     };
     const forwardStackgaPhysicalKey=(e,down)=>{
-      try{
-        const fr=duel?.iframeEl || document.getElementById('duelFrame');
-        const activeId=String(duel?.meta?.id||coop?.meta?.id||'');
-        const src=String(fr?.getAttribute?.('src')||fr?.src||'');
-        const active=(activeId==='stackga') || /(?:^|\/)games\/stackga\//.test(src) || document.body.classList.contains('mode-stackga');
-        if(!active||!fr?.contentWindow)return;
-        const code=String(e.code||'');
-        if(!['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space','KeyP'].includes(code))return;
-        // Direct parent -> game proxy. This does not depend on iframe focus,
-        // so the first key press after Game Start works without a mouse click.
-        fr.contentWindow.postMessage({type:'stackga_key',gameId:'stackga',code,down:!!down,repeat:!!e.repeat},'*');
-        if(['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(code)) e.preventDefault?.();
-      }catch(_){ }
+      const sent=forwardStackgaKeyToGame(e?.code, down, e?.repeat);
+      if(sent && ['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(String(e?.code||''))) e.preventDefault?.();
+      return sent;
     };
     window.addEventListener("keydown", (e)=>{
       // Stackga must never depend on a click-to-focus recovery. During an active
@@ -2586,7 +2588,6 @@ function handleDuelMatch(m){
   const cpuInMatch = (m.aSid === CPU_SID || m.bSid === CPU_SID);
 
   if (isPlayer){
-    blurGameBlockingInputs();
     duel.ui.frameWrap?.classList.remove("hidden");
     duel.ui.spectate?.classList.add("hidden");
     setDuelFrameLoading(true, duel.meta?.id || m.gameId || "");
@@ -2674,7 +2675,6 @@ function startCoopEmbed(meta){
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
-  blurGameBlockingInputs();
   setDuelFrameLoading(true, meta?.id || "");
   // coop에서는 관전/대진 UI를 숨기고 iframe만 사용
   duel.ui.spectate?.classList.add("hidden");
@@ -2726,7 +2726,6 @@ function startCoopPractice(meta){
   
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
-  blurGameBlockingInputs();
   setDuelFrameLoading(true, meta?.id || "");
   duel.ui.spectate?.classList.add("hidden");
   duel.ui.frameWrap?.classList.remove("hidden");

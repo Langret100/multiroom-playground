@@ -10,7 +10,7 @@ for(const id of games){
   if(!reg.includes(`id:'${id}'`)) throw new Error(`registry ${id}`);
   if(!reg.includes(`game_cards/${id}.webp`)) throw new Error(`card ref ${id}`);
 }
-if(!index.includes('registry.js?v=20260831-cards6') || !room.includes('registry.js?v=20260831-cards6')) throw new Error('registry cache bust missing');
+if(!index.includes('registry.js?v=20260831-cards7') || !room.includes('registry.js?v=20260831-cards7')) throw new Error('registry cache bust missing');
 for(const token of ['gameCardGrid','playerCountChips','roomTitleCount']) if(!index.includes(token)) throw new Error(`index missing ${token}`);
 if(index.includes('id="selectedGameSummary"')) throw new Error('empty selectedGameSummary bar returned');
 if(index.includes('class="createRoomNote"')) throw new Error('obsolete empty room note returned');

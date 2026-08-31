@@ -266,6 +266,21 @@ function statusDot(room){
     try{ refreshRooms(); }catch(_){ }
   }
 
+  function forwardEmbeddedRoomKey(e, down){
+    try{
+      const ov = _embedOverlay || document.getElementById('embedRoomOverlay');
+      const fr = _embedFrame || document.getElementById('embedRoomFrame');
+      if(!ov || ov.classList.contains('hidden') || !fr?.contentWindow) return false;
+      const code=String(e?.code||'');
+      if(!['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space','KeyP'].includes(code)) return false;
+      fr.contentWindow.postMessage({ type:'embedded_room_key', code, down:!!down, repeat:!!e.repeat }, '*');
+      if(['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(code)) e.preventDefault?.();
+      return true;
+    }catch(_){ return false; }
+  }
+  window.addEventListener('keydown', (e)=>{ forwardEmbeddedRoomKey(e,true); }, {capture:true, passive:false});
+  window.addEventListener('keyup', (e)=>{ forwardEmbeddedRoomKey(e,false); }, {capture:true, passive:false});
+
   // Receive signals from embedded room/game iframes.
   window.addEventListener('message', (e)=>{
     const d = e?.data || {};
