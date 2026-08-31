@@ -382,10 +382,21 @@ export function drawBoard(ctx, board, cell, opts={}){
   const now = Date.now();
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
   const bg = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
-  bg.addColorStop(0,"rgba(235,248,255,.97)");
-  bg.addColorStop(.55,"rgba(244,250,255,.98)");
-  bg.addColorStop(1,"rgba(230,246,255,.99)");
+  // Pale night-sky board: cool blue at the top, misty near the floor.
+  bg.addColorStop(0,"rgba(185,207,244,.98)");
+  bg.addColorStop(.42,"rgba(210,225,249,.985)");
+  bg.addColorStop(1,"rgba(235,244,255,.995)");
   ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
+  // Tiny fixed stars keep the sky readable without distracting from cells.
+  ctx.save();
+  for(let i=0;i<18;i++){
+    const sx=((i*97+31)%997)/997*ctx.canvas.width;
+    const sy=((i*53+17)%431)/431*ctx.canvas.height*.58;
+    const rr=Math.max(0.8,cell*.022*((i%3)+1)*.52);
+    ctx.fillStyle=`rgba(255,255,255,${.18+(i%4)*.07})`;
+    ctx.beginPath(); ctx.arc(sx,sy,rr,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
 
   const active = new Set();
   if(activePiece){
@@ -403,7 +414,7 @@ export function drawBoard(ctx, board, cell, opts={}){
   for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
     const v=board[y][x];
     if(!v){
-      ctx.fillStyle="rgba(80,145,190,.055)";
+      ctx.fillStyle="rgba(68,103,160,.055)";
       roundRect(ctx,x*cell+1,y*cell+1,cell-2,cell-2,Math.max(2,cell*.14)); ctx.fill();
       continue;
     }
@@ -463,7 +474,7 @@ export function drawBoard(ctx, board, cell, opts={}){
 
 export function drawNext(ctx, piece, cell){
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
-  const bg=ctx.createLinearGradient(0,0,0,ctx.canvas.height); bg.addColorStop(0,"#effaff"); bg.addColorStop(1,"#e5f4ff");
+  const bg=ctx.createLinearGradient(0,0,0,ctx.canvas.height); bg.addColorStop(0,"#dce9fb"); bg.addColorStop(1,"#edf5ff");
   ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
   if(!piece) return;
   const shape=SHAPES[piece.type][0];
@@ -517,13 +528,30 @@ function settledColor(y,v,ghost){
   return {rgb,a};
 }
 function drawJellyCell(ctx,px,py,cell,color,o){
-  const pad=Math.max(1.4,cell*.06), w=cell-pad*2, h=cell-pad*2;
+  // Keep pieces visually connected: only a hairline gutter between cells.
+  const pad=Math.max(.55,cell*.018), w=cell-pad*2, h=cell-pad*2;
   ctx.save(); ctx.translate(px+cell/2,py+cell/2+(o.dy||0)); ctx.scale(o.sx||1,o.sy||1); ctx.translate(-cell/2,-cell/2);
   const [r,g,b]=color.rgb; const grad=ctx.createLinearGradient(0,pad,0,cell-pad);
-  grad.addColorStop(0,`rgba(${Math.min(255,r+42)},${Math.min(255,g+42)},255,${color.a})`); grad.addColorStop(.52,`rgba(${r},${g},${b},${color.a})`); grad.addColorStop(1,`rgba(${Math.max(0,r-18)},${Math.max(0,g-20)},${Math.max(0,b-14)},${color.a})`);
-  ctx.fillStyle=grad; ctx.shadowColor=`rgba(${r},${g},${b},${.28+.18*(o.settleGlow||0)})`; ctx.shadowBlur=cell*(.16+.10*(o.settleGlow||0)); roundRect(ctx,pad,pad,w,h,Math.max(3,cell*.23)); ctx.fill(); ctx.shadowBlur=0;
-  const gloss=ctx.createLinearGradient(0,pad,0,cell*.48); gloss.addColorStop(0,"rgba(255,255,255,.62)"); gloss.addColorStop(1,"rgba(255,255,255,0)"); ctx.fillStyle=gloss; roundRect(ctx,pad+cell*.09,pad+cell*.07,w-cell*.18,h*.4,Math.max(2,cell*.16)); ctx.fill();
-  ctx.strokeStyle="rgba(255,255,255,.35)"; ctx.lineWidth=Math.max(1,cell*.035); roundRect(ctx,pad+.5,pad+.5,w-1,h-1,Math.max(3,cell*.23)); ctx.stroke();
-  if(o.sparkle){ const phase=(o.t/260 + o.x*1.7 + o.y*.9); if(Math.sin(phase)>0.2){ ctx.fillStyle=`rgba(255,255,255,${.32+.28*Math.sin(phase)})`; const cx=cell*(.25+((o.x*37+o.y*17)%48)/100), cy=cell*(.25+((o.x*13+o.y*29)%42)/100), rr=Math.max(1.1,cell*.055); ctx.beginPath(); ctx.moveTo(cx,cy-rr*1.8); ctx.lineTo(cx+rr*.5,cy-rr*.5); ctx.lineTo(cx+rr*1.8,cy); ctx.lineTo(cx+rr*.5,cy+rr*.5); ctx.lineTo(cx,cy+rr*1.8); ctx.lineTo(cx-rr*.5,cy+rr*.5); ctx.lineTo(cx-rr*1.8,cy); ctx.lineTo(cx-rr*.5,cy-rr*.5); ctx.closePath(); ctx.fill(); } }
+  grad.addColorStop(0,`rgba(${Math.min(255,r+35)},${Math.min(255,g+35)},${Math.min(255,b+38)},${color.a})`);
+  grad.addColorStop(.48,`rgba(${r},${g},${b},${color.a})`);
+  grad.addColorStop(1,`rgba(${Math.max(0,r-14)},${Math.max(0,g-16)},${Math.max(0,b-12)},${color.a})`);
+  ctx.fillStyle=grad;
+  // A tighter shadow keeps the jelly crisp instead of looking low-resolution/blurred.
+  ctx.shadowColor=`rgba(${r},${g},${b},${.18+.12*(o.settleGlow||0)})`;
+  ctx.shadowBlur=cell*(.065+.035*(o.settleGlow||0));
+  roundRect(ctx,pad,pad,w,h,Math.max(2.2,cell*.16)); ctx.fill(); ctx.shadowBlur=0;
+  const gloss=ctx.createLinearGradient(0,pad,0,cell*.42);
+  gloss.addColorStop(0,"rgba(255,255,255,.58)"); gloss.addColorStop(1,"rgba(255,255,255,0)");
+  ctx.fillStyle=gloss; roundRect(ctx,pad+cell*.055,pad+cell*.045,w-cell*.11,h*.34,Math.max(1.8,cell*.11)); ctx.fill();
+  ctx.strokeStyle="rgba(255,255,255,.52)"; ctx.lineWidth=Math.max(1,cell*.027);
+  roundRect(ctx,pad+.5,pad+.5,w-1,h-1,Math.max(2.2,cell*.16)); ctx.stroke();
+  if(o.sparkle){
+    const phase=(o.t/260 + o.x*1.7 + o.y*.9);
+    if(Math.sin(phase)>0.2){
+      ctx.fillStyle=`rgba(255,255,255,${.32+.28*Math.sin(phase)})`;
+      const cx=cell*(.25+((o.x*37+o.y*17)%48)/100), cy=cell*(.25+((o.x*13+o.y*29)%42)/100), rr=Math.max(1.1,cell*.055);
+      ctx.beginPath(); ctx.moveTo(cx,cy-rr*1.8); ctx.lineTo(cx+rr*.5,cy-rr*.5); ctx.lineTo(cx+rr*1.8,cy); ctx.lineTo(cx+rr*.5,cy+rr*.5); ctx.lineTo(cx,cy+rr*1.8); ctx.lineTo(cx-rr*.5,cy+rr*.5); ctx.lineTo(cx-rr*1.8,cy); ctx.lineTo(cx-rr*.5,cy-rr*.5); ctx.closePath(); ctx.fill();
+    }
+  }
   ctx.restore();
 }

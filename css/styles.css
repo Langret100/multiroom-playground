@@ -1996,3 +1996,42 @@ body.page-room:not(.in-game) .roomBottom .panel.chat{
 @keyframes createModalIn{from{opacity:0;transform:translateY(18px) scale(.975)}to{opacity:1;transform:none}}
 .createConfirmBtn.launching{animation:createLaunch .16s ease both}@keyframes createLaunch{50%{transform:scale(.955)}100%{transform:scale(1.015)}}
 @media(prefers-reduced-motion:reduce){#createModal.show .createRoomModal,.createConfirmBtn.launching{animation:none!important}}
+
+/* ===== 2026-08-31 room guide clipping + create-grid scroll cleanup ===== */
+@media (min-width:921px){
+  body.page-room:not(.in-game) .briefingCards{
+    flex:0 0 auto;
+    grid-template-columns:minmax(210px,.82fr) minmax(0,1.78fr);
+    grid-template-areas:"flow control" "tip control";
+    grid-auto-rows:max-content;
+    align-items:stretch;
+  }
+  body.page-room:not(.in-game) .briefingCard.flow{grid-area:flow}
+  body.page-room:not(.in-game) .briefingCard.control{grid-area:control;grid-column:auto;min-height:0;height:auto}
+  body.page-room:not(.in-game) .briefingCard.tip{grid-area:tip}
+  body.page-room:not(.in-game) .briefingCard{height:auto;min-height:0}
+  body.page-room:not(.in-game) .gameBriefingBoard{
+    flex:0 0 auto;
+    min-height:max-content;
+    overflow:visible;
+  }
+  /* If a compact-height desktop still cannot fit everything, scroll the whole
+     game-description panel instead of clipping the control diagram. */
+  body.page-room:not(.in-game) .canvasWrap{
+    overflow-x:hidden;
+    overflow-y:auto;
+    scrollbar-width:none;
+  }
+  body.page-room:not(.in-game) .canvasWrap::-webkit-scrollbar{display:none}
+}
+
+/* The game-card shelf should only scroll vertically. Hide browser chrome so
+   card hover/press transforms never create a stray horizontal scrollbar. */
+#createModal .createGameGrid{
+  overflow-x:hidden !important;
+  overflow-y:auto !important;
+  scrollbar-width:none !important;
+  -ms-overflow-style:none;
+  overscroll-behavior:contain;
+}
+#createModal .createGameGrid::-webkit-scrollbar{width:0;height:0;display:none}

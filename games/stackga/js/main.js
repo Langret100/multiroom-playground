@@ -3,7 +3,7 @@ import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
 import { StackGame, drawBoard, drawNext, COLS } from "./game.js";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-dualboard1";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,

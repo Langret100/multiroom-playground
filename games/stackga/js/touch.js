@@ -20,54 +20,67 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   if(!cvMe || !cvOpp || !cvNext) return { rows: ROWS, cell: 24 };
 
   const dpr = Math.min(2, window.devicePixelRatio || 1);
-
-  // DOM measurements (HUD is outside playShell)
   const playShell = document.getElementById('playShell');
   const sideCol  = document.getElementById('sideCol');
   const nextCard = document.getElementById('nextCard');
   const oppCard  = document.getElementById('oppCard');
   const comboArea = document.getElementById('comboArea');
+  const boardCard = document.getElementById('boardCol');
 
   const shellW = playShell?.clientWidth  || (window.visualViewport?.width  || window.innerWidth  || 360);
   const shellH = playShell?.clientHeight || (window.visualViewport?.height || window.innerHeight || 640);
-
-  // Use actual board card inner size so we can maximize board height (avoid big blank under the board)
-  const boardCard = document.getElementById('boardCol');
-  const boardInnerW = Math.max(180, (boardCard?.clientWidth || (shellW*0.74)) - 20);
-  const boardInnerH = Math.max(260, (boardCard?.clientHeight || shellH) - 20);
-
-  // Determine rows (fixed)
   const rowsVal = (rows|0) > 0 ? (rows|0) : ROWS;
+  const isWide = shellW >= 900;
 
-  // Choose a cell so rowsVal fits.
-  let cell = Math.floor(Math.min(boardInnerW / COLS, boardInnerH / rowsVal));
-  cell = clamp(cell, 12, 56);
+  // Clear old inline sizing before measuring a new responsive mode.
+  if(nextCard) nextCard.style.height = '';
+  if(oppCard) oppCard.style.height = '';
+  if(comboArea) comboArea.style.height = '';
 
-  // Recompute cell conservatively.
-  cell = Math.floor(Math.min(boardInnerW / COLS, boardInnerH / rowsVal));
-  cell = clamp(cell, 10, 56);
+  function sizeBoard(canvas, innerW, innerH, maxCell=56){
+    let c = Math.floor(Math.min(innerW / COLS, innerH / rowsVal));
+    c = clamp(c, 8, maxCell);
+    const cssW = c * COLS;
+    const cssH = c * rowsVal;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    return c;
+  }
 
-  // ---- Main board (10 x rowsVal)
-  const meW = cell * COLS;
-  const meH = cell * rowsVal;
-  cvMe.width  = Math.floor(meW * dpr);
-  cvMe.height = Math.floor(meH * dpr);
-  cvMe.style.width  = meW + 'px';
-  cvMe.style.height = meH + 'px';
+  // Main board uses its actual card size in both layouts.
+  const boardInnerW = Math.max(180, (boardCard?.clientWidth || (shellW*(isWide ? .47 : .74))) - 20);
+  const boardInnerH = Math.max(260, (boardCard?.clientHeight || shellH) - 20);
+  const cell = sizeBoard(cvMe, boardInnerW, boardInnerH, 56);
 
-  // ---- Side column: Next + Opp(10 x rowsVal, no stretch) + Combo text
+  if(isWide){
+    // Desktop/Whalebook: opponent gets a full-height board instead of a tiny minimap.
+    const oppInnerW = Math.max(220, (oppCard?.clientWidth || shellW*.34) - 20);
+    const oppInnerH = Math.max(300, (oppCard?.clientHeight || shellH) - 20);
+    sizeBoard(cvOpp, oppInnerW, oppInnerH, 56);
+
+    // NEXT stays compact in the center information rail.
+    const nextInnerW = Math.max(60, (nextCard?.clientWidth || 130) - 16);
+    const nextInnerH = Math.max(60, Math.min(nextInnerW, Math.floor(shellH*.20)));
+    const nextCss = clamp(Math.floor(Math.min(nextInnerW, nextInnerH)), 60, 126);
+    cvNext.width = Math.floor(nextCss * dpr);
+    cvNext.height = Math.floor(nextCss * dpr);
+    cvNext.style.width = nextCss + 'px';
+    cvNext.style.height = nextCss + 'px';
+    if(nextCard) nextCard.style.height = (nextCss + 16) + 'px';
+    return { rows:rowsVal, cell };
+  }
+
+  // Mobile/tablet: preserve the existing compact right rail.
   const sideW  = sideCol?.clientWidth || clamp(Math.floor(shellW * 0.26), 104, 180);
   const sideH = sideCol?.clientHeight || shellH;
   const gap = 10;
-  const pad = 16; // card padding (8*2)
-
+  const pad = 16;
   const comboMinH = 64;
 
-  // Next preview (square)
   let nextInner = clamp(Math.min((sideW - pad), Math.floor(sideH * 0.20)), 52, 118);
   const nextCardH = nextInner + pad;
-
-  // Remaining height after Next (reserve space for combo text)
   const remain = Math.max(160, sideH - nextCardH - gap);
   const oppInnerW = Math.max(64, (sideW - pad));
   const oppInnerMaxH = Math.max(120, remain - comboMinH - gap);
@@ -76,7 +89,6 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   oppCell = clamp(oppCell, 5, 24);
   const oppW = oppCell * COLS;
   const oppHpx = oppCell * rowsVal;
-
   const oppCardH = oppHpx + pad;
   const comboH = Math.max(comboMinH, remain - oppCardH - gap);
 
@@ -84,15 +96,11 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   if(oppCard)  oppCard.style.height  = oppCardH + 'px';
   if(comboArea) comboArea.style.height = comboH + 'px';
 
-  // Next canvas (fill card)
-  const nextW = nextInner;
-  const nextHpx = nextInner;
-  cvNext.width  = Math.floor(nextW * dpr);
-  cvNext.height = Math.floor(nextHpx * dpr);
+  cvNext.width  = Math.floor(nextInner * dpr);
+  cvNext.height = Math.floor(nextInner * dpr);
   cvNext.style.width  = '100%';
   cvNext.style.height = '100%';
 
-  // Opp canvas: explicit px height so it never stretches vertically
   cvOpp.width  = Math.floor(oppW * dpr);
   cvOpp.height = Math.floor(oppHpx * dpr);
   cvOpp.style.width  = '100%';
@@ -100,7 +108,6 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
 
   return { rows: rowsVal, cell };
 }
-
 
 export function initTouchControls(canvas, onAction){
   if(!canvas || !onAction) return;
