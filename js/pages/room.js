@@ -907,7 +907,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_math_submit","sc_time_ping"]);
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -1284,11 +1284,6 @@ function updatePreview(modeId){
       try{ room.send("tg_box_impulse", d); }catch(_){ }
       return;
     }
-    if (d.type === "tg_item"){
-      if (!fromMainForTg) return;
-      try{ room.send("tg_item", d); }catch(_){ }
-      return;
-    }
     if (d.type === "tg_sync"){
       if (!fromMainForTg) return;
       try{ room.send("tg_sync", {}); }catch(_){ }
@@ -1384,6 +1379,14 @@ function updatePreview(modeId){
       return;
     }
     // ── Soccer: iframe → server relays (single authoritative path) ──
+    // Soccer compatibility relay: reuse the long-standing tg_state -> tg_players
+    // transport so math-round synchronization does not require a Worker upgrade.
+    if (d.type === "sc_compat") {
+      if (!fromMainForSoccer) return;
+      try{ room.send("tg_state", { state: { __soccerCompat: d.packet || {} } }); }catch(_){ }
+      return;
+    }
+
     if (d.type === "sc_pos"){
       if (!fromMainForSoccer) return;
       const isEvent=!!(d.kickAt||d.headerAt||d.tackleAt||d.claimAt);
@@ -1427,24 +1430,6 @@ function updatePreview(modeId){
     if (d.type === "sc_stun"){
       if (!fromMainForSoccer) return;
       try{ room.send("sc_stun", { sid:String(d.sid||""), dur:Number(d.dur||0) }); }catch(_){ }
-      return;
-    }
-    if (d.type === "sc_math_submit"){
-      if (!fromMainForSoccer) return;
-      try{
-        room.send("sc_math_submit", {
-          roundId:String(d.roundId||""),
-          final:!!d.final,
-          answeredAt:Number(d.answeredAt||0),
-          questionIndex:Number.isInteger(Number(d.questionIndex))?Number(d.questionIndex):null,
-          answer:Number.isFinite(Number(d.answer))?Number(d.answer):null
-        });
-      }catch(_){ }
-      return;
-    }
-    if (d.type === "sc_time_ping"){
-      if (!fromMainForSoccer) return;
-      try{ room.send("sc_time_ping", { clientSentAt:Number(d.clientSentAt||0) }); }catch(_){ }
       return;
     }
     if (d.type === "sc_sync"){
@@ -2345,7 +2330,7 @@ function sendCoopBridgeInit(){
     players: bridgePlayers,
     ...(brBridgeStartPayload ? { startPayload: brBridgeStartPayload } : (coop?.meta?.id === 'backrooms3d' && coop?.startPayload ? { startPayload: coop.startPayload } : {})),
     level: coop.level || 1,
-    // Soccer clock/round timing comes only from sc_round_state.serverNow/remainingMs.
+    // Soccer round timing is carried by the host-authoritative compatibility state.
     startedAt: 0,
     practice: (() => {
       // Explicit local practice mode (togester only)
@@ -3080,7 +3065,14 @@ try{
 
       // Togester (coop) relay: server -> iframe
       room.onMessage("tg_players", (msg)=>{
-        postToMain({ type:"tg_players", players: msg.players || {} });
+        const playerMap = msg.players || {};
+        postToMain({ type:"tg_players", players: playerMap });
+        // In soccer, tg_players is also the backwards-compatible generic relay
+        // for host-authoritative math round packets. Old Workers already support it.
+        try{
+          const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+          if (modeId === "soccer") postToMain({ type:"sc_compat_players", players: playerMap });
+        }catch(_){ }
       });
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
@@ -3098,10 +3090,6 @@ try{
       room.onMessage("tg_push", (msg)=>{
         postToMain({ type:"tg_push", to: msg.to, dx: msg.dx, dy: msg.dy, from: msg.from });
       });
-      room.onMessage("tg_item", (msg)=>{
-        postToMain(Object.assign({ type:"tg_item" }, msg || {}));
-      });
-
       room.onMessage("tg_boxes", (msg)=>{
         postToMain(Object.assign({ type:"tg_boxes" }, msg || {}));
       });
@@ -3148,27 +3136,6 @@ try{
         postToMain({ type:"st_event", event: msg.event || {} });
       });
 
-      // ── Soccer: server → iframe relays ──────────────────────────────
-      // 2026-08 clean soccer protocol: the Worker owns the whole round state machine.
-      room.onMessage("sc_time_pong", (msg)=>{
-        postToMain({ type:"sc_time_pong", clientSentAt:Number(msg.clientSentAt||0), serverNow:Number(msg.serverNow||0) });
-      });
-      room.onMessage("sc_round_state", (msg)=>{
-        postToMain({ type:"sc_round_state", ...msg });
-      });
-      room.onMessage("sc_round_progress", (msg)=>{
-        postToMain({ type:"sc_round_progress", roundId:String(msg.roundId||""), scoreA:Number(msg.scoreA||0), scoreB:Number(msg.scoreB||0) });
-      });
-      room.onMessage("sc_math_ack", (msg)=>{
-        postToMain({
-          type:"sc_math_ack", roundId:String(msg.roundId||""), activeRoundId:String(msg.activeRoundId||""),
-          accepted:!!msg.accepted, reason:String(msg.reason||""), score:Number(msg.score||0),
-          expectedQuestionIndex:Number(msg.expectedQuestionIndex||0), phase:String(msg.phase||""), serverNow:Number(msg.serverNow||0)
-        });
-      });
-      room.onMessage("sc_score_sync", (msg)=>{
-        postToMain({ type:"sc_score_sync", scoreA:Number(msg.scoreA||0), scoreB:Number(msg.scoreB||0) });
-      });
       // 투게스터의 tg_players 릴레이와 완전히 동일한 패턴: 서버가 집계한
       // "전체 인원 위치 스냅샷"을 그대로 iframe에 전달한다. 개별 sc_pos를
       // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는

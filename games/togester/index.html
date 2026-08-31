@@ -829,6 +829,16 @@
         let itemDropSeq = 0;
         let nextItemDropAt = 0;
         let seenItemEvents = new Set();
+        // Backwards-compatible item authority over the existing tg_state/tg_players
+        // relay. No tg_item Worker support is required.
+        let itemCompatRequest = null;
+        let itemCompatHostVersion = 0;
+        let itemCompatHostEvent = null;
+        let itemCompatHostEvents = [];
+        let itemCompatSeenRequests = new Set();
+        let itemCompatAppliedVersion = 0;
+        let hostSessionId = '';
+
         let lastItemUseAt = 0;
 
         // 네트워크 보간용 히스토리 버퍼 (상대 움직임 끊김 완화)
@@ -1498,6 +1508,7 @@
             // room.js 의 bridge_init 에서 isHost 가 초기 타이밍상 false 로 들어올 수 있다.
             // seat 0 은 서버에서 호스트로 배정되므로, 임베드 초기화 시 안전한 폴백을 둔다.
             isHost = !!init.isHost || (typeof init.seat === 'number' && init.seat === 0 && !init.practice);
+            hostSessionId = String((Array.isArray(init.players) ? ((p=>p&&(p.sid||p.sessionId))(init.players.find(p=>p && (p.isHost || Number(p.seat)===0)))) : '') || init.hostSessionId || '');
             roomId = String(init.roomCode || 'ROOM');
             playerId = String(init.sessionId || ('p_' + Date.now()));
             localPlayer.name = String(init.nick || '햄찌').slice(0, 16);
@@ -2177,16 +2188,62 @@ cameraX = 0;
             updateFloorBtn();
         }
 
+        function itemCompatNormalizeWorld(){
+            return (worldItems||[]).slice(0,24).map(it=>({id:String(it.id||''),type:String(it.type||''),x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed}));
+        }
+        function itemCompatPublishHost(event=null){
+            if(!isHost || !EMBED || isGuestMode) return;
+            if(event){
+                itemCompatHostEvent={...event}; itemCompatHostEvents.push({...event});
+                if(itemCompatHostEvents.length>16)itemCompatHostEvents=itemCompatHostEvents.slice(-16);
+                itemCompatHostVersion++;
+            }
+            bridgeSendState(true);
+        }
+        function itemCompatProcessRequest(req, fromSid){
+            if(!isHost || !req || Number(req.level)!==Number(currentLevel)) return;
+            const evt=String(req.evt||''); if(!evt || itemCompatSeenRequests.has(evt)) return;
+            itemCompatSeenRequests.add(evt); if(itemCompatSeenRequests.size>400)itemCompatSeenRequests.clear();
+            const out={...req,from:String(fromSid||''),accepted:false};
+            if(req.action==='pick'){
+                const found=worldItems.find(x=>String(x.id)===String(req.id));
+                if(found){ out.accepted=true; out.itemType=String(found.type||req.itemType||''); out.charges=Number(req.charges)||ITEM_DEFS[out.itemType]?.charges||1; applyItemEvent(out,String(fromSid)===String(mySessionId)); }
+            }else if(req.action==='spawn'||req.action==='drop'||req.action==='use'){
+                out.accepted=true; applyItemEvent(out,String(fromSid)===String(mySessionId));
+            }
+            itemCompatPublishHost(out);
+        }
+        function itemCompatApplyHostState(st){
+            const sync=st&&st.itemCompat;if(!sync||!sync.authority)return;
+            const version=Math.max(0,Number(sync.version)||0);
+            if(Array.isArray(sync.world) && version>=itemCompatAppliedVersion){
+                worldItems=sync.world.filter(it=>it&&ITEM_DEFS[it.type]&&it.id).map(it=>({id:String(it.id),type:String(it.type),x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed}));
+            }
+            if(version>itemCompatAppliedVersion){
+                const events=Array.isArray(sync.events)?sync.events:(sync.event?[sync.event]:[]);
+                for(const ev of events){
+                    if(!ev||!ev.evt||seenItemEvents.has(`compat:${ev.evt}`))continue;
+                    seenItemEvents.add(`compat:${ev.evt}`);
+                    if(ev.accepted!==false){
+                        if(ev.action==='pick'){
+                            if(String(ev.from||'')===String(mySessionId) && ITEM_DEFS[ev.itemType]) heldItem={id:String(ev.id),type:String(ev.itemType),charges:Number(ev.charges)||ITEM_DEFS[ev.itemType].charges};
+                        }else if(ev.action==='use' && String(ev.from||'')!==String(mySessionId) && ev.effect){
+                            const e=ev.effect;addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color);itemSound(ev.itemType);
+                        }
+                    }
+                    if(itemCompatRequest && String(itemCompatRequest.evt||'')===String(ev.evt||'')) itemCompatRequest=null;
+                }
+            }
+            itemCompatAppliedVersion=Math.max(itemCompatAppliedVersion,version);updateItemButton();
+        }
         function itemEvent(action, data={}){
             const evt = `${mySessionId || 'solo'}:${Date.now()}:${++itemDropSeq}`;
             const payload = { action, level: currentLevel, evt, ...data };
-            // 멀티 줍기는 서버가 경합 승자를 정한 뒤 에코를 받은 경우에만 적용한다.
-            if (action === 'pick' && EMBED && !isGuestMode){
-                bridgeSend('tg_item', payload);
-                return;
-            }
-            applyItemEvent(payload, true);
-            if (EMBED && !isGuestMode) bridgeSend('tg_item', payload);
+            if(!EMBED || isGuestMode){ applyItemEvent(payload,true); return; }
+            if(isHost){ itemCompatProcessRequest(payload,mySessionId); return; }
+            // Guests publish a request in their ordinary player state. The host sees
+            // it in tg_players, decides once, and publishes the authoritative snapshot.
+            itemCompatRequest=payload; bridgeSendState(true);
         }
 
         function buildRoundItems(level, levelNum){
@@ -4198,6 +4255,8 @@ cameraX = 0;
             const next = {};
             if (!map) map = {};
             for (const [sid, p] of Object.entries(map)){
+                if(isHost && sid !== mySessionId && p?.itemRequest) itemCompatProcessRequest(p.itemRequest,sid);
+                if((hostSessionId && String(sid)===String(hostSessionId)) || p?.itemCompat?.authority) itemCompatApplyHostState(p);
                 if (sid === mySessionId) continue;
                 next[sid] = p;
                 // 스냅샷 기록 (보간/예측)
@@ -4418,7 +4477,14 @@ cameraX = 0;
                     variant: localPlayer.variant,
                     goalReached: !!localPlayer.goalReached,
                     pushing: (performance.now() < (localPlayer.pushAnimUntil || 0)),
-                    heldItem: heldItem ? { type:heldItem.type, charges:heldItem.charges } : null
+                    heldItem: heldItem ? { type:heldItem.type, charges:heldItem.charges } : null,
+                    itemRequest: itemCompatRequest ? { ...itemCompatRequest } : null,
+                    itemCompat: isHost ? {
+                        authority:true, version:itemCompatHostVersion,
+                        event:itemCompatHostEvent ? { ...itemCompatHostEvent } : null,
+                        events:itemCompatHostEvents.map(e=>({...e})),
+                        world:itemCompatNormalizeWorld()
+                    } : null
                 }
             });
         }
@@ -4475,6 +4541,7 @@ cameraX = 0;
             if (d.type === "bridge_host"){
                 const prevHost = !!isHost;
                 isHost = !!d.isHost;
+                hostSessionId = String(d.hostSessionId || hostSessionId || '');
                 // 호스트 승격/변경 직후 authoritative 퍼즐 스냅샷 송신이 바로 시작되도록 즉시 동기화 요청/전송
                 if (isHost && !prevHost){
                     try{ ensureBoxIds(); }catch(_){ }
@@ -4563,11 +4630,6 @@ cameraX = 0;
                 }
                 try{ sfxPush(); }catch(_){ }
                 bridgeSendState(true);
-                return;
-            }
-
-            if (d.type === "tg_item"){
-                applyItemEvent(d, false);
                 return;
             }
 
