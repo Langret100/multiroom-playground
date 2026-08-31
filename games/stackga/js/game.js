@@ -485,6 +485,7 @@ export function drawBoard(ctx, board, cell, opts={}){
   const lockedSet = new Set((lastLockCells||[]).map(([x,y])=>`${x},${y}`));
   const contactSet = new Set((lastContactCells||[]).map(([x,y])=>`${x},${y}`));
   const cascadeMap = new Map((lastCascadeCells||[]).map(c=>[`${c.x},${c.toY}`,c]));
+  const cascadeClusterMap = buildCascadeClusterMap(lastCascadeCells||[]);
   const age = now-lastLockAt;
   const contactAge = now-lastContactAt;
   const cascadeAge = now-lastCascadeAt;
@@ -510,19 +511,23 @@ export function drawBoard(ctx, board, cell, opts={}){
       sx=1+cw*.048; sy=1-cw*.075; dy=cw*cell*.025;
     } else if(cascadeInfo){
       const dropRows=Math.max(0,cascadeInfo.toY-cascadeInfo.fromY);
+      const clusterMeta=cascadeClusterMap.get(key);
       if(cascadeAge<0 && cascadeAge>-260){
         // While the completed row is flashing, visually keep surviving blocks
         // at their old height so the board does not appear to teleport.
         dy=-dropRows*cell;
       } else if(cascadeAge>=0 && cascadeAge<560){
-        // Then let them fall into the new rows with a soft jelly landing wave.
+        // Connected floating chunks should feel like one soft jelly mass, not
+        // a set of independent squares. So use one cluster timing/phase.
         const fallT=Math.max(0,Math.min(1,cascadeAge/175));
         const ease=1-Math.pow(1-fallT,3);
-        const delay=Math.max(0,(ROWS-1-y))*6;
+        const delay=Math.max(0,(ROWS-1-(clusterMeta?.bottomY ?? y)))*6;
         const ca=Math.max(0,cascadeAge-delay);
-        const cw=Math.sin(ca/39)*Math.exp(-ca/260);
+        const phase=clusterMeta?.phase || 0;
+        const cw=Math.sin(ca/39 + phase)*Math.exp(-ca/260);
+        const stretch=Math.min(.02, ((clusterMeta?.size || 1)-1)*.0028);
         dy=-dropRows*cell*(1-ease)+cw*cell*.035;
-        sx=1+cw*.065; sy=1-cw*.10;
+        sx=1+cw*(.065+stretch); sy=1-cw*(.10+stretch*1.25);
       }
     }
 
@@ -566,10 +571,32 @@ export function drawBoard(ctx, board, cell, opts={}){
       airDx=(lastAirMoveDir||0)*cell*(.105*decay + .025*wave*decay);
       airSkew=(lastAirMoveDir||0)*.09*decay;
     }
+
+    // Airborne tetrominoes are one connected jelly body. Previously each cell
+    // applied sx/sy/skew around its own centre, so a 4-cell piece looked like
+    // four separate gummies wobbling. Transform the whole connected piece once
+    // around its shared centre, then render its cells without per-cell squash.
+    const airCells=[];
     for(let yy=0;yy<4;yy++) for(let xx=0;xx<4;xx++) if(sh[yy][xx]){
       const bx=activePiece.x+xx, by=activePiece.y+yy;
       if(by<0 || by>=ROWS || bx<0 || bx>=COLS) continue;
-      drawJellyCell(ctx,bx*cell+airDx,by*cell,cell,fallingColor(activePiece.id,ghost),{sx:airSx,sy:airSy,dy:0,skewX:airSkew,sparkle:false,t:now,x:bx,y:by});
+      airCells.push([bx,by]);
+    }
+    if(airCells.length){
+      const minX=Math.min(...airCells.map(c=>c[0]));
+      const maxX=Math.max(...airCells.map(c=>c[0]));
+      const minY=Math.min(...airCells.map(c=>c[1]));
+      const maxY=Math.max(...airCells.map(c=>c[1]));
+      const centerX=((minX+maxX+1)*cell)*.5;
+      const centerY=((minY+maxY+1)*cell)*.5;
+      ctx.save();
+      ctx.translate(centerX+airDx,centerY);
+      ctx.transform(airSx,0,airSkew,airSy,0,0);
+      ctx.translate(-centerX,-centerY);
+      for(const [bx,by] of airCells){
+        drawJellyCell(ctx,bx*cell,by*cell,cell,fallingColor(activePiece.id,ghost),{sx:1,sy:1,dy:0,skewX:0,sparkle:false,t:now,x:bx,y:by});
+      }
+      ctx.restore();
     }
   }
 }
@@ -599,6 +626,39 @@ function mixColor(a,b,t){
     ],
     a:lerp(a.a,b.a,k)
   };
+}
+function buildCascadeClusterMap(cells){
+  const out = new Map();
+  if(!Array.isArray(cells) || !cells.length) return out;
+  const byKey = new Map(cells.map(cell=>[`${cell.x},${cell.toY}`, cell]));
+  const seen = new Set();
+  for(const cell of cells){
+    const startKey = `${cell.x},${cell.toY}`;
+    if(seen.has(startKey)) continue;
+    const stack = [cell];
+    const cluster = [];
+    seen.add(startKey);
+    while(stack.length){
+      const cur = stack.pop();
+      cluster.push(cur);
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){
+        const nextKey = `${cur.x+dx},${cur.toY+dy}`;
+        const next = byKey.get(nextKey);
+        if(next && !seen.has(nextKey)){
+          seen.add(nextKey);
+          stack.push(next);
+        }
+      }
+    }
+    const bottomY = Math.max(...cluster.map(v=>v.toY));
+    const topY = Math.min(...cluster.map(v=>v.toY));
+    const leftX = Math.min(...cluster.map(v=>v.x));
+    const maxDrop = Math.max(...cluster.map(v=>Math.max(0, v.toY - v.fromY)));
+    const phase = (((leftX+1)*17 + (topY+1)*11 + cluster.length*5) % 29) / 29 * Math.PI * 2;
+    const meta = { bottomY, topY, leftX, maxDrop, size: cluster.length, phase };
+    for(const member of cluster) out.set(`${member.x},${member.toY}`, meta);
+  }
+  return out;
 }
 function paletteAt(t){
   // bottom -> fresh mint/green -> violet -> cobalt -> deep starry blue

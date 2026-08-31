@@ -662,6 +662,33 @@ function updatePreview(modeId){
 
   function setText(el, t){ if(el) el.textContent = String(t ?? ""); }
 
+  function blurGameBlockingInputs(){
+    try{
+      const ae = document.activeElement;
+      if(!ae) return;
+      const tag = String(ae.tagName || '').toUpperCase();
+      if(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || ae.isContentEditable){
+        ae.blur?.();
+      }
+    }catch(_){ }
+  }
+
+  function setDuelFrameLoading(active, gameId=''){
+    try{
+      const wrap = duel?.ui?.frameWrap;
+      if(!wrap) return;
+      wrap.classList.toggle('iframe-loading', !!active);
+      if(gameId) wrap.dataset.game = String(gameId);
+      if(!active) wrap.classList.add('iframe-ready');
+      else wrap.classList.remove('iframe-ready');
+      try{ duel?.iframeEl?.setAttribute?.('aria-busy', active ? 'true' : 'false'); }catch(__){ }
+    }catch(_){ }
+  }
+
+  function revealDuelFrameSoon(delay=80){
+    setTimeout(()=>{ setDuelFrameLoading(false); }, delay);
+  }
+
   function updateBracketUI(){
     if(!duel.ui.duelBracket) return;
     const host = duel.ui.duelBracket;
@@ -923,6 +950,7 @@ function updatePreview(modeId){
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   function focusGameIframeSoon(){
+    blurGameBlockingInputs();
     const fr = duel?.iframeEl;
     if(!fr) return;
     const poke = ()=>{
@@ -1712,8 +1740,19 @@ function updatePreview(modeId){
         if(['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(code)) e.preventDefault?.();
       }catch(_){ }
     };
-    window.addEventListener("keydown", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true); forwardStackgaPhysicalKey(e,true); }, { passive:false, capture:true });
-    window.addEventListener("keyup", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false); forwardStackgaPhysicalKey(e,false); }, { passive:false, capture:true });
+    window.addEventListener("keydown", (e)=>{
+      // Stackga must never depend on a click-to-focus recovery. During an active
+      // block-stacking match, forward physical keys before the generic text-input
+      // guard: a chat/input element can remain focused when the host starts the match.
+      forwardStackgaPhysicalKey(e,true);
+      if (shouldIgnoreKeyEvent(e)) return;
+      setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true);
+    }, { passive:false, capture:true });
+    window.addEventListener("keyup", (e)=>{
+      forwardStackgaPhysicalKey(e,false);
+      if (shouldIgnoreKeyEvent(e)) return;
+      setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false);
+    }, { passive:false, capture:true });
 
     // Mobile overlay buttons
     const btns = document.querySelectorAll("[data-key]");
@@ -2547,8 +2586,10 @@ function handleDuelMatch(m){
   const cpuInMatch = (m.aSid === CPU_SID || m.bSid === CPU_SID);
 
   if (isPlayer){
+    blurGameBlockingInputs();
     duel.ui.frameWrap?.classList.remove("hidden");
     duel.ui.spectate?.classList.add("hidden");
+    setDuelFrameLoading(true, duel.meta?.id || m.gameId || "");
     // Load iframe fresh
     const src = `${duel.meta.embedPath}?embed=1&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
     duel.iframeLoaded = false;
@@ -2559,6 +2600,7 @@ function handleDuelMatch(m){
         // wait for bridge_ready or init anyway
         sendBridgeInit();
         focusGameIframeSoon();
+        revealDuelFrameSoon(180);
       };
       duel.iframeEl.src = src;
     }
@@ -2595,6 +2637,7 @@ function handleDuelMatch(m){
       }
     }
   } else {
+    setDuelFrameLoading(false, duel.meta?.id || m.gameId || "");
     duel.ui.frameWrap?.classList.add("hidden");
     duel.ui.spectate?.classList.remove("hidden");
     // spectator: ensure CPU iframe is not running
@@ -2631,6 +2674,8 @@ function startCoopEmbed(meta){
 
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
+  blurGameBlockingInputs();
+  setDuelFrameLoading(true, meta?.id || "");
   // coop에서는 관전/대진 UI를 숨기고 iframe만 사용
   duel.ui.spectate?.classList.add("hidden");
   duel.ui.frameWrap?.classList.remove("hidden");
@@ -2656,6 +2701,8 @@ function startCoopEmbed(meta){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
       sendCoopBridgeInit();
+      focusGameIframeSoon();
+      revealDuelFrameSoon(180);
     };
     duel.iframeEl.src = src;
   }
@@ -2679,6 +2726,8 @@ function startCoopPractice(meta){
   
   showDuelUI(true);
   try{ enterGameFullscreen(); }catch(_){ }
+  blurGameBlockingInputs();
+  setDuelFrameLoading(true, meta?.id || "");
   duel.ui.spectate?.classList.add("hidden");
   duel.ui.frameWrap?.classList.remove("hidden");
   if (duel.ui.duelLine) duel.ui.duelLine.textContent = (meta?.name || "협동") + " · 연습";
@@ -2689,6 +2738,8 @@ function startCoopPractice(meta){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
       sendCoopBridgeInit();
+      focusGameIframeSoon();
+      revealDuelFrameSoon(180);
     };
     duel.iframeEl.src = src;
   }
