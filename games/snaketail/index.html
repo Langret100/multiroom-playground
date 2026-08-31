@@ -173,11 +173,24 @@
   #overlay button{ border:none; padding:10px 14px; border-radius:12px; font-weight:800; cursor:pointer; }
   #overlay .primary{ background:var(--accent); color:#1b1d27; }
   #overlay .ghost{ background:transparent; border:1px solid var(--line); color:var(--txt); }
+
+  /* Game-feel screen FX */
+  #screenFx{position:fixed;inset:0;pointer-events:none;z-index:25;opacity:0;mix-blend-mode:screen;}
+  #screenFx.eat{animation:stEatFx .22s ease-out;}
+  #screenFx.kill{animation:stKillFx .34s ease-out;}
+  #screenFx.die{animation:stDieFx .42s ease-out;}
+  #screenFx.level{animation:stLevelFx .55s ease-out;}
+  @keyframes stEatFx{0%{opacity:.36;background:radial-gradient(circle at 50% 50%,rgba(118,255,203,.75),transparent 38%)}100%{opacity:0}}
+  @keyframes stKillFx{0%{opacity:.5;background:radial-gradient(circle at 50% 50%,rgba(255,205,77,.9),transparent 44%)}100%{opacity:0}}
+  @keyframes stDieFx{0%{opacity:.5;background:rgba(255,70,100,.22)}100%{opacity:0}}
+  @keyframes stLevelFx{0%{opacity:.5;background:radial-gradient(circle,rgba(112,193,255,.7),rgba(147,102,255,.18) 42%,transparent 72%)}100%{opacity:0}}
+
 </style>
 
 </head>
 <body>
 <div id="wrap">
+  <div id="screenFx" aria-hidden="true"></div>
   <div id="topbar">
     <div class="pill" id="pillRoom">
       <span class="muted">⏱</span><b id="timeLeft">--:--</b>
@@ -319,12 +332,17 @@
       beep(base*1.25, 0.06, 'triangle', 0.08);
       beep(base*1.5, 0.06, 'triangle', 0.06);
     };
+    const cc0Eat = new Audio('https://raw.githubusercontent.com/eugeneloza/SnakeGame/master/data/EatSound_CC0_by_EugeneLoza.ogg');
+    const cc0Die = new Audio('https://raw.githubusercontent.com/eugeneloza/SnakeGame/master/data/DieSound_CC0_by_EugeneLoza.ogg');
+    cc0Eat.preload='auto'; cc0Die.preload='auto'; cc0Eat.volume=.18; cc0Die.volume=.16;
+    const playSample=(el)=>{ try{ el.currentTime=0; const pr=el.play(); if(pr&&pr.catch)pr.catch(()=>{}); }catch(_){ } };
+    const fx=(kind)=>{ try{ const el=document.getElementById('screenFx'); if(!el)return; el.className=''; void el.offsetWidth; el.className=kind; setTimeout(()=>{ if(el.className===kind)el.className=''; },650); }catch(_){ } };
     return {
-      prime(){ const a = ensure(); if (!a) return; if (a.state==='suspended') a.resume().catch(()=>{}); },
-      eat(){ beep(740, 0.06, 'square', 0.08); beep(980, 0.07, 'triangle', 0.06); },
-      level(){ chord(660); setTimeout(()=> chord(880), 70); },
-      kill(){ beep(220, 0.08, 'sawtooth', 0.10); setTimeout(()=>beep(330, 0.06, 'square', 0.07), 70); },
-      die(){ beep(260, 0.14, 'sine', 0.09); setTimeout(()=>beep(190, 0.18, 'sine', 0.06), 110); },
+      prime(){ const a = ensure(); if (a && a.state==='suspended') a.resume().catch(()=>{}); },
+      eat(){ playSample(cc0Eat); fx('eat'); beep(740, 0.05, 'triangle', 0.045); },
+      level(){ fx('level'); chord(660); setTimeout(()=> chord(880), 70); },
+      kill(){ fx('kill'); beep(260, 0.07, 'triangle', 0.08); setTimeout(()=>beep(390, 0.06, 'square', 0.05), 65); },
+      die(){ playSample(cc0Die); fx('die'); beep(240, 0.12, 'sine', 0.055); },
       tick(){ beep(980, 0.03, 'triangle', 0.03); }
     };
   })();
@@ -373,6 +391,35 @@
     { key:'p12', name:'12각형', quantumDeg:30, sides:12, targetMass:125, hint:'30도씩 회전해 원에 가까워져요.' },
     { key:'circle', name:'원', quantumDeg:0, sides:0, targetMass:160, hint:'이제 자유롭게 움직일 수 있어요!' },
   ];
+
+  // CC0 snake sprite (Eugene Loza / OpenGameArt, mirrored in the source GitHub repo).
+  // The first 16x16 frame is used for the head; body beads are rendered locally so
+  // each player can keep a distinct color. If the remote image is unavailable, a
+  // clean fallback head is used automatically.
+  const snakeSprite = new Image();
+  let snakeSpriteReady = false;
+  snakeSprite.onload = ()=>{ snakeSpriteReady = true; };
+  snakeSprite.onerror = ()=>{ snakeSpriteReady = false; };
+  snakeSprite.src = 'https://raw.githubusercontent.com/eugeneloza/SnakeGame/master/data/Snake.png';
+
+  const particles = [];
+  function spawnParticles(x,y,hue=120,count=10,kind='eat'){
+    for(let i=0;i<count;i++){
+      const a=Math.random()*Math.PI*2, sp=(kind==='die'?150:95)+Math.random()*100;
+      particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:0.35+Math.random()*0.35,max:0.7,hue,r:2+Math.random()*4});
+    }
+  }
+  function updateDrawParticles(dt){
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i]; p.life-=dt;
+      if(p.life<=0){particles.splice(i,1);continue;}
+      p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.94; p.vy*=0.94;
+      const sp=worldToScreen(p.x,p.y), a=Math.max(0,p.life/p.max);
+      ctx.globalAlpha=a; ctx.fillStyle=`hsl(${p.hue} 90% 66%)`;
+      ctx.beginPath(); ctx.arc(sp.x,sp.y,p.r*cam.z*2.2,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
 
   // --- Game state ---
   let mySid = '';
@@ -687,11 +734,11 @@ function turn(dirSign){
       targetVel = clamp(d * gain, -maxRate, maxRate);
     } else {
       const axis = (input.right ? 1 : 0) - (input.left ? 1 : 0);
-      const maxRate = (st.quantumDeg === 0) ? 5.6 : 4.5;
+      const maxRate = (st.quantumDeg === 0) ? 4.65 : 3.8;
       targetVel = axis * maxRate;
     }
 
-    const lerp = Math.min(1, dt * 13.5);
+    const lerp = Math.min(1, dt * 9.5);
     me.turnVel = (Number(me.turnVel)||0) + (targetVel - (Number(me.turnVel)||0)) * lerp;
     if (!steer.active && !input.left && !input.right){
       me.turnVel *= Math.max(0, 1 - dt * 10.5);
@@ -771,13 +818,14 @@ function turn(dirSign){
 
       // --- BOOST (snake.io-style) ---
       const canBoost = input.boost && me.mass > 10.5;
-      const baseSpeed = 320;
-      const boostMul = 1.85;
+      const baseSpeed = 270;
+      const boostMul = 1.58;
       me.speed = canBoost ? baseSpeed*boostMul : baseSpeed;
 
       // Boost consumes mass and drops tiny pellets.
       if (!me._boostAcc) me._boostAcc = 0;
       if (canBoost){
+        if(Math.random()<0.40){ const tail=me.body[Math.min(me.body.length-1,12)]||{x:me.x,y:me.y}; spawnParticles(tail.x,tail.y,me.colorHue||115,1,'eat'); }
         // mass drain
         me.mass = Math.max(8, me.mass - dt*1.6);
         me._boostAcc += dt;
@@ -814,7 +862,7 @@ function turn(dirSign){
       }
 
       // update body
-      const spacing = 4;
+      const spacing = 6;
       const last = me.body[0] || { x: me.x, y: me.y };
       if (dist2(last.x,last.y,me.x,me.y) > spacing*spacing){
         me.body.unshift({ x: me.x, y: me.y });
@@ -874,7 +922,7 @@ function turn(dirSign){
         const fr = foodInfo(f).r;
         const rr = (eatR + fr);
         if (dist2(me.x, me.y, f.x, f.y) <= rr*rr){
-          if(isMathFood(f)){ net.foods.splice(i,1); onMathFoodEaten(f); SFX.eat(); break; }
+          if(isMathFood(f)){ net.foods.splice(i,1); onMathFoodEaten(f); spawnParticles(me.x,me.y,190,12,'eat'); SFX.eat(); break; }
           //── 일반 먹이
           const value = Number(f.value||foodInfo(f).value)||foodInfo(f).value;
           if (offlineSolo || !connected){
@@ -882,6 +930,7 @@ function turn(dirSign){
             net.foods.splice(i,1);
             const mul = mathBoostMul > 1 ? mathBoostMul : 1;
             me.mass += (value * 0.5) * mul;
+            spawnParticles(me.x,me.y,120,10,'eat');
             SFX.eat();
             spawnOneFood();
             lastFoodsAt = now();
@@ -1027,8 +1076,10 @@ function turn(dirSign){
         const br = (aTh + bTh) * 0.5;
 
         const body = Array.isArray(b.body) ? b.body : [];
-        // skip first few to avoid false positives near head
-        for (let i=12; i<body.length; i+=2){
+        // Keep collisions active for short snakes too; the last 12% stays a safe tail zone.
+        const bodyStart=Math.min(Math.max(2,Math.floor(body.length*0.12)),Math.max(2,body.length-1));
+        const bodyEnd=Math.max(bodyStart,Math.floor(body.length*0.88));
+        for (let i=bodyStart; i<bodyEnd; i+=1){
           const p = body[i];
           if (!p) continue;
           if (dist2(ax,ay, Number(p.x||0)||0, Number(p.y||0)||0) < br*br){
@@ -1317,63 +1368,27 @@ function esc(s){
     const col = colorForSid(sid, state);
     // Cute snake materials
     const headMat = new T.MeshStandardMaterial({ color: col, roughness: 0.45, metalness: 0.04, transparent: true, opacity: 0.99 });
-    const tailMat = new T.MeshStandardMaterial({ color: col, roughness: 0.72, metalness: 0.02, transparent: true, opacity: 0.96 });
+    const tailMat = new T.MeshStandardMaterial({ color: col, roughness: 0.42, metalness: 0.02, transparent: true, opacity: 0.97, emissive: col.clone().multiplyScalar(0.10), emissiveIntensity: 0.35 });
 
-    // head: rounded snake head with a clear front snout and soft cheeks
+    // clean arcade mascot head: simple rounded capsule + eyes, no uncanny face parts
     const g = new T.Group();
-    const head = new T.Mesh(new T.SphereGeometry(0.36, 24, 20), headMat);
-    head.position.y = 0.28;
-    head.scale.set(1.04, 0.88, 1.62);
+    const head = new T.Mesh(new T.SphereGeometry(0.38, 26, 20), headMat);
+    head.position.y = 0.25;
+    head.scale.set(1.0, 0.92, 1.34);
     g.add(head);
 
-    const snout = new T.Mesh(new T.CapsuleGeometry(0.11, 0.38, 5, 12), headMat);
-    snout.rotation.x = Math.PI * 0.5;
-    snout.position.set(0, 0.20, 0.54);
-    snout.scale.set(0.88, 0.74, 1.0);
-    g.add(snout);
-
-    const cheekL = new T.Mesh(new T.SphereGeometry(0.11, 12, 10), headMat);
-    cheekL.position.set(-0.12, 0.20, 0.20);
-    cheekL.scale.set(0.92, 0.72, 0.96);
-    const cheekR = cheekL.clone();
-    cheekR.position.x = 0.12;
-    g.add(cheekL);
-    g.add(cheekR);
-
-    const eyeWhiteMat = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.35, metalness: 0.0, emissive: 0x101010, emissiveIntensity: 0.12 });
-    const pupilMat = new T.MeshStandardMaterial({ color: 0x101010, roughness: 0.85, metalness: 0.0 });
-    const eyeGeo = new T.SphereGeometry(0.075, 12, 10);
-    const pupilGeo = new T.SphereGeometry(0.034, 10, 8);
-
-    const eyeL = new T.Mesh(eyeGeo, eyeWhiteMat);
-    const eyeR = new T.Mesh(eyeGeo, eyeWhiteMat);
-    eyeL.position.set(-0.15, 0.37, 0.38);
-    eyeR.position.set( 0.15, 0.37, 0.38);
-    g.add(eyeL); g.add(eyeR);
-
-    const pL = new T.Mesh(pupilGeo, pupilMat);
-    const pR = new T.Mesh(pupilGeo, pupilMat);
-    pL.position.set(-0.15, 0.37, 0.45);
-    pR.position.set( 0.15, 0.37, 0.45);
-    g.add(pL); g.add(pR);
-
-    const browGeo = new T.CapsuleGeometry(0.015, 0.10, 3, 8);
-    const browL = new T.Mesh(browGeo, pupilMat);
-    browL.rotation.z = Math.PI * 0.22;
-    browL.rotation.x = Math.PI * 0.5;
-    browL.position.set(-0.15, 0.45, 0.33);
-    const browR = browL.clone();
-    browR.rotation.z = -Math.PI * 0.22;
-    browR.position.x = 0.15;
-    g.add(browL); g.add(browR);
-
-    const tongueMat = new T.MeshStandardMaterial({ color: 0xff4d6d, roughness: 0.65, metalness: 0.0, emissive: 0x330008, emissiveIntensity: 0.25 });
-    const tongue = new T.Mesh(new T.BoxGeometry(0.05, 0.01, 0.16), tongueMat);
-    tongue.position.set(0, 0.16, 0.82);
-    g.add(tongue);
+    const eyeWhiteMat = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 0.28, emissive: 0x202020, emissiveIntensity: 0.08 });
+    const pupilMat = new T.MeshStandardMaterial({ color: 0x10131a, roughness: 0.7 });
+    const eyeGeo = new T.SphereGeometry(0.07, 12, 10);
+    const pupilGeo = new T.SphereGeometry(0.031, 10, 8);
+    for (const xEye of [-0.14,0.14]){
+      const ew=new T.Mesh(eyeGeo,eyeWhiteMat); ew.position.set(xEye,0.36,0.36); g.add(ew);
+      const pp=new T.Mesh(pupilGeo,pupilMat); pp.position.set(xEye,0.36,0.42); g.add(pp);
+    }
+    const tongue = null;
 
     const tailMax = 160;
-    const SegGeo = new T.IcosahedronGeometry(0.16, 0);
+    const SegGeo = new T.SphereGeometry(0.17, 12, 9);
     const tail = new T.InstancedMesh(SegGeo, tailMat, tailMax);
     tail.count = 0;
     tail.instanceMatrix.setUsage(T.DynamicDrawUsage);
@@ -1471,7 +1486,7 @@ function esc(s){
       obj.tail.instanceMatrix.needsUpdate = true;
 
       // tongue flick
-      try{ if (obj.tongue){ obj.tongue.visible = ((now()>>8)&1)===0; } }catch(_){ }
+      try{ if (obj.tongue){ if(obj.tongue) obj.tongue.visible = ((now()>>8)&1)===0; } }catch(_){ }
     }
 
     renderer.render(scene, camera);
@@ -1548,7 +1563,7 @@ function esc(s){
     ctx.clearRect(0,0,w,h);
 
     // 배경
-    ctx.fillStyle = '#070a16';
+    const bg=ctx.createLinearGradient(0,0,w,h); bg.addColorStop(0,'#071126'); bg.addColorStop(.55,'#0b1630'); bg.addColorStop(1,'#10152d'); ctx.fillStyle=bg;
     ctx.fillRect(0,0,w,h);
     // topbar 영역(상단 52px)은 그리지 않음
     ctx.save();
@@ -1656,108 +1671,61 @@ function esc(s){
       mass:me.mass,alive:me.alive,
       nick:myNick,colorHue:me.colorHue,body:me.body
     },true);
+    updateDrawParticles(1/60);
   }
 
   function drawSnake(sid, s, isMe=false){
-    const alive = s.alive !== false;
-    const mass  = Number(s.mass||0)||0;
-    const th    = thicknessFor(mass);
-    const body  = Array.isArray(s.body) ? s.body : [];
-    const hue   = hueForState(sid, s);
-    const dir   = Number(s.dir||0)||0;
-    const fx = Math.cos(dir), fy = Math.sin(dir);
-    const cDark  = alive?`hsla(${hue},78%,34%,.97)`:`hsla(${hue},25%,28%,.5)`;
-    const cMid   = alive?`hsla(${hue},68%,56%,.97)`:`hsla(${hue},20%,42%,.5)`;
-    const cBelly = alive?`hsla(${(hue+28)%360},48%,80%,.82)`:`rgba(160,160,140,.3)`;
-    const headPos = worldToScreen(Number(s.x||0)||0, Number(s.y||0)||0);
-    const hr = Math.max(6, th*0.72+3);
-    const skip = Math.max(1, Math.floor(body.length/200));
-    // 아웃라인
+    const alive=s.alive!==false;
+    const mass=Number(s.mass||0)||0;
+    const th=thicknessFor(mass);
+    const body=Array.isArray(s.body)?s.body:[];
+    const hue=hueForState(sid,s);
+    const dir=Number(s.dir||0)||0;
+    const head=worldToScreen(Number(s.x||0)||0,Number(s.y||0)||0);
+    const beadR=Math.max(5,th*0.55);
+
     if(body.length>2){
-      ctx.lineCap='round'; ctx.lineJoin='round';
-      ctx.strokeStyle='rgba(0,0,0,.4)'; ctx.lineWidth=th*1.28+2;
-      ctx.beginPath(); ctx.moveTo(headPos.x,headPos.y);
-      for(let i=0;i<body.length;i+=skip){const bp=body[i];if(!bp)continue;const pp=worldToScreen(Number(bp.x||0),Number(bp.y||0));ctx.lineTo(pp.x,pp.y);}
-      ctx.stroke();
+      ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
+      ctx.strokeStyle='rgba(0,0,0,.26)'; ctx.lineWidth=beadR*1.55;
+      ctx.beginPath(); ctx.moveTo(head.x+2,head.y+3);
+      const shadowStep=Math.max(1,Math.floor(body.length/55));
+      for(let i=0;i<body.length;i+=shadowStep){const b=body[i];if(!b)continue;const p=worldToScreen(Number(b.x||0),Number(b.y||0));ctx.lineTo(p.x+2,p.y+3);} ctx.stroke(); ctx.restore();
     }
-    // 등 색
-    if(body.length>2){
-      ctx.lineCap='round'; ctx.lineJoin='round';
-      ctx.strokeStyle=cDark; ctx.lineWidth=th*1.05;
-      ctx.beginPath(); ctx.moveTo(headPos.x,headPos.y);
-      for(let i=0;i<body.length;i+=skip){const bp=body[i];if(!bp)continue;const pp=worldToScreen(Number(bp.x||0),Number(bp.y||0));ctx.lineTo(pp.x,pp.y);}
-      ctx.stroke();
-      // 배 중심선
-      ctx.strokeStyle=cBelly; ctx.lineWidth=th*0.26;
-      ctx.beginPath(); ctx.moveTo(headPos.x,headPos.y);
-      for(let i=0;i<body.length;i+=skip){const bp=body[i];if(!bp)continue;const pp=worldToScreen(Number(bp.x||0),Number(bp.y||0));ctx.lineTo(pp.x,pp.y);}
-      ctx.stroke();
+
+    const beadStep=Math.max(1,Math.floor(body.length/42));
+    let beadIndex=0;
+    for(let i=0;i<body.length;i+=beadStep){
+      const b=body[i]; if(!b)continue;
+      const p=worldToScreen(Number(b.x||0),Number(b.y||0));
+      const tailT=body.length<=1?0:i/(body.length-1);
+      const r=beadR*(1-tailT*0.48);
+      const grad=ctx.createRadialGradient(p.x-r*.35,p.y-r*.4,r*.12,p.x,p.y,r);
+      grad.addColorStop(0,alive?`hsl(${hue} 92% 78%)`:'rgba(150,155,165,.7)');
+      grad.addColorStop(.58,alive?`hsl(${hue} 76% 55%)`:'rgba(110,115,125,.6)');
+      grad.addColorStop(1,alive?`hsl(${hue} 72% 38%)`:'rgba(75,80,90,.55)');
+      ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=Math.max(1,r*.09); ctx.stroke();
+      if((beadIndex++%3)===0){ctx.fillStyle='rgba(255,255,255,.32)';ctx.beginPath();ctx.arc(p.x-r*.28,p.y-r*.34,Math.max(1.2,r*.16),0,Math.PI*2);ctx.fill();}
     }
-    // 비늘
-    const scStep=Math.max(4,Math.floor(body.length/55));
-    for(let i=body.length-1;i>=0;i-=scStep){
-      const bp=body[i];if(!bp)continue;
-      const t=body.length<=1?0:i/(body.length-1);
-      const sr=th*(0.44+(1-t)*0.38);
-      const pp=worldToScreen(Number(bp.x||0),Number(bp.y||0));
-      ctx.save(); ctx.translate(pp.x,pp.y); ctx.scale(1.1,0.56);
-      ctx.fillStyle=(Math.floor(i/scStep)%2===0)?cMid:cDark;
-      ctx.globalAlpha=alive?0.44:0.18;
-      ctx.beginPath(); ctx.arc(0,0,sr,0,Math.PI*2); ctx.fill();
-      ctx.globalAlpha=1; ctx.restore();
+
+    const hr=beadR*1.24;
+    ctx.save(); ctx.translate(head.x,head.y); ctx.rotate(dir);
+    if(snakeSpriteReady){
+      ctx.imageSmoothingEnabled=false;
+      ctx.drawImage(snakeSprite,0,0,16,16,-hr,-hr,hr*2,hr*2);
+      ctx.globalCompositeOperation='source-atop'; ctx.globalAlpha=.22; ctx.fillStyle=`hsl(${hue} 85% 55%)`; ctx.fillRect(-hr,-hr,hr*2,hr*2);
+      ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+    }else{
+      const hg=ctx.createRadialGradient(-hr*.35,-hr*.35,hr*.12,0,0,hr);
+      hg.addColorStop(0,`hsl(${hue} 92% 80%)`); hg.addColorStop(.6,`hsl(${hue} 80% 56%)`); hg.addColorStop(1,`hsl(${hue} 72% 38%)`);
+      ctx.fillStyle=hg; ctx.beginPath(); ctx.ellipse(0,0,hr*1.12,hr*.88,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(hr*.35,-hr*.28,hr*.18,0,Math.PI*2);ctx.arc(hr*.35,hr*.28,hr*.18,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle='#17213b'; ctx.beginPath(); ctx.arc(hr*.41,-hr*.28,hr*.09,0,Math.PI*2);ctx.arc(hr*.41,hr*.28,hr*.09,0,Math.PI*2);ctx.fill();
     }
-    // 꼬리 끝 뾰족
-    if(body.length>=6){
-      const t0=body[body.length-1],t1=body[body.length-6];
-      if(t0&&t1){
-        const tp=worldToScreen(Number(t0.x||0),Number(t0.y||0));
-        const tp1=worldToScreen(Number(t1.x||0),Number(t1.y||0));
-        const ddx=tp.x-tp1.x,ddy=tp.y-tp1.y,dl=Math.sqrt(ddx*ddx+ddy*ddy)||1;
-        const nx=ddx/dl,ny=ddy/dl,tw2=th*0.15;
-        ctx.fillStyle=cDark;
-        ctx.beginPath();
-        ctx.moveTo(tp.x+nx*tw2*5,tp.y+ny*tw2*5);
-        ctx.lineTo(tp.x-ny*tw2,tp.y+nx*tw2);
-        ctx.lineTo(tp.x+ny*tw2,tp.y-nx*tw2);
-        ctx.closePath(); ctx.fill();
-      }
-    }
-    // 머리 납작 타원
-    ctx.save(); ctx.translate(headPos.x,headPos.y); ctx.rotate(dir);
-    ctx.fillStyle='rgba(0,0,0,.32)';
-    ctx.beginPath(); ctx.ellipse(1.5,1.5,hr*1.35,hr*0.82,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle=cDark;
-    ctx.beginPath(); ctx.ellipse(0,0,hr*1.35,hr*0.82,0,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle=cMid;
-    ctx.beginPath(); ctx.ellipse(-hr*0.08,0,hr*0.72,hr*0.46,0,0,Math.PI*2); ctx.fill();
     ctx.restore();
-    // 눈 (세로 동공)
-    const eyeSz=Math.max(3.5,hr*0.44),eSep=hr*0.54,eFwd=hr*0.44;
-    [[headPos.x+fx*eFwd-fy*eSep,headPos.y+fy*eFwd+fx*eSep],[headPos.x+fx*eFwd+fy*eSep,headPos.y+fy*eFwd-fx*eSep]].forEach(([ex,ey])=>{
-      ctx.fillStyle='#fffde0'; ctx.beginPath(); ctx.arc(ex,ey,eyeSz,0,Math.PI*2); ctx.fill();
-      ctx.save(); ctx.translate(ex+fx*eyeSz*0.25,ey+fy*eyeSz*0.25); ctx.rotate(dir); ctx.scale(0.28,1);
-      ctx.fillStyle='rgba(8,4,18,.93)'; ctx.beginPath(); ctx.arc(0,0,eyeSz*0.82,0,Math.PI*2); ctx.fill();
-      ctx.restore();
-      ctx.fillStyle='rgba(255,255,255,.78)';
-      ctx.beginPath(); ctx.arc(ex-fx*eyeSz*0.3-fy*eyeSz*0.2,ey-fy*eyeSz*0.3+fx*eyeSz*0.2,eyeSz*0.22,0,Math.PI*2); ctx.fill();
-    });
-    // 두갈래 혀
-    if(((now()>>6)&3)<2){
-      const tB=hr*1.38,tL=hr*0.9,tF=hr*0.48,tA=0.46;
-      const tx0=headPos.x+fx*tB,ty0=headPos.y+fy*tB,tx1=tx0+fx*tL,ty1=ty0+fy*tL;
-      ctx.strokeStyle='rgba(255,28,68,.96)'; ctx.lineWidth=Math.max(1.2,hr*0.15); ctx.lineCap='round';
-      ctx.beginPath(); ctx.moveTo(tx0,ty0); ctx.lineTo(tx1,ty1); ctx.stroke();
-      [dir+tA,dir-tA].forEach(a=>{ctx.beginPath();ctx.moveTo(tx1,ty1);ctx.lineTo(tx1+Math.cos(a)*tF,ty1+Math.sin(a)*tF);ctx.stroke();});
-    }
-    // 이름
+
     const nick=s.nick||sid.slice(0,4);
-    const fs=Math.max(10,Math.round(9*cam.z+8));
-    ctx.font=`700 ${fs}px system-ui`; ctx.textAlign='center';
-    const tw=ctx.measureText(nick).width, tagY=headPos.y-hr*1.7-6;
-    ctx.fillStyle='rgba(0,0,0,.52)';
-    if(ctx.roundRect){ctx.beginPath();ctx.roundRect(headPos.x-tw/2-5,tagY-fs,tw+10,fs+4,3);ctx.fill();}
-    ctx.fillStyle=isMe?'#ffd04d':'rgba(235,242,255,.95)';
-    ctx.fillText(nick,headPos.x,tagY); ctx.textAlign='left';
+    ctx.save(); ctx.textAlign='center'; ctx.font=`800 ${Math.max(10,11+cam.z*5)}px system-ui`; ctx.lineWidth=4; ctx.strokeStyle='rgba(6,10,25,.75)'; ctx.strokeText(nick,head.x,head.y-hr-10); ctx.fillStyle=isMe?'#ffd76a':'#f5f8ff'; ctx.fillText(nick,head.x,head.y-hr-10); ctx.restore();
   }
 
   function hashHue(s){
@@ -2019,7 +1987,7 @@ function esc(s){
       net.foods = net.foods.filter(f => f && String(f.id) !== id);
       if (eaterSid === mySid){
         me.mass += value + bonus;
-        if (comboText){ addComboFx(me.x, me.y, comboText); SFX.level(); } else { SFX.eat(); }
+        if (comboText){ addComboFx(me.x, me.y, comboText); spawnParticles(me.x,me.y,280,18,'eat'); SFX.level(); } else { spawnParticles(me.x,me.y,120,10,'eat'); SFX.eat(); }
       } else if (comboText){
         const s = net.players[eaterSid];
         if (s) addComboFx(Number(s.x||0), Number(s.y||0), comboText);
@@ -2036,6 +2004,7 @@ function esc(s){
         if (victim === mySid && me.alive){
           me.alive = false;
           me.killerSid = killer;
+          spawnParticles(me.x,me.y,350,26,'die');
           // 내가 죽었을 때: 몸통을 먹이로 변환하여 브로드캐스트
           const deathPellets = [];
           for(let j=0; j<me.body.length; j+=4){

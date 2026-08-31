@@ -3,7 +3,7 @@ import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
 import { StackGame, drawBoard, drawNext, COLS } from "./game.js";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-jellyfocus3";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-jellyfocus4";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -269,6 +269,25 @@ document.addEventListener("keyup", (e)=>{
   else if(e.code==="ArrowLeft") stopHorizontal("left");
   else if(e.code==="ArrowRight") stopHorizontal("right");
 });
+// Parent room page forwards keyboard events too, so gameplay never depends on
+// whether the browser has already focused this iframe.
+window.addEventListener('message',(e)=>{
+  const d=e?.data||{};
+  if(d.type!=='stackga_key'||d.gameId!=='stackga')return;
+  const code=String(d.code||'');
+  if(d.down){
+    if(code==='ArrowDown'){ if(!downHeld){ downHeld=true; performAction('down'); downTimer=setInterval(()=>{if(downHeld)performAction('down');},30); } return; }
+    if(code==='ArrowLeft'||code==='ArrowRight'){ if(!d.repeat) startHorizontal(code==='ArrowLeft'?'left':'right'); return; }
+    if(d.repeat)return;
+    if(code==='ArrowUp') performAction('rotate');
+    else if(code==='Space') performAction('drop');
+    else if(code==='KeyP') performAction('pause');
+  }else{
+    if(code==='ArrowDown') stopDownHold();
+    else if(code==='ArrowLeft') stopHorizontal('left');
+    else if(code==='ArrowRight') stopHorizontal('right');
+  }
+});
 window.addEventListener("blur", stopAllHeld);
 initTouchControls(ui.cvMe, performAction);
 
@@ -367,6 +386,7 @@ function render(){
       lastLockAt: meGame.lastLockAt, lastLockCells: meGame.lastLockCells,
       lastContactAt: meGame.lastContactAt, lastContactCells: meGame.lastContactCells,
       lastCascadeAt: meGame.lastCascadeAt, lastCascadeCells: meGame.lastCascadeCells,
+      lastClearAt: meGame.lastClearAt, lastClearRows: meGame.lastClearRows, lastClearCells: meGame.lastClearCells,
       lastAirMoveAt: meGame.lastAirMoveAt, lastAirMoveDir: meGame.lastAirMoveDir
     });
     const mult = meGame._isBigNextActive(now) ? 1.55 : 1;

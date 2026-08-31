@@ -2035,3 +2035,35 @@ body.page-room:not(.in-game) .roomBottom .panel.chat{
   overscroll-behavior:contain;
 }
 #createModal .createGameGrid::-webkit-scrollbar{width:0;height:0;display:none}
+
+/* room-create shelf cleanup: no clipped last row / no empty summary bar */
+#createModal .selectedGameSummary{display:none !important;}
+#createModal .createRoomNote{margin-top:10px;}
+@media (min-width:761px){
+  #createModal .createRoomModal{max-height:min(96vh,940px);}
+  #createModal .createRoomBody{overflow-y:auto; scrollbar-width:none;}
+  #createModal .createRoomBody::-webkit-scrollbar{display:none;}
+  #createModal .createGameGrid{max-height:none !important;overflow:visible !important;padding:3px 3px 12px !important;}
+}
+@media (max-width:760px){
+  #createModal .createGameGrid{padding-bottom:14px !important;overflow-x:hidden !important;overflow-y:auto !important;}
+}
+
+
+/* ===== 2026-08-31 final create-room shelf cleanup ===== */
+#createModal .createRoomBody{padding-bottom:14px!important}
+#createModal .createSettingsSection{margin-bottom:0!important}
+#createModal .createGameGrid{padding-bottom:4px!important}
+@media (min-width:761px){
+  #createModal .createGameGrid{
+    grid-template-columns:repeat(5,minmax(0,1fr));
+    max-height:none!important;
+    overflow:visible!important;
+    padding:2px 3px 2px!important;
+  }
+  #createModal .gameCardArt{aspect-ratio:16/9}
+  #createModal .gameCardText{min-height:44px;padding:7px 9px 8px}
+}
+@media (max-width:760px){
+  #createModal .createGameGrid{padding-bottom:8px!important}
+}

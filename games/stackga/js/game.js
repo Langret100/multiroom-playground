@@ -154,6 +154,10 @@ export class StackGame {
     this.lastContactCells = [];
     this.lastCascadeAt = 0;
     this.lastCascadeCells = [];
+    // Local-only line clear presentation. The board rules/network state are unchanged.
+    this.lastClearAt = 0;
+    this.lastClearRows = [];
+    this.lastClearCells = [];
 
     this.current = null;
     this.next = this._makePiece();
@@ -323,6 +327,17 @@ export class StackGame {
     const fullRows = [];
     for(let y=0;y<ROWS;y++) if(this.board[y].every(v=>v!==0)) fullRows.push(y);
     const fullSet = new Set(fullRows);
+    // Keep a tiny render-only copy of completed rows so they can flash/pop before
+    // disappearing. Gameplay still clears immediately, so multiplayer timing is untouched.
+    if(fullRows.length){
+      this.lastClearAt = now;
+      this.lastClearRows = fullRows.slice();
+      this.lastClearCells = fullRows.map(y=>({y, cells:this.board[y].slice()}));
+    } else {
+      this.lastClearAt = 0;
+      this.lastClearRows = [];
+      this.lastClearCells = [];
+    }
     const cascade = [];
     if(fullRows.length){
       for(let y=0;y<ROWS;y++) for(let x=0;x<COLS;x++){
@@ -343,7 +358,9 @@ export class StackGame {
       this.lastContactCells = this.lastContactCells
         .filter(([,y])=>!clearedSet.has(y))
         .map(([x,y])=>[x, y + clearResult.rows.filter(r=>r>y).length]);
-      this.lastCascadeAt = now;
+      // Let the clear flash finish first, then visually drop the surviving rows.
+      // This timestamp may be slightly in the future on purpose.
+      this.lastCascadeAt = now + 235;
       this.lastCascadeCells = cascade;
     } else {
       this.lastCascadeAt = 0;
@@ -381,7 +398,7 @@ export class StackGame {
 }
 
 export function drawBoard(ctx, board, cell, opts={}){
-  const { ghost=false, activePiece=null, lastLockAt=0, lastLockCells=[], lastContactAt=0, lastContactCells=[], lastCascadeAt=0, lastCascadeCells=[], lastAirMoveAt=0, lastAirMoveDir=0 } = opts;
+  const { ghost=false, activePiece=null, lastLockAt=0, lastLockCells=[], lastContactAt=0, lastContactCells=[], lastCascadeAt=0, lastCascadeCells=[], lastClearAt=0, lastClearRows=[], lastClearCells=[], lastAirMoveAt=0, lastAirMoveDir=0 } = opts;
   const now = Date.now();
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
   const bg = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
@@ -402,6 +419,65 @@ export function drawBoard(ctx, board, cell, opts={}){
   ctx.restore();
 
   const active = new Set();
+  // Line-clear celebration overlay: flash -> centre-out jelly pop -> spark burst.
+  // The actual board has already been cleared; this is visual-only and never serialized.
+  const clearAge=now-lastClearAt;
+  if(!ghost && lastClearAt && clearAge>=0 && clearAge<360 && Array.isArray(lastClearCells)){
+    const white={rgb:[248,252,255],a:.98};
+    for(const row of lastClearCells){
+      const y=row.y|0, cells=row.cells||[];
+      for(let x=0;x<COLS;x++){
+        const v=cells[x]||1;
+        const dist=Math.abs(x-(COLS-1)/2);
+        const delay=dist*11;
+        const local=clearAge-delay;
+        if(local<0) continue;
+        const base=settledColor(y,v,false);
+        let color=base, sx=1, sy=1, dy=0;
+        if(local<95){
+          const pulse=Math.sin((local/95)*Math.PI);
+          color=mixColor(base,white,.45+.45*pulse);
+          sx=1+.055*pulse; sy=1-.08*pulse;
+        }else{
+          const k=Math.max(0,Math.min(1,(local-95)/175));
+          const e=k*k*(3-2*k);
+          color=mixColor(base,white,.55*(1-e));
+          color={rgb:color.rgb,a:Math.max(0,.98*(1-e))};
+          sx=Math.max(.05,1-e*.96);
+          sy=1+.22*Math.sin(k*Math.PI)*(1-k);
+          dy=-cell*.07*Math.sin(k*Math.PI);
+        }
+        if(color.a>.02) drawJellyCell(ctx,x*cell,y*cell,cell,color,{sx,sy,dy,sparkle:false,t:now,x,y,settleGlow:1});
+      }
+      // A fast luminous sweep makes the completed row read instantly.
+      if(clearAge<210){
+        const beam=Math.max(0,Math.min(1,(clearAge-25)/150));
+        if(beam>0){
+          const half=ctx.canvas.width*.5*beam;
+          const cy=(y+.5)*cell;
+          const g=ctx.createLinearGradient(ctx.canvas.width/2-half,0,ctx.canvas.width/2+half,0);
+          g.addColorStop(0,'rgba(255,255,255,0)'); g.addColorStop(.5,'rgba(225,248,255,.80)'); g.addColorStop(1,'rgba(255,255,255,0)');
+          ctx.fillStyle=g; ctx.fillRect(ctx.canvas.width/2-half,cy-Math.max(1,cell*.045),half*2,Math.max(2,cell*.09));
+        }
+      }
+      // Deterministic little star chips; no particle state or server data required.
+      if(clearAge>105 && clearAge<335){
+        const p=(clearAge-105)/230;
+        ctx.save();
+        for(let i=0;i<14;i++){
+          const dir=i%2?-1:1;
+          const seed=(i*47+y*23)%97;
+          const px=ctx.canvas.width*.5 + dir*(cell*(.35+i*.24))*p;
+          const py=(y+.5)*cell + Math.sin((seed+i)*1.7)*cell*.22*p - cell*.18*p;
+          const rr=Math.max(1,cell*(.025+.018*((seed%5)/4)))*(1-p*.55);
+          ctx.globalAlpha=Math.max(0,.9-p*.7); ctx.fillStyle=i%3===0?'#fff6a7':'#d8f7ff';
+          ctx.beginPath(); ctx.arc(px,py,rr,0,Math.PI*2); ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+  }
+
   if(activePiece){
     const sh=SHAPES[activePiece.type][activePiece.rot];
     for(let yy=0;yy<4;yy++) for(let xx=0;xx<4;xx++) if(sh[yy][xx]) active.add(`${activePiece.x+xx},${activePiece.y+yy}`);
@@ -432,13 +508,21 @@ export function drawBoard(ctx, board, cell, opts={}){
     } else if(isContact && contactAge>=0 && contactAge<300){
       const cw=Math.sin(contactAge/31)*Math.exp(-contactAge/165);
       sx=1+cw*.048; sy=1-cw*.075; dy=cw*cell*.025;
-    } else if(cascadeInfo && cascadeAge>=0){
-      // Bottom blocks react first, producing a soft downward settling wave.
-      const delay=Math.max(0,(ROWS-1-y))*9;
-      const ca=cascadeAge-delay;
-      if(ca>=0 && ca<520){
+    } else if(cascadeInfo){
+      const dropRows=Math.max(0,cascadeInfo.toY-cascadeInfo.fromY);
+      if(cascadeAge<0 && cascadeAge>-260){
+        // While the completed row is flashing, visually keep surviving blocks
+        // at their old height so the board does not appear to teleport.
+        dy=-dropRows*cell;
+      } else if(cascadeAge>=0 && cascadeAge<560){
+        // Then let them fall into the new rows with a soft jelly landing wave.
+        const fallT=Math.max(0,Math.min(1,cascadeAge/175));
+        const ease=1-Math.pow(1-fallT,3);
+        const delay=Math.max(0,(ROWS-1-y))*6;
+        const ca=Math.max(0,cascadeAge-delay);
         const cw=Math.sin(ca/39)*Math.exp(-ca/260);
-        sx=1+cw*.065; sy=1-cw*.10; dy=cw*cell*.035;
+        dy=-dropRows*cell*(1-ease)+cw*cell*.035;
+        sx=1+cw*.065; sy=1-cw*.10;
       }
     }
 
@@ -451,12 +535,16 @@ export function drawBoard(ctx, board, cell, opts={}){
       const raw=Math.max(0,Math.min(1,(age-120)/700));
       settleMix=raw*raw*(3-2*raw);
       cellColor=mixColor(fallingColor(v,false),targetColor,settleMix);
-    } else if(cascadeInfo && cascadeAge>=0 && cascadeAge<650 && v!==8){
+    } else if(cascadeInfo && cascadeAge<650 && v!==8){
       // A block that physically moved down after a clear keeps its former layer
-      // colour briefly and then re-dyes into the palette of its new height.
-      const raw=Math.max(0,Math.min(1,(cascadeAge-70)/560));
-      const k=raw*raw*(3-2*raw);
-      cellColor=mixColor(settledColor(cascadeInfo.fromY,v,false),targetColor,k);
+      // colour through the flash, then re-dyes as it settles into the new height.
+      if(cascadeAge<0){
+        cellColor=settledColor(cascadeInfo.fromY,v,false);
+      }else{
+        const raw=Math.max(0,Math.min(1,(cascadeAge-25)/500));
+        const k=raw*raw*(3-2*raw);
+        cellColor=mixColor(settledColor(cascadeInfo.fromY,v,false),targetColor,k);
+      }
     }
     drawJellyCell(ctx,x*cell,y*cell,cell,cellColor,{
       sx,sy,dy,

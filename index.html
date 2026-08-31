@@ -6,7 +6,7 @@
   <title>로비</title>
   <link rel="icon" href="./favicon.ico"/>
   <link rel="preload" as="image" type="image/webp" href="./assets/images/backgrounds/lobby-world.webp"/>
-  <link rel="stylesheet" href="./css/styles.css?v=20260831-create-room-v1"/>
+  <link rel="stylesheet" href="./css/styles.css?v=20260831-create-room-v2"/>
 </head>
 <body class="page-lobby">
   <div class="app">
@@ -129,8 +129,6 @@
           <select id="maxClients" class="srOnly" tabindex="-1" aria-hidden="true"></select>
         </section>
 
-        <div class="selectedGameSummary" id="selectedGameSummary" aria-live="polite"></div>
-        <small class="createRoomNote">방을 만들면 자동으로 입장합니다. 게임·채팅 기록은 저장하지 않습니다.</small>
       </div>
       <div class="modalFooter createRoomFooter">
         <button class="btn createCancelBtn" id="createCancel">취소</button>
@@ -204,7 +202,7 @@
   <script src="./js/core/audio.js" defer></script>
   <script src="./js/core/fullscreen-intent.js" defer></script>
   <script src="./js/games/registry.js" defer></script>
-  <script src="./js/pages/lobby.js" defer></script>
+  <script src="./js/pages/lobby.js?v=20260831-create-room-v2" defer></script>
 
   <audio id="bgmLobby" src="assets/audio/lobby_music.mp3" preload="auto" loop></audio>
 

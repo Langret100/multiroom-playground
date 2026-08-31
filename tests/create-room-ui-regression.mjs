@@ -10,7 +10,9 @@ for(const id of games){
   if(!reg.includes(`id:'${id}'`)) throw new Error(`registry ${id}`);
   if(!reg.includes(`game_cards/${id}.webp`)) throw new Error(`card ref ${id}`);
 }
-for(const token of ['gameCardGrid','playerCountChips','selectedGameSummary','roomTitleCount']) if(!index.includes(token)) throw new Error(`index missing ${token}`);
+for(const token of ['gameCardGrid','playerCountChips','roomTitleCount']) if(!index.includes(token)) throw new Error(`index missing ${token}`);
+if(index.includes('id="selectedGameSummary"')) throw new Error('empty selectedGameSummary bar returned');
+if(index.includes('class="createRoomNote"')) throw new Error('obsolete empty room note returned');
 for(const token of ['pointerdown','520','selectGameCard','renderPlayerChips','pickPop','launching']) if(!lobby.includes(token)) throw new Error(`lobby missing ${token}`);
 if(!lobby.includes("meta.id === 'soccer'") || !lobby.includes('n%2===0')) throw new Error('soccer even players lost');
 if(!lobby.includes("meta.id === 'mathexplorer' ? 1 : 2")) throw new Error('mathexplorer 1p lost');

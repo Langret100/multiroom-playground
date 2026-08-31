@@ -16,7 +16,7 @@ if(!/Slime_wet_smacking\.ogg/.test(audio) || !/Windchimes\.ogg/.test(audio)) thr
 if(!/Glass-jelly HUD/.test(css) || !/\.hudLeft>div/.test(css) || !/background:linear-gradient\(180deg,#55d7e5/.test(css)) throw new Error('glass HUD/frame restyle missing');
 if(!/clearResult\.rows/.test(game) || !/r=>r>y/.test(game)) throw new Error('fresh-lock row-clear remap missing');
 
-if(!/lastCascadeCells/.test(game) || !/cascadeInfo\.fromY/.test(game) || !/\(cascadeAge-70\)\/560/.test(game)) throw new Error('cascade re-dye animation missing');
+if(!/lastCascadeCells/.test(game) || !/cascadeInfo\.fromY/.test(game) || !/cascadeAge<0/.test(game) || !/fallT/.test(game) || !/\(cascadeAge-25\)\/500/.test(game)) throw new Error('delayed cascade fall/re-dye animation missing');
 if(!/lastContactCells/.test(game) || !/contactAge/.test(game) || !/cw\*\.048/.test(game)) throw new Error('contact jelly reaction missing');
 
 // A lock that completes the bottom row must keep the two surviving O-piece cells

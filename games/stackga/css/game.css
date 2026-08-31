@@ -466,3 +466,19 @@ body{
 @media (min-width:1400px){
   .hudLeft{left:22px;top:16px}.hudRight{right:22px;top:16px}
 }
+
+/* Mobile embedded exit button: keep the Korean label on one line. */
+body.embed .matchBtn, body.embed .exitBtn{
+  flex:0 0 auto!important;
+  width:auto!important;
+  min-width:62px!important;
+  padding-inline:10px!important;
+  white-space:nowrap!important;
+  word-break:keep-all!important;
+  overflow-wrap:normal!important;
+  line-height:1!important;
+}
+@media (max-width:480px){
+  body.embed .hudRight{flex:0 0 auto;min-width:max-content}
+  body.embed .matchBtn, body.embed .exitBtn{min-width:58px!important;font-size:11px!important;padding-inline:8px!important}
+}

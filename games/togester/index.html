@@ -734,19 +734,19 @@
         const PHYS_SCALE = 1.0;
         // 기본 슈퍼마리오(SMB1) 느낌: 과속 방지 + 살짝 미끄러짐(스키드) + 낙하/점프 완만
         // (단위: px/frame @60fps)
-        const GRAVITY = 0.32 * PHYS_SCALE;
-        const MAX_FALL_SPEED = 6.9 * PHYS_SCALE;
-        const MOVE_MAX_SPEED = 3.0 * PHYS_SCALE;
-        const MOVE_ACCEL_GROUND = 0.30 * PHYS_SCALE;
-        const MOVE_ACCEL_AIR = 0.20 * PHYS_SCALE;
-        const MOVE_FRICTION_GROUND = 0.14 * PHYS_SCALE;
-        const MOVE_FRICTION_AIR = 0.04 * PHYS_SCALE;
-        const MOVE_SKID_DECEL = 0.60 * PHYS_SCALE;
-        const JUMP_VELOCITY = -8.4 * PHYS_SCALE;
+        const GRAVITY = 0.16 * PHYS_SCALE;
+        const MAX_FALL_SPEED = 4.15 * PHYS_SCALE;
+        const MOVE_MAX_SPEED = 2.05 * PHYS_SCALE;
+        const MOVE_ACCEL_GROUND = 0.18 * PHYS_SCALE;
+        const MOVE_ACCEL_AIR = 0.10 * PHYS_SCALE;
+        const MOVE_FRICTION_GROUND = 0.10 * PHYS_SCALE;
+        const MOVE_FRICTION_AIR = 0.028 * PHYS_SCALE;
+        const MOVE_SKID_DECEL = 0.34 * PHYS_SCALE;
+        const JUMP_VELOCITY = -6.55 * PHYS_SCALE;
         // 가변 점프(짧게 누르면 낮게, 길게 누르면 높게)
-        const JUMP_HOLD_MAX_MS = 150;
-        const JUMP_HOLD_GRAVITY_MULT = 0.55;
-        const JUMP_CUT_VY = -2.8 * PHYS_SCALE;
+        const JUMP_HOLD_MAX_MS = 250;
+        const JUMP_HOLD_GRAVITY_MULT = 0.45;
+        const JUMP_CUT_VY = -2.05 * PHYS_SCALE;
         const RESPAWN_COOLDOWN_MS = 30000; // 30초
         const PUSH_IMPULSE_X = 16;
         const PUSH_IMPULSE_Y = -14;
@@ -782,7 +782,8 @@
             stunUntil: 0,
             noHeadBlockUntil: 0,
             noHeadBlockSids: [],
-            goalReached: false
+            goalReached: false,
+            boxJumpGraceUntil: 0
         };
         
         let players = {};
@@ -1115,13 +1116,13 @@
         }
 
         function _chunkStairs({rng, platforms, y, step, wMin, wMax}){
-            // 3단 지그재그
-            const sides = [60, 260];
+            // PICO PARK-like readable staircase: clear left/right roles, generous landing zones.
+            const sides = [28, 292];
             let side = rng() < 0.5 ? 0 : 1;
             for (let i=0;i<3;i++){
-                const w = _rint(rng, wMin, wMax);
-                const x = sides[side] + _rint(rng, -15, 15);
-                _addPlatform(platforms, clamp(x, 20, TG_STAGE_W - w - 20), y - i*step, w, 20);
+                const w = _rint(rng, Math.max(200,wMin), Math.max(245,wMax));
+                const x = sides[side] + _rint(rng, -8, 8);
+                _addPlatform(platforms, clamp(x, 18, TG_STAGE_W - w - 18), y - i*step, w, 20);
                 side = 1 - side;
             }
             return y - step*3;
@@ -1160,7 +1161,7 @@
             const btnSideLeft = rng() < 0.5;
             const btnPlatW = _rint(rng, 165, 205);
             const btnPlatX = btnSideLeft ? 35 : (TG_STAGE_W - 35 - btnPlatW);
-            const btnPlatY = yApproach + _rint(rng, 105, 145);
+            const btnPlatY = yApproach + _rint(rng, 82, 105);
             _addPlatform(platforms, btnPlatX, btnPlatY, btnPlatW, 20);
             buttons.push({ x: btnSideLeft ? 55 : (TG_STAGE_W - 55 - 70), y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#e17055' });
 
@@ -1189,14 +1190,14 @@
             bridges.push({ x: 210, y: yGap, width: 125, height: 20, color: '#00cec9', active: false });
 
             // 버튼은 아래쪽에
-            const btnPlatY = yGap + _rint(rng, 160, 205);
+            const btnPlatY = yGap + _rint(rng, 105, 130);
             const btnPlatX = rng() < 0.5 ? 45 : 285;
             _addPlatform(platforms, btnPlatX, btnPlatY, 190, 20);
             buttons.push({ x: btnPlatX + 45, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
 
             // 밑에 스파이크(중반 이후)
             if (diff > 0.35){
-                spikes.push({ x: 175, y: yGap + 78, width: 170, height: 36 });
+                spikes.push({ x: 195, y: yGap + 78, width: 130, height: 36 });
             }
 
             // 위쪽 진행 발판
@@ -1213,7 +1214,7 @@
             // 리프트
             lifts.push({ x: 360, y: bottomY, width: 120, height: 20, minY: topY, maxY: bottomY, speed: _lerp(2.6, 3.4, diff), color: '#6c5ce7' });
             // 버튼 발판
-            const btnPlatY = bottomY + _rint(rng, 130, 170);
+            const btnPlatY = bottomY + _rint(rng, 100, 125);
             _addPlatform(platforms, 40, btnPlatY, 195, 20);
             buttons.push({ x: 85, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
             // 리프트 상단 하차 발판
@@ -1230,7 +1231,7 @@
         function _chunkBox({rng, platforms, doors, buttons, boxes, spikes, y, step, diff}){
             // 상자(수단)로 버튼을 눌러 문을 열기
             const yApproach = y - step;
-            _addPlatform(platforms, 120, yApproach, 260, 20);
+            _addPlatform(platforms, 70, yApproach, 360, 20);
 
             const yDoor = yApproach - 110;
             doors.push({ x: 0, y: yDoor, width: TG_STAGE_W, height: 30, open: false, color: '#d35400' });
@@ -1238,16 +1239,16 @@
             // 버튼 포켓
             const pocketLeft = rng() < 0.5;
             const pocketX = pocketLeft ? 40 : 330;
-            const pocketY = yApproach + _rint(rng, 155, 190);
-            _addPlatform(platforms, pocketX, pocketY, 175, 20);
+            const pocketY = yApproach + _rint(rng, 105, 130);
+            _addPlatform(platforms, pocketX, pocketY, 190, 20);
             buttons.push({ x: pocketX + 40, y: _buttonOn(pocketY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#fdcb6e' });
 
             // 상자 (접근 발판 위)
-            boxes.push({ x: 240 + _rint(rng,-40,40), y: yApproach - 40, width: 40, height: 40 });
+            boxes.push({ x: 250 + _rint(rng,-25,25), y: yApproach - 40, width: 40, height: 40 });
 
             // 함정: 상자 길목 스파이크
-            if (diff > 0.45){
-                spikes.push({ x: 155 + _rint(rng,-20,20), y: yApproach + 58, width: 210, height: 36 });
+            if (diff > 0.72 && rng() < 0.35){
+                spikes.push({ x: pocketLeft ? 300 : 85, y: yApproach + 82, width: 105, height: 32 });
             }
 
             // 문 위 진행 발판
@@ -1282,7 +1283,7 @@
             _addPlatform(platforms, 340, yA, 150, 20);
             bridges.push({ x: 180, y: yA, width: 160, height: 20, color: '#00cec9', active: false });
 
-            const btn1PlatY = yA + 165;
+            const btn1PlatY = yA + 112;
             _addPlatform(platforms, 35, btn1PlatY, 195, 20);
             buttons.push({ x: 85, y: _buttonOn(btn1PlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
 
@@ -1294,8 +1295,8 @@
             const liftTop = yC - 80;
             _addPlatform(platforms, 35, yC + 40, 160, 20);
             lifts.push({ x: 355, y: liftBottom, width: 120, height: 20, minY: liftTop, maxY: liftBottom, speed: _lerp(2.4, 3.6, diff), color: '#6c5ce7' });
-            _addPlatform(platforms, 35, yC + 195, 195, 20);
-            buttons.push({ x: 95, y: _buttonOn(yC + 195), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
+            _addPlatform(platforms, 35, yC + 125, 195, 20);
+            buttons.push({ x: 95, y: _buttonOn(yC + 125), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
 
             _addPlatform(platforms, 230, liftTop - 40, 220, 20);
             if (diff > 0.35) spikes.push({ x: 170, y: yA + 58, width: 180, height: 34 });
@@ -1310,11 +1311,11 @@
             _addPlatform(platforms, 35, y0, 150, 20);
             _addPlatform(platforms, 345, y0, 150, 20);
             bridges.push({ x: 185, y: y0, width: 160, height: 20, color: '#00cec9', active: false });
-            const b1y = y0 + 165; _addPlatform(platforms, 35, b1y, 195, 20);
+            const b1y = y0 + 112; _addPlatform(platforms, 35, b1y, 195, 20);
             buttons.push({ x: 95, y: _buttonOn(b1y), width:70, height:12, pressed:false, bridgeId: bridges.length-1, color:'#00b894' });
             doors.push({ x: 0, y: y1, width: TG_STAGE_W, height: 26, open:false, color:'#d63031' });
             _addPlatform(platforms, 140, y1 - 85, 220, 20);
-            const b2y = y1 + 120; _addPlatform(platforms, 300, b2y, 185, 20);
+            const b2y = y1 + 105; _addPlatform(platforms, 300, b2y, 185, 20);
             buttons.push({ x: 365, y: _buttonOn(b2y), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#e17055' });
             _addPlatform(platforms, 60, y2, 150, 20);
             _addPlatform(platforms, 300, y2, 150, 20);
@@ -1327,13 +1328,13 @@
             _addPlatform(platforms, 90, yA, 300, 20);
             boxes.push({ x: 210, y: yA - 40, width:40, height:40 });
             const pocketX = (rng() < 0.5) ? 40 : 330;
-            _addPlatform(platforms, pocketX, yA + 155, 175, 20);
+            _addPlatform(platforms, pocketX, yA + 112, 175, 20);
             doors.push({ x:0, y:yB, width:TG_STAGE_W, height:26, open:false, color:'#d35400' });
-            buttons.push({ x:pocketX + 48, y:_buttonOn(yA + 155), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#fdcb6e' });
+            buttons.push({ x:pocketX + 48, y:_buttonOn(yA + 112), width:70, height:12, pressed:false, doorId: doors.length-1, color:'#fdcb6e' });
             _addPlatform(platforms, 150, yB - 85, 220, 20);
             lifts.push({ x: 350, y: yC + 80, width: 120, height: 20, minY: yC - 90, maxY: yC + 80, speed: _lerp(2.5,3.7,diff), color:'#6c5ce7' });
-            _addPlatform(platforms, 40, yC + 190, 195, 20);
-            buttons.push({ x: 105, y: _buttonOn(yC + 190), width:70, height:12, pressed:false, liftId: lifts.length-1, color:'#a29bfe' });
+            _addPlatform(platforms, 40, yC + 125, 195, 20);
+            buttons.push({ x: 105, y: _buttonOn(yC + 125), width:70, height:12, pressed:false, liftId: lifts.length-1, color:'#a29bfe' });
             _addPlatform(platforms, 220, yC - 120, 220, 20);
             if (diff > 0.5) spikes.push({ x: 180, y: yA + 68, width: 160, height: 34 });
             return y - step*4;
@@ -1341,27 +1342,27 @@
 
         function _seqForLevel(lv, rng){
             const pick = (arr)=>_pick(rng, arr);
-            // 마리오식 진행감: 소개 -> 안전 응용 -> 작은 테스트 -> 마무리
-            if (lv <= 3) return ['stairs','stairs','stairs'];
-            if (lv === 4) return ['stairs','bridge','stairs','gap','bridge'];
-            if (lv === 5) return ['stairs','door','stairs','bridge','door'];
-            if (lv === 6) return ['stairs','box','door','stairs','bridge'];
-            if (lv === 7) return ['bridge','gap','lift','stairs','door'];
-            if (lv === 8) return ['box','bridge','door','lift','stairs'];
-            if (lv === 9) return ['relay','stairs','bridge','door','spike'];
-            if (lv === 10) return ['split','bridge','lift','door','spike'];
-            if (lv <= 14) return [pick(['relay','boxrelay']), pick(['door','box']), pick(['lift','bridge']), 'stairs', pick(['split','gap']), 'spike'];
-            if (lv <= 17) return [pick(['door','box']), pick(['relay','split']), 'spike', pick(['boxrelay','lift']), 'stairs', pick(['door','gap'])];
-            return [pick(['relay','split']), pick(['boxrelay','door']), 'spike', pick(['lift','bridge']), pick(['relay','boxrelay']), 'stairs', pick(['split','box']), pick(['door','gap'])];
+            // Readable co-op progression: every round has 3~4 clear puzzle beats.
+            if (lv <= 3) return ['stairs','stairs'];
+            if (lv === 4) return ['stairs','bridge','stairs'];
+            if (lv === 5) return ['stairs','door','bridge'];
+            if (lv === 6) return ['stairs','box','door'];
+            if (lv === 7) return ['bridge','lift','stairs'];
+            if (lv === 8) return ['box','bridge','lift'];
+            if (lv === 9) return ['relay','stairs','bridge'];
+            if (lv === 10) return ['split','lift','door'];
+            if (lv <= 14) return [pick(['relay','boxrelay']), pick(['door','box']), pick(['lift','bridge']), 'stairs'];
+            if (lv <= 17) return [pick(['boxrelay','relay']), pick(['split','door']), pick(['lift','bridge']), pick(['stairs','gap'])];
+            return [pick(['relay','split']), pick(['boxrelay','door']), pick(['lift','bridge']), pick(['stairs','gap'])];
         }
 
         function _genLevel(lv){
             const rng = _mulberry32(0x51F15 + lv * 1337);
             const diff = clamp((lv - 1) / 19, 0, 1);
 
-            const step = Math.round(_lerp(185, 155, diff));
-            const wMax = Math.round(_lerp(305, 220, diff));
-            const wMin = Math.round(_lerp(225, 155, diff));
+            const step = Math.round(_lerp(150, 140, diff));
+            const wMax = Math.round(_lerp(340, 280, diff));
+            const wMin = Math.round(_lerp(255, 210, diff));
 
             const platforms = [];
             const spikes = [];
@@ -1373,13 +1374,13 @@
             if (lv === 1){
                 // 튜토리얼 1: 매우 짧은 이동/점프 입문 (혼자 쉽게 가능)
                 platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
-                _addPlatform(platforms, 90, 2230, 260, 20);
-                _addPlatform(platforms, 250, 2165, 170, 20);
-                _addPlatform(platforms, 120, 2100, 180, 20);
-                _addPlatform(platforms, 260, 2038, 150, 20);
+                _addPlatform(platforms, 45, 2210, 240, 20);
+                _addPlatform(platforms, 295, 2065, 185, 20);
+                _addPlatform(platforms, 55, 1915, 210, 20);
+                _addPlatform(platforms, 285, 1765, 195, 20);
                 return {
                     spawn:{x:120,y:2320},
-                    goal:{x:305,y:1948,width:90,height:80},
+                    goal:{x:330,y:1665,width:90,height:80},
                     platforms, buttons, doors, spikes, boxes, lifts, bridges,
                     message:'튜토리얼 1: 이동/점프로 짧게 도착!'
                 };
@@ -1388,21 +1389,21 @@
             if (lv === 2){
                 // 튜토리얼 2: 상자→버튼→다리 (혼자 안전하게 체험)
                 platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
-                _addPlatform(platforms, 80, 2230, 300, 20);
-                _addPlatform(platforms, 70, 2145, 210, 20);
-                boxes.push({ x: 220, y: 2105, width: 40, height: 40 });
-                buttons.push({ x: 95, y: _buttonOn(2145), width: 70, height: 12, pressed: false, bridgeId: 0, color: '#00b894' });
+                _addPlatform(platforms, 45, 2220, 410, 20);
+                _addPlatform(platforms, 35, 2090, 210, 20);
+                boxes.push({ x: 310, y: 2180, width: 40, height: 40 });
+                buttons.push({ x: 95, y: _buttonOn(2090), width: 70, height: 12, pressed: false, bridgeId: 0, color: '#00b894' });
 
-                const yBridge = 2060;
+                const yBridge = 1960;
                 _addPlatform(platforms, 40, yBridge, 150, 20);
                 bridges.push({ x: 190, y: yBridge, width: 140, height: 20, color: '#00cec9', active: false });
                 _addPlatform(platforms, 330, yBridge, 150, 20);
 
-                _addPlatform(platforms, 260, 1978, 170, 20);
-                _addPlatform(platforms, 130, 1912, 170, 20);
+                _addPlatform(platforms, 285, 1840, 195, 20);
+                _addPlatform(platforms, 55, 1720, 210, 20);
                 return {
                     spawn:{x:120,y:2320},
-                    goal:{x:165,y:1822,width:95,height:80},
+                    goal:{x:115,y:1630,width:95,height:80},
                     platforms, buttons, doors, spikes, boxes, lifts, bridges,
                     message:'튜토리얼 2: 상자를 버튼에 올리면 다리가 생겨요!'
                 };
@@ -1411,26 +1412,26 @@
             if (lv === 3){
                 // 튜토리얼 3: 문/리프트를 순서대로 익히는 퍼즐 입문 (혼자 가능)
                 platforms.push({ x: 0, y: TG_GROUND_Y, width: TG_STAGE_W, height: 70, color: '#2d3436' });
-                _addPlatform(platforms, 70, 2230, 310, 20);
+                _addPlatform(platforms, 45, 2220, 410, 20);
 
                 // 1) 문 기믹 소개
-                _addPlatform(platforms, 60, 2145, 190, 20);
-                _addPlatform(platforms, 300, 2145, 150, 20);
-                boxes.push({ x: 340, y: 2105, width: 40, height: 40 });
-                buttons.push({ x: 92, y: _buttonOn(2145), width: 70, height: 12, pressed: false, doorId: 0, color: '#fdcb6e' });
-                doors.push({ x: 210, y: 2066, width: 120, height: 24, open: false, color: '#d35400' });
-                _addPlatform(platforms, 200, 2060, 150, 20);
-                _addPlatform(platforms, 130, 1980, 200, 20);
+                _addPlatform(platforms, 35, 2085, 205, 20);
+                _addPlatform(platforms, 305, 2085, 180, 20);
+                boxes.push({ x: 360, y: 2045, width: 40, height: 40 });
+                buttons.push({ x: 92, y: _buttonOn(2085), width: 70, height: 12, pressed: false, doorId: 0, color: '#fdcb6e' });
+                doors.push({ x: 210, y: 1975, width: 120, height: 24, open: false, color: '#d35400' });
+                _addPlatform(platforms, 185, 1968, 175, 20);
+                _addPlatform(platforms, 40, 1848, 220, 20);
 
                 // 2) 리프트 기믹 소개
-                _addPlatform(platforms, 55, 1905, 160, 20);
-                buttons.push({ x: 82, y: _buttonOn(1905), width: 70, height: 12, pressed: false, liftId: 0, color: '#a29bfe' });
-                boxes.push({ x: 165, y: 1865, width: 40, height: 40 });
-                lifts.push({ x: 340, y: 1905, width: 110, height: 20, minY: 1795, maxY: 1905, speed: 2.2, color: '#6c5ce7' });
-                _addPlatform(platforms, 235, 1755, 170, 20);
+                _addPlatform(platforms, 35, 1720, 205, 20);
+                buttons.push({ x: 82, y: _buttonOn(1720), width: 70, height: 12, pressed: false, liftId: 0, color: '#a29bfe' });
+                boxes.push({ x: 160, y: 1680, width: 40, height: 40 });
+                lifts.push({ x: 355, y: 1720, width: 110, height: 20, minY: 1545, maxY: 1720, speed: 1.75, color: '#6c5ce7' });
+                _addPlatform(platforms, 245, 1495, 215, 20);
                 return {
                     spawn:{x:120,y:2320},
-                    goal:{x:270,y:1665,width:95,height:80},
+                    goal:{x:315,y:1405,width:95,height:80},
                     platforms, buttons, doors, spikes, boxes, lifts, bridges,
                     message:'튜토리얼 3: 문과 리프트를 순서대로 사용해보세요!'
                 };
@@ -1452,6 +1453,9 @@
 
             const seq = _seqForLevel(lv, rng);
             for (const t of seq){
+                // Keep every puzzle inside the visible 2400px tower. A chunk that would
+                // overshoot the goal is skipped and replaced by the final staircase below.
+                if (y < 610) break;
                 if (t === 'stairs') y = _chunkStairs({rng, platforms, y, step, wMin, wMax});
                 else if (t === 'spike') y = _chunkSpike({rng, platforms, spikes, y, step, wMin, wMax, diff});
                 else if (t === 'door') y = _chunkDoor({rng, platforms, doors, buttons, y, step, wMin, wMax, diff});
@@ -1463,17 +1467,18 @@
                 else if (t === 'split') y = _chunkSplitDual({rng, platforms, doors, buttons, bridges, y, step, diff});
                 else if (t === 'boxrelay') y = _chunkBoxRelay({rng, platforms, doors, buttons, boxes, lifts, spikes, y, step, diff});
                 else y = _chunkStairs({rng, platforms, y, step, wMin, wMax});
-
-                // 라운드가 높을수록 쉬는 구간이 짧아짐: 추가 발판을 덜 줌
-                if (diff < 0.18 && rng() < 0.45){
-                    const w = _rint(rng, wMin+40, wMax);
-                    const x = _rint(rng, 60, TG_STAGE_W - w - 60);
-                    _addPlatform(platforms, x, y, w, 20);
-                    y -= step;
-                }
             }
 
-            // 상단 정리 발판
+            // Clean, readable finish: alternating broad landings lead to the flag.
+            let finishY = Math.min(520, Math.max(300, y));
+            let finishSide = lv % 2;
+            while (finishY > 265){
+                const fw = 230;
+                const fx = finishSide ? 255 : 35;
+                _addPlatform(platforms, fx, finishY, fw, 20);
+                finishSide = 1 - finishSide;
+                finishY -= 135;
+            }
             _addPlatform(platforms, 140, 220, 240, 20);
             _addPlatform(platforms, 120, 140, 280, 20);
 
@@ -1990,7 +1995,7 @@ cameraX = 0;
 
         // ==================== 액션/점프/부활/발판 헬퍼 ====================
         function canJump(){
-            return !localPlayer.isDead && !localPlayer.jumpUsed;
+            return !localPlayer.isDead && (!localPlayer.jumpUsed || localPlayer.onGround);
         }
 
         function anyTeammateAlive(){
@@ -2004,6 +2009,9 @@ cameraX = 0;
             if (!canJump()) return;
             const now = performance.now();
             localPlayer.vy = JUMP_VELOCITY;
+            // Prevent the box collision resolver from snapping the player back onto
+            // the box during the first few rising frames.
+            localPlayer.boxJumpGraceUntil = now + 150;
             localPlayer.jumpHolding = true;
             localPlayer.jumpStartAt = performance.now();
             localPlayer.onGround = false;
@@ -3238,6 +3246,8 @@ cameraX = 0;
                     localPlayer.x += boxDx;
                     localPlayer.y = box.y - 40;
                     localPlayer.onGround = true;
+                    localPlayer.jumpUsed = false;
+                    localPlayer.jumpHolding = false;
                     if (localPlayer.vy > 0) localPlayer.vy = 0;
                     continue;
                 }
@@ -3505,6 +3515,8 @@ cameraX = 0;
                 if (player.y + 20 < rect.y + rect.height / 2) {
                     player.y = rect.y - 40;
                     player.onGround = true;
+                    player.jumpUsed = false;
+                    player.jumpHolding = false;
                     player.vy = 0;
                 } else {
                     player.y = rect.y + rect.height;
@@ -3559,6 +3571,8 @@ cameraX = 0;
                 if (pRect.y < rect.y) {
                     player.y = rect.y - pRect.height;
                     player.onGround = true;
+                    player.jumpUsed = false;
+                    player.jumpHolding = false;
                     player.vy = 0;
                 } else {
                     // When I jump while someone is stacked on my head, don't let their (slightly delayed)
@@ -3620,6 +3634,9 @@ cameraX = 0;
         // 박스 밀기
         function pushBox(player, box) {
             const remoteAuthBoxes = usesRemoteAuthoritativeBoxes();
+            // When jumping from the top of a box, let the player leave the box cleanly
+            // instead of resolving the tiny remaining overlap back to the box top.
+            if (player.y < box.y && player.vy < -0.25 && performance.now() < (player.boxJumpGraceUntil || 0)) return;
             const overlapX = Math.min(player.x + 40 - box.x, box.x + box.width - player.x);
             const overlapY = Math.min(player.y + 40 - box.y, box.y + box.height - player.y);
             
@@ -3648,6 +3665,8 @@ cameraX = 0;
                     // 플레이어가 박스 위에 착지
                     player.y = box.y - 40;
                     player.onGround = true;
+                    player.jumpUsed = false;
+                    player.jumpHolding = false;
                     player.vy = 0;
                 } else {
                     // 플레이어가 박스 아래에서 부딪힘

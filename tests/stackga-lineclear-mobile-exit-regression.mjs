@@ -1,0 +1,26 @@
+import fs from 'node:fs';
+const root=new URL('..',import.meta.url).pathname;
+const game=fs.readFileSync(root+'games/stackga/js/game.js','utf8');
+const main=fs.readFileSync(root+'games/stackga/js/main.js','utf8');
+const css=fs.readFileSync(root+'games/stackga/css/game.css','utf8');
+function ok(v,m){if(!v)throw new Error(m)}
+ok(game.includes('lastClearAt = 0') && game.includes('lastClearCells = []'),'line clear render state missing');
+ok(game.includes('lastClearAt = now') && game.includes('this.board[y].slice()'),'completed row capture missing');
+ok(game.includes('now + 235'),'cascade delay after clear missing');
+ok(game.includes('Line-clear celebration overlay') && game.includes('centre-out jelly pop'),'line clear overlay missing');
+ok(game.includes("g.addColorStop(.5,'rgba(225,248,255,.80)')"),'line clear beam missing');
+ok(game.includes('for(let i=0;i<14;i++)'),'line clear particles missing');
+ok(game.includes('dy=-dropRows*cell') && game.includes('fallT'),'delayed cascade fall missing');
+ok(main.includes('lastClearAt: meGame.lastClearAt') && main.includes('lastClearCells: meGame.lastClearCells'),'line clear renderer wiring missing');
+ok(css.includes('Mobile embedded exit button') && css.includes('white-space:nowrap!important') && css.includes('word-break:keep-all!important'),'mobile exit no-wrap missing');
+const {StackGame,COLS,ROWS}=await import('../games/stackga/js/game.js');
+const g=new StackGame(42);
+for(let x=0;x<COLS;x++)g.board[ROWS-1][x]=2;
+g.board[ROWS-1][4]=0;g.board[ROWS-1][5]=0;
+g.current={type:'O',id:5,x:3,y:ROWS-2,rot:0};g.dead=false;
+g._lock();
+ok(g.lastCleared===1,'fixture did not clear line');
+ok(g.lastClearRows.length===1 && g.lastClearRows[0]===ROWS-1,'clear row state incorrect');
+ok(g.lastClearCells.length===1 && g.lastClearCells[0].cells.every(Boolean),'clear row snapshot incomplete');
+ok(g.lastCascadeAt>g.lastClearAt,'cascade is not delayed after clear');
+console.log('STACKGA_LINECLEAR_MOBILE_EXIT_REGRESSION_OK');

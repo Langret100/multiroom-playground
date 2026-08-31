@@ -13,6 +13,6 @@ ok(game.includes('cell*.008'),'jelly cell gap not tightened enough');
 ok(game.includes('cell*(.038+.022*'),'jelly shadow not sharpened');
 ok(game.includes('Tiny fixed stars'),'night stars missing');
 ok(gcss.includes('wide-night duel refinement'),'stackga shell restyle missing');
-ok(idx.includes('game.css?v=20260831-jellyfocus3') && idx.includes('main.js?v=20260831-jellyfocus3'),'stackga cache bust missing');
-ok(room.includes('styles.css?v=20260831-roomguide2'),'room css cache bust missing');
+ok(idx.includes('game.css?v=20260831-jellyfocus4') && idx.includes('main.js?v=20260831-jellyfocus4'),'stackga cache bust missing');
+ok(room.includes('styles.css?v=20260831-roomguide3'),'room css cache bust missing');
 console.log('UI_CLIPPING_STACKGA_CRISP_REGRESSION_OK');

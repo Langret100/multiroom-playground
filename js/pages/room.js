@@ -1697,8 +1697,23 @@ function updatePreview(modeId){
         postToMain({type:'tg_key',gameId:'togester',code,down:!!down,repeat:!!e.repeat});
       }catch(_){ }
     };
-    window.addEventListener("keydown", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true); }, { passive:true });
-    window.addEventListener("keyup", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false); }, { passive:true });
+    const forwardStackgaPhysicalKey=(e,down)=>{
+      try{
+        const fr=duel?.iframeEl || document.getElementById('duelFrame');
+        const activeId=String(duel?.meta?.id||coop?.meta?.id||'');
+        const src=String(fr?.getAttribute?.('src')||fr?.src||'');
+        const active=(activeId==='stackga') || /(?:^|\/)games\/stackga\//.test(src) || document.body.classList.contains('mode-stackga');
+        if(!active||!fr?.contentWindow)return;
+        const code=String(e.code||'');
+        if(!['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space','KeyP'].includes(code))return;
+        // Direct parent -> game proxy. This does not depend on iframe focus,
+        // so the first key press after Game Start works without a mouse click.
+        fr.contentWindow.postMessage({type:'stackga_key',gameId:'stackga',code,down:!!down,repeat:!!e.repeat},'*');
+        if(['ArrowLeft','ArrowRight','ArrowDown','ArrowUp','Space'].includes(code)) e.preventDefault?.();
+      }catch(_){ }
+    };
+    window.addEventListener("keydown", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true); forwardStackgaPhysicalKey(e,true); }, { passive:false, capture:true });
+    window.addEventListener("keyup", (e)=>{ if (shouldIgnoreKeyEvent(e)) return; setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false); forwardStackgaPhysicalKey(e,false); }, { passive:false, capture:true });
 
     // Mobile overlay buttons
     const btns = document.querySelectorAll("[data-key]");
