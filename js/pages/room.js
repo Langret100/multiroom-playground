@@ -922,6 +922,18 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
+  function focusGameIframeSoon(){
+    const fr = duel?.iframeEl;
+    if(!fr) return;
+    const poke = ()=>{
+      try{ fr.focus({ preventScroll:true }); }catch(_){ try{ fr.focus(); }catch(__){} }
+      try{ fr.contentWindow?.postMessage({ type:"focus_game" }, "*"); }catch(_){ }
+    };
+    poke();
+    setTimeout(poke,70);
+    setTimeout(poke,220);
+  }
+
   const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
   const soccerLegacyRelayState = { round:null, pos:null };
   function sendSoccerLegacyRelay(){
@@ -1016,6 +1028,7 @@ function updatePreview(modeId){
     }
 
     if (d.type === "bridge_ready"){
+      if(fromMain) focusGameIframeSoon();
       // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
       if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback){
         duel.iframeReady = true;
@@ -2530,6 +2543,7 @@ function handleDuelMatch(m){
         duel.iframeLoaded = true;
         // wait for bridge_ready or init anyway
         sendBridgeInit();
+        focusGameIframeSoon();
       };
       duel.iframeEl.src = src;
     }

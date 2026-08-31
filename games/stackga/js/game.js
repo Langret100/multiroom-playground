@@ -248,6 +248,9 @@ export class StackGame {
     const nx = this.current.x + dx;
     if(!collide(this.board,this.current,nx,this.current.y,this.current.rot)){
       this.current.x = nx;
+      // Local-only airborne jelly inertia. Never serialized or sent to the server.
+      this.lastAirMoveAt = Date.now();
+      this.lastAirMoveDir = dx < 0 ? -1 : 1;
       return true;
     }
     return false;
@@ -378,7 +381,7 @@ export class StackGame {
 }
 
 export function drawBoard(ctx, board, cell, opts={}){
-  const { ghost=false, activePiece=null, lastLockAt=0, lastLockCells=[], lastContactAt=0, lastContactCells=[], lastCascadeAt=0, lastCascadeCells=[] } = opts;
+  const { ghost=false, activePiece=null, lastLockAt=0, lastLockCells=[], lastContactAt=0, lastContactCells=[], lastCascadeAt=0, lastCascadeCells=[], lastAirMoveAt=0, lastAirMoveDir=0 } = opts;
   const now = Date.now();
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
   const bg = ctx.createLinearGradient(0,0,0,ctx.canvas.height);
@@ -425,17 +428,17 @@ export function drawBoard(ctx, board, cell, opts={}){
     const isContact=!ghost && !isActive && !isFreshLock && contactSet.has(key);
     const cascadeInfo=!ghost && !isActive ? cascadeMap.get(key) : null;
     if(isFreshLock && age<430){
-      sx=1+wobble*.085; sy=1-wobble*.12; dy=wobble*cell*.035;
+      sx=1+wobble*.12; sy=1-wobble*.17; dy=wobble*cell*.045;
     } else if(isContact && contactAge>=0 && contactAge<300){
       const cw=Math.sin(contactAge/31)*Math.exp(-contactAge/165);
-      sx=1+cw*.032; sy=1-cw*.05; dy=cw*cell*.018;
+      sx=1+cw*.048; sy=1-cw*.075; dy=cw*cell*.025;
     } else if(cascadeInfo && cascadeAge>=0){
       // Bottom blocks react first, producing a soft downward settling wave.
       const delay=Math.max(0,(ROWS-1-y))*9;
       const ca=cascadeAge-delay;
       if(ca>=0 && ca<520){
         const cw=Math.sin(ca/39)*Math.exp(-ca/260);
-        sx=1+cw*.045; sy=1-cw*.072; dy=cw*cell*.026;
+        sx=1+cw*.065; sy=1-cw*.10; dy=cw*cell*.035;
       }
     }
 
@@ -464,10 +467,21 @@ export function drawBoard(ctx, board, cell, opts={}){
   }
   if(activePiece){
     const sh=SHAPES[activePiece.type][activePiece.rot];
+    const airAge = now - lastAirMoveAt;
+    let airSx=1, airSy=1, airDx=0, airSkew=0;
+    if(!ghost && lastAirMoveAt && airAge>=0 && airAge<260){
+      const decay=Math.exp(-airAge/145);
+      const wave=Math.sin((airAge+26)/48);
+      // Stretch in the travel direction, then overshoot softly on the rebound.
+      airSx=1 + (.115*decay) + (.025*wave*decay);
+      airSy=1 - (.075*decay) - (.018*wave*decay);
+      airDx=(lastAirMoveDir||0)*cell*(.105*decay + .025*wave*decay);
+      airSkew=(lastAirMoveDir||0)*.09*decay;
+    }
     for(let yy=0;yy<4;yy++) for(let xx=0;xx<4;xx++) if(sh[yy][xx]){
       const bx=activePiece.x+xx, by=activePiece.y+yy;
       if(by<0 || by>=ROWS || bx<0 || bx>=COLS) continue;
-      drawJellyCell(ctx,bx*cell,by*cell,cell,fallingColor(activePiece.id,ghost),{sx:1,sy:1,dy:0,sparkle:false,t:now,x:bx,y:by});
+      drawJellyCell(ctx,bx*cell+airDx,by*cell,cell,fallingColor(activePiece.id,ghost),{sx:airSx,sy:airSy,dy:0,skewX:airSkew,sparkle:false,t:now,x:bx,y:by});
     }
   }
 }
@@ -530,7 +544,9 @@ function settledColor(y,v,ghost){
 function drawJellyCell(ctx,px,py,cell,color,o){
   // Keep pieces visually connected: only a hairline gutter between cells.
   const pad=Math.max(.28,cell*.008), w=cell-pad*2, h=cell-pad*2;
-  ctx.save(); ctx.translate(px+cell/2,py+cell/2+(o.dy||0)); ctx.scale(o.sx||1,o.sy||1); ctx.translate(-cell/2,-cell/2);
+  ctx.save(); ctx.translate(px+cell/2,py+cell/2+(o.dy||0));
+  if(o.skewX) ctx.transform(1,0,o.skewX,1,0,0);
+  ctx.scale(o.sx||1,o.sy||1); ctx.translate(-cell/2,-cell/2);
   const [r,g,b]=color.rgb; const grad=ctx.createLinearGradient(0,pad,0,cell-pad);
   grad.addColorStop(0,`rgba(${Math.min(255,r+35)},${Math.min(255,g+35)},${Math.min(255,b+38)},${color.a})`);
   grad.addColorStop(.48,`rgba(${r},${g},${b},${color.a})`);

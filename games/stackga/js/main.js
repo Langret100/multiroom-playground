@@ -3,7 +3,7 @@ import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
 import { StackGame, drawBoard, drawNext, COLS } from "./game.js";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-nightduel2";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-jellyfocus3";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -45,8 +45,14 @@ try{
   if (ui.cvMe){
     ui.cvMe.tabIndex = 0;
     ui.cvMe.style.outline = "none";
-    const focusMe = ()=>{ try{ ui.cvMe.focus({ preventScroll:true }); }catch(_){ try{ ui.cvMe.focus(); }catch(__){} } };
-    window.addEventListener("load", focusMe);
+    const focusMe = ()=>{
+      try{ window.focus(); }catch(_){}
+      try{ ui.cvMe.focus({ preventScroll:true }); }catch(_){ try{ ui.cvMe.focus(); }catch(__){} }
+    };
+    window.addEventListener("load", ()=>{ focusMe(); setTimeout(focusMe,80); setTimeout(focusMe,260); });
+    window.addEventListener("focus", ()=>setTimeout(focusMe,0));
+    document.addEventListener("visibilitychange", ()=>{ if(!document.hidden) setTimeout(focusMe,30); });
+    window.addEventListener("message", (e)=>{ if(e?.data?.type === "focus_game") setTimeout(focusMe,0); });
     ui.cvMe.addEventListener("pointerdown", focusMe, { passive:true });
     document.body?.addEventListener?.("pointerdown", ()=>{ try{ window.focus(); }catch(_){} }, true);
   }
@@ -360,7 +366,8 @@ function render(){
       activePiece: meGame.current,
       lastLockAt: meGame.lastLockAt, lastLockCells: meGame.lastLockCells,
       lastContactAt: meGame.lastContactAt, lastContactCells: meGame.lastContactCells,
-      lastCascadeAt: meGame.lastCascadeAt, lastCascadeCells: meGame.lastCascadeCells
+      lastCascadeAt: meGame.lastCascadeAt, lastCascadeCells: meGame.lastCascadeCells,
+      lastAirMoveAt: meGame.lastAirMoveAt, lastAirMoveDir: meGame.lastAirMoveDir
     });
     const mult = meGame._isBigNextActive(now) ? 1.55 : 1;
     const cellNext = Math.floor((ui.cvNext.width / 4) * mult);
