@@ -1373,7 +1373,7 @@ export class RoomDO{
           if (kind === "leave") {
             if (this.br.latestStates) delete this.br.latestStates[String(uid)];
           } else if (kind === "state") {
-            this.br.latestStates[String(uid)] = Object.assign({}, cleanInner, { from:String(uid) });
+            this.br.latestStates[String(uid)] = Object.assign({}, cleanInner, { from:String(uid), _serverAt:n });
             this._checkBackroomsCatches();
           } else if (kind === "world") {
             this.br.latestWorld = Object.assign({}, inner, { from:String(uid) });
@@ -1771,13 +1771,35 @@ export class RoomDO{
         this._relayLimiter.set(uid, lim);
 
         const state = d.state || {};
+        const prevState = this.st.players[uid] || null;
+        const prevScore = this.st.scores[uid] || null;
         this.st.players[uid] = state;
 
         // Keep a lightweight score snapshot on the server (mass, alive)
         const mass = Number(state.mass || state.score || 0) || 0;
-        const alive = state.alive !== false;
+        const incomingAlive = state.alive !== false;
+        const alive = (prevScore && prevScore.alive === false) ? false : incomingAlive;
         const nick = this.users.get(uid)?.nick || safeNick(state.nick || "");
         this.st.scores[uid] = { mass, alive, nick };
+
+        // Existing st_state is also the authoritative death transition. This covers
+        // wall/self deaths without adding a new protocol message. Host-reported kills
+        // mark the score dead first, so they do not duplicate these pellets.
+        if (prevScore && prevScore.alive !== false && incomingAlive === false){
+          const body = Array.isArray(state.body) && state.body.length ? state.body : (Array.isArray(prevState?.body) ? prevState.body : []);
+          const pellets = [];
+          for (let i=0; i<body.length && pellets.length<80; i++){
+            const pt = body[i]; if(!pt) continue;
+            const x = Number(pt.x||0)||0, y = Number(pt.y||0)||0;
+            const value = Math.max(1, Math.min(4, Math.round(mass/Math.max(1, body.length)) || 1));
+            const kind = value >= 4 ? 3 : (value >= 2 ? 2 : 1);
+            const rec = { id:`death-${uid}-${n}-${i}`, x, y, kind, value };
+            this.st.foods.push(rec); pellets.push(rec);
+          }
+          if (pellets.length) this._broadcast("st_spawn", { foods: pellets });
+          this._broadcast("st_event", { event:{ kind:"death", victimSid:uid, killerSid:"", t:n, pellets:pellets.map(p=>p.id) } });
+          this._maybeEndSnakeTail();
+        }
 
         this._scheduleStBroadcast();
         return;
@@ -1856,7 +1878,18 @@ export class RoomDO{
       if (t === "st_event"){
         // Only host can broadcast authoritative events (kills, roundStart, etc.)
         if (uid !== this.meta.ownerUserId) return;
-        this._broadcast("st_event", { event: d.event || {} });
+        const ev = d.event || {};
+        this._broadcast("st_event", { event: ev });
+        if (ev && ev.kind === "kill"){
+          const victimSid = String(ev.victimSid || "");
+          if (victimSid){
+            const cur = this.st.scores[victimSid] || { mass:0, alive:true, nick:this.users.get(victimSid)?.nick || "" };
+            cur.alive = false;
+            this.st.scores[victimSid] = cur;
+            if (this.st.players[victimSid]) this.st.players[victimSid].alive = false;
+            this._maybeEndSnakeTail();
+          }
+        }
         return;
       }
 
@@ -2402,12 +2435,15 @@ export class RoomDO{
       const hunters=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='monster'&&!st?.ghost);
       const rabbits=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='rabbit'&&!st?.ghost&&!st?.trapped);
       const stamp=now();
+      const catchRadius=2.75;
       for(const [,hunter] of hunters){
+        if(stamp-Number(hunter?._serverAt||stamp)>1500)continue;
         for(const [target,rabbit] of rabbits){
+          if(stamp-Number(rabbit?._serverAt||stamp)>1500)continue;
           if(stamp-Number(this.br.catchCooldown[target]||0)<3000)continue;
           const dx=Number(rabbit?.x||0)-Number(hunter?.x||0);
           const dz=Number(rabbit?.z||0)-Number(hunter?.z||0);
-          if(dx*dx+dz*dz>2.1*2.1)continue;
+          if(dx*dx+dz*dz>catchRadius*catchRadius)continue;
           const count=Math.min(2,Math.max(Number(this.br.caughtCounts[target]||0),Number(rabbit?.caught||0))+1);
           this.br.catchCooldown[target]=stamp;
           this.br.caughtCounts[target]=count;

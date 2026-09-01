@@ -392,15 +392,9 @@
     { key:'circle', name:'원', quantumDeg:0, sides:0, targetMass:160, hint:'이제 자유롭게 움직일 수 있어요!' },
   ];
 
-  // CC0 snake sprite (Eugene Loza / OpenGameArt, mirrored in the source GitHub repo).
-  // The first 16x16 frame is used for the head; body beads are rendered locally so
-  // each player can keep a distinct color. If the remote image is unavailable, a
-  // clean fallback head is used automatically.
-  const snakeSprite = new Image();
-  let snakeSpriteReady = false;
-  snakeSprite.onload = ()=>{ snakeSpriteReady = true; };
-  snakeSprite.onerror = ()=>{ snakeSpriteReady = false; };
-  snakeSprite.src = 'https://raw.githubusercontent.com/eugeneloza/SnakeGame/master/data/Snake.png';
+  // The head is rendered locally as a vector mascot so its direction, color and
+  // proportions always match the body. This also removes the fragile remote sprite
+  // dependency that previously made the head look unrelated to the tail.
 
   const particles = [];
   function spawnParticles(x,y,hue=120,count=10,kind='eat'){
@@ -676,6 +670,25 @@
 
   function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
   function dist2(ax,ay,bx,by){ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; }
+  function resampleBodyPath(body, desiredCount){
+    const pts=(Array.isArray(body)?body:[]).filter(p=>p&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
+    if(pts.length<=1)return pts.map(p=>({x:Number(p.x),y:Number(p.y)}));
+    const count=Math.max(2,Math.min(240,Math.floor(Number(desiredCount)||pts.length)));
+    const seg=[];let total=0;
+    for(let i=1;i<pts.length;i++){
+      const ax=Number(pts[i-1].x),ay=Number(pts[i-1].y),bx=Number(pts[i].x),by=Number(pts[i].y);
+      const len=Math.hypot(bx-ax,by-ay);seg.push({ax,ay,bx,by,len,start:total});total+=len;
+    }
+    if(total<0.001)return [{x:Number(pts[0].x),y:Number(pts[0].y)}];
+    const out=[];let si=0;
+    for(let n=0;n<count;n++){
+      const target=(n/(count-1))*total;
+      while(si<seg.length-1 && target>seg[si].start+seg[si].len)si++;
+      const q=seg[si];const t=q.len>0?clamp((target-q.start)/q.len,0,1):0;
+      out.push({x:q.ax+(q.bx-q.ax)*t,y:q.ay+(q.by-q.ay)*t});
+    }
+    return out;
+  }
 
   function thicknessFor(mass){
     return clamp(8 + Math.sqrt(Math.max(0, mass))*1.5, 8, 32);
@@ -854,10 +867,13 @@ function turn(dirSign){
       // wall collision
       const pad = WORLD.pad;
       if (me.x < pad || me.y < pad || me.x > WORLD.W - pad || me.y > WORLD.H - pad){
-        // die
         me.alive = false;
         SFX.die();
-        // tell host via state; host will handle kill logic if needed
+        const localDeathPellets=makePelletsFromBody(mySid||'wall',me);
+        for(const pel of localDeathPellets)if(!net.foods.some(f=>f&&f.id===pel.id))net.foods.push(pel);
+        // Host can publish immediately; non-host death is converted authoritatively
+        // when the server sees alive:true -> false on the existing st_state stream.
+        if(isHost && EMBED && connected && localDeathPellets.length)bridgeSend('st_spawn',{source:'death',foods:localDeathPellets});
         enterSpectate('dead');
       }
 
@@ -893,15 +909,11 @@ function turn(dirSign){
               // (동일 크기는 충돌자(나)가 불리하게 처리)
               if(myMass <= theirMass){
                 me.alive=false; SFX.die();
-                const deadPellets=[];
-                for(let j=0;j<me.body.length;j+=4){
-                  const p=me.body[j]; if(!p) continue;
-                  const pel={id:`dead-${now()}-${j}`,x:p.x,y:p.y,kind:2,value:2};
-                  net.foods.push(pel);
-                  deadPellets.push(pel);
-                }
-                // 서버 및 다른 플레이어에게 먹이 브로드캐스트
-                if(EMBED && connected && deadPellets.length){
+                const deadPellets=makePelletsFromBody(mySid||'self',me);
+                for(const pel of deadPellets)if(!net.foods.some(f=>f&&f.id===pel.id))net.foods.push(pel);
+                // The host publishes its own death immediately. For non-host deaths,
+                // the authoritative server state transition publishes the pellets.
+                if(isHost && EMBED && connected && deadPellets.length){
                   bridgeSend('st_spawn', { source:'death', foods: deadPellets });
                 }
                 enterSpectate('dead');
@@ -1109,24 +1121,18 @@ function turn(dirSign){
   function makePelletsFromBody(seedSid, snakeState){
     const body = Array.isArray(snakeState?.body) ? snakeState.body : [];
     const mass = Number(snakeState?.mass||0)||0;
-    const pellets = [];
-    // 몸 mass에 비례한 먹이 개수 (최소 8, 최대 40)
-    const pelletCount = Math.min(40, Math.max(8, Math.floor(mass / 4)));
-    const step = Math.max(1, Math.floor(body.length / pelletCount));
-    for (let i=0; i<body.length; i+=step){
-      const p = body[i];
-      if (!p) continue;
-      // 크기가 클수록 더 가치있는 먹이 (kind 2~4)
-      const val = Math.max(2, Math.min(7, Math.floor(mass / 18)));
-      const kind = val >= 6 ? 4 : val >= 4 ? 3 : 2;
-      pellets.push({
-        id: `${seedSid}-${now()}-${i}-${Math.floor(Math.random()*9999)}`,
-        x: Number(p.x||0)||0,
-        y: Number(p.y||0)||0,
-        kind,
-        value: val
-      });
-      if (pellets.length >= pelletCount) break;
+    if(!body.length)return [];
+    // Spread pellets across the *entire* body path. Count grows with visible length
+    // instead of taking only the first few body samples, so a long snake visibly
+    // turns into a long trail of food when it dies.
+    const desired=Math.min(80,Math.max(8,Math.ceil(lengthFor(mass)/Math.max(18,thicknessFor(mass)*1.05))));
+    const samples=resampleBodyPath(body,Math.min(desired,Math.max(2,body.length*4)));
+    const pellets=[];
+    const approxValue=clamp(mass/Math.max(1,samples.length),1,4);
+    const kind=approxValue>=3.25?3:(approxValue>=1.65?2:1);
+    for(let i=0;i<samples.length && pellets.length<80;i++){
+      const p=samples[i];
+      pellets.push({id:`${seedSid}-${now()}-${i}-${Math.floor(Math.random()*9999)}`,x:Number(p.x)||0,y:Number(p.y)||0,kind,value:Math.max(1,Math.round(approxValue))});
     }
     return pellets;
   }
@@ -1358,14 +1364,21 @@ function esc(s){
   function visualHeadDir(state){
     const fallback=Number(state?.dir||0)||0;
     const body=Array.isArray(state?.body)?state.body:[];
-    const first=body.find(p=>p&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
-    if(!first)return fallback;
     const hx=Number(state?.x||0),hy=Number(state?.y||0);
-    const dx=hx-Number(first.x),dy=hy-Number(first.y);
-    // The newest body point is the most reliable visual trail direction. If it is
-    // virtually on top of the head, keep the authoritative direction instead.
-    if(dx*dx+dy*dy<4)return fallback;
-    return Math.atan2(dy,dx);
+    let anchor=null,bestD2=0;
+    // Use a short stretch of the newest trail rather than a single almost-overlapping
+    // point. This keeps the visual face aligned with actual travel while turning.
+    for(let i=0;i<Math.min(body.length,8);i++){
+      const p=body[i];if(!p)continue;
+      const px=Number(p.x),py=Number(p.y);if(!Number.isFinite(px)||!Number.isFinite(py))continue;
+      const d2=dist2(hx,hy,px,py);if(d2>bestD2){bestD2=d2;anchor={x:px,y:py};}
+    }
+    if(!anchor||bestD2<9)return fallback;
+    const trailDir=Math.atan2(hy-anchor.y,hx-anchor.x);
+    let delta=((trailDir-fallback+Math.PI*3)%(Math.PI*2))-Math.PI;
+    // A stale/teleported body snapshot must not flip the face backwards.
+    if(Math.abs(delta)>Math.PI*0.72)return fallback;
+    return trailDir;
   }
 
   function colorForSid(sid, s=null){
@@ -1458,11 +1471,11 @@ function esc(s){
     // players snapshot (remote + me)
     const snap = {};
     for (const [sid, s] of Object.entries(net.players || {})){
-      if (!s) continue;
+      if (!s || s.alive === false) continue;
       snap[sid] = s;
     }
-    if (mySid){
-      snap[mySid] = { x: me.x, y: me.y, dir: me.dir, mass: me.mass, alive: me.alive, nick: myNick, colorHue: me.colorHue, body: me.body };
+    if (mySid && me.alive){
+      snap[mySid] = { x: me.x, y: me.y, dir: me.dir, mass: me.mass, alive: true, nick: myNick, colorHue: me.colorHue, body: me.body };
     }
 
     const keep = new Set(Object.keys(snap));
@@ -1482,17 +1495,20 @@ function esc(s){
       const yaw = -visualHeadDir(s) + Math.PI * 0.5;
       obj.group.rotation.y = yaw;
 
-      // tail instances: bead chain that starts empty and grows
+      // Resample the whole trail to a dense, even bead chain. Remote snapshots are
+      // intentionally compact, so drawing only their raw points made large snakes
+      // look like disconnected floating balls.
       const body = Array.isArray(s.body) ? s.body : [];
-      const step = 1;
-      const maxN = Math.min(Math.floor(body.length/step), obj.maxTail);
+      const targetCount=Math.min(obj.maxTail,Math.max(body.length,Math.ceil(lengthFor(Number(s.mass||0)||0)/Math.max(12,thicknessFor(Number(s.mass||0)||0)*0.65))));
+      const renderBody=resampleBodyPath(body,targetCount);
+      const maxN = Math.min(renderBody.length, obj.maxTail);
       for (let i=0; i<maxN; i++){
-        const p = body[i*step];
+        const p = renderBody[i];
         if (!p) continue;
         const ax = w2x(Number(p.x||0)||0) - x;
         const az = w2z(Number(p.y||0)||0) - z;
         const t = maxN <= 1 ? 0 : (i / (maxN-1));
-        const sc = 0.34 + (1.0 - t) * 0.82;
+        const sc = 0.48 + (1.0 - t) * 0.82;
         R3.tmpMat.compose(new T.Vector3(ax, 0.14, az), new T.Quaternion(), new T.Vector3(sc, sc, sc));
         obj.tail.setMatrixAt(i, R3.tmpMat);
       }
@@ -1673,16 +1689,17 @@ function esc(s){
       ctx.globalAlpha=1; ctx.textAlign='left';
     }
 
-    // 원격 뱀 (보간된 위치로 렌더)
+    // 원격 뱀 (보간된 위치로 렌더). Dead snakes disappear; their body is food.
     for(const [sid,s] of Object.entries(net.players||{})){
-      if(!s||sid===mySid) continue;
-      drawSnake(sid, remoteRender[sid]||s);
+      if(!s||sid===mySid||s.alive===false) continue;
+      const rs=remoteRender[sid]||s;if(rs.alive===false)continue;
+      drawSnake(sid, rs);
     }
 
     // 내 뱀
-    drawSnake(mySid||'me',{
+    if(me.alive)drawSnake(mySid||'me',{
       x:me.x,y:me.y,dir:me.dir,
-      mass:me.mass,alive:me.alive,
+      mass:me.mass,alive:true,
       nick:myNick,colorHue:me.colorHue,body:me.body
     },true);
     updateDrawParticles(1/60);
@@ -1698,48 +1715,44 @@ function esc(s){
     const head=worldToScreen(Number(s.x||0)||0,Number(s.y||0)||0);
     const beadR=Math.max(5,th*0.55);
 
-    if(body.length>2){
-      ctx.save(); ctx.lineCap='round'; ctx.lineJoin='round';
-      ctx.strokeStyle='rgba(0,0,0,.26)'; ctx.lineWidth=beadR*1.55;
-      ctx.beginPath(); ctx.moveTo(head.x+2,head.y+3);
-      const shadowStep=Math.max(1,Math.floor(body.length/55));
-      for(let i=0;i<body.length;i+=shadowStep){const b=body[i];if(!b)continue;const p=worldToScreen(Number(b.x||0),Number(b.y||0));ctx.lineTo(p.x+2,p.y+3);} ctx.stroke(); ctx.restore();
+    if(body.length>1){
+      const pathStep=Math.max(1,Math.floor(body.length/180));
+      // A connected core stroke guarantees continuity at every length. Decorative
+      // beads sit on top of it, so growing no longer stretches the tail apart.
+      ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+      ctx.strokeStyle='rgba(0,0,0,.28)';ctx.lineWidth=beadR*1.78;ctx.beginPath();ctx.moveTo(head.x+2,head.y+3);
+      for(let i=0;i<body.length;i+=pathStep){const b=body[i];if(!b)continue;const p=worldToScreen(Number(b.x||0),Number(b.y||0));ctx.lineTo(p.x+2,p.y+3);}ctx.stroke();
+      ctx.strokeStyle=alive?`hsl(${hue} 76% 48%)`:'rgba(105,110,120,.65)';ctx.lineWidth=beadR*1.56;ctx.beginPath();ctx.moveTo(head.x,head.y);
+      for(let i=0;i<body.length;i+=pathStep){const b=body[i];if(!b)continue;const p=worldToScreen(Number(b.x||0),Number(b.y||0));ctx.lineTo(p.x,p.y);}ctx.stroke();ctx.restore();
     }
 
-    const beadStep=Math.max(1,Math.floor(body.length/42));
+    const beadStep=Math.max(1,Math.floor(body.length/110));
     let beadIndex=0;
     for(let i=0;i<body.length;i+=beadStep){
       const b=body[i]; if(!b)continue;
       const p=worldToScreen(Number(b.x||0),Number(b.y||0));
       const tailT=body.length<=1?0:i/(body.length-1);
-      const r=beadR*(1-tailT*0.48);
+      const r=beadR*(1-tailT*0.42);
       const grad=ctx.createRadialGradient(p.x-r*.35,p.y-r*.4,r*.12,p.x,p.y,r);
-      grad.addColorStop(0,alive?`hsl(${hue} 92% 78%)`:'rgba(150,155,165,.7)');
-      grad.addColorStop(.58,alive?`hsl(${hue} 76% 55%)`:'rgba(110,115,125,.6)');
-      grad.addColorStop(1,alive?`hsl(${hue} 72% 38%)`:'rgba(75,80,90,.55)');
+      grad.addColorStop(0,`hsl(${hue} 92% 78%)`);
+      grad.addColorStop(.58,`hsl(${hue} 76% 55%)`);
+      grad.addColorStop(1,`hsl(${hue} 72% 38%)`);
       ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(p.x,p.y,r,0,Math.PI*2); ctx.fill();
-      ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=Math.max(1,r*.09); ctx.stroke();
-      if((beadIndex++%3)===0){ctx.fillStyle='rgba(255,255,255,.32)';ctx.beginPath();ctx.arc(p.x-r*.28,p.y-r*.34,Math.max(1.2,r*.16),0,Math.PI*2);ctx.fill();}
+      ctx.strokeStyle='rgba(255,255,255,.20)'; ctx.lineWidth=Math.max(1,r*.08); ctx.stroke();
+      if((beadIndex++%4)===0){ctx.fillStyle='rgba(255,255,255,.28)';ctx.beginPath();ctx.arc(p.x-r*.28,p.y-r*.34,Math.max(1.1,r*.14),0,Math.PI*2);ctx.fill();}
     }
 
-    const hr=beadR*1.24;
-    ctx.save(); ctx.translate(head.x,head.y); ctx.rotate(dir);
-    if(snakeSpriteReady){
-      ctx.imageSmoothingEnabled=false;
-      ctx.drawImage(snakeSprite,0,0,16,16,-hr,-hr,hr*2,hr*2);
-      ctx.globalCompositeOperation='source-atop'; ctx.globalAlpha=.22; ctx.fillStyle=`hsl(${hue} 85% 55%)`; ctx.fillRect(-hr,-hr,hr*2,hr*2);
-      ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
-      // Small front marker: +X is the travel-facing edge before ctx.rotate(dir).
-      // It makes the head direction unambiguous even if the source sprite frame itself
-      // is visually symmetric.
-      ctx.fillStyle='rgba(255,255,255,.92)';ctx.beginPath();ctx.arc(hr*.78,0,Math.max(1.4,hr*.10),0,Math.PI*2);ctx.fill();
-    }else{
-      const hg=ctx.createRadialGradient(-hr*.35,-hr*.35,hr*.12,0,0,hr);
-      hg.addColorStop(0,`hsl(${hue} 92% 80%)`); hg.addColorStop(.6,`hsl(${hue} 80% 56%)`); hg.addColorStop(1,`hsl(${hue} 72% 38%)`);
-      ctx.fillStyle=hg; ctx.beginPath(); ctx.ellipse(0,0,hr*1.12,hr*.88,0,0,Math.PI*2); ctx.fill();
-      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(hr*.35,-hr*.28,hr*.18,0,Math.PI*2);ctx.arc(hr*.35,hr*.28,hr*.18,0,Math.PI*2);ctx.fill();
-      ctx.fillStyle='#17213b'; ctx.beginPath(); ctx.arc(hr*.41,-hr*.28,hr*.09,0,Math.PI*2);ctx.arc(hr*.41,hr*.28,hr*.09,0,Math.PI*2);ctx.fill();
-    }
+    const hr=beadR*1.20;
+    ctx.save();ctx.translate(head.x,head.y);ctx.rotate(dir);
+    // Local vector mascot head: front is +X, so eyes always show the true travel
+    // direction. Shape/color are intentionally continuous with the body beads.
+    const hg=ctx.createRadialGradient(-hr*.30,-hr*.35,hr*.12,0,0,hr*1.15);
+    hg.addColorStop(0,`hsl(${hue} 94% 80%)`);hg.addColorStop(.58,`hsl(${hue} 80% 56%)`);hg.addColorStop(1,`hsl(${hue} 72% 38%)`);
+    ctx.fillStyle=hg;ctx.beginPath();ctx.ellipse(0,0,hr*1.16,hr*.90,0,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,.24)';ctx.lineWidth=Math.max(1,hr*.08);ctx.stroke();
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(hr*.38,-hr*.30,hr*.19,0,Math.PI*2);ctx.arc(hr*.38,hr*.30,hr*.19,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='#17213b';ctx.beginPath();ctx.arc(hr*.48,-hr*.30,hr*.095,0,Math.PI*2);ctx.arc(hr*.48,hr*.30,hr*.095,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.38)';ctx.beginPath();ctx.ellipse(-hr*.20,-hr*.42,hr*.26,hr*.10,-.35,0,Math.PI*2);ctx.fill();
     ctx.restore();
 
     const nick=s.nick||sid.slice(0,4);
@@ -2023,17 +2036,8 @@ function esc(s){
           me.alive = false;
           me.killerSid = killer;
           spawnParticles(me.x,me.y,350,26,'die');
-          // 내가 죽었을 때: 몸통을 먹이로 변환하여 브로드캐스트
-          const deathPellets = [];
-          for(let j=0; j<me.body.length; j+=4){
-            const p = me.body[j]; if(!p) continue;
-            const pel = {id:`kill-${now()}-${j}`, x:p.x, y:p.y, kind:2, value:2};
-            net.foods.push(pel);
-            deathPellets.push(pel);
-          }
-          if(EMBED && connected && deathPellets.length){
-            bridgeSend('st_spawn', { source:'kill', foods: deathPellets });
-          }
+          // The host/server already published the authoritative death pellets. Do
+          // not create a second local-only corpse trail with different pellet IDs.
           enterSpectate('dead');
           SFX.die();
         } else {

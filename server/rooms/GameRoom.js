@@ -443,8 +443,10 @@ this.sc = {
       const packet = { msg };
       if (kind === "state") {
         try{
+          packet.msg._serverAt = nowMs;
           this.br.latestStates[client.sessionId] = packet.msg;
           this.br.dirtyStates[client.sessionId] = packet.msg;
+          checkBackroomsCatches();
         }catch(_){ }
         return;
       }
@@ -452,6 +454,41 @@ this.sc = {
       else if (kind === "chat") { try{ this.br.latestChat.push(packet.msg); if (this.br.latestChat.length > 30) this.br.latestChat.shift(); }catch(_){ } }
       this.broadcast("br_msg", packet, { except: client });
     });
+
+
+    const checkBackroomsCatches = ()=>{
+      try{
+        if(this.state.mode!=="backrooms3d" || !this.br?.startPayload) return;
+        const start=this.br.startPayload;
+        const startedAt=Number(start.startedAt||0);
+        if(startedAt && Date.now() < startedAt + 10000) return;
+        const states=this.br.latestStates||{};
+        const roles=start.roles||{};
+        this.br.catchCooldown=this.br.catchCooldown||{};
+        this.br.caughtCounts=this.br.caughtCounts||{};
+        const roleOf=(sid)=>String(roles[String(sid)]?.role ||
+          (String(start.monsterSid||'')===String(sid)?'monster':'rabbit'));
+        const hunters=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='monster'&&!st?.ghost);
+        const rabbits=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='rabbit'&&!st?.ghost&&!st?.trapped);
+        const stamp=Date.now(), catchRadius=2.75;
+        for(const [,hunter] of hunters){
+          if(stamp-Number(hunter?._serverAt||stamp)>1500) continue;
+          for(const [target,rabbit] of rabbits){
+            if(stamp-Number(rabbit?._serverAt||stamp)>1500) continue;
+            if(stamp-Number(this.br.catchCooldown[target]||0)<3000) continue;
+            const dx=Number(rabbit?.x||0)-Number(hunter?.x||0);
+            const dz=Number(rabbit?.z||0)-Number(hunter?.z||0);
+            if(dx*dx+dz*dz>catchRadius*catchRadius) continue;
+            const count=Math.min(2,Math.max(Number(this.br.caughtCounts[target]||0),Number(rabbit?.caught||0))+1);
+            this.br.catchCooldown[target]=stamp;
+            this.br.caughtCounts[target]=count;
+            this.br.latestStates[target]=Object.assign({},rabbit,{caught:count,trapped:count<2,ghost:count>=2,hasKey:false,_serverAt:stamp});
+            this.broadcast("br_msg",{msg:{kind:"caught",target:String(target),caught:count,from:"server",nick:"SYSTEM"}});
+            return;
+          }
+        }
+      }catch(_){ }
+    };
 
 // ---- SuhakTokki relay (embedded iframe) ----
     // The game runs inside an iframe and communicates with the room via "sk_msg" packets.
@@ -951,10 +988,27 @@ this.onMessage("st_state", (client, { state }) => {
 
   this.st.players[sid] = snap;
 
+  const hadScore = !!this.st.scores[sid];
   const prev = this.st.scores[sid] || { mass: 0, alive: true, nick: snap.nick };
   // If server already marked dead (e.g., via kill event), keep it dead.
   const alive = (prev.alive === false) ? false : snap.alive;
   this.st.scores[sid] = { mass: snap.mass, alive, nick: snap.nick };
+
+  // Convert wall/self deaths into food using the existing state stream. Host kill
+  // events mark prev.alive=false first, preventing duplicate corpse pellets.
+  if (hadScore && prev.alive !== false && snap.alive === false){
+    const sourceBody = body.length ? body : (Array.isArray(prev_snap.body) ? prev_snap.body : []);
+    const out = [];
+    for(let i=0; i<sourceBody.length && out.length<80; i++){
+      const pt=sourceBody[i]; if(!pt) continue;
+      const value=clamp(Math.round(snap.mass/Math.max(1,sourceBody.length))||1,1,4);
+      const item={id:`death-${sid}-${Date.now()}-${i}`,x:clamp(Number(pt.x)||0,0,7200),y:clamp(Number(pt.y)||0,0,4400),kind:value>=4?3:(value>=2?2:1),value};
+      this.st.foods.push(item);out.push(item);
+    }
+    if(out.length)this.broadcast("st_spawn",{foods:out});
+    this.broadcast("st_event",{event:{kind:"death",victimSid:sid,killerSid:"",t:Date.now(),pellets:out.map(x=>x.id)}});
+    this.maybeAutoEndSnakeTail();
+  }
 });
 
 this.onMessage("st_eat", (client, { id }) => {
@@ -1028,6 +1082,7 @@ this.onMessage("st_event", (client, { event }) => {
       const cur = this.st.scores[victimSid] || { mass: 0, alive: true, nick: this.state.players.get(victimSid)?.nick || "Player" };
       cur.alive = false;
       this.st.scores[victimSid] = cur;
+      if (this.st.players[victimSid]) this.st.players[victimSid].alive = false;
       this.maybeAutoEndSnakeTail();
     }
   }

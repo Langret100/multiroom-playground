@@ -2014,6 +2014,9 @@ function spawnShelfPillar(wx,wz, idx=0){
   };
   let revealPingT = 0; // monster sprint reveal ping (seconds)
   let huntLeft = 90; let huntActive = false; // hunter must catch within 90s
+  // 3D models are wider than their position points. A 2.1-unit center distance made
+  // visually touching rabbits fail to register, especially with network interpolation.
+  const MULTI_CATCH_RADIUS = 2.75;
   let gameOver = false;
   let gameOverMessage = '';
   let shiftHeld = false;
@@ -4092,7 +4095,7 @@ if(monsterReleaseLeft>0){
             for(const rb of rabbits){
               if(rb.sid===hunter.sid) continue;
               const dx=rb.x-hunter.x, dz=rb.z-hunter.z;
-              if(dx*dx+dz*dz < 2.1*2.1){
+              if(dx*dx+dz*dz < MULTI_CATCH_RADIUS*MULTI_CATCH_RADIUS){
                 caught = true;
                 const target = rb.sid;
                 if(target===bridge.sid){

@@ -2430,10 +2430,13 @@ cameraX = 0;
                 const pickId=String(near.id||'');
                 if(pickId){
                     pendingItemPickupIds.add(pickId);
-                    // Remove immediately on the picker. A rejected request is restored by
-                    // the next authoritative host snapshot after pending is cleared.
-                    worldItems=worldItems.filter(x=>String(x.id)!==pickId);
-                    updateItemButton();
+                    // Only a non-host embedded client hides the item optimistically.
+                    // The host must keep it in worldItems until itemCompatProcessRequest()
+                    // validates the pickup; removing it first makes the host reject its own pickup.
+                    if(EMBED && !isGuestMode && !isHost){
+                        worldItems=worldItems.filter(x=>String(x.id)!==pickId);
+                        updateItemButton();
+                    }
                 }
                 itemEvent('pick', { id:near.id, itemType:near.type, charges:ITEM_DEFS[near.type]?.charges || 1 });
                 return;
@@ -2625,6 +2628,10 @@ cameraX = 0;
             heldItem.charges--;
             if(heldItem.charges<=0) heldItem=null;
             updateItemButton();
+            // itemEvent('use') is sent before the local charge is consumed. Publish the
+            // post-use equipment state immediately too, so the last charge cannot leave
+            // a stale held item visible on another client until the next heartbeat.
+            if(EMBED && !isGuestMode) bridgeSendState(true);
         }
 
         function applyItemEvent(d, local=false){

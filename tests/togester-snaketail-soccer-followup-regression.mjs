@@ -15,7 +15,7 @@ ok(tg.includes("pendingItemPickupIds.delete(String(ev.id||''))"),'rejected picku
 
 // SnakeTail: visual direction follows the newest actual body trail rather than a stale angle only.
 ok(st.includes('function visualHeadDir(state)'),'snaketail visual direction helper missing');
-ok(st.includes('return Math.atan2(dy,dx)'),'snaketail head direction not derived from travel trail');
+ok(st.includes('const trailDir=Math.atan2(hy-anchor.y,hx-anchor.x)'),'snaketail head direction not derived from travel trail');
 ok(st.includes('const yaw = -visualHeadDir(s) + Math.PI * 0.5'),'snaketail 3D head direction not corrected');
 ok(st.includes('const dir=visualHeadDir(s);'),'snaketail 2D head direction not corrected');
 

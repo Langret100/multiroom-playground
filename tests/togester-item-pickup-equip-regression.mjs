@@ -1,0 +1,14 @@
+import fs from "node:fs";
+const h=fs.readFileSync(new URL("../games/togester/index.html",import.meta.url),"utf8");
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+const a=h.indexOf("function handlePrimaryAction(){"), b=h.indexOf("function dropHeldItem",a);
+const block=h.slice(a,b);
+ok(block.includes("if(EMBED && !isGuestMode && !isHost)"),"optimistic removal is not limited to non-host embedded clients");
+ok(block.indexOf("if(EMBED && !isGuestMode && !isHost)") < block.indexOf("itemEvent('pick'"),"pickup ordering guard missing");
+const proc=h.slice(h.indexOf("function itemCompatProcessRequest"),h.indexOf("function itemCompatApplyHostState"));
+ok(proc.includes("const found=worldItems.find"),"host authority no longer validates pickup from world state");
+ok(proc.includes("applyItemEvent(out,String(fromSid)===String(mySessionId))"),"accepted host pickup does not apply/equip locally");
+const app=h.slice(h.indexOf("function applyItemEvent"),h.indexOf("function updateWorldItems"));
+ok(app.includes("heldItem={id:pickId,type:pickedType"),"accepted pickup does not equip heldItem");
+ok(app.includes("worldItems=worldItems.filter(x=>String(x.id)!==pickId)"),"accepted pickup does not remove world item");
+console.log("TOGESTER_ITEM_PICKUP_EQUIP_REGRESSION_OK");
