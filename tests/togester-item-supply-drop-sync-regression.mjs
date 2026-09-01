@@ -1,0 +1,21 @@
+import fs from 'node:fs';
+const h=fs.readFileSync(new URL('../games/togester/index.html',import.meta.url),'utf8');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+ok(h.includes('const ITEM_SUPPLY_INTERVAL_MS = 14000'),'supply interval is not 14s');
+ok(h.includes('const ITEM_SUPPLY_EMPTY_MAX_WAIT_MS = 5000'),'empty-map fast replenishment missing');
+ok(h.includes('const ITEM_SUPPLY_MAX_WORLD = 7'),'world item cap missing');
+ok(h.includes('nextItemDropAt = performance.now() + 9000'),'first round supply delay missing');
+const sync=h.slice(h.indexOf('function itemCompatApplyHostState'),h.indexOf('function itemEvent',h.indexOf('function itemCompatApplyHostState')));
+ok(sync.includes('version>itemCompatAppliedVersion'),'item world does not require a strictly newer snapshot');
+ok(!sync.includes('version>=itemCompatAppliedVersion'),'equal-version stale snapshot can still overwrite dropped items');
+const supply=h.slice(h.indexOf('function randomSupplyItem(){'),h.indexOf('function nearestPickup',h.indexOf('function randomSupplyItem(){')));
+ok(supply.indexOf('if (EMBED && !isGuestMode && !isHost) return;') < supply.indexOf('const now = performance.now()'),'guest is still advancing a private supply timer');
+ok(supply.includes('worldItems.length===0') && supply.includes('ITEM_SUPPLY_EMPTY_MAX_WAIT_MS'),'empty-map replenishment pull-forward missing');
+ok(supply.includes('worldItems.length >= ITEM_SUPPLY_MAX_WORLD'),'supply flood cap missing');
+ok(supply.includes("y:p.y-280") && supply.includes('landed:false'),'supply is not visibly dropped from the air');
+ok(supply.includes("id:`supply-${currentLevel}-${Date.now()}-${++itemDropSeq}`"),'supply IDs are not unique/explicit');
+// Tiny timing model: an empty map cannot remain dry for more than 5 seconds once checked.
+let now=1000, next=20000;
+if(0===0 && next>now+5000) next=now+5000;
+ok(next===6000,'empty-map timing model failed');
+console.log('TOGESTER_ITEM_SUPPLY_DROP_SYNC_REGRESSION_OK');

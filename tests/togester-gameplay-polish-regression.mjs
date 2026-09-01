@@ -8,5 +8,6 @@ ok(html.includes('const JUMP_VELOCITY = -6.40 * PHYS_SCALE'),'jump polish missin
 ok(html.includes('const JUMP_HOLD_MAX_MS = 250'),'jump hold polish missing');
 ok(html.includes('boxJumpGraceUntil: 0') && html.includes('boxJumpGraceUntil = now + 150'),'box jump grace missing');
 ok(html.includes("performance.now() < (player.boxJumpGraceUntil || 0)"),'box jump resolver guard missing');
-ok(html.includes("if (lv <= 3) return ['stairs','stairs']") && html.includes("return [pick(['relay','split'])"),'readable co-op sequence missing');
+ok(html.includes("if (lv <= 3) return ['stairs','stairs']") && html.includes("return ['box','bridge','door','lift']"),'readable single-mechanic co-op sequence missing');
+ok(!/return \[pick\(\['relay','split'\]\)/.test(html),'dense composite puzzle sequence returned');
 console.log('TOGESTER_GAMEPLAY_POLISH_REGRESSION_OK');

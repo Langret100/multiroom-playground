@@ -833,7 +833,7 @@
         let lastPushAt = 0;
 
         // 라운드 아이템: 매 라운드 안전 동선 위에 정확히 5개를 분산 배치하고,
-        // 호스트가 30초마다 추가 보급을 투하한다. 아이템 판정은 기존 tg_state 호환 릴레이만 사용한다.
+        // 호스트가 주기적으로 하늘 보급을 투하한다. 아이템 판정은 기존 tg_state 호환 릴레이만 사용한다.
         const ITEM_DEFS = {
             gun:        { name:'총',         charges:6, color:'#74b9ff' },
             lightsaber: { name:'칼',         charges:8, color:'#55efc4' },
@@ -847,7 +847,9 @@
             boomerang:  { name:'부메랑',     charges:5, color:'#fab1a0' }
         };
         const ITEM_TYPES = Object.keys(ITEM_DEFS);
-        const ITEM_DROP_INTERVAL_MS = 30000;
+        const ITEM_SUPPLY_INTERVAL_MS = 14000;
+        const ITEM_SUPPLY_EMPTY_MAX_WAIT_MS = 5000;
+        const ITEM_SUPPLY_MAX_WORLD = 7;
         let worldItems = [];
         let heldItem = null;
         let itemEffects = [];
@@ -1086,7 +1088,7 @@
         
         
                // ==================== 모바일 세로 진행 레벨 ====================
-        // 20라운드: 맵 반복 없이, 라운드가 올라갈수록 함정/퍼즐 난이도가 증가하도록 구성
+        // 20라운드: 맵 반복 없이, 한 화면 높이마다 한 가지 퍼즐 기믹만 읽히도록 구성
         // (기존: 8개 맵 반복 -> 개선: 25개 맵을 결정론적으로 생성)
 
         const TG_STAGE_W = 520;
@@ -1157,31 +1159,20 @@
             const yApproach = y - step;
             const yDoor = y - step*2 + 10;
             // 접근 발판
-            _addPlatform(platforms, 120 + _rint(rng,-25,25), yApproach, _rint(rng, wMin, wMax), 20);
+            _addPlatform(platforms, 120, yApproach, 280, 20);
             // 문 (전체 폭)
             doors.push({ x: 0, y: yDoor, width: TG_STAGE_W, height: 30, open: false, color: '#d63031' });
             // 버튼 발판
             const btnSideLeft = rng() < 0.5;
             const btnPlatW = _rint(rng, 165, 205);
             const btnPlatX = btnSideLeft ? 35 : (TG_STAGE_W - 35 - btnPlatW);
-            const btnPlatY = yApproach + _rint(rng, 82, 105);
+            const btnPlatY = yApproach + 105;
             _addPlatform(platforms, btnPlatX, btnPlatY, btnPlatW, 20);
             buttons.push({ x: btnSideLeft ? 55 : (TG_STAGE_W - 55 - 70), y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#e17055' });
 
             // 문 위쪽 진행 발판
             const topW = _rint(rng, wMin, wMax);
-            _addPlatform(platforms, 120 + _rint(rng,-25,25), yDoor - 90, topW, 20);
-
-            // 후반 난이도: 2단 문
-            if (diff > 0.72 && rng() < 0.5){
-                const yDoor2 = yDoor - step - 10;
-                doors.push({ x: 0, y: yDoor2, width: TG_STAGE_W, height: 30, open: false, color: '#c0392b' });
-                const btnPlatY2 = yDoor - 40;
-                const btnPlatX2 = btnSideLeft ? (TG_STAGE_W - 35 - btnPlatW) : 35;
-                _addPlatform(platforms, btnPlatX2, btnPlatY2, btnPlatW, 20);
-                buttons.push({ x: btnSideLeft ? (TG_STAGE_W - 55 - 70) : 55, y: _buttonOn(btnPlatY2), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#fdcb6e' });
-                _addPlatform(platforms, 140, yDoor2 - 90, _rint(rng, wMin, wMax), 20);
-            }
+            _addPlatform(platforms, 140, yDoor - 90, 240, 20);
 
             return y - step*3;
         }
@@ -1193,15 +1184,10 @@
             bridges.push({ x: 210, y: yGap, width: 125, height: 20, color: '#00cec9', active: false });
 
             // 버튼은 아래쪽에
-            const btnPlatY = yGap + _rint(rng, 105, 130);
+            const btnPlatY = yGap + 115;
             const btnPlatX = rng() < 0.5 ? 45 : 285;
             _addPlatform(platforms, btnPlatX, btnPlatY, 190, 20);
             buttons.push({ x: btnPlatX + 45, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, bridgeId: bridges.length-1, color: '#00b894' });
-
-            // 밑에 스파이크(중반 이후)
-            if (diff > 0.35){
-                spikes.push({ x: 195, y: yGap + 78, width: 130, height: 36 });
-            }
 
             // 위쪽 진행 발판
             _addPlatform(platforms, 140 + _rint(rng,-30,30), yGap - step, 240, 20);
@@ -1210,23 +1196,18 @@
 
         function _chunkLift({rng, platforms, lifts, buttons, spikes, y, step, diff}){
             // 버튼 누르는 동안만 올라가는 리프트
-            const bottomY = y - _rint(rng, 0, 10);
+            const bottomY = y;
             const topY = bottomY - Math.round(step * _lerp(2.1, 2.6, diff));
             // 접근 발판
-            _addPlatform(platforms, 70 + _rint(rng,-15,15), bottomY - step, 200, 20);
+            _addPlatform(platforms, 55, bottomY - step, 210, 20);
             // 리프트
             lifts.push({ x: 360, y: bottomY, width: 120, height: 20, minY: topY, maxY: bottomY, speed: _lerp(2.6, 3.4, diff), color: '#6c5ce7' });
             // 버튼 발판
-            const btnPlatY = bottomY + _rint(rng, 100, 125);
+            const btnPlatY = bottomY + 115;
             _addPlatform(platforms, 40, btnPlatY, 195, 20);
             buttons.push({ x: 85, y: _buttonOn(btnPlatY), width: 70, height: 12, pressed: false, liftId: lifts.length-1, color: '#a29bfe' });
             // 리프트 상단 하차 발판
-            _addPlatform(platforms, 250 + _rint(rng,-20,20), topY - 60, 220, 20);
-
-            // 후반: 리프트 아래에 스파이크 압박
-            if (diff > 0.6 && rng() < 0.65){
-                spikes.push({ x: 285, y: bottomY + 62, width: 165, height: 36 });
-            }
+            _addPlatform(platforms, 245, topY - 60, 225, 20);
 
             return y - step*3;
         }
@@ -1242,20 +1223,15 @@
             // 버튼 포켓
             const pocketLeft = rng() < 0.5;
             const pocketX = pocketLeft ? 40 : 330;
-            const pocketY = yApproach + _rint(rng, 105, 130);
+            const pocketY = yApproach + 110;
             _addPlatform(platforms, pocketX, pocketY, 190, 20);
             buttons.push({ x: pocketX + 40, y: _buttonOn(pocketY), width: 70, height: 12, pressed: false, doorId: doors.length-1, color: '#fdcb6e' });
 
             // 상자 (접근 발판 위)
-            boxes.push({ x: 250 + _rint(rng,-25,25), y: yApproach - 40, width: 40, height: 40 });
-
-            // 함정: 상자 길목 스파이크
-            if (diff > 0.72 && rng() < 0.35){
-                spikes.push({ x: pocketLeft ? 300 : 85, y: yApproach + 82, width: 105, height: 32 });
-            }
+            boxes.push({ x: pocketLeft ? 330 : 150, y: yApproach - 40, width: 40, height: 40 });
 
             // 문 위 진행 발판
-            _addPlatform(platforms, 140 + _rint(rng,-25,25), yDoor - 90, 240, 20);
+            _addPlatform(platforms, 140, yDoor - 90, 240, 20);
             return y - step*3;
         }
 
@@ -1344,19 +1320,26 @@
         }
 
         function _seqForLevel(lv, rng){
-            const pick = (arr)=>_pick(rng, arr);
-            // Readable co-op progression: every round has 3~4 clear puzzle beats.
+            // One readable mechanic per vertical band. Dense relay/split/boxrelay chunks
+            // looked cluttered and made the intended route hard to read on a phone-sized view.
             if (lv <= 3) return ['stairs','stairs'];
             if (lv === 4) return ['stairs','bridge','stairs'];
-            if (lv === 5) return ['stairs','door','bridge'];
+            if (lv === 5) return ['stairs','door','stairs'];
             if (lv === 6) return ['stairs','box','door'];
             if (lv === 7) return ['bridge','lift','stairs'];
             if (lv === 8) return ['box','bridge','lift'];
-            if (lv === 9) return ['relay','stairs','bridge'];
-            if (lv === 10) return ['split','lift','door'];
-            if (lv <= 14) return [pick(['relay','boxrelay']), pick(['door','box']), pick(['lift','bridge']), 'stairs'];
-            if (lv <= 17) return [pick(['boxrelay','relay']), pick(['split','door']), pick(['lift','bridge']), pick(['stairs','gap'])];
-            return [pick(['relay','split']), pick(['boxrelay','door']), pick(['lift','bridge']), pick(['stairs','gap'])];
+            if (lv === 9) return ['door','bridge','stairs'];
+            if (lv === 10) return ['box','lift','door'];
+            if (lv === 11) return ['bridge','door','lift'];
+            if (lv === 12) return ['box','bridge','door'];
+            if (lv === 13) return ['lift','stairs','bridge'];
+            if (lv === 14) return ['box','door','lift'];
+            if (lv === 15) return ['bridge','lift','door'];
+            if (lv === 16) return ['box','bridge','lift'];
+            if (lv === 17) return ['door','gap','lift'];
+            if (lv === 18) return ['box','door','gap'];
+            if (lv === 19) return ['bridge','lift','gap'];
+            return ['box','bridge','door','lift'];
         }
 
         function _genLevel(lv){
@@ -1930,7 +1913,7 @@
                 itemCompatHostEvents = [];
                 itemCompatSeenRequests.clear();
             }
-            nextItemDropAt = performance.now() + ITEM_DROP_INTERVAL_MS;
+            nextItemDropAt = performance.now() + 9000;
             updateItemButton();
 
             ensureBoxIds();
@@ -2289,7 +2272,7 @@ cameraX = 0;
             const sync=st&&st.itemCompat;if(!sync||!sync.authority)return;
             if(Number(sync.level)!==Number(currentLevel))return;
             const version=Math.max(0,Number(sync.version)||0);
-            if(Array.isArray(sync.world) && version>=itemCompatAppliedVersion){
+            if(Array.isArray(sync.world) && version>itemCompatAppliedVersion){
                 worldItems=sync.world.filter(it=>{
                     if(!it||!ITEM_DEFS[it.type]||!it.id)return false;
                     const id=String(it.id);
@@ -2385,15 +2368,24 @@ cameraX = 0;
 
         function randomSupplyItem(){
             if (!gameObjects || !gameObjects.platforms?.length) return;
-            const now = performance.now();
-            if (now < nextItemDropAt) return;
-            nextItemDropAt = now + ITEM_DROP_INTERVAL_MS;
+            // Only the authoritative side schedules supply drops. Guests mirror the
+            // host world snapshot instead of running their own invisible timer.
             if (EMBED && !isGuestMode && !isHost) return;
-            const candidates = gameObjects.platforms.filter(p => !p.temp && p.width >= 80);
+            const now = performance.now();
+            // If players have exhausted every world item, never leave the round dry
+            // for a full normal interval. Pull the next supply forward to <= 5 s.
+            if (worldItems.length===0 && nextItemDropAt > now + ITEM_SUPPLY_EMPTY_MAX_WAIT_MS){
+                nextItemDropAt = now + ITEM_SUPPLY_EMPTY_MAX_WAIT_MS;
+            }
+            if (now < nextItemDropAt) return;
+            nextItemDropAt = now + ITEM_SUPPLY_INTERVAL_MS;
+            // Keep repeated air-drops useful without carpeting the whole map.
+            if (worldItems.length >= ITEM_SUPPLY_MAX_WORLD) return;
+            const candidates = gameObjects.platforms.filter(p => !p.temp && p.width >= 100);
             const p = candidates[Math.floor(Math.random() * candidates.length)] || gameObjects.platforms[0];
             const type = ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)];
             const x = p.x + 18 + Math.random() * Math.max(10, p.width - 54);
-            itemEvent('spawn', { item:{ id:`drop-${currentLevel}-${Date.now()}-${itemDropSeq}`, type, x, y:p.y-260, vx:0, vy:0, landed:false } });
+            itemEvent('spawn', { item:{ id:`supply-${currentLevel}-${Date.now()}-${++itemDropSeq}`, type, x, y:p.y-280, vx:0, vy:0, landed:false } });
         }
 
         function nearestPickup(){
@@ -2492,17 +2484,6 @@ cameraX = 0;
             }else if(type==='missile'){
                 _itemTone(105,.22,'sawtooth',.105,310);
                 _itemTone(55,.16,'square',.06,95,.06);
-            }else if(type==='hammer'){
-                p(-10,-5,13,10,ink);p(-8,-4,10,8,'#ff7675');p(-6,-3,6,2,'#ffb3b3');p(2,-2,4,4,ink);p(4,-1,11,3,'#8d6e63');p(13,-2,3,5,ink);
-            }else if(type==='spring'){
-                p(-8,-7,16,4,ink);p(-6,-6,12,2,'#ffeaa7');p(-7,5,14,4,ink);p(-5,6,10,2,'#e17055');
-                p(-4,-3,8,2,'#81ecec');p(-6,-1,12,2,'#55efc4');p(-4,1,8,2,'#81ecec');p(-6,3,12,2,'#55efc4');
-            }else if(type==='ice'){
-                p(-9,-3,14,7,ink);p(-7,-2,11,5,'#81ecec');p(-4,-1,5,2,'#dff9fb');p(4,-2,5,5,'#00cec9');p(9,-1,4,3,'#dff9fb');
-                p(-2,4,5,3,ink);p(-1,6,4,4,'#74b9ff');
-            }else if(type==='boomerang'){
-                p(-8,-8,5,4,ink);p(-6,-6,5,4,'#fab1a0');p(-4,-4,5,4,'#e17055');p(-2,-2,5,4,'#fab1a0');
-                p(0,0,5,4,'#e17055');p(2,2,5,4,'#fab1a0');p(4,4,5,4,ink);p(2,6,7,3,'#8d6e63');
             }else if(type==='grenade'){
                 _itemTone(170,.10,'square',.08,90);
             }else if(type==='pan'){
@@ -2623,11 +2604,15 @@ cameraX = 0;
                 }
             }
             localPlayer.pushAnimUntil=now+PUSH_ANIM_MS;
-            itemSound(type); addItemEffect(effect.kind,effect.x,effect.y,effect.tx,effect.ty,effect.color);
-            itemEvent('use',{id:heldItem.id,itemType:type,effect,impacts});
+            // Commit the use/charge state independently from presentation. A broken SFX/VFX
+            // must never turn an item into an unlimited-use gameplay effect.
+            const usedItemId=heldItem.id;
+            itemEvent('use',{id:usedItemId,itemType:type,effect,impacts});
             heldItem.charges--;
             if(heldItem.charges<=0) heldItem=null;
             updateItemButton();
+            try{ itemSound(type); }catch(_){ }
+            try{ addItemEffect(effect.kind,effect.x,effect.y,effect.tx,effect.ty,effect.color); }catch(_){ }
             // itemEvent('use') is sent before the local charge is consumed. Publish the
             // post-use equipment state immediately too, so the last charge cannot leave
             // a stale held item visible on another client until the next heartbeat.
@@ -3807,6 +3792,17 @@ cameraX = 0;
             }else if(type==='pan'){
                 p(-9,-7,12,2,ink);p(-11,-5,16,11,ink);p(-9,-5,12,9,'#636e72');p(-7,-4,8,2,'#b2bec3');
                 p(5,0,10,5,ink);p(5,1,8,3,'#8d6e63');p(13,0,3,5,ink);
+            }else if(type==='hammer'){
+                p(-10,-5,13,10,ink);p(-8,-4,10,8,'#ff7675');p(-6,-3,6,2,'#ffb3b3');p(2,-2,4,4,ink);p(4,-1,11,3,'#8d6e63');p(13,-2,3,5,ink);
+            }else if(type==='spring'){
+                p(-8,-7,16,4,ink);p(-6,-6,12,2,'#ffeaa7');p(-7,5,14,4,ink);p(-5,6,10,2,'#e17055');
+                p(-4,-3,8,2,'#81ecec');p(-6,-1,12,2,'#55efc4');p(-4,1,8,2,'#81ecec');p(-6,3,12,2,'#55efc4');
+            }else if(type==='ice'){
+                p(-9,-3,14,7,ink);p(-7,-2,11,5,'#81ecec');p(-4,-1,5,2,'#dff9fb');p(4,-2,5,5,'#00cec9');p(9,-1,4,3,'#dff9fb');
+                p(-2,4,5,3,ink);p(-1,6,4,4,'#74b9ff');
+            }else if(type==='boomerang'){
+                p(-8,-8,5,4,ink);p(-6,-6,5,4,'#fab1a0');p(-4,-4,5,4,'#e17055');p(-2,-2,5,4,'#fab1a0');
+                p(0,0,5,4,'#e17055');p(2,2,5,4,'#fab1a0');p(4,4,5,4,ink);p(2,6,7,3,'#8d6e63');
             }
             ctx.restore();
         }
