@@ -634,18 +634,18 @@ function applyMathResult(d){
   // 정상 수신이면 결과 화면을 충분히 보여준다. RESULT 단계에 늦게 재접속한
   // 경우에는 남은 시간 안에 긴 연출을 억지로 재생하지 않고 최종 결과를 즉시
   // 보여줘, 선공팀을 확인하지 못한 채 COUNTDOWN으로 넘어가는 일을 막는다.
-  if(resultRemain<1450){
+  if(resultRemain<850){
     showFinalResult();
   }else{
     mkSub.textContent='양 팀 결과를 하나씩 공개합니다';mkProblem.textContent='두근두근…';mkHelp.textContent='누가 먼저 공을 가질까요?';mkTeamA.textContent='?';mkTeamB.textContent='?';
-    queueMathTimeout(()=>{sfxMathReveal();mkTeamA.textContent=String(scoreA);mkTeamA.classList.remove('pop');void mkTeamA.offsetWidth;mkTeamA.classList.add('pop');},260);
-    queueMathTimeout(()=>{sfxMathReveal();mkTeamB.textContent=String(scoreB);mkTeamB.classList.remove('pop');void mkTeamB.offsetWidth;mkTeamB.classList.add('pop');},720);
-    queueMathTimeout(()=>{sfxMathReveal();mkProblem.textContent=`${scoreA} : ${scoreB}`;},1100);
+    queueMathTimeout(()=>{sfxMathReveal();mkTeamA.textContent=String(scoreA);mkTeamA.classList.remove('pop');void mkTeamA.offsetWidth;mkTeamA.classList.add('pop');},180);
+    queueMathTimeout(()=>{sfxMathReveal();mkTeamB.textContent=String(scoreB);mkTeamB.classList.remove('pop');void mkTeamB.offsetWidth;mkTeamB.classList.add('pop');},420);
+    queueMathTimeout(()=>{sfxMathReveal();mkProblem.textContent=`${scoreA} : ${scoreB}`;},650);
     if(d.tied){
-      queueMathTimeout(()=>{mkSub.textContent='동점! 동전 던지기로 선공을 정합니다';mkHelp.textContent='축구공 동전이 돌아갑니다!';mkCoin.classList.add('show');},1350);
-      queueMathTimeout(()=>{mkCoin.classList.remove('show');sfxMathResult(d.winner);mkResult.textContent=mathKickoff.kind==='restart'?`${winner} 팀이 재시작 선공!`:`${winner} 팀이 첫 선공!`;mkHelp.textContent='동점 승부 끝! 3, 2, 1 후 시작합니다';},1950);
+      queueMathTimeout(()=>{mkSub.textContent='동점! 동전 던지기로 선공을 정합니다';mkHelp.textContent='축구공 동전이 돌아갑니다!';mkCoin.classList.add('show');},820);
+      queueMathTimeout(()=>{mkCoin.classList.remove('show');sfxMathResult(d.winner);mkResult.textContent=mathKickoff.kind==='restart'?`${winner} 팀이 재시작 선공!`:`${winner} 팀이 첫 선공!`;mkHelp.textContent='동점 승부 끝! 곧 시작합니다';},1180);
     }else{
-      queueMathTimeout(()=>{sfxMathResult(d.winner);mkSub.textContent='팀 정답 합계로 선공 결정!';mkResult.textContent=mathKickoff.kind==='restart'?`${winner} 팀이 재시작 선공!`:`${winner} 팀이 첫 선공!`;mkHelp.textContent='잠시 후 3, 2, 1 카운트다운이 시작됩니다';},1450);
+      queueMathTimeout(()=>{sfxMathResult(d.winner);mkSub.textContent='팀 정답 합계로 선공 결정!';mkResult.textContent=mathKickoff.kind==='restart'?`${winner} 팀이 재시작 선공!`:`${winner} 팀이 첫 선공!`;mkHelp.textContent='잠시 후 짧은 카운트다운이 시작됩니다';},900);
     }
   }
   // 실제 재개 시각과 경기 잠금은 방장 권위 호환 라운드 상태를 따른다.
@@ -2875,7 +2875,7 @@ function soccerCompatScheduleTick(){
 }
 function soccerCompatStartRound(kind='initial'){
   if(!isHost)return;
-  const restart=kind==='restart',now=Date.now(),beginsAt=now+800,endsAt=beginsAt+(restart?5000:10000);
+  const restart=kind==='restart',now=Date.now(),beginsAt=now+520,endsAt=beginsAt+(restart?5000:10000);
   soccerCompatScores={};soccerCompatSeenSubmit={};
   soccerCompatRound={id:`compat-${restart?'r':'i'}-${++soccerCompatSerial}-${now}`,serial:soccerCompatSerial,kind:restart?'restart':'initial',
     seed:(Math.floor(Math.random()*2147483646)+1),phase:'quiz',beginsAt,endsAt,resultUntil:0,kickoffAt:0,winner:'',tied:false,kickoffOwnerSid:''};
@@ -2887,7 +2887,8 @@ function soccerCompatTick(){
   if(r.phase==='quiz'&&now>=r.endsAt+150){
     let a=0,b=0;for(const [sid,v] of Object.entries(soccerCompatScores)){if(soccerCompatTeamOfSid(sid)==='A')a+=Number(v||0);else b+=Number(v||0);}
     r.tied=a===b;r.winner=r.tied?((r.seed&1)?'A':'B'):(a>b?'A':'B');r.kickoffOwnerSid=soccerCompatOwnerForTeam(r.winner);
-    r.phase='result';r.resultUntil=now+3000;r.kickoffAt=r.resultUntil+3000;soccerCompatBroadcast();
+    // Keep the decision readable without freezing the field for six extra seconds.
+    r.phase='result';r.resultUntil=now+1600;r.kickoffAt=r.resultUntil+1900;soccerCompatBroadcast();
   }else if(r.phase==='result'&&now>=r.resultUntil){r.phase='countdown';soccerCompatBroadcast();
   }else if(r.phase==='countdown'&&now>=r.kickoffAt){r.phase='playing';soccerCompatBroadcast();
   }else{
@@ -2943,7 +2944,7 @@ window.addEventListener('message', e=>{
     mySid = String(d.sessionId||'');
     myNick = String(d.nick||'Player');
     mySeat = Number(d.seat ?? -1);
-    isHost = !!d.isHost;
+    isHost = !!d.isHost || (mySeat===0);
 
     const incoming = (d.players||[]).map(p=>({
       sid: String(p.sid||p.sessionId||''),
@@ -3140,12 +3141,23 @@ window.addEventListener('message', e=>{
     if (newA !== score.A) scoreAnimA = Date.now();
     if (newB !== score.B) scoreAnimB = Date.now();
     score.A = newA; score.B = newB;
-    if (d.type === 'sc_goal'){
-      const hold=Math.max(700,Number(d.quizDelayMs||1050));
-      gameActive=false;restartLockUntil=Math.max(restartLockUntil,Date.now()+hold);clearRoundActions();
-      if(isHost)setTimeout(()=>soccerCompatStartRound('restart'),Math.min(900,hold));
-      if(!isHost){showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400);}
+    const hold=Math.max(650,Number(d.quizDelayMs||1050));
+    gameActive=false;restartLockUntil=Math.max(restartLockUntil,Date.now()+hold);clearRoundActions();
+
+    // A confirmed goal immediately returns the ball to midfield. Previously the old
+    // goal-line position stayed visible until countdown, making the restart look stuck.
+    ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:Date.now()+hold};
+    netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
+    pendingGoalVisual=null;goalPending=false;
+
+    if(isHost){
+      // Cancel the old round heartbeat before opening the restart quiz. Without this,
+      // one late PLAYING snapshot can overwrite the new QUIZ state after a goal.
+      if(soccerCompatTickTimer){try{clearTimeout(soccerCompatTickTimer);}catch(_){ }soccerCompatTickTimer=0;}
+      soccerCompatRound=null;
+      setTimeout(()=>{ if(isHost&&!gameOver) soccerCompatStartRound('restart'); },Math.min(720,hold));
     }
+    showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400);
     return;
   }
 

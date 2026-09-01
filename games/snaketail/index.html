@@ -1354,6 +1354,20 @@ function esc(s){
     return hashHue(String(sid||''));
   }
 
+
+  function visualHeadDir(state){
+    const fallback=Number(state?.dir||0)||0;
+    const body=Array.isArray(state?.body)?state.body:[];
+    const first=body.find(p=>p&&Number.isFinite(Number(p.x))&&Number.isFinite(Number(p.y)));
+    if(!first)return fallback;
+    const hx=Number(state?.x||0),hy=Number(state?.y||0);
+    const dx=hx-Number(first.x),dy=hy-Number(first.y);
+    // The newest body point is the most reliable visual trail direction. If it is
+    // virtually on top of the head, keep the authoritative direction instead.
+    if(dx*dx+dy*dy<4)return fallback;
+    return Math.atan2(dy,dx);
+  }
+
   function colorForSid(sid, s=null){
     const T = THREE_REF;
     const hue = hueForState(sid, s);
@@ -1465,7 +1479,7 @@ function esc(s){
       const x = w2x(Number(s.x||0)||0);
       const z = w2z(Number(s.y||0)||0);
       obj.group.position.set(x, 0, z);
-      const yaw = (-Number(s.dir||0) || 0) + Math.PI * 0.5;
+      const yaw = -visualHeadDir(s) + Math.PI * 0.5;
       obj.group.rotation.y = yaw;
 
       // tail instances: bead chain that starts empty and grows
@@ -1680,7 +1694,7 @@ function esc(s){
     const th=thicknessFor(mass);
     const body=Array.isArray(s.body)?s.body:[];
     const hue=hueForState(sid,s);
-    const dir=Number(s.dir||0)||0;
+    const dir=visualHeadDir(s);
     const head=worldToScreen(Number(s.x||0)||0,Number(s.y||0)||0);
     const beadR=Math.max(5,th*0.55);
 
@@ -1715,6 +1729,10 @@ function esc(s){
       ctx.drawImage(snakeSprite,0,0,16,16,-hr,-hr,hr*2,hr*2);
       ctx.globalCompositeOperation='source-atop'; ctx.globalAlpha=.22; ctx.fillStyle=`hsl(${hue} 85% 55%)`; ctx.fillRect(-hr,-hr,hr*2,hr*2);
       ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+      // Small front marker: +X is the travel-facing edge before ctx.rotate(dir).
+      // It makes the head direction unambiguous even if the source sprite frame itself
+      // is visually symmetric.
+      ctx.fillStyle='rgba(255,255,255,.92)';ctx.beginPath();ctx.arc(hr*.78,0,Math.max(1.4,hr*.10),0,Math.PI*2);ctx.fill();
     }else{
       const hg=ctx.createRadialGradient(-hr*.35,-hr*.35,hr*.12,0,0,hr);
       hg.addColorStop(0,`hsl(${hue} 92% 80%)`); hg.addColorStop(.6,`hsl(${hue} 80% 56%)`); hg.addColorStop(1,`hsl(${hue} 72% 38%)`);

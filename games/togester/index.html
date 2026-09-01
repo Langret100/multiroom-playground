@@ -734,18 +734,18 @@
         const PHYS_SCALE = 1.0;
         // 기본 슈퍼마리오(SMB1) 느낌: 과속 방지 + 살짝 미끄러짐(스키드) + 낙하/점프 완만
         // (단위: px/frame @60fps)
-        const GRAVITY = 0.16 * PHYS_SCALE;
-        const MAX_FALL_SPEED = 4.15 * PHYS_SCALE;
-        const MOVE_MAX_SPEED = 2.05 * PHYS_SCALE;
-        const MOVE_ACCEL_GROUND = 0.18 * PHYS_SCALE;
-        const MOVE_ACCEL_AIR = 0.10 * PHYS_SCALE;
+        const GRAVITY = 0.18 * PHYS_SCALE;
+        const MAX_FALL_SPEED = 4.40 * PHYS_SCALE;
+        const MOVE_MAX_SPEED = 2.40 * PHYS_SCALE;
+        const MOVE_ACCEL_GROUND = 0.22 * PHYS_SCALE;
+        const MOVE_ACCEL_AIR = 0.12 * PHYS_SCALE;
         const MOVE_FRICTION_GROUND = 0.10 * PHYS_SCALE;
         const MOVE_FRICTION_AIR = 0.028 * PHYS_SCALE;
         const MOVE_SKID_DECEL = 0.34 * PHYS_SCALE;
-        const JUMP_VELOCITY = -6.55 * PHYS_SCALE;
+        const JUMP_VELOCITY = -6.40 * PHYS_SCALE;
         // 가변 점프(짧게 누르면 낮게, 길게 누르면 높게)
         const JUMP_HOLD_MAX_MS = 250;
-        const JUMP_HOLD_GRAVITY_MULT = 0.45;
+        const JUMP_HOLD_GRAVITY_MULT = 0.50;
         const JUMP_CUT_VY = -2.05 * PHYS_SCALE;
         const RESPAWN_COOLDOWN_MS = 30000; // 30초
         const PUSH_IMPULSE_X = 16;
@@ -854,6 +854,9 @@
         let itemDropSeq = 0;
         let nextItemDropAt = 0;
         let seenItemEvents = new Set();
+        // Picked items must not be resurrected by a delayed host snapshot.
+        let pendingItemPickupIds = new Set();
+        let consumedItemIds = new Set();
         // Backwards-compatible item authority over the existing tg_state/tg_players
         // relay. No tg_item Worker support is required.
         let itemCompatRequest = null;
@@ -1915,6 +1918,8 @@
             heldItem = null;
             itemEffects = [];
             seenItemEvents.clear();
+            pendingItemPickupIds.clear();
+            consumedItemIds.clear();
             // Every round owns a fresh authoritative item snapshot. Previously the
             // host snapshot had no level tag, so a delayed tg_players heartbeat from
             // round N could overwrite the freshly generated round N+1 items.
@@ -2285,7 +2290,11 @@ cameraX = 0;
             if(Number(sync.level)!==Number(currentLevel))return;
             const version=Math.max(0,Number(sync.version)||0);
             if(Array.isArray(sync.world) && version>=itemCompatAppliedVersion){
-                worldItems=sync.world.filter(it=>it&&ITEM_DEFS[it.type]&&it.id).map(it=>({id:String(it.id),type:String(it.type),x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed}));
+                worldItems=sync.world.filter(it=>{
+                    if(!it||!ITEM_DEFS[it.type]||!it.id)return false;
+                    const id=String(it.id);
+                    return !consumedItemIds.has(id) && !pendingItemPickupIds.has(id);
+                }).map(it=>({id:String(it.id),type:String(it.type),x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed}));
             }
             if(version>itemCompatAppliedVersion){
                 const events=Array.isArray(sync.events)?sync.events:(sync.event?[sync.event]:[]);
@@ -2294,7 +2303,9 @@ cameraX = 0;
                     seenItemEvents.add(`compat:${ev.evt}`);
                     if(ev.accepted!==false){
                         if(ev.action==='pick'){
-                            if(String(ev.from||'')===String(mySessionId) && ITEM_DEFS[ev.itemType]) heldItem={id:String(ev.id),type:String(ev.itemType),charges:Number(ev.charges)||ITEM_DEFS[ev.itemType].charges};
+                            const pickId=String(ev.id||'');
+                            if(pickId){ pendingItemPickupIds.delete(pickId); consumedItemIds.add(pickId); worldItems=worldItems.filter(x=>String(x.id)!==pickId); }
+                            if(String(ev.from||'')===String(mySessionId) && ITEM_DEFS[ev.itemType]) heldItem={id:pickId,type:String(ev.itemType),charges:Number(ev.charges)||ITEM_DEFS[ev.itemType].charges};
                         }else if(ev.action==='use'){
                             if(String(ev.from||'')!==String(mySessionId) && ev.effect){
                                 const e=ev.effect;addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color);itemSound(ev.itemType);
@@ -2309,6 +2320,7 @@ cameraX = 0;
                             }
                         }
                     }
+                    if(ev.action==='pick' && ev.accepted===false){ pendingItemPickupIds.delete(String(ev.id||'')); }
                     if(itemCompatRequest && String(itemCompatRequest.evt||'')===String(ev.evt||'')) itemCompatRequest=null;
                 }
             }
@@ -2415,6 +2427,14 @@ cameraX = 0;
             const near = nearestPickup();
             if (near){
                 if (heldItem) dropHeldItem(false);
+                const pickId=String(near.id||'');
+                if(pickId){
+                    pendingItemPickupIds.add(pickId);
+                    // Remove immediately on the picker. A rejected request is restored by
+                    // the next authoritative host snapshot after pending is cleared.
+                    worldItems=worldItems.filter(x=>String(x.id)!==pickId);
+                    updateItemButton();
+                }
                 itemEvent('pick', { id:near.id, itemType:near.type, charges:ITEM_DEFS[near.type]?.charges || 1 });
                 return;
             }
@@ -2612,16 +2632,19 @@ cameraX = 0;
             if(d.evt){ if(seenItemEvents.has(d.evt))return; seenItemEvents.add(d.evt); if(seenItemEvents.size>300)seenItemEvents.clear(); }
             if(d.action==='spawn' || d.action==='drop'){
                 const it=d.item||{}; if(!ITEM_DEFS[it.type]||!it.id)return;
-                worldItems=worldItems.filter(x=>x.id!==it.id);
-                worldItems.push({id:String(it.id),type:it.type,x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed});
+                const worldId=String(it.id); pendingItemPickupIds.delete(worldId); consumedItemIds.delete(worldId);
+                worldItems=worldItems.filter(x=>String(x.id)!==worldId);
+                worldItems.push({id:worldId,type:it.type,x:Number(it.x)||0,y:Number(it.y)||0,vx:Number(it.vx)||0,vy:Number(it.vy)||0,landed:!!it.landed});
             }else if(d.action==='pick'){
-                const found=worldItems.find(x=>x.id===d.id);
-                worldItems=worldItems.filter(x=>x.id!==d.id);
+                const pickId=String(d.id||'');
+                const found=worldItems.find(x=>String(x.id)===pickId);
+                pendingItemPickupIds.delete(pickId); consumedItemIds.add(pickId);
+                worldItems=worldItems.filter(x=>String(x.id)!==pickId);
                 // The server echo is authoritative. Use its itemType even when a
                 // simultaneous remote update removed the local world object first.
                 const pickedType=String(found?.type||d.itemType||'');
                 if((local || String(d.from||'')===String(mySessionId||'')) && ITEM_DEFS[pickedType]){
-                    heldItem={id:String(d.id),type:pickedType,charges:Number(d.charges)||ITEM_DEFS[pickedType].charges};
+                    heldItem={id:pickId,type:pickedType,charges:Number(d.charges)||ITEM_DEFS[pickedType].charges};
                 }
             }else if(d.action==='use'){
                 if(!local && d.effect){ const e=d.effect; addItemEffect(e.kind,e.x,e.y,e.tx,e.ty,e.color); itemSound(d.itemType); }
