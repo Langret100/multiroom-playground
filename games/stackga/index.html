@@ -7,7 +7,7 @@
   <style id="stackga-critical-bg">html,body{margin:0;background:#183560}</style>
   <title>쌓기게임</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="./css/game.css?v=20260831-stackclean1" />
+  <link rel="stylesheet" href="./css/game.css?v=20260902-combojelly1" />
 </head>
 <body>
   <div class="wrap">
@@ -44,9 +44,9 @@
             <canvas id="cvOpp" width="120" height="240"></canvas>
           </div>
           <!-- 콤보: 카드(네모칸) 없이 빈 공간에 텍스트만 표시 -->
-          <div class="comboArea" id="comboArea" aria-label="combo">
-            <div class="comboNum" id="comboNum">0</div>
-            <div class="comboTxt">Combo!</div>
+          <div class="comboArea comboIdle" id="comboArea" aria-label="combo">
+            <img class="comboJelly" id="comboJelly" src="./assets/combo/combo-1.png" alt="콤보!" />
+            <div class="comboBadge" id="comboBadge">x2</div>
           </div>
         </div>
 
@@ -67,7 +67,7 @@
     <div id="log" class="hidden"></div>
   </div>
 
-  <script type="module" src="./js/main.js?v=20260831-stackclean1"></script>
+  <script type="module" src="./js/main.js?v=20260902-combojelly1"></script>
 
 <script>
 (function(){

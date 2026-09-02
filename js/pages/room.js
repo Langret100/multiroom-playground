@@ -360,6 +360,7 @@ function setupBgm(audioElId, btnId){
   };
 
   const BRIEFING_FLOW = {
+    starpaint: "색칠 점령 → 아이템 견제 → 3R 보스전 → 최종 집계",
     stackga: "블록 배치 → 줄 삭제 → 상대 압박",
     suika: "도형 낙하 → 같은 도형 합치기 → 최고 단계",
     drawanswer: "출제자 그림 → 채팅 추리 → 연속 정답",
@@ -373,6 +374,7 @@ function setupBgm(audioElId, btnId){
   };
 
   const BRIEFING_TIP = {
+    starpaint: "밟은 블록은 내 색으로 덮어쓸 수 있고, 파괴된 블록은 점수에 포함되지 않습니다.",
     stackga: "연속 삭제를 노리되 빈틈이 너무 높아지지 않게 관리하세요.",
     suika: "큰 도형을 한쪽에 모으면 다음 합체 공간을 만들기 쉽습니다.",
     drawanswer: "글자 대신 특징과 모양을 크게 그리면 팀원이 빨리 알아봅니다.",
@@ -966,6 +968,7 @@ function updatePreview(modeId){
     const isBrPacket = (d.type === "bridge_ready" || d.type === "br_game_start_ack" || d.type === "br_msg" || d.type === "br_batch") && (!d.gameId || d.gameId === 'backrooms3d');
     const isTgPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("tg_")) && d.gameId === "togester";
     const isSoccerPacket = SOCCER_BRIDGE_TYPES.has(String(d.type||""));
+    const isPbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("pb_")) && (!d.gameId || d.gameId === "starpaint");
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
     const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
     const fromStoredMxWin = !!(coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
@@ -976,6 +979,7 @@ function updatePreview(modeId){
     const brModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='backrooms3d') || (duel?.iframeEl && /embedGame=backrooms3d/.test(String(duel.iframeEl.src || ''))));
     const tgModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='togester') || (duel?.iframeEl && /embedGame=togester/.test(String(duel.iframeEl.src || ''))));
     const soccerModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='soccer') || (duel?.iframeEl && /embedGame=soccer/.test(String(duel.iframeEl.src || ''))));
+    const pbModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='starpaint') || (duel?.iframeEl && /embedGame=starpaint/.test(String(duel.iframeEl.src || ''))));
     const coopOriginOk = !e.origin || e.origin === location.origin;
     // 일부 모바일 WebView는 iframe postMessage의 e.source를 null로 전달한다.
     // 현재 게임 모드 + 동일 출처 + 명시적 gameId가 모두 일치할 때만 보조 경로를 연다.
@@ -989,6 +993,8 @@ function updatePreview(modeId){
     // 현재 게임/동일 출처/gameId 태그가 모두 맞는 축구 패킷만 보조 경로로 받는다.
     const fromSoccerCoopFallback = !!(isSoccerPacket && d.gameId === 'soccer' && soccerModeLikely && soccerOriginOk && !fromCpu);
     const fromMainForSoccer = fromMain || fromStoredSoccerWin || fromSoccerCoopFallback;
+    const fromPbCoopFallback = !!(isPbPacket && pbModeLikely && coopOriginOk && !fromCpu);
+    const fromMainForPb = fromMain || fromPbCoopFallback;
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
     }
@@ -1046,7 +1052,7 @@ function updatePreview(modeId){
     if (d.type === "bridge_ready"){
       if(fromMain) focusGameIframeSoon();
       // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
-      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback){
+      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback || fromPbCoopFallback){
         duel.iframeReady = true;
         coop.iframeReady = true;
       }
@@ -1062,7 +1068,7 @@ function updatePreview(modeId){
         sendCpuBridgeInit();
       }
       const isGkFrame = !!(coop.active && coop.meta && coop.meta.id === "geumchikeo" && fromMain);
-      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
+      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
@@ -1392,6 +1398,34 @@ function updatePreview(modeId){
         success: !!d.success,
         reason: d.reason
       });
+      return;
+    }
+
+    // StarPaint (coop competitive) iframe -> server relay
+    if (d.type === "pb_input"){
+      if (!fromMainForPb) return;
+      try{ room.send("pb_input", { input:d.input || {} }); }catch(_){ }
+      return;
+    }
+    if (d.type === "pb_state"){
+      if (!fromMainForPb) return;
+      try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
+      return;
+    }
+    if (d.type === "pb_sync"){
+      if (!fromMainForPb) return;
+      try{ room.send("pb_sync", {}); }catch(_){ }
+      return;
+    }
+    if (d.type === "pb_over"){
+      if (!fromMainForPb) return;
+      try{ room.send("pb_over", { winnerSeat:Number(d.winnerSeat)||0, scores:Array.isArray(d.scores)?d.scores:[] }); }catch(_){ }
+      return;
+    }
+    if (d.type === "pb_quit"){
+      if (!fromMainForPb) return;
+      try{ room.send("pb_quit", {}); }catch(_){ }
+      try{ exitGameFullscreen(); }catch(_){ }
       return;
     }
 
@@ -3199,6 +3233,11 @@ try{
       room.onMessage("tg_floor_quota", (msg)=>{
         postToMain({ type:"tg_floor_quota", used: msg.used, limit: msg.limit });
       });
+
+      // StarPaint relay: server -> iframe
+      room.onMessage("pb_input", (msg)=>{ postToMain({ type:"pb_input", from:msg.from, input:msg.input || {} }); });
+      room.onMessage("pb_state", (msg)=>{ postToMain({ type:"pb_state", state:msg.state || {} }); });
+      room.onMessage("pb_over", (msg)=>{ postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] }); });
 
       // SnakeTail relay: server -> iframe
       room.onMessage("st_timer", (msg)=>{

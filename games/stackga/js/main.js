@@ -1,9 +1,9 @@
 // Firebase dependency removed.
 import { createAudio } from "./audio.js";
 import { initMatchButton } from "./match.js";
-import { StackGame, drawBoard, drawNext, COLS } from "./game.js?v=20260831-stackclean1";
+import { StackGame, drawBoard, drawNext, COLS } from "./game.js?v=20260902-combojelly1";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260831-stackclean1";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20260902-combojelly1";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -24,8 +24,9 @@ const ui = {
   effect: $("effect"),
   mode: $("mode"),
 
-  comboNum: $("comboNum"),
   comboArea: $("comboArea"),
+  comboJelly: $("comboJelly"),
+  comboBadge: $("comboBadge"),
 
   overlay: $("overlay"),
   overlayTitle: $("overlayTitle"),
@@ -119,14 +120,33 @@ function flash(kind){
   setTimeout(()=>{ boardColEl.classList.remove(cls); }, 220);
 }
 
-function bumpCombo(add){
-  if(!ui.comboNum || !ui.comboArea) return;
-  comboLines = Math.max(0, comboLines + (add||0));
-  ui.comboNum.textContent = String(comboLines);
-  ui.comboArea.classList.remove('comboPop');
-  // force reflow for restart animation
+let comboAnimTimers=[];
+function clearComboTimers(){
+  for(const id of comboAnimTimers){ try{ clearTimeout(id); }catch{} }
+  comboAnimTimers=[];
+}
+function hideCombo(){
+  clearComboTimers();
+  if(!ui.comboArea) return;
+  ui.comboArea.classList.add('comboIdle');
+  ui.comboArea.classList.remove('comboPop','comboBurst');
+}
+function showCombo(streak){
+  if(!ui.comboArea || !ui.comboJelly || !ui.comboBadge) return;
+  if(streak < 2){ hideCombo(); return; }
+  clearComboTimers();
+  ui.comboBadge.textContent = `x${streak}`;
+  ui.comboArea.classList.remove('comboIdle','comboPop','comboBurst');
   void ui.comboArea.offsetWidth;
   ui.comboArea.classList.add('comboPop');
+  const frames=[1,2,3,4];
+  frames.forEach((n,i)=>{
+    comboAnimTimers.push(setTimeout(()=>{
+      if(ui.comboJelly) ui.comboJelly.src=`./assets/combo/combo-${n}.png`;
+      if(i===2) ui.comboArea?.classList.add('comboBurst');
+    },i*95));
+  });
+  comboAnimTimers.push(setTimeout(()=>ui.comboArea?.classList.remove('comboBurst'),500));
 }
 
 function safeSetText(el, t){ if(el) el.textContent = t; }
@@ -298,7 +318,10 @@ let roomId="", pid="", oppPid="";
 let hbTimer=null;
 let lobbyId="";
 let mySlot=null;
-let comboLines=0;
+let comboStreak=0;
+let cpuComboStreak=0;
+let myLastLockSerial=0;
+let cpuLastLockSerial=0;
 let roomUnsub=null, oppUnsub=null, evUnsub=null;
 let metaRef=null, playersRef=null, statesRef=null, eventsRef=null;
 
@@ -470,41 +493,58 @@ function beginLoop(){
         cpuGame.tick(dt);
         oppLastBoard = cpuGame.snapshot();
 
-        const c2 = cpuGame.lastCleared || 0;
-        if(c2>0){
+        const cpuLock = cpuGame.lastLockSerial>>>0;
+        if(cpuLock !== cpuLastLockSerial){
+          cpuLastLockSerial = cpuLock;
+          const c2 = cpuGame.lastCleared || 0;
           cpuGame.lastCleared = 0;
-          const atk = linesToGarbage(c2);
-          if(atk){
-            applyGarbageTo(meGame, atk);
-            // 받는 쪽 이펙트
-            shake("strong");
-            flash("bad");
-            audio.sfx("attackHit");
+          if(c2>0){
+            cpuComboStreak += 1;
+            const atk = linesToGarbage(c2) + (cpuComboStreak>=2 ? 1 : 0);
+            if(atk){
+              applyGarbageTo(meGame, atk);
+              // 받는 쪽 이펙트
+              shake("strong");
+              flash("bad");
+              audio.sfx("attackHit");
+            }
+          }else{
+            cpuComboStreak = 0;
           }
         }
       }
 
       updateHud();
 
-    // my attacks
-      const c = meGame?.lastCleared || 0;
-      if(c>0){
-      meGame.lastCleared = 0;
-      const atk = linesToGarbage(c);
-      bumpCombo(c);
-      // 줄 지울 때마다 이펙트
-      shake("soft");
-      flash("good");
-      audio.sfx("clear");
-      if(atk){
-        audio.sfx("attackSend");
-        if(mode==="online"){
-          pushEvent({ api, eventsRef, event:{ from: pid, kind:"garbage", payload: { n: atk } } }).catch(()=>{});
-        }else if(mode==="cpu" && cpuGame){
-          applyGarbageTo(cpuGame, atk);
+    // my attacks: simultaneous clears keep the original rule, and consecutive clear locks add +1 garbage each time.
+      const myLock = meGame ? (meGame.lastLockSerial>>>0) : 0;
+      if(meGame && myLock !== myLastLockSerial){
+        myLastLockSerial = myLock;
+        const c = meGame.lastCleared || 0;
+        meGame.lastCleared = 0;
+        if(c>0){
+          comboStreak += 1;
+          const comboAtk = comboStreak>=2 ? 1 : 0;
+          const atk = linesToGarbage(c) + comboAtk;
+          showCombo(comboStreak);
+          // 줄 지울 때마다 이펙트
+          shake(comboAtk ? "strong" : "soft");
+          flash("good");
+          audio.sfx("clear");
+          if(comboAtk) audio.sfx("sparkle");
+          if(atk){
+            audio.sfx("attackSend");
+            if(mode==="online"){
+              pushEvent({ api, eventsRef, event:{ from: pid, kind:"garbage", payload: { n: atk, base: linesToGarbage(c), combo: comboAtk, streak: comboStreak } } }).catch(()=>{});
+            }else if(mode==="cpu" && cpuGame){
+              applyGarbageTo(cpuGame, atk);
+            }
+          }
+        }else{
+          comboStreak = 0;
+          hideCombo();
         }
       }
-    }
 
     // online publish
       if(mode==="online"){
@@ -587,8 +627,11 @@ function startCpuMode(reason){
   cpuGame = new StackGame(((Math.random()*2**32)>>>0), playRows||20);
   cpuCtl = new CpuController(cpuGame);
   oppLastBoard = cpuGame.snapshot();
-  comboLines = 0;
-  bumpCombo(0);
+  comboStreak = 0;
+  cpuComboStreak = 0;
+  myLastLockSerial = 0;
+  cpuLastLockSerial = 0;
+  hideCombo();
   safeSetText(ui.mode, "PC");
   startLoop();
 }
@@ -732,8 +775,11 @@ function onRoomUpdate(room){
     }
     fit();
     oppLastBoard = null;
-    comboLines = 0;
-    bumpCombo(0);
+    comboStreak = 0;
+    cpuComboStreak = 0;
+    myLastLockSerial = 0;
+    cpuLastLockSerial = 0;
+    hideCombo();
     seenEvents.clear();
 
     oppUnsub?.();
@@ -865,8 +911,11 @@ async function boot(){
       autoCtl = null;
     }
     oppLastBoard = null;
-    comboLines = 0;
-    bumpCombo(0);
+    comboStreak = 0;
+    cpuComboStreak = 0;
+    myLastLockSerial = 0;
+    cpuLastLockSerial = 0;
+    hideCombo();
     seenEvents.clear();
     fit();
     startLoop();

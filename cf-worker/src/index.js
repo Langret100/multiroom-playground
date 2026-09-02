@@ -545,6 +545,7 @@ export class RoomDO{
 
     this.tour = null;              // tournament state for duel mode
     this.tg = { players:{}, floors:{}, buttons:{}, boxes:{}, lastBroadcast:0, timer:null }; // coop state aggregation
+    this.pb = { state:null }; // starpaint host-authoritative snapshot
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
     // Soccer (수학축구): authoritative player/ball/score aggregation, mirrors GameRoom.js (Colyseus) implementation.
     this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, posBroadcastTimer:null, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
@@ -1751,6 +1752,43 @@ export class RoomDO{
         return;
       }
 
+      // ----- StarPaint relay (host-authoritative world) -----
+      if (t === "pb_input"){
+        if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
+        const clean = d.input && typeof d.input === "object" ? {
+          left:!!d.input.left, right:!!d.input.right, jumpSeq:Number(d.input.jumpSeq||0)>>>0, pickSeq:Number(d.input.pickSeq||0)>>>0, useSeq:Number(d.input.useSeq||0)>>>0, quizRespawn:!!d.input.quizRespawn
+        } : {};
+        this._broadcast("pb_input", { from:uid, input:clean });
+        return;
+      }
+      if (t === "pb_state"){
+        if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
+        const sender=this.users.get(uid); if(!sender || !sender.isHost) return;
+        if(!this.pb) this.pb={state:null};
+        this.pb.state = d.state && typeof d.state === "object" ? d.state : null;
+        if (this.pb.state) this._broadcast("pb_state", { state:this.pb.state });
+        return;
+      }
+      if (t === "pb_sync"){
+        if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
+        if (this.pb && this.pb.state) this._send(ws, "pb_state", { state:this.pb.state });
+        return;
+      }
+      if (t === "pb_over"){
+        if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
+        const sender=this.users.get(uid); if(!sender || !sender.isHost) return;
+        const winnerSeat=Math.max(0,Math.min(7,Number(d.winnerSeat)||0));
+        const scores=Array.isArray(d.scores)?d.scores.slice(0,8).map(v=>Math.max(0,Number(v)||0)):[];
+        this._broadcast("pb_over", { winnerSeat, scores, state:this.pb&&this.pb.state?this.pb.state:null });
+        this._broadcast("result", { mode:"starpaint", done:true, winnerSeat, scores });
+        this._endAndBackToLobby(6500);
+        return;
+      }
+      if (t === "pb_quit"){
+        if (this.meta.mode !== "starpaint") return;
+        return;
+      }
+
       // ----- SnakeTail relay (snaketail) -----
       if (t === "st_sync"){
         // Client asks for a resync (useful when iframe loads after initial broadcast)
@@ -2361,6 +2399,7 @@ export class RoomDO{
 
     this.tour = null;
     this.tg = { players:{}, floors:{}, lastBroadcast:0, timer:null };
+    this.pb = { state:null };
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} };
     this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, posBroadcastTimer:null, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
     this.sk = { startPayload: null };

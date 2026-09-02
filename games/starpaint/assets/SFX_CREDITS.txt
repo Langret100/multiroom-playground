@@ -1,0 +1,16 @@
+STARPAINT SOUND EFFECTS - SOURCE / LICENSE
+
+Bundled game code references these free web-hosted sound assets at runtime.
+
+1) OpenGameArt - “Squish Sounds Effects” by EZduzziteh
+   License: CC0 1.0 / public-domain dedication
+   Page: https://opengameart.org/content/squish-sounds-effects
+   Used: squish_01, squish_02, squishpop, squishsplat_impact
+
+2) Kenney - Interface Sounds (mirror packaged by Calinou)
+   License: CC0 1.0 Universal
+   Page: https://kenney.nl/
+   Mirror: https://github.com/Calinou/kenney-interface-sounds
+   Used: select_005, confirmation_001, error_003, maximize_003
+
+The game also contains a tiny synthesized WebAudio fallback so gameplay still has feedback when a remote audio host is unavailable.

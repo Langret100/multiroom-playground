@@ -148,6 +148,7 @@ export class StackGame {
     this._garbageRnd = mulberry32(((this.seed ^ 0xA5A5A5A5)>>>0) || 1);
     this._colorRnd = mulberry32(((this.seed ^ 0x3F91C2D7)>>>0) || 1);
     this.lastLockAt = 0;
+    this.lastLockSerial = 0;
     this.lastLockCells = [];
     // Purely local render events. These never enter multiplayer/server snapshots.
     this.lastContactAt = 0;
@@ -319,6 +320,7 @@ export class StackGame {
     this.lastContactAt = now;
     this.lastContactCells = [...contact.values()];
     this.lastLockAt = now;
+    this.lastLockSerial = (this.lastLockSerial + 1) >>> 0;
 
     merge(this.board,this.current);
 

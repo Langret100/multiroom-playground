@@ -503,3 +503,15 @@ body.embed .matchBtn, body.embed .exitBtn{
 @keyframes stackReadyPop{0%{opacity:0;transform:scale(.72)}65%{opacity:1;transform:scale(1.08)}100%{transform:scale(1)}}
 @keyframes stackStartPop{0%{transform:scale(.86)}55%{transform:scale(1.13)}100%{transform:scale(1)}}
 @media(prefers-reduced-motion:reduce){.overlay.stackStartCue .overlayCard{animation:none!important}}
+
+
+/* ===== jelly combo sprite animation ===== */
+.comboArea{position:relative;overflow:visible;min-height:72px;transition:opacity .12s ease,transform .12s ease}
+.comboArea.comboIdle{opacity:0;transform:scale(.82);pointer-events:none}
+.comboJelly{display:block;width:min(100%,170px);height:auto;image-rendering:auto;filter:drop-shadow(0 6px 12px rgba(55,48,126,.26));transform-origin:center center}
+.comboBadge{position:absolute;right:4px;bottom:2px;min-width:38px;padding:4px 8px;border-radius:999px;background:linear-gradient(180deg,#fff8a6,#ffc83d);border:2px solid rgba(255,255,255,.92);box-shadow:0 4px 10px rgba(71,57,122,.24);color:#8f3b77;font-weight:1000;font-size:17px;line-height:1;text-shadow:0 1px 0 #fff}
+.comboArea.comboPop{animation:comboJellyPop .46s cubic-bezier(.2,1.45,.45,1)}
+.comboArea.comboBurst .comboJelly{animation:comboJellyBurst .22s ease-out}
+@keyframes comboJellyPop{0%{opacity:0;transform:scale(.45,.28) translateY(10px)}45%{opacity:1;transform:scale(1.15,.9) translateY(-4px)}72%{transform:scale(.94,1.08)}100%{opacity:1;transform:scale(1)}}
+@keyframes comboJellyBurst{0%{filter:drop-shadow(0 5px 10px rgba(55,48,126,.24));transform:scale(1)}50%{filter:drop-shadow(0 0 18px rgba(255,220,85,.72));transform:scale(1.1)}100%{filter:drop-shadow(0 6px 12px rgba(55,48,126,.26));transform:scale(1)}}
+@media(max-width:600px){.comboJelly{width:min(100%,132px)}.comboBadge{font-size:14px;right:0;bottom:0}}
