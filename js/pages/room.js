@@ -689,15 +689,15 @@ function updatePreview(modeId){
       try{
         const manifestUrl = "games/starpaint/assets/manifest.json";
         const atlasUrl = "games/starpaint/assets/atlas.webp";
-        // Start transfer immediately while players are still in the lobby, and decode
-        // the atlas ahead of iframe creation so game startup does not pay decode cost.
-        const manifestJob = fetch(manifestUrl, { cache:"force-cache" }).catch(()=>null);
-        const img = new Image();
-        img.fetchPriority = "high";
-        img.decoding = "async";
-        const imageJob = new Promise(resolve=>{ img.onload=resolve; img.onerror=resolve; img.src=atlasUrl; });
-        await Promise.all([manifestJob, imageJob]);
-        try{ if (img.decode) await img.decode(); }catch(_){ }
+        // Warm encoded bytes only. Decoding the 4K atlas in both the parent page and
+        // the iframe duplicates a large CPU/memory job and can make startup slower.
+        const warm = async(url)=>{
+          try{
+            const res = await fetch(url, { cache:"force-cache" });
+            if (res && res.ok) await res.blob();
+          }catch(_){ }
+        };
+        await Promise.all([warm(manifestUrl), warm(atlasUrl)]);
       }catch(_){ starpaintAssetsWarmed = false; }
     })();
     return starpaintWarmPromise;
