@@ -2342,6 +2342,7 @@ function sendCoopBridgeInit(){
 
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
     const isSoccer = (coop && coop.meta && coop.meta.id === "soccer");
+    const isStarpaint = (coop && coop.meta && coop.meta.id === "starpaint");
     // 금칙어 게임: 자체 WS 연결 유지 → room.state.order 없이도 바로 전송
     const isGeumchikeo = (coop && coop.meta && coop.meta.id === "geumchikeo");
 
@@ -2353,7 +2354,7 @@ function sendCoopBridgeInit(){
     // Soccer는 서버 sc_roster/sc_sync가 권위 로스터를 바로 보완하므로
     // room.state 스냅샷이 늦더라도 bridge_init을 막지 않는다. 이 대기가 걸리면
     // 경기장만 보이고 입력·수학 퀴즈가 모두 비활성인 상태가 된다.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer)){
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -2456,10 +2457,10 @@ function sendCoopBridgeInit(){
         });
       });
     }catch(_){}
-    // Soccer bridge_init은 room.state.players가 늦어도 반드시 내 항목을 포함한다.
-    // 실제 팀/캐릭터는 직후 서버 sc_roster가 덮어써 권위 상태를 유지한다.
+    // Soccer/StarPaint bridge_init은 room.state.players가 늦어도 반드시 내 항목을 포함한다.
+    // StarPaint는 이후 bridge_roster가 실시간 참가자 명단을 보완한다.
     try{
-      if (coop?.meta?.id === 'soccer' && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
+      if ((coop?.meta?.id === 'soccer' || coop?.meta?.id === 'starpaint') && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
         arr.push({
           sessionId:String(mySessionId),
           nick:myNick || 'Player',
