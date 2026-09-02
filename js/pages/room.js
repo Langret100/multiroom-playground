@@ -681,19 +681,26 @@ function updatePreview(modeId){
   }
 
   let starpaintAssetsWarmed = false;
+  let starpaintWarmPromise = null;
   function warmStarpaintAssets(){
-    if (starpaintAssetsWarmed) return;
+    if (starpaintAssetsWarmed) return starpaintWarmPromise || Promise.resolve();
     starpaintAssetsWarmed = true;
-    try{
-      for (const href of ["games/starpaint/assets/manifest.json", "games/starpaint/assets/atlas.webp"]){
-        const l = document.createElement("link");
-        l.rel = "preload";
-        l.href = href;
-        if (href.endsWith(".webp")){ l.as = "image"; l.type = "image/webp"; l.fetchPriority = "high"; }
-        else { l.as = "fetch"; l.crossOrigin = "anonymous"; }
-        document.head.appendChild(l);
-      }
-    }catch(_){ }
+    starpaintWarmPromise = (async()=>{
+      try{
+        const manifestUrl = "games/starpaint/assets/manifest.json";
+        const atlasUrl = "games/starpaint/assets/atlas.webp";
+        // Start transfer immediately while players are still in the lobby, and decode
+        // the atlas ahead of iframe creation so game startup does not pay decode cost.
+        const manifestJob = fetch(manifestUrl, { cache:"force-cache" }).catch(()=>null);
+        const img = new Image();
+        img.fetchPriority = "high";
+        img.decoding = "async";
+        const imageJob = new Promise(resolve=>{ img.onload=resolve; img.onerror=resolve; img.src=atlasUrl; });
+        await Promise.all([manifestJob, imageJob]);
+        try{ if (img.decode) await img.decode(); }catch(_){ }
+      }catch(_){ starpaintAssetsWarmed = false; }
+    })();
+    return starpaintWarmPromise;
   }
 
   function resetStarpaintBridgeState(){
