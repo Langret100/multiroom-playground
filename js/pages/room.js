@@ -940,7 +940,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  let starpaintCompatInputSeq = 0, starpaintDirectPbSeen = false, starpaintCompatFallbackAt = 0, lastStarpaintMoveSent = 0;
+  let lastStarpaintMoveSent = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -1404,7 +1404,7 @@ function updatePreview(modeId){
 
     // StarPaint (coop competitive) iframe -> server relay
     if (d.type === "pb_player"){
-      if (!fromMainForPb) return;
+      if (!fromMainForPb || !pbModeLikely) return;
       // Movement uses the exact same proven relay shape as Togester:
       // client snapshot -> tg_state -> server aggregate -> tg_players (~20Hz).
       const now = Date.now();
@@ -1414,37 +1414,27 @@ function updatePreview(modeId){
       return;
     }
     if (d.type === "pb_input"){
-      if (!fromMainForPb) return;
-      if (!starpaintCompatFallbackAt) starpaintCompatFallbackAt = Date.now() + 1200;
+      if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_input", { input:d.input || {} }); }catch(_){ }
-      // Current Workers understand pb_* directly. Only enable the legacy tg_state
-      // transport if no direct StarPaint packet has come back for 1.2s.
-      if (!starpaintDirectPbSeen && Date.now() >= starpaintCompatFallbackAt){
-        try{ room.send("tg_state", { state:{ __starpaintInput:d.input || {}, __starpaintInputSeq:++starpaintCompatInputSeq } }); }catch(_){ }
-      }
       return;
     }
     if (d.type === "pb_state"){
-      if (!fromMainForPb) return;
-      if (!starpaintCompatFallbackAt) starpaintCompatFallbackAt = Date.now() + 1200;
+      if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
-      if (!starpaintDirectPbSeen && Date.now() >= starpaintCompatFallbackAt){
-        try{ room.send("tg_state", { state:{ __starpaintState:d.state || {} } }); }catch(_){ }
-      }
       return;
     }
     if (d.type === "pb_sync"){
-      if (!fromMainForPb) return;
+      if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_sync", {}); }catch(_){ }
       return;
     }
     if (d.type === "pb_over"){
-      if (!fromMainForPb) return;
+      if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_over", { winnerSeat:Number(d.winnerSeat)||0, scores:Array.isArray(d.scores)?d.scores:[] }); }catch(_){ }
       return;
     }
     if (d.type === "pb_quit"){
-      if (!fromMainForPb) return;
+      if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_quit", {}); }catch(_){ }
       try{ exitGameFullscreen(); }catch(_){ }
       return;
@@ -1903,6 +1893,23 @@ function updatePreview(modeId){
     const seatOf = {};
     state.order.forEach((seat, sid)=> seatOf[sid] = seat);
     entries.sort((a,b)=> (seatOf[a[0]]??99) - (seatOf[b[0]]??99));
+
+    // StarPaint keeps gameplay authority in the current host, but its iframe also
+    // needs the live room roster so departed players cannot remain as stale actors.
+    try{
+      if (coop?.active && coop?.meta?.id === "starpaint" && phase !== "lobby" && duel?.iframeEl){
+        postToMain({
+          type: "bridge_roster",
+          gameId: "starpaint",
+          players: entries.map(([sid,p])=>({
+            sessionId: String(sid),
+            nick: p?.nick ? String(p.nick) : String(sid).slice(0,4),
+            seat: Number.isFinite(Number(seatOf[sid])) ? Number(seatOf[sid]) : 0,
+            isHost: !!p?.isHost
+          }))
+        });
+      }
+    }catch(_){ }
 
     for (const [sid, p] of entries){
       const row = document.createElement("div");
@@ -3208,22 +3215,18 @@ try{
       // Togester (coop) relay: server -> iframe
       room.onMessage("tg_players", (msg)=>{
         const playerMap = msg.players || {};
-        postToMain({ type:"tg_players", players: playerMap });
-        // StarPaint compatibility transport over the long-standing Togester
-        // aggregate relay. New Workers also send pb_* directly; the game drops
-        // duplicate/equal sequence snapshots safely.
+        const relayModeId = String(coop?.meta?.id || room?.state?.mode || "");
+        // StarPaint consumes only its namespaced movement slice below. Avoid also
+        // posting the full Togester aggregate into the StarPaint iframe every tick.
+        if (relayModeId !== "starpaint") postToMain({ type:"tg_players", players: playerMap });
+        // StarPaint only reuses the existing aggregate movement relay. The data is
+        // namespaced inside the packet and consumed only while this room is in StarPaint.
         try{
           const modeId = String(coop?.meta?.id || room?.state?.mode || "");
           if (modeId === "starpaint"){
             const moves = {};
             Object.entries(playerMap).forEach(([sid, packet])=>{
               if (packet && packet.__starpaintMove) moves[String(sid)] = packet.__starpaintMove;
-              if (!starpaintDirectPbSeen && packet && packet.__starpaintState){
-                postToMain({ type:"pb_state", state:packet.__starpaintState });
-              }
-              if (!starpaintDirectPbSeen && packet && packet.__starpaintInput){
-                postToMain({ type:"pb_input", from:String(sid), input:packet.__starpaintInput });
-              }
             });
             if (Object.keys(moves).length) postToMain({ type:"pb_players", players:moves });
           }
@@ -3274,10 +3277,23 @@ try{
         postToMain({ type:"tg_floor_quota", used: msg.used, limit: msg.limit });
       });
 
-      // StarPaint relay: server -> iframe
-      room.onMessage("pb_input", (msg)=>{ starpaintDirectPbSeen = true; postToMain({ type:"pb_input", from:msg.from, input:msg.input || {} }); });
-      room.onMessage("pb_state", (msg)=>{ starpaintDirectPbSeen = true; postToMain({ type:"pb_state", state:msg.state || {} }); });
-      room.onMessage("pb_over", (msg)=>{ postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] }); });
+      // StarPaint relay: server -> iframe. Keep pb_* packets isolated to StarPaint
+      // so a late packet can never leak into another game's iframe after a mode switch.
+      room.onMessage("pb_input", (msg)=>{
+        const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+        if (modeId !== "starpaint") return;
+        postToMain({ type:"pb_input", from:msg.from, input:msg.input || {} });
+      });
+      room.onMessage("pb_state", (msg)=>{
+        const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+        if (modeId !== "starpaint") return;
+        postToMain({ type:"pb_state", state:msg.state || {} });
+      });
+      room.onMessage("pb_over", (msg)=>{
+        const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+        if (modeId !== "starpaint") return;
+        postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] });
+      });
 
       // SnakeTail relay: server -> iframe
       room.onMessage("st_timer", (msg)=>{
