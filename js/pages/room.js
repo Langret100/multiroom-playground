@@ -680,6 +680,31 @@ function updatePreview(modeId){
     setTimeout(()=>{ setDuelFrameLoading(false); }, delay);
   }
 
+  let starpaintAssetsWarmed = false;
+  function warmStarpaintAssets(){
+    if (starpaintAssetsWarmed) return;
+    starpaintAssetsWarmed = true;
+    try{
+      for (const href of ["games/starpaint/assets/manifest.json", "games/starpaint/assets/atlas.webp"]){
+        const l = document.createElement("link");
+        l.rel = "preload";
+        l.href = href;
+        if (href.endsWith(".webp")){ l.as = "image"; l.type = "image/webp"; l.fetchPriority = "high"; }
+        else { l.as = "fetch"; l.crossOrigin = "anonymous"; }
+        document.head.appendChild(l);
+      }
+    }catch(_){ }
+  }
+
+  function resetStarpaintBridgeState(){
+    starpaintNativePbStateSeen = false;
+    starpaintCompatStateNeeded = false;
+    starpaintCompatProbeStartedAt = 0;
+    starpaintCompatStateCache = null;
+    starpaintCompatSyncUntil = 0;
+    lastStarpaintMoveSent = 0;
+  }
+
   function updateBracketUI(){
     if(!duel.ui.duelBracket) return;
     const host = duel.ui.duelBracket;
@@ -2736,6 +2761,7 @@ function handleDuelMatch(m){
 }
 
 function startCoopEmbed(meta){
+  if (meta && meta.id === "starpaint") warmStarpaintAssets();
   if (coop.active && coop.meta && meta && coop.meta.id === meta.id && duel.iframeEl && duel.iframeEl.src && duel.iframeEl.src.includes(`embedGame=${encodeURIComponent(meta.id)}`)) {
     try{ sendCoopBridgeInit(); }catch(_){ }
     try{ coop.sentGameStart = false; coop._brGameStartAck = false; maybeSendCoopGameStart(); }catch(_){ }
@@ -2743,6 +2769,7 @@ function startCoopEmbed(meta){
   }
   coop.active = true;
   coop.meta = meta;
+  if (meta && meta.id === "starpaint") resetStarpaintBridgeState();
   coop.iframeLoaded = false;
   coop.iframeReady = false;
   coop._mxGameStartAck = false;
@@ -2922,6 +2949,8 @@ function startSim(){
 
       // preview title (pre-game)
       try{ updatePreview(room.state.mode); }catch(_){ }
+      // StarPaint assets are large enough to benefit from warming while players are still in the room lobby.
+      try{ if (String(room.state.mode || "") === "starpaint") warmStarpaintAssets(); }catch(_){ }
 
 
       // state listeners
@@ -2933,6 +2962,7 @@ function startSim(){
         try{ window.__roomModeId = room?.state?.mode || ""; }catch(_){ }
 
         try{ updatePreview(room.state.mode); }catch(_){ }
+        try{ if (String(room.state.mode || "") === "starpaint") warmStarpaintAssets(); }catch(_){ }
         // phase transitions (waiting <-> playing)
         try{
           const ph = room.state.phase;
