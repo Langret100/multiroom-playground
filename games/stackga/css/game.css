@@ -505,13 +505,90 @@ body.embed .matchBtn, body.embed .exitBtn{
 @media(prefers-reduced-motion:reduce){.overlay.stackStartCue .overlayCard{animation:none!important}}
 
 
-/* ===== jelly combo sprite animation ===== */
-.comboArea{position:relative;overflow:visible;min-height:72px;transition:opacity .12s ease,transform .12s ease}
-.comboArea.comboIdle{opacity:0;transform:scale(.82);pointer-events:none}
-.comboJelly{display:block;width:min(100%,170px);height:auto;image-rendering:auto;filter:drop-shadow(0 6px 12px rgba(55,48,126,.26));transform-origin:center center}
-.comboBadge{position:absolute;right:4px;bottom:2px;min-width:38px;padding:4px 8px;border-radius:999px;background:linear-gradient(180deg,#fff8a6,#ffc83d);border:2px solid rgba(255,255,255,.92);box-shadow:0 4px 10px rgba(71,57,122,.24);color:#8f3b77;font-weight:1000;font-size:17px;line-height:1;text-shadow:0 1px 0 #fff}
-.comboArea.comboPop{animation:comboJellyPop .46s cubic-bezier(.2,1.45,.45,1)}
-.comboArea.comboBurst .comboJelly{animation:comboJellyBurst .22s ease-out}
-@keyframes comboJellyPop{0%{opacity:0;transform:scale(.45,.28) translateY(10px)}45%{opacity:1;transform:scale(1.15,.9) translateY(-4px)}72%{transform:scale(.94,1.08)}100%{opacity:1;transform:scale(1)}}
-@keyframes comboJellyBurst{0%{filter:drop-shadow(0 5px 10px rgba(55,48,126,.24));transform:scale(1)}50%{filter:drop-shadow(0 0 18px rgba(255,220,85,.72));transform:scale(1.1)}100%{filter:drop-shadow(0 6px 12px rgba(55,48,126,.26));transform:scale(1)}}
-@media(max-width:600px){.comboJelly{width:min(100%,132px)}.comboBadge{font-size:14px;right:0;bottom:0}}
+/* ===== board-local jelly combo: large, translucent, one-second lifecycle ===== */
+.boardCard>.comboArea,.oppCard>.comboArea{
+  position:absolute!important;
+  inset:0!important;
+  z-index:6;
+  width:100%!important;
+  height:100%!important;
+  min-height:0!important;
+  padding:0!important;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  pointer-events:none;
+  user-select:none;
+  opacity:0;
+  transform:none!important;
+}
+.comboArea.comboIdle{display:flex;opacity:0;visibility:hidden}
+.comboVisual{
+  position:relative;
+  flex:0 0 auto;
+  width:clamp(320px,115%,480px);
+  transform-origin:center center;
+  will-change:transform,opacity;
+}
+.comboJelly{
+  display:block;
+  width:100%;
+  height:auto;
+  image-rendering:auto;
+  filter:drop-shadow(0 8px 18px rgba(26,24,84,.28));
+}
+.comboBadge{
+  position:absolute;
+  right:14%;
+  bottom:6%;
+  min-width:48px;
+  padding:6px 11px;
+  border-radius:999px;
+  background:linear-gradient(180deg,rgba(255,250,166,.92),rgba(255,194,47,.92));
+  border:2px solid rgba(255,255,255,.84);
+  box-shadow:0 5px 14px rgba(36,29,94,.25);
+  color:#8f286e;
+  font-weight:1000;
+  font-size:clamp(19px,2vw,28px);
+  line-height:1;
+  text-align:center;
+  text-shadow:0 1px 0 rgba(255,255,255,.85);
+}
+.comboArea.comboPop{
+  visibility:visible;
+  animation:comboFadeLife 1s linear both;
+}
+.comboArea.comboPop .comboVisual{
+  animation:comboJellyLife 1s cubic-bezier(.2,.72,.28,1) both;
+}
+.comboArea.comboBurst .comboJelly{animation:comboJellyBurst .24s ease-out}
+@keyframes comboFadeLife{
+  0%{opacity:0}
+  10%{opacity:.78}
+  70%{opacity:.72}
+  84%{opacity:.58}
+  100%{opacity:0}
+}
+@keyframes comboJellyLife{
+  0%{transform:translateY(16px) scale(.48,.25)}
+  17%{transform:translateY(-5px) scale(1.16,.86)}
+  31%{transform:translateY(1px) scale(.94,1.08)}
+  44%{transform:translateY(0) scale(1.04,.97)}
+  58%,76%{transform:translateY(0) scale(1)}
+  88%{transform:translateY(-2px) scale(1.06,.92)}
+  100%{transform:translateY(-14px) scale(.72,1.12)}
+}
+@keyframes comboJellyBurst{
+  0%{filter:drop-shadow(0 7px 16px rgba(26,24,84,.26));transform:scale(1)}
+  50%{filter:drop-shadow(0 0 25px rgba(255,220,85,.66));transform:scale(1.08)}
+  100%{filter:drop-shadow(0 8px 18px rgba(26,24,84,.28));transform:scale(1)}
+}
+@media(max-width:600px){
+  .comboVisual{width:clamp(280px,120%,390px)}
+  .comboBadge{min-width:42px;padding:5px 9px;font-size:17px}
+}
+@media(prefers-reduced-motion:reduce){
+  .comboArea.comboPop{animation:comboFadeLife 1s linear both}
+  .comboArea.comboPop .comboVisual,.comboArea.comboBurst .comboJelly{animation:none}
+}

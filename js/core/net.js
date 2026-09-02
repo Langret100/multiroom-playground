@@ -131,7 +131,7 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo"]);
+const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo","starpaint"]);
 const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
 const isSoccer = (String(this.state.mode||"") === "soccer");
@@ -140,7 +140,7 @@ if (isDuel && humans.length === 1){
   // 1인 듀얼은 서버가 CPU를 붙여 시작하므로 ready 조건을 true로 봄(프론트 UX용)
   this.state.allReady = true;
 } else {
-  const soloCoopOk = isCoop && humans.length === 1 && new Set(["suhaktokki","snaketail","mathexplorer","math-explorer"]).has(String(this.state.mode||""));
+  const soloCoopOk = isCoop && humans.length === 1 && new Set(["suhaktokki","snaketail","mathexplorer","math-explorer","starpaint"]).has(String(this.state.mode||""));
   const baseReady = soloCoopOk || (humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready));
   // 수학축구: 반드시 짝수 인원(2·4·6·8)이어야 시작 가능
   const evenOk = !isSoccer || (humans.length % 2 === 0);
@@ -242,6 +242,8 @@ if (isDuel && humans.length === 1){
         "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over",
         // Togester
         "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_item","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
+        // StarPaint
+        "pb_input","pb_state","pb_over",
         // SnakeTail
         "st_timer","st_foods","st_spawn","st_eaten","st_players","st_scores","st_event",
         // SuhakTokki (coop)
@@ -394,6 +396,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-08-04-soccer-flow-clean-v24";
+  window.__BUILD_ID = "2026-09-02-starpaint-sync2";
   window.Net = { nowHHMM, makeClient, safeText, setStatus };
 })();

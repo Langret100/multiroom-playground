@@ -940,6 +940,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
+  let starpaintCompatInputSeq = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -1405,11 +1406,17 @@ function updatePreview(modeId){
     if (d.type === "pb_input"){
       if (!fromMainForPb) return;
       try{ room.send("pb_input", { input:d.input || {} }); }catch(_){ }
+      // Compatibility path for an older deployed Worker: tg_state already exists
+      // there and broadcasts an aggregated snapshot to every room member.
+      try{ room.send("tg_state", { state:{ __starpaintInput:d.input || {}, __starpaintInputSeq:++starpaintCompatInputSeq } }); }catch(_){ }
       return;
     }
     if (d.type === "pb_state"){
       if (!fromMainForPb) return;
       try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
+      // Keep multiplayer working even when only the static patch was deployed
+      // and the Cloudflare Worker has not yet been upgraded for pb_* packets.
+      try{ room.send("tg_state", { state:{ __starpaintState:d.state || {} } }); }catch(_){ }
       return;
     }
     if (d.type === "pb_sync"){
@@ -3188,6 +3195,22 @@ try{
       room.onMessage("tg_players", (msg)=>{
         const playerMap = msg.players || {};
         postToMain({ type:"tg_players", players: playerMap });
+        // StarPaint compatibility transport over the long-standing Togester
+        // aggregate relay. New Workers also send pb_* directly; the game drops
+        // duplicate/equal sequence snapshots safely.
+        try{
+          const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+          if (modeId === "starpaint"){
+            Object.entries(playerMap).forEach(([sid, packet])=>{
+              if (packet && packet.__starpaintState){
+                postToMain({ type:"pb_state", state:packet.__starpaintState });
+              }
+              if (packet && packet.__starpaintInput){
+                postToMain({ type:"pb_input", from:String(sid), input:packet.__starpaintInput });
+              }
+            });
+          }
+        }catch(_){ }
         // In soccer, tg_players is also the backwards-compatible generic relay
         // for host-authoritative math round packets. Old Workers already support it.
         try{

@@ -666,7 +666,8 @@ export class RoomDO{
       this.meta.mode === "suhaktokki" ||
       this.meta.mode === "snaketail" ||
       this.meta.mode === "mathexplorer" ||
-      this.meta.mode === "math-explorer"
+      this.meta.mode === "math-explorer" ||
+      this.meta.mode === "starpaint"
     );
     let humanCount = 0;
     for (const [uid] of this.users.entries()){
@@ -1763,7 +1764,7 @@ export class RoomDO{
       }
       if (t === "pb_state"){
         if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
-        const sender=this.users.get(uid); if(!sender || !sender.isHost) return;
+        const sender=this.users.get(uid); if(!sender || (!sender.isHost && Number(sender.seat)!==0)) return;
         if(!this.pb) this.pb={state:null};
         this.pb.state = d.state && typeof d.state === "object" ? d.state : null;
         if (this.pb.state) this._broadcast("pb_state", { state:this.pb.state });
@@ -1776,7 +1777,7 @@ export class RoomDO{
       }
       if (t === "pb_over"){
         if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
-        const sender=this.users.get(uid); if(!sender || !sender.isHost) return;
+        const sender=this.users.get(uid); if(!sender || (!sender.isHost && Number(sender.seat)!==0)) return;
         const winnerSeat=Math.max(0,Math.min(7,Number(d.winnerSeat)||0));
         const scores=Array.isArray(d.scores)?d.scores.slice(0,8).map(v=>Math.max(0,Number(v)||0)):[];
         this._broadcast("pb_over", { winnerSeat, scores, state:this.pb&&this.pb.state?this.pb.state:null });

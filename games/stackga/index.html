@@ -7,7 +7,7 @@
   <style id="stackga-critical-bg">html,body{margin:0;background:#183560}</style>
   <title>쌓기게임</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="./css/game.css?v=20260902-combojelly1" />
+  <link rel="stylesheet" href="./css/game.css?v=20260902-combojelly2" />
 </head>
 <body>
   <div class="wrap">
@@ -30,6 +30,12 @@
         <!-- 내 게임 화면: 좌측에 딱 붙음 -->
         <div class="cardBox boardCard" id="boardCol" aria-label="me">
           <canvas id="cvMe" width="360" height="720"></canvas>
+          <div class="comboArea comboIdle" id="comboAreaMe" aria-label="내 콤보">
+            <div class="comboVisual">
+              <img class="comboJelly" id="comboJellyMe" src="./assets/combo/combo-1.png" alt="콤보!" />
+              <div class="comboBadge" id="comboBadgeMe">x2</div>
+            </div>
+          </div>
         </div>
 
         <!-- 남는 공간: 상단 NEXT, 아래 상대 화면(보드만) -->
@@ -42,11 +48,12 @@
             <!-- 요청: 라벨은 카드 내부 좌측 상단 (NEXT와 동일한 스타일) -->
             <div class="cardTag" id="oppTag">Player</div>
             <canvas id="cvOpp" width="120" height="240"></canvas>
-          </div>
-          <!-- 콤보: 카드(네모칸) 없이 빈 공간에 텍스트만 표시 -->
-          <div class="comboArea comboIdle" id="comboArea" aria-label="combo">
-            <img class="comboJelly" id="comboJelly" src="./assets/combo/combo-1.png" alt="콤보!" />
-            <div class="comboBadge" id="comboBadge">x2</div>
+            <div class="comboArea comboIdle" id="comboAreaOpp" aria-label="상대 콤보">
+              <div class="comboVisual">
+                <img class="comboJelly" id="comboJellyOpp" src="./assets/combo/combo-1.png" alt="콤보!" />
+                <div class="comboBadge" id="comboBadgeOpp">x2</div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -67,7 +74,7 @@
     <div id="log" class="hidden"></div>
   </div>
 
-  <script type="module" src="./js/main.js?v=20260902-combojelly1"></script>
+  <script type="module" src="./js/main.js?v=20260902-combojelly2"></script>
 
 <script>
 (function(){

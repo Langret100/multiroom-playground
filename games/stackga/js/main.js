@@ -24,9 +24,12 @@ const ui = {
   effect: $("effect"),
   mode: $("mode"),
 
-  comboArea: $("comboArea"),
-  comboJelly: $("comboJelly"),
-  comboBadge: $("comboBadge"),
+  comboAreaMe: $("comboAreaMe"),
+  comboJellyMe: $("comboJellyMe"),
+  comboBadgeMe: $("comboBadgeMe"),
+  comboAreaOpp: $("comboAreaOpp"),
+  comboJellyOpp: $("comboJellyOpp"),
+  comboBadgeOpp: $("comboBadgeOpp"),
 
   overlay: $("overlay"),
   overlayTitle: $("overlayTitle"),
@@ -120,33 +123,47 @@ function flash(kind){
   setTimeout(()=>{ boardColEl.classList.remove(cls); }, 220);
 }
 
-let comboAnimTimers=[];
-function clearComboTimers(){
-  for(const id of comboAnimTimers){ try{ clearTimeout(id); }catch{} }
-  comboAnimTimers=[];
+const comboAnimTimers={me:[],opp:[]};
+function comboUi(side='me'){
+  return side==='opp'
+    ? {area:ui.comboAreaOpp,jelly:ui.comboJellyOpp,badge:ui.comboBadgeOpp}
+    : {area:ui.comboAreaMe,jelly:ui.comboJellyMe,badge:ui.comboBadgeMe};
 }
-function hideCombo(){
-  clearComboTimers();
-  if(!ui.comboArea) return;
-  ui.comboArea.classList.add('comboIdle');
-  ui.comboArea.classList.remove('comboPop','comboBurst');
+function clearComboTimers(side){
+  const sides=side?[side]:['me','opp'];
+  for(const s of sides){
+    for(const id of comboAnimTimers[s]){ try{ clearTimeout(id); }catch{} }
+    comboAnimTimers[s]=[];
+  }
 }
-function showCombo(streak){
-  if(!ui.comboArea || !ui.comboJelly || !ui.comboBadge) return;
-  if(streak < 2){ hideCombo(); return; }
-  clearComboTimers();
-  ui.comboBadge.textContent = `x${streak}`;
-  ui.comboArea.classList.remove('comboIdle','comboPop','comboBurst');
-  void ui.comboArea.offsetWidth;
-  ui.comboArea.classList.add('comboPop');
+function hideCombo(side){
+  const sides=side?[side]:['me','opp'];
+  clearComboTimers(side);
+  for(const s of sides){
+    const {area}=comboUi(s);
+    if(!area) continue;
+    area.classList.add('comboIdle');
+    area.classList.remove('comboPop','comboBurst');
+  }
+}
+function showCombo(streak,side='me'){
+  const {area,jelly,badge}=comboUi(side);
+  if(!area || !jelly || !badge) return;
+  if(streak < 2){ hideCombo(side); return; }
+  clearComboTimers(side);
+  badge.textContent = `x${streak}`;
+  area.classList.remove('comboIdle','comboPop','comboBurst');
+  void area.offsetWidth;
+  area.classList.add('comboPop');
   const frames=[1,2,3,4];
   frames.forEach((n,i)=>{
-    comboAnimTimers.push(setTimeout(()=>{
-      if(ui.comboJelly) ui.comboJelly.src=`./assets/combo/combo-${n}.png`;
-      if(i===2) ui.comboArea?.classList.add('comboBurst');
+    comboAnimTimers[side].push(setTimeout(()=>{
+      jelly.src=`./assets/combo/combo-${n}.png`;
+      if(i===2) area.classList.add('comboBurst');
     },i*95));
   });
-  comboAnimTimers.push(setTimeout(()=>ui.comboArea?.classList.remove('comboBurst'),500));
+  comboAnimTimers[side].push(setTimeout(()=>area.classList.remove('comboBurst'),520));
+  comboAnimTimers[side].push(setTimeout(()=>hideCombo(side),1000));
 }
 
 function safeSetText(el, t){ if(el) el.textContent = t; }
@@ -500,6 +517,7 @@ function beginLoop(){
           cpuGame.lastCleared = 0;
           if(c2>0){
             cpuComboStreak += 1;
+            showCombo(cpuComboStreak,'opp');
             const atk = linesToGarbage(c2) + (cpuComboStreak>=2 ? 1 : 0);
             if(atk){
               applyGarbageTo(meGame, atk);
@@ -510,6 +528,7 @@ function beginLoop(){
             }
           }else{
             cpuComboStreak = 0;
+            hideCombo('opp');
           }
         }
       }
@@ -526,7 +545,7 @@ function beginLoop(){
           comboStreak += 1;
           const comboAtk = comboStreak>=2 ? 1 : 0;
           const atk = linesToGarbage(c) + comboAtk;
-          showCombo(comboStreak);
+          showCombo(comboStreak,'me');
           // 줄 지울 때마다 이펙트
           shake(comboAtk ? "strong" : "soft");
           flash("good");
@@ -842,6 +861,8 @@ function onEventRecv(payload){
 
   if(ev.kind === "garbage"){
     const n = Math.max(0, (ev.payload && ev.payload.n) | 0);
+    const streak = Math.max(0, (ev.payload && ev.payload.streak) | 0);
+    if(streak >= 2) showCombo(streak,'opp');
     if(n > 0){
       applyGarbageTo(meGame, n);
       // 공격 들어올 때 이펙트
