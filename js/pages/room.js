@@ -940,7 +940,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  let starpaintCompatInputSeq = 0;
+  let starpaintCompatInputSeq = 0, starpaintDirectPbSeen = false, starpaintCompatFallbackAt = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -1405,18 +1405,22 @@ function updatePreview(modeId){
     // StarPaint (coop competitive) iframe -> server relay
     if (d.type === "pb_input"){
       if (!fromMainForPb) return;
+      if (!starpaintCompatFallbackAt) starpaintCompatFallbackAt = Date.now() + 1200;
       try{ room.send("pb_input", { input:d.input || {} }); }catch(_){ }
-      // Compatibility path for an older deployed Worker: tg_state already exists
-      // there and broadcasts an aggregated snapshot to every room member.
-      try{ room.send("tg_state", { state:{ __starpaintInput:d.input || {}, __starpaintInputSeq:++starpaintCompatInputSeq } }); }catch(_){ }
+      // Current Workers understand pb_* directly. Only enable the legacy tg_state
+      // transport if no direct StarPaint packet has come back for 1.2s.
+      if (!starpaintDirectPbSeen && Date.now() >= starpaintCompatFallbackAt){
+        try{ room.send("tg_state", { state:{ __starpaintInput:d.input || {}, __starpaintInputSeq:++starpaintCompatInputSeq } }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "pb_state"){
       if (!fromMainForPb) return;
+      if (!starpaintCompatFallbackAt) starpaintCompatFallbackAt = Date.now() + 1200;
       try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
-      // Keep multiplayer working even when only the static patch was deployed
-      // and the Cloudflare Worker has not yet been upgraded for pb_* packets.
-      try{ room.send("tg_state", { state:{ __starpaintState:d.state || {} } }); }catch(_){ }
+      if (!starpaintDirectPbSeen && Date.now() >= starpaintCompatFallbackAt){
+        try{ room.send("tg_state", { state:{ __starpaintState:d.state || {} } }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "pb_sync"){
@@ -3200,7 +3204,7 @@ try{
         // duplicate/equal sequence snapshots safely.
         try{
           const modeId = String(coop?.meta?.id || room?.state?.mode || "");
-          if (modeId === "starpaint"){
+          if (modeId === "starpaint" && !starpaintDirectPbSeen){
             Object.entries(playerMap).forEach(([sid, packet])=>{
               if (packet && packet.__starpaintState){
                 postToMain({ type:"pb_state", state:packet.__starpaintState });
@@ -3258,8 +3262,8 @@ try{
       });
 
       // StarPaint relay: server -> iframe
-      room.onMessage("pb_input", (msg)=>{ postToMain({ type:"pb_input", from:msg.from, input:msg.input || {} }); });
-      room.onMessage("pb_state", (msg)=>{ postToMain({ type:"pb_state", state:msg.state || {} }); });
+      room.onMessage("pb_input", (msg)=>{ starpaintDirectPbSeen = true; postToMain({ type:"pb_input", from:msg.from, input:msg.input || {} }); });
+      room.onMessage("pb_state", (msg)=>{ starpaintDirectPbSeen = true; postToMain({ type:"pb_state", state:msg.state || {} }); });
       room.onMessage("pb_over", (msg)=>{ postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] }); });
 
       // SnakeTail relay: server -> iframe
