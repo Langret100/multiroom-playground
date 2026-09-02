@@ -944,6 +944,8 @@ function updatePreview(modeId){
   let starpaintNativePbStateSeen = false;
   let starpaintCompatStateNeeded = false;
   let starpaintCompatProbeStartedAt = 0;
+  let starpaintCompatStateCache = null;
+  let starpaintCompatSyncUntil = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -1413,7 +1415,15 @@ function updatePreview(modeId){
       const now = Date.now();
       if (now - lastStarpaintMoveSent < 40) return;
       lastStarpaintMoveSent = now;
-      try{ room.send("tg_state", { state:{ __starpaintMove:d.player || {} } }); }catch(_){ }
+      try{
+        const relayState = { __starpaintMove:d.player || {} };
+        // GitHub-only compatibility must ride in the SAME tg_state record as movement.
+        // RoomDO keeps only the latest per-player tg_state, so separate sync/state
+        // packets can be overwritten by the next 40ms movement packet before broadcast.
+        if (Date.now() < starpaintCompatSyncUntil) relayState.__starpaintSyncReq = Date.now();
+        if (getMyIsHost() && starpaintCompatStateNeeded && starpaintCompatStateCache) relayState.__starpaintState = starpaintCompatStateCache;
+        room.send("tg_state", { state:relayState });
+      }catch(_){ }
       return;
     }
     if (d.type === "pb_input"){
@@ -1425,22 +1435,23 @@ function updatePreview(modeId){
       if (!fromMainForPb || !pbModeLikely) return;
       const now = Date.now();
       if (!starpaintCompatProbeStartedAt) starpaintCompatProbeStartedAt = now;
-      try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
-      // GitHub-only compatibility: some deployed Workers predate pb_state.
-      // Start the proven tg_state fallback only when the native route has not
-      // echoed back, or when a guest explicitly asks for a compatibility sync.
+      starpaintCompatStateCache = d.state || {};
+      try{ room.send("pb_state", { state:starpaintCompatStateCache }); }catch(_){ }
+      // If the deployed Worker predates pb_state, enable the compatibility data,
+      // but piggyback it on the host's normal movement record. Sending a separate
+      // tg_state here races with movement because the server stores only the latest
+      // state per user before its ~50ms aggregate broadcast.
       if (starpaintCompatStateNeeded || (!starpaintNativePbStateSeen && now-starpaintCompatProbeStartedAt >= 650)){
         starpaintCompatStateNeeded = true;
-        try{ room.send("tg_state", { state:{ __starpaintState:d.state || {} } }); }catch(_){ }
       }
       return;
     }
     if (d.type === "pb_sync"){
       if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_sync", {}); }catch(_){ }
-      // A sync request also travels over the already-deployed tg_state relay.
-      // The host sees this marker and temporarily/conditionally enables state fallback.
-      try{ room.send("tg_state", { state:{ __starpaintSyncReq:Date.now() } }); }catch(_){ }
+      // Keep the request piggybacked on several normal movement snapshots so it
+      // cannot be overwritten inside the existing tg_state aggregate relay.
+      starpaintCompatSyncUntil = Date.now() + 1800;
       return;
     }
     if (d.type === "pb_over"){
