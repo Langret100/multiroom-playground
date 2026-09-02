@@ -940,7 +940,7 @@ function updatePreview(modeId){
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
-  let starpaintCompatInputSeq = 0, starpaintDirectPbSeen = false, starpaintCompatFallbackAt = 0;
+  let starpaintCompatInputSeq = 0, starpaintDirectPbSeen = false, starpaintCompatFallbackAt = 0, lastStarpaintMoveSent = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -1403,6 +1403,16 @@ function updatePreview(modeId){
     }
 
     // StarPaint (coop competitive) iframe -> server relay
+    if (d.type === "pb_player"){
+      if (!fromMainForPb) return;
+      // Movement uses the exact same proven relay shape as Togester:
+      // client snapshot -> tg_state -> server aggregate -> tg_players (~20Hz).
+      const now = Date.now();
+      if (now - lastStarpaintMoveSent < 40) return;
+      lastStarpaintMoveSent = now;
+      try{ room.send("tg_state", { state:{ __starpaintMove:d.player || {} } }); }catch(_){ }
+      return;
+    }
     if (d.type === "pb_input"){
       if (!fromMainForPb) return;
       if (!starpaintCompatFallbackAt) starpaintCompatFallbackAt = Date.now() + 1200;
@@ -3204,15 +3214,18 @@ try{
         // duplicate/equal sequence snapshots safely.
         try{
           const modeId = String(coop?.meta?.id || room?.state?.mode || "");
-          if (modeId === "starpaint" && !starpaintDirectPbSeen){
+          if (modeId === "starpaint"){
+            const moves = {};
             Object.entries(playerMap).forEach(([sid, packet])=>{
-              if (packet && packet.__starpaintState){
+              if (packet && packet.__starpaintMove) moves[String(sid)] = packet.__starpaintMove;
+              if (!starpaintDirectPbSeen && packet && packet.__starpaintState){
                 postToMain({ type:"pb_state", state:packet.__starpaintState });
               }
-              if (packet && packet.__starpaintInput){
+              if (!starpaintDirectPbSeen && packet && packet.__starpaintInput){
                 postToMain({ type:"pb_input", from:String(sid), input:packet.__starpaintInput });
               }
             });
+            if (Object.keys(moves).length) postToMain({ type:"pb_players", players:moves });
           }
         }catch(_){ }
         // In soccer, tg_players is also the backwards-compatible generic relay
