@@ -687,13 +687,13 @@ function updatePreview(modeId){
     starpaintAssetsWarmed = true;
     starpaintWarmPromise = (async()=>{
       try{
-        const manifestUrl = "games/starpaint/assets/manifest.json";
-        const atlasUrl = "games/starpaint/assets/atlas.webp";
+        const manifestUrl = "games/starpaint/assets/manifest.json?v=sp-atlasfix1";
+        const atlasUrl = "games/starpaint/assets/atlas.webp?v=sp-atlasfix1";
         // Warm encoded bytes only. Decoding the 4K atlas in both the parent page and
         // the iframe duplicates a large CPU/memory job and can make startup slower.
         const warm = async(url)=>{
           try{
-            const res = await fetch(url, { cache:"force-cache" });
+            const res = await fetch(url, { cache:"force-cache", priority:"auto" });
             if (res && res.ok) await res.blob();
           }catch(_){ }
         };
@@ -1106,7 +1106,11 @@ function updatePreview(modeId){
         sendCpuBridgeInit();
       }
       const isGkFrame = !!(coop.active && coop.meta && coop.meta.id === "geumchikeo" && fromMain);
-      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coop.iframeLoaded){
+      // StarPaint posts bridge_ready from its running script before heavy assets are loaded.
+      // For StarPaint that signal is sufficient to initialize the bridge immediately;
+      // waiting for iframe.onload needlessly serializes networking behind document resources.
+      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb);
+      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coopInitReady){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
@@ -2810,7 +2814,11 @@ function startCoopEmbed(meta){
     const startId = encodeURIComponent(String(coop?.startPayload?.startId || coop?.startPayload?.startedAt || ""));
     return `&roomId=${encodeURIComponent(roomId || "")}&sid=${sid}&nick=${nick}&host=${host}&seat=${seat}&mapSeed=${mapSeed}&startId=${startId}`;
   })();
-  const src = `${meta.embedPath}?embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}&_m=${Date.now()}`;
+  // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
+  // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
+  // for StarPaint; other embeds retain their existing cache-busting behavior.
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-startup-fast3" : `&_m=${Date.now()}`;
+  const src = `${meta.embedPath}?embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
