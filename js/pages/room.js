@@ -941,6 +941,9 @@ function updatePreview(modeId){
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   let lastStarpaintMoveSent = 0;
+  let starpaintNativePbStateSeen = false;
+  let starpaintCompatStateNeeded = false;
+  let starpaintCompatProbeStartedAt = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -1420,12 +1423,24 @@ function updatePreview(modeId){
     }
     if (d.type === "pb_state"){
       if (!fromMainForPb || !pbModeLikely) return;
+      const now = Date.now();
+      if (!starpaintCompatProbeStartedAt) starpaintCompatProbeStartedAt = now;
       try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
+      // GitHub-only compatibility: some deployed Workers predate pb_state.
+      // Start the proven tg_state fallback only when the native route has not
+      // echoed back, or when a guest explicitly asks for a compatibility sync.
+      if (starpaintCompatStateNeeded || (!starpaintNativePbStateSeen && now-starpaintCompatProbeStartedAt >= 650)){
+        starpaintCompatStateNeeded = true;
+        try{ room.send("tg_state", { state:{ __starpaintState:d.state || {} } }); }catch(_){ }
+      }
       return;
     }
     if (d.type === "pb_sync"){
       if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_sync", {}); }catch(_){ }
+      // A sync request also travels over the already-deployed tg_state relay.
+      // The host sees this marker and temporarily/conditionally enables state fallback.
+      try{ room.send("tg_state", { state:{ __starpaintSyncReq:Date.now() } }); }catch(_){ }
       return;
     }
     if (d.type === "pb_over"){
@@ -3227,6 +3242,11 @@ try{
             const moves = {};
             Object.entries(playerMap).forEach(([sid, packet])=>{
               if (packet && packet.__starpaintMove) moves[String(sid)] = packet.__starpaintMove;
+              if (packet && packet.__starpaintSyncReq && String(sid) !== String(mySessionId)) starpaintCompatStateNeeded = true;
+              if (packet && packet.__starpaintState){
+                starpaintCompatStateNeeded = true;
+                postToMain({ type:"pb_state", state:packet.__starpaintState });
+              }
             });
             if (Object.keys(moves).length) postToMain({ type:"pb_players", players:moves });
           }
@@ -3287,6 +3307,8 @@ try{
       room.onMessage("pb_state", (msg)=>{
         const modeId = String(coop?.meta?.id || room?.state?.mode || "");
         if (modeId !== "starpaint") return;
+        starpaintNativePbStateSeen = true;
+        starpaintCompatStateNeeded = false;
         postToMain({ type:"pb_state", state:msg.state || {} });
       });
       room.onMessage("pb_over", (msg)=>{
