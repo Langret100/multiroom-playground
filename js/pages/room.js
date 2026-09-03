@@ -3372,6 +3372,12 @@ try{
         const modeId = String(coop?.meta?.id || room?.state?.mode || "");
         if (modeId !== "starpaint") return;
         postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] });
+        // Client-only StarPaint finish: keep the embedded winner scene visible for 2s,
+        // then return this client to the room without requiring a Worker update.
+        try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
+        window.__starpaintLocalBackTimer = setTimeout(()=>{
+          try{ returnToRoomLobbyLocal(); }catch(_){ }
+        }, 2000);
       });
 
       // SnakeTail relay: server -> iframe
@@ -3444,23 +3450,30 @@ try{
       });
       room.onMessage("result", (r)=> {
         try{ stopGameBgm(); }catch(_){ }
-        showResultOverlay(r);
+        // StarPaint has its own winner character/name scene. Do not cover it with
+        // the generic room result overlay during the 2-second finish window.
+        if (String(r?.mode || "") !== "starpaint") showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });
       });
-      room.onMessage("backToRoom", ()=> {
-          try{ exitGameFullscreen(); }catch(_){ }
+      function returnToRoomLobbyLocal(){
+        try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
+        window.__starpaintLocalBackTimer = null;
+        try{ exitGameFullscreen(); }catch(_){ }
         try{ stopGameBgm(); }catch(_){ }
         hideResultOverlay();
         showDuelUI(false);
         duel.active=null; duel.meta=null;
-        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null;     coop.iframeLoaded=false; coop.iframeReady=false;
+        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.iframeLoaded=false; coop.iframeReady=false;
         coop.level = 1;
         isReady = false;
-        // Notify iframes (best-effort) before clearing.
         postToAllIframes({ type: "duel_back" });
         if(duel.iframeEl) duel.iframeEl.src="about:blank";
-        /* stay in room lobby UI */
+      }
+      room.onMessage("backToRoom", ()=> {
+        // Existing servers may still send this later (e.g. 6.5s). The cleanup is
+        // idempotent, so a late legacy backToRoom is harmless after the local 2s return.
+        returnToRoomLobbyLocal();
       });
 
       room.onMessage("chat", (msg)=>{
