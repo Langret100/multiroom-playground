@@ -3,13 +3,13 @@
   const GAME_REGISTRY = [
     {
       id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/starpaint/index.html?v=20260902-spcum1', cardImage:'assets/images/game_cards/starpaint.webp',
+      embedPath:'games/starpaint/index.html?v=20260903-spinv2', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',
       descLines:['3개의 60초 라운드 동안 더 많은 블록을 자기 색으로 칠하세요.','1~4인은 기본 맵, 5~8인은 확장 맵에서 시작하며 10초마다 인원수에 맞춰 아이템이 보급됩니다.','아이템으로 상대를 밀치거나 바닥을 부수고, 3라운드에는 보스가 등장합니다.'],
-      pcHint:'PC: ←→/A,D 이동 · Space/Z/W/↑ 점프 · E/X 줍기 · C/V 아이템 사용',
-      mobileHint:'모바일: 왼쪽 터치 조이스틱 이동 · 오른쪽 점프/줍기/사용 버튼',
-      pcControls:[['← → / A D','이동'],['SPACE / Z / W / ↑','점프'],['E / X','아이템 줍기'],['C / V','아이템 사용']],
-      mobileControls:[['왼쪽 터치','조이스틱 이동'],['점프','점프'],['줍기','아이템 줍기'],['사용','아이템 사용']]
+      pcHint:'PC: ←→ 이동 · Z/↑ 점프 · X 액션(줍기·사용·주먹질) · C 아이템 교체',
+      mobileHint:'모바일: 왼쪽 터치 조이스틱 이동 · 오른쪽 점프/액션/교체 버튼',
+      pcControls:[['← →','이동'],['Z / ↑','점프'],['X','액션 · 줍기/사용/주먹질'],['C','아이템 1↔2 교체']],
+      mobileControls:[['왼쪽 터치','조이스틱 이동'],['점프','점프'],['액션','줍기/사용/주먹질'],['교체','아이템 1↔2 교체']]
     },
     {
       id:'stackga', name:'블록쌓기', category:'퍼즐 · 대전', type:'duel', badgeClass:'tetris', maxClients:2,

@@ -687,8 +687,8 @@ function updatePreview(modeId){
     starpaintAssetsWarmed = true;
     starpaintWarmPromise = (async()=>{
       try{
-        const manifestUrl = "games/starpaint/assets/manifest.json?v=sp-loadfix1";
-        const atlasUrl = "games/starpaint/assets/atlas.png?v=sp-loadfix1";
+        const manifestUrl = "games/starpaint/assets/manifest.json?v=sp-inv2";
+        const atlasUrl = "games/starpaint/assets/atlas.webp?v=sp-inv2";
         // Warm encoded bytes only. Decoding the 4K atlas in both the parent page and
         // the iframe duplicates a large CPU/memory job and can make startup slower.
         const warm = async(url)=>{
