@@ -3372,7 +3372,13 @@ try{
         const modeId = String(coop?.meta?.id || room?.state?.mode || "");
         if (modeId !== "starpaint") return;
         postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] });
-
+        // StarPaint owns its winner scene. Keep it visible for about 2 seconds,
+        // then return only the local game UI to the room. The deployed Worker
+        // will still authoritatively reset phase/ready with its later backToRoom.
+        try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
+        window.__starpaintLocalBackTimer = setTimeout(()=>{
+          try{ returnToRoomLobbyLocal(); }catch(_){ }
+        }, 2000);
       });
 
       // SnakeTail relay: server -> iframe
