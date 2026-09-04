@@ -1,0 +1,15 @@
+import fs from 'node:fs';
+const read=p=>fs.readFileSync(new URL('../'+p, import.meta.url),'utf8');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+const room=read('js/pages/room.js');
+const cpu=read('games/stackga/js/cpu.js');
+const main=read('games/stackga/js/main.js');
+ok(room.includes('localStorage.getItem("cpu_difficulty") || "low"'),'room CPU selector default is not low');
+ok(room.includes("cpuDiffSelect.value || 'low'"),'room CPU selector fallback is not low');
+ok(cpu.includes('constructor(game, seed, difficulty = "low")'),'CpuController default is not low');
+ok(cpu.includes('String(difficulty||"low")'),'CpuController null fallback is not low');
+const midQuery=(main.match(/get\("cpu"\) \|\| "mid"/g)||[]).length;
+ok(midQuery===0,'embedded StackGa still has mid fallback');
+const lowQuery=(main.match(/get\("cpu"\) \|\| "low"/g)||[]).length;
+ok(lowQuery===2,'embedded StackGa low fallback is not applied to both paths');
+console.log('STACKGA_DEFAULT_LOW_REGRESSION_OK');

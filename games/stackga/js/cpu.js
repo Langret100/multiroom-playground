@@ -1,6 +1,6 @@
 import { COLS, ROWS, SHAPES, mulberry32 } from "./game.js";
 
-// CPU 난이도 상향: 가능한 배치(회전/위치)를 탐색해 휴리스틱 점수로 최선 수를 선택합니다.
+// CPU plans a placement once per piece, then executes it at a human-readable pace.
 function cloneBoard(b){
   return b.map(row => row.slice());
 }
@@ -83,17 +83,22 @@ function evalBoard(board, cleared){
 }
 
 export class CpuController {
-  constructor(game, seed, difficulty = "mid"){
+  constructor(game, seed, difficulty = "low"){
     this.game = game;
     this.rnd = mulberry32((seed>>>0) || 1);
     this.lastPieceKey = "";
     this.targetX = 3;
     this.targetRot = 0;
     this.actionAcc = 0;
-    const d = (String(difficulty||"mid").toLowerCase());
+    this.pieceAge = 0;
+    this.pieceDelay = 0;
+    const d = (String(difficulty||"low").toLowerCase());
     this.diff = (d === "high" || d === "hard" || d === "h") ? "high" : (d === "low" || d === "easy" || d === "l") ? "low" : "mid";
-    this.actionMs = (this.diff === "high") ? 38 : (this.diff === "low") ? 105 : 52;
-    this.jitterScale = (this.diff === "high") ? 3 : (this.diff === "low") ? 180 : 10;
+    this.actionMs = (this.diff === "high") ? 55 : (this.diff === "low") ? 100 : 82;
+    this.jitterScale = (this.diff === "high") ? 4 : (this.diff === "low") ? 42 : 16;
+    this.thinkMs = (this.diff === "high") ? 420 : (this.diff === "low") ? 900 : 760;
+    this.softDropMs = (this.diff === "low") ? 150 : 0;
+    this.softDropAcc = 0;
   }
 
   _plan(){
@@ -105,6 +110,10 @@ export class CpuController {
     const key = `${type}:${g.current.id}:${g.next?.type||""}`;
     if(this.lastPieceKey === key) return;
     this.lastPieceKey = key;
+    this.pieceAge = 0;
+    this.actionAcc = 0;
+    this.pieceDelay = this.thinkMs + Math.floor(this.rnd() * (this.diff === "low" ? 500 : this.diff === "mid" ? 300 : 140));
+    this.softDropAcc = 0;
 
     const base = cloneBoard(g.board);
     let best = { score: -1e18, x: g.current.x, rot: g.current.rot };
@@ -139,7 +148,9 @@ export class CpuController {
     const g = this.game;
     if(!g || g.dead || g.paused) return;
 
+    const beforeKey=this.lastPieceKey;
     this._plan();
+    if(this.lastPieceKey===beforeKey) this.pieceAge += dt;
 
     this.actionAcc += dt;
     while(this.actionAcc >= this.actionMs){
@@ -160,8 +171,19 @@ export class CpuController {
         continue;
       }
 
-      // once aligned, hard drop quickly
-      g.hardDrop();
+      // Easy CPU never teleports a freshly spawned piece to the floor.
+      // After a visible thinking period it advances the piece one row at a time,
+      // so the player can actually watch and react to the opponent's placement.
+      if(this.pieceAge < this.pieceDelay) continue;
+      if(this.diff === "low"){
+        this.softDropAcc += this.actionMs;
+        if(this.softDropAcc >= this.softDropMs){
+          this.softDropAcc = 0;
+          g.softDrop();
+        }
+      }else{
+        g.hardDrop();
+      }
     }
   }
 }

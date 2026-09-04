@@ -19,10 +19,15 @@ ok(st.includes('const trailDir=Math.atan2(hy-anchor.y,hx-anchor.x)'),'snaketail 
 ok(st.includes('const yaw = -visualHeadDir(s) + Math.PI * 0.5'),'snaketail 3D head direction not corrected');
 ok(st.includes('const dir=visualHeadDir(s);'),'snaketail 2D head direction not corrected');
 
-// Soccer: goal always resets midfield and starts a fresh restart quiz; post-result lock is shorter.
-ok(sc.includes("r.phase='result';r.resultUntil=now+1600;r.kickoffAt=r.resultUntil+1900"),'soccer post-result delay not shortened');
-ok(sc.includes("beginsAt=now+520"),'soccer restart preparation still excessively delayed');
-ok(sc.includes('ball={x:FX+FW/2,y:KICKOFF_Y,z:0'),'soccer goal does not reset ball to midfield');
-ok(sc.includes('soccerCompatRound=null') && sc.includes("soccerCompatStartRound('restart')"),'soccer goal does not force a fresh restart quiz');
-ok(sc.includes('isHost = !!d.isHost || (mySeat===0);'),'soccer host fallback missing');
+// Soccer: Worker owns round timing/score and the client only presents confirmed goals.
+const worker=read('cf-worker/src/index.js');
+ok(worker.includes('const beginsAt=now()+800;'),'soccer Worker quiz preparation missing');
+ok(worker.includes('r.resultUntil=now()+3000;r.kickoffAt=r.resultUntil+3000'),'soccer Worker result/countdown lifecycle missing');
+ok(worker.includes('this.sc.score[team] = Number(this.sc.score[team]||0) + 1'),'soccer score is not Worker-authoritative');
+ok(worker.includes('if(this.sc.seenGoalIds.includes(goalId))return'),'soccer duplicate goal protection missing');
+ok(sc.includes('GOAL_SCORE_LEFT_X = GOAL_PLANE_LEFT_X') && sc.includes('GOAL_SCORE_RIGHT_X = GOAL_PLANE_RIGHT_X'),'soccer goal plane still requires deep-net travel');
+ok(sc.includes('if(now-g.enteredAt>=180)'),'soccer goal visual still holds the ball too long');
+ok(sc.includes('ball={x:FX+FW/2,y:KICKOFF_Y,z:0'),'soccer confirmed goal does not reset ball to midfield');
+ok(sc.includes('isHost = !!d.isHost;'),'soccer iframe still invents host authority from seat number');
+ok(!sc.includes('sc_compat') && !sc.includes('soccerCompat'),'soccer compatibility round path remains');
 console.log('TOGESTER_SNAKETAIL_SOCCER_FOLLOWUP_REGRESSION_OK');

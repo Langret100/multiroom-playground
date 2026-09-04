@@ -545,7 +545,7 @@ export class RoomDO{
 
     this.tour = null;              // tournament state for duel mode
     this.tg = { players:{}, floors:{}, buttons:{}, boxes:{}, lastBroadcast:0, timer:null }; // coop state aggregation
-    this.pb = { state:null }; // starpaint host-authoritative snapshot
+    this.pb = { state:null }; // StarPaint host-authoritative world snapshot
     this.st = { players:{}, foods:[], lastBroadcast:0, timer:null, startedAt:0, durationMs:180000, scores:{} }; // snaketail state
     // Soccer (수학축구): authoritative player/ball/score aggregation, mirrors GameRoom.js (Colyseus) implementation.
     this.sc = { players:{}, ball:null, score:{A:0,B:0}, over:false, lastPosBroadcastAt:0, posBroadcastTimer:null, phase:"idle", round:null, playedMs:0, playStartedAt:0, matchDurationMs:120000, timer:null, transitionTimer:null, kickoffOwnerSid:"", roundSerial:0 };
@@ -1046,6 +1046,10 @@ export class RoomDO{
           this.tg.timer = null;
         }
 
+        // StarPaint has its own native pb_* lifecycle. Never carry a prior match's
+        // world/player snapshot into a new round in the same room.
+        this.pb = { state:null };
+
         // SnakeTail transient state (clients simulate; server relays + keeps score)
         this.st.players = {};
         this.st.foods = [];
@@ -1170,10 +1174,6 @@ export class RoomDO{
           }
         }
 
-        if (this._backToLobbyTimer){
-          try{ clearTimeout(this._backToLobbyTimer); }catch(_){ }
-          this._backToLobbyTimer = null;
-        }
         this.meta.phase = "playing";
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
@@ -1761,17 +1761,36 @@ export class RoomDO{
       if (t === "pb_input"){
         if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
         const clean = d.input && typeof d.input === "object" ? {
-          left:!!d.input.left, right:!!d.input.right, jumpSeq:Number(d.input.jumpSeq||0)>>>0, pickSeq:Number(d.input.pickSeq||0)>>>0, useSeq:Number(d.input.useSeq||0)>>>0, quizRespawn:!!d.input.quizRespawn
+          left:!!d.input.left, right:!!d.input.right,
+          jumpSeq:Number(d.input.jumpSeq||0)>>>0, pickSeq:Number(d.input.pickSeq||0)>>>0,
+          useSeq:Number(d.input.useSeq||0)>>>0, swapSeq:Number(d.input.swapSeq||0)>>>0,
+          respawnSeq:Number(d.input.respawnSeq||0)>>>0, quizRespawn:!!d.input.quizRespawn,
+          shotAngleDeg:Number(d.input.shotAngleDeg||0), shotPower:Number(d.input.shotPower||0), shotCharged:!!d.input.shotCharged
         } : {};
         this._broadcast("pb_input", { from:uid, input:clean });
         return;
       }
       if (t === "pb_state"){
         if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
-        const sender=this.users.get(uid); if(!sender || (!sender.isHost && Number(sender.seat)!==0)) return;
+        const sender=this.users.get(uid); if(!sender?.isHost) return;
         if(!this.pb) this.pb={state:null};
         this.pb.state = d.state && typeof d.state === "object" ? d.state : null;
         if (this.pb.state) this._broadcast("pb_state", { state:this.pb.state });
+        return;
+      }
+      if (t === "pb_hit"){
+        if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
+        const sender=this.users.get(uid); if(!sender?.isHost) return;
+        const hit=d.hit&&typeof d.hit==="object"?d.hit:null; if(!hit) return;
+        const targetSid=String(hit.targetSid||""); if(!targetSid||!this.users.has(targetSid)) return;
+        this._broadcast("pb_hit", { hit:{ targetSid, vx:Number(hit.vx)||0, vy:Number(hit.vy)||0, duration:Math.max(80,Math.min(800,Number(hit.duration)||240)) } });
+        return;
+      }
+      if (t === "pb_fx"){
+        if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
+        const sender=this.users.get(uid); if(!sender?.isHost) return;
+        const ev=d.event&&typeof d.event==="object"?d.event:null; if(!ev) return;
+        this._broadcast("pb_fx", { event:ev });
         return;
       }
       if (t === "pb_sync"){
@@ -1781,12 +1800,12 @@ export class RoomDO{
       }
       if (t === "pb_over"){
         if (this.meta.mode !== "starpaint" || this.meta.phase !== "playing") return;
-        const sender=this.users.get(uid); if(!sender || (!sender.isHost && Number(sender.seat)!==0)) return;
+        const sender=this.users.get(uid); if(!sender?.isHost) return;
         const winnerSeat=Math.max(0,Math.min(7,Number(d.winnerSeat)||0));
         const scores=Array.isArray(d.scores)?d.scores.slice(0,8).map(v=>Math.max(0,Number(v)||0)):[];
         this._broadcast("pb_over", { winnerSeat, scores, state:this.pb&&this.pb.state?this.pb.state:null });
         this._broadcast("result", { mode:"starpaint", done:true, winnerSeat, scores });
-        this._endAndBackToLobby(6500);
+        this._endAndBackToLobby(2400);
         return;
       }
       if (t === "pb_quit"){
@@ -2389,6 +2408,7 @@ export class RoomDO{
     try{ if (this._lobbyUpdateTimer){ clearTimeout(this._lobbyUpdateTimer); this._lobbyUpdateTimer = null; } }catch(_){}
     try{ if (this._backToLobbyTimer){ clearTimeout(this._backToLobbyTimer); this._backToLobbyTimer = null; } }catch(_){}
     try{ if (this.tg && this.tg.timer){ clearTimeout(this.tg.timer); } }catch(_){}
+    try{ if (this.pb && this.pb.playerTimer){ clearTimeout(this.pb.playerTimer); } }catch(_){}
     try{ if (this.st && this.st.timer){ clearTimeout(this.st.timer); } }catch(_){}
     try{ if (this.st && this.st._timer){ clearTimeout(this.st._timer); } }catch(_){}
     try{ if (this.sc && this.sc.timer){ clearTimeout(this.sc.timer); } }catch(_){}
@@ -3367,53 +3387,58 @@ export class RoomDO{
 
 
   _endAndBackToLobby(delayMs){
-    // Result screens are client-side visuals; the room's authoritative lifecycle must
-    // not depend on a multi-second in-memory setTimeout. Reset phase/ready immediately
-    // so the same room can always start another game even if the DO hibernates.
-    const d = Math.max(0, Number(delayMs || 0));
-    this.meta.phase = "lobby";
-    this.meta.status = "waiting";
-    this.tour = null;
-
-    try{ this.tg.players = {}; this.tg.floors = {}; }catch(_){ }
-    if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
-    try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
-    if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
-    if (this.st && this.st._timer){ try{ clearTimeout(this.st._timer); }catch(_){ } this.st._timer = null; }
-    if (this.sc?.transitionTimer){ try{ clearTimeout(this.sc.transitionTimer); }catch(_){ } }
-    try{ this.sc.players = {}; this.sc.ball = null; this.sc.score = { A:0, B:0 }; this.sc.over = false; this.sc.phase = "idle"; this.sc.round = null; this.sc.playedMs = 0; this.sc.playStartedAt = 0; this.sc.kickoffOwnerSid = ""; }catch(_){ }
-    if (this.sc && this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
-    try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
-    try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.latestEvent = null; this.mx.lastActiveAt = 0; } }catch(_){ }
-    try{ if (this.br){ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; } }catch(_){ }
-    try{ this.da && this._daReset(); }catch(_){ }
-    try{ this._relayLimiter = new Map(); }catch(_){ }
-    this._stopCpu();
-    this._removeCpuUser();
-    for (const u of this.users.values()) u.ready = false;
-    for (const [ws, uid] of this.sockets.entries()){
-      if (!uid) continue;
-      const u = this.users.get(uid);
-      if (!u) continue;
-      wsSetAttachment(ws, { uid, nick: u.nick, ready:false, seat:u.seat });
-    }
-    this._scheduleLobbyUpdate();
-    // Broadcast lobby state now. This is the important durable state transition.
-    this._broadcast("room_state", this._snapshot());
-
-    // Keep the result/winner scene visible for the requested delay. If this visual-only
-    // timer is lost, clients still receive room_state=lobby and can ready/start again.
+    // Several clients may report the same shared game end nearly simultaneously.
+    // Schedule exactly one reset/backToRoom broadcast for the room.
     if (this._backToLobbyTimer) return;
-    const sendBack=()=>{
-      this._backToLobbyTimer=null;
-      // A new round may already have started during the result-screen delay.
-      // Never let an old visual timer pull an active round back into the lobby.
-      if (this.meta.phase !== "lobby") return;
+    const d = Number(delayMs || 0);
+    this._backToLobbyTimer = setTimeout(()=>{
+      this._backToLobbyTimer = null;
+      this.meta.phase = "lobby";
+      this.meta.status = "waiting";
+      this.tour = null;
+
+
+      // Clear transient per-game snapshots so leaving the room leaves no server-side residue
+      try{ this.tg.players = {}; this.tg.floors = {}; }catch(_){ }
+      if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
+      this.pb = { state:null };
+      try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
+      if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
+      if (this.st && this.st._timer){ try{ clearTimeout(this.st._timer); }catch(_){ } this.st._timer = null; }
+
+      if (this.sc?.transitionTimer){ try{ clearTimeout(this.sc.transitionTimer); }catch(_){ } }
+      try{ this.sc.players = {}; this.sc.ball = null; this.sc.score = { A:0, B:0 }; this.sc.over = false; this.sc.phase = "idle"; this.sc.round = null; this.sc.playedMs = 0; this.sc.playStartedAt = 0; this.sc.kickoffOwnerSid = ""; }catch(_){ }
+      if (this.sc && this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
+
+      // Clear authoritative start payloads / transient coop caches when returning to lobby.
+      try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
+      try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.latestEvent = null; this.mx.lastActiveAt = 0; } }catch(_){ }
+      try{ if (this.br){ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; } }catch(_){ }
+
+      try{ this.da && this._daReset(); }catch(_){ }
+      try{ this._relayLimiter = new Map(); }catch(_){ }
+
+      // stop CPU + remove CPU user when returning to lobby
+      this._stopCpu();
+      this._removeCpuUser();
+
+      // reset ready
+      for (const u of this.users.values()){
+        u.ready = false;
+      }
+
+      // update attachments
+      for (const [ws, uid] of this.sockets.entries()){
+        if (!uid) continue;
+        const u = this.users.get(uid);
+        if (!u) continue;
+        wsSetAttachment(ws, { uid, nick: u.nick, ready: !!u.ready, seat: u.seat });
+      }
+
+      this._scheduleLobbyUpdate();
       this._broadcast("backToRoom", { resetReady:true });
       this._broadcast("room_state", this._snapshot());
-    };
-    if (d <= 0) sendBack();
-    else this._backToLobbyTimer=setTimeout(sendBack,d);
+    }, d);
   }
 
   async fetch(request){

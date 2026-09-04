@@ -1653,6 +1653,7 @@ let joyDx=0,joyDy=0,joyTouchId=-1,joyStartX=0,joyStartY=0;
 function startPlay(){
   if(phase==='playing')return;
   phase='playing';
+  lastOwnChatText='';
   scr('gameScreen');
   setTimeout(()=>{
     resizeWorld();
@@ -1748,14 +1749,20 @@ function focusChat(){
 }
 $('chatIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat();}});
 let lastOwnChatText='';
-function normalizeSpamText(v){return String(v||'').trim().replace(/\s+/g,' ');}
-function applyOwnSpamPenalty(){const p=players[myUid];if(!p||p.elim)return;const ns=Math.max(0,Number(p.score||0)-SPAM_PENALTY);p.score=ns;updateScoreUI();showSt(`🚨 도배 경고! -${SPAM_PENALTY} 체력`,1700);addLog(null,`🚨 도배 경고! ${esc(p.nick)} -${SPAM_PENALTY} 체력`,'pen');redFlash();sfx('penalty');if(entities[myUid]){entities[myUid].bubText='🚨 도배 경고!';entities[myUid].bubTimer=1900;entities[myUid].bubPenalty=true;entities[myUid].emotion='sad';setTimeout(()=>{if(entities[myUid])entities[myUid].emotion='neutral';},2100);}gSend('score',{score:ns,why:'spam',kw:''});if(ns<=0){p.elim=true;markElim(myUid,'spam');gSend('elim',{reason:'spam'});checkElim();}}
+function normalizedChatText(v){return String(v||'').trim().replace(/\s+/g,' ');}
 function sendChat(){
   if(phase!=='playing')return;
   const inp=$('chatIn');const txt=inp.value.trim();if(!txt)return;
   const p=players[myUid];if(!p||p.elim)return;
-  const normalized=normalizeSpamText(txt);
-  if(normalized&&normalized===lastOwnChatText){inp.value='';applyOwnSpamPenalty();setTimeout(focusChat,30);return;}
+  const normalized=normalizedChatText(txt);
+  if(normalized&&normalized===lastOwnChatText){
+    inp.value='';
+    const ns=Math.max(0,Number(p.score||0)-SPAM_PENALTY);p.score=ns;updateScoreUI();
+    showSt(`🚨 도배 경고! -${SPAM_PENALTY} 체력`,1700);addLog(null,`🚨 도배 경고! ${esc(p.nick)} -${SPAM_PENALTY} 체력`,'pen');redFlash();sfx('penalty');
+    gSend('score',{score:ns,why:'spam',kw:''});
+    if(ns<=0){p.elim=true;markElim(myUid,'spam');gSend('elim',{reason:'spam'});checkElim();}
+    setTimeout(focusChat,30);return;
+  }
   const now=Date.now();
   if(now-lastChatTs<CHAT_CD){showSt('⏱ '+((CHAT_CD-(now-lastChatTs))/1000).toFixed(1)+'초 후 가능',1200);return;}
   lastChatTs=now;lastOwnChatText=normalized;inp.value='';
@@ -1876,10 +1883,10 @@ function applyScore(uid,score,why,kw){
   const p=players[uid];if(!p)return;
   p.score=score;
   if(why){
-    addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${why==='sil'?'30초 침묵':why==='spam'?'도배 경고':'금칙어'})`,'pen');
+    addLog(null,`⚠️ ${esc(p.nick)} -${why==='spam'?SPAM_PENALTY:PENALTY}점 (${why==='sil'?'30초 침묵':why==='spam'?'도배 경고':'금칙어'})`,'pen');
     redFlash();
     if(why==='kw'&&kw){showKwBanner(p.nick,kw);zoomEntity(uid);}
-    if(entities[uid]){entities[uid].bubText=why==='sil'?'😴 침묵!':'🚫 금칙어!';entities[uid].bubTimer=2000;entities[uid].bubPenalty=true;entities[uid].emotion='sad';}
+    if(entities[uid]){entities[uid].bubText=why==='sil'?'😴 침묵!':why==='spam'?'🚨 도배!':'🚫 금칙어!';entities[uid].bubTimer=2000;entities[uid].bubPenalty=true;entities[uid].emotion='sad';}
   }
   if(score<=0){p.elim=true;markElim(uid,why||'score');}
   checkElim();
@@ -1996,7 +2003,7 @@ function goBack(){
   if(gameLoopId){cancelAnimationFrame(gameLoopId);gameLoopId=null;}
   if(bgmLoopId){clearTimeout(bgmLoopId);bgmLoopId=null;}
   players={};entities={};roomPls={};myKws=[];
-  phase='idle';myReady=false;startLock=false;mathCd=false;lastChatTs=0;chatCollapsed=false;myKws=[];
+  phase='idle';myReady=false;startLock=false;mathCd=false;lastChatTs=0;lastOwnChatText='';chatCollapsed=false;myKws=[];
   _bgmAudio.pause(); _bgmAudio.currentTime=0;
   if(kwTimerI){clearInterval(kwTimerI);kwTimerI=null;}
   if(timerI){clearInterval(timerI);timerI=null;}

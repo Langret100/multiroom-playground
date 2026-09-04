@@ -787,7 +787,7 @@ function onRoomUpdate(room){
     meGame = new StackGame(((meta.seed>>>0) || 1), playRows);
     // If this iframe is a hidden CPU bot (embedded solo mode), drive inputs automatically.
     if (window.__EMBED_INIT__?.role === "cpu"){
-      const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "mid");
+      const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "low");
       autoCtl = new CpuController(meGame, (((meta.seed>>>0) || 1) ^ 0x9e3779b9) >>> 0, cpuDiff);
     } else {
       autoCtl = null;
@@ -926,7 +926,7 @@ async function boot(){
     // Start local game immediately.
     meGame = new StackGame(seed, playRows);
     if (window.__EMBED_INIT__?.role === "cpu"){
-      const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "mid");
+      const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "low");
       autoCtl = new CpuController(meGame, (seed ^ 0x9e3779b9) >>> 0, cpuDiff);
     } else {
       autoCtl = null;

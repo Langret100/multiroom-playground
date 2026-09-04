@@ -273,7 +273,7 @@ function setupBgm(audioElId, btnId){
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
-  let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "mid").toLowerCase();
+  let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
   let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
   let mathDiffWrap = null;
   let mathDiffSelect = null;
@@ -315,7 +315,7 @@ function setupBgm(audioElId, btnId){
       if (cpuDiffSelect){
         cpuDiffSelect.value = cpuDifficulty;
         cpuDiffSelect.addEventListener('change', ()=>{
-          cpuDifficulty = (cpuDiffSelect.value || 'mid').toLowerCase();
+          cpuDifficulty = (cpuDiffSelect.value || 'low').toLowerCase();
           try{ localStorage.setItem('cpu_difficulty', cpuDifficulty); }catch(_){ }
         });
       }
@@ -704,11 +704,6 @@ function updatePreview(modeId){
   }
 
   function resetStarpaintBridgeState(){
-    starpaintNativePbStateSeen = false;
-    starpaintCompatStateNeeded = false;
-    starpaintCompatProbeStartedAt = 0;
-    starpaintCompatStateCache = null;
-    starpaintCompatSyncUntil = 0;
     lastStarpaintMoveSent = 0;
   }
 
@@ -973,11 +968,6 @@ function updatePreview(modeId){
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   let lastStarpaintMoveSent = 0;
-  let starpaintNativePbStateSeen = false;
-  let starpaintCompatStateNeeded = false;
-  let starpaintCompatProbeStartedAt = 0;
-  let starpaintCompatStateCache = null;
-  let starpaintCompatSyncUntil = 0;
   function focusGameIframeSoon(){
     const fr = duel?.iframeEl;
     if(!fr) return;
@@ -990,11 +980,7 @@ function updatePreview(modeId){
     setTimeout(poke,220);
   }
 
-  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
-  const soccerLegacyRelayState = { round:null, pos:null };
-  function sendSoccerLegacyRelay(){
-    try{ room.send("tg_state", { state:{ __soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos } }); }catch(_){ }
-  }
+  const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_math_submit","sc_time_ping"]);
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
@@ -1109,7 +1095,7 @@ function updatePreview(modeId){
       // StarPaint posts bridge_ready from its running script before heavy assets are loaded.
       // For StarPaint that signal is sufficient to initialize the bridge immediately;
       // waiting for iframe.onload needlessly serializes networking behind document resources.
-      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb);
+      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb || fromMainForSoccer);
       if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coopInitReady){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
@@ -1446,20 +1432,12 @@ function updatePreview(modeId){
     // StarPaint (coop competitive) iframe -> server relay
     if (d.type === "pb_player"){
       if (!fromMainForPb || !pbModeLikely) return;
-      // Movement uses the exact same proven relay shape as Togester:
-      // client snapshot -> tg_state -> server aggregate -> tg_players (~20Hz).
       const now = Date.now();
       if (now - lastStarpaintMoveSent < 40) return;
       lastStarpaintMoveSent = now;
-      try{
-        const relayState = { __starpaintMove:d.player || {} };
-        // GitHub-only compatibility must ride in the SAME tg_state record as movement.
-        // RoomDO keeps only the latest per-player tg_state, so separate sync/state
-        // packets can be overwritten by the next 40ms movement packet before broadcast.
-        if (Date.now() < starpaintCompatSyncUntil) relayState.__starpaintSyncReq = Date.now();
-        if (getMyIsHost() && starpaintCompatStateNeeded && starpaintCompatStateCache) relayState.__starpaintState = starpaintCompatStateCache;
-        room.send("tg_state", { state:relayState });
-      }catch(_){ }
+      // Movement already works through the room's aggregate state relay. Keep that
+      // path unchanged; StarPaint actions and world authority use pb_* separately.
+      try{ room.send("tg_state", { state:{ __starpaintMove:d.player || {} } }); }catch(_){ }
       return;
     }
     if (d.type === "pb_input"){
@@ -1469,25 +1447,22 @@ function updatePreview(modeId){
     }
     if (d.type === "pb_state"){
       if (!fromMainForPb || !pbModeLikely) return;
-      const now = Date.now();
-      if (!starpaintCompatProbeStartedAt) starpaintCompatProbeStartedAt = now;
-      starpaintCompatStateCache = d.state || {};
-      try{ room.send("pb_state", { state:starpaintCompatStateCache }); }catch(_){ }
-      // If the deployed Worker predates pb_state, enable the compatibility data,
-      // but piggyback it on the host's normal movement record. Sending a separate
-      // tg_state here races with movement because the server stores only the latest
-      // state per user before its ~50ms aggregate broadcast.
-      if (starpaintCompatStateNeeded || (!starpaintNativePbStateSeen && now-starpaintCompatProbeStartedAt >= 650)){
-        starpaintCompatStateNeeded = true;
-      }
+      try{ room.send("pb_state", { state:d.state || {} }); }catch(_){ }
+      return;
+    }
+    if (d.type === "pb_hit"){
+      if (!fromMainForPb || !pbModeLikely) return;
+      try{ room.send("pb_hit", { hit:d.hit || {} }); }catch(_){ }
+      return;
+    }
+    if (d.type === "pb_fx"){
+      if (!fromMainForPb || !pbModeLikely) return;
+      try{ room.send("pb_fx", { event:d.event || {} }); }catch(_){ }
       return;
     }
     if (d.type === "pb_sync"){
       if (!fromMainForPb || !pbModeLikely) return;
       try{ room.send("pb_sync", {}); }catch(_){ }
-      // Keep the request piggybacked on several normal movement snapshots so it
-      // cannot be overwritten inside the existing tg_state aggregate relay.
-      starpaintCompatSyncUntil = Date.now() + 1800;
       return;
     }
     if (d.type === "pb_over"){
@@ -1533,40 +1508,33 @@ function updatePreview(modeId){
       try{ room.send("st_over", { reason: d.reason, winnerSid: d.winnerSid }); }catch(_){ }
       return;
     }
-    // ── Soccer: iframe → server relays (single authoritative path) ──
-    // Soccer compatibility relay: reuse the long-standing tg_state -> tg_players
-    // transport so math-round synchronization does not require a Worker upgrade.
-    if (d.type === "sc_compat") {
-      if (!fromMainForSoccer) return;
-      soccerLegacyRelayState.round = d.packet || {};
-      sendSoccerLegacyRelay();
-      return;
-    }
-
+    // ── Soccer: iframe → server relays (Worker-authoritative) ──
     if (d.type === "sc_pos"){
       if (!fromMainForSoccer) return;
-      const isEvent=!!(d.kickAt||d.headerAt||d.tackleAt||d.claimAt);
-      const n=Date.now();
-      if(!isEvent){
-        if(!window.__scDirectPosTs)window.__scDirectPosTs=0;
-        if(n-window.__scDirectPosTs<30)return;
-        window.__scDirectPosTs=n;
-      }
-      // Old Workers can drop soccer-specific sc_pos for players that missed their
-      // registration window. Carry movement through the long-standing tg_state relay
-      // instead, merged with the math-round packet so neither overwrites the other.
-      soccerLegacyRelayState.pos = {
+      try{ room.send("sc_pos", {
         stateSeq:Number(d.stateSeq||0), x:Number(d.x||0), y:Number(d.y||0), dir:Number(d.dir||0),
-        vx:Number(d.vx||0), vy:Number(d.vy||0),
-        dribble:d.dribble==null?undefined:!!d.dribble, dribbleBallX:d.dribbleBallX, dribbleBallY:d.dribbleBallY,
+        vx:Number(d.vx||0), vy:Number(d.vy||0), dribble:d.dribble==null?undefined:!!d.dribble,
+        dribbleBallX:d.dribbleBallX, dribbleBallY:d.dribbleBallY,
         claimAt:d.claimAt, claimBallX:d.claimBallX, claimBallY:d.claimBallY,
         kickAt:d.kickAt, kickCharge:d.kickCharge, tackle:d.tackle,
         kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir, kickVX:d.kickVX, kickVY:d.kickVY,
         kickBallX:d.kickBallX, kickBallY:d.kickBallY,
         headerAt:d.headerAt, headerX:d.headerX, headerY:d.headerY, headerDir:d.headerDir,
         headerBallX:d.headerBallX, headerBallY:d.headerBallY, tackleAt:d.tackleAt
-      };
-      sendSoccerLegacyRelay();
+      }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_math_submit"){
+      if (!fromMainForSoccer) return;
+      try{ room.send("sc_math_submit", {
+        roundId:String(d.roundId||""), final:!!d.final, answeredAt:Number(d.answeredAt||0),
+        questionIndex:d.questionIndex==null?null:Number(d.questionIndex), answer:d.answer==null?null:Number(d.answer)
+      }); }catch(_){ }
+      return;
+    }
+    if (d.type === "sc_time_ping"){
+      if (!fromMainForSoccer) return;
+      try{ room.send("sc_time_ping", { clientSentAt:Number(d.clientSentAt||Date.now()) }); }catch(_){ }
       return;
     }
     if (d.type === "sc_ball"){
@@ -1944,12 +1912,6 @@ function updatePreview(modeId){
     // Layout hint for CSS (mobile: hide player list during play).
     try{
       document.body.classList.toggle("is-playing", phase !== "lobby");
-      if (phase === "lobby"){
-        // Server has authoritatively released the previous match. Never keep a stale
-        // local READY/game-in-progress latch after returning from an embedded game.
-        isReady = false;
-        forceLobbyUI = false;
-      }
       document.body.classList.toggle("is-lobby", phase === "lobby");
     }catch(_){ }
     els.players.innerHTML = "";
@@ -2321,7 +2283,6 @@ function sendCpuBridgeInit(){
 
 function sendCoopBridgeInit(){
   if (!coop.active || !coop.meta) return;
-  if (coop.meta.id === "soccer" && !coop.iframeReady) return;
 
   const playersObj = room?.state?.players;
   const getPlayer = (sid)=>{
@@ -2823,7 +2784,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-startup-fast3" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-combat-authority" : `&_m=${Date.now()}`;
   const src = `${meta.embedPath}?embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
@@ -3292,34 +3253,17 @@ try{
 
       // Togester (coop) relay: server -> iframe
       room.onMessage("tg_players", (msg)=>{
-        const playerMap = msg.players || {};
         const relayModeId = String(coop?.meta?.id || room?.state?.mode || "");
-        // StarPaint consumes only its namespaced movement slice below. Avoid also
-        // posting the full Togester aggregate into the StarPaint iframe every tick.
-        if (relayModeId !== "starpaint") postToMain({ type:"tg_players", players: playerMap });
-        // StarPaint only reuses the existing aggregate movement relay. The data is
-        // namespaced inside the packet and consumed only while this room is in StarPaint.
-        try{
-          const modeId = String(coop?.meta?.id || room?.state?.mode || "");
-          if (modeId === "starpaint"){
-            const moves = {};
-            Object.entries(playerMap).forEach(([sid, packet])=>{
-              if (packet && packet.__starpaintMove) moves[String(sid)] = packet.__starpaintMove;
-              if (packet && packet.__starpaintSyncReq && String(sid) !== String(mySessionId)) starpaintCompatStateNeeded = true;
-              if (packet && packet.__starpaintState){
-                starpaintCompatStateNeeded = true;
-                postToMain({ type:"pb_state", state:packet.__starpaintState });
-              }
-            });
-            if (Object.keys(moves).length) postToMain({ type:"pb_players", players:moves });
-          }
-        }catch(_){ }
-        // In soccer, tg_players is also the backwards-compatible generic relay
-        // for host-authoritative math round packets. Old Workers already support it.
-        try{
-          const modeId = String(coop?.meta?.id || room?.state?.mode || "");
-          if (modeId === "soccer") postToMain({ type:"sc_compat_players", players: playerMap });
-        }catch(_){ }
+        const playerMap = msg.players || {};
+        if (relayModeId !== "starpaint"){
+          postToMain({ type:"tg_players", players:playerMap });
+          return;
+        }
+        const moves={};
+        for(const [sid,packet] of Object.entries(playerMap)){
+          if(packet && packet.__starpaintMove) moves[String(sid)]=packet.__starpaintMove;
+        }
+        if(Object.keys(moves).length) postToMain({ type:"pb_players", players:moves });
       });
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
@@ -3360,8 +3304,8 @@ try{
         postToMain({ type:"tg_floor_quota", used: msg.used, limit: msg.limit });
       });
 
-      // StarPaint relay: server -> iframe. Keep pb_* packets isolated to StarPaint
-      // so a late packet can never leak into another game's iframe after a mode switch.
+      // StarPaint action edges and host-authoritative world state use pb_*.
+      // Movement is intentionally kept on the existing aggregate state relay above.
       room.onMessage("pb_input", (msg)=>{
         const modeId = String(coop?.meta?.id || room?.state?.mode || "");
         if (modeId !== "starpaint") return;
@@ -3370,20 +3314,22 @@ try{
       room.onMessage("pb_state", (msg)=>{
         const modeId = String(coop?.meta?.id || room?.state?.mode || "");
         if (modeId !== "starpaint") return;
-        starpaintNativePbStateSeen = true;
-        starpaintCompatStateNeeded = false;
         postToMain({ type:"pb_state", state:msg.state || {} });
+      });
+      room.onMessage("pb_hit", (msg)=>{
+        const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+        if (modeId !== "starpaint") return;
+        postToMain({ type:"pb_hit", hit:msg.hit || {} });
+      });
+      room.onMessage("pb_fx", (msg)=>{
+        const modeId = String(coop?.meta?.id || room?.state?.mode || "");
+        if (modeId !== "starpaint") return;
+        postToMain({ type:"pb_fx", event:msg.event || {} });
       });
       room.onMessage("pb_over", (msg)=>{
         const modeId = String(coop?.meta?.id || room?.state?.mode || "");
         if (modeId !== "starpaint") return;
         postToMain({ type:"pb_over", state:msg.state || null, winnerSeat:msg.winnerSeat, scores:msg.scores || [] });
-        // Client-only StarPaint finish: keep the embedded winner scene visible for 2s,
-        // then return this client to the room without requiring a Worker update.
-        try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
-        window.__starpaintLocalBackTimer = setTimeout(()=>{
-          try{ returnToRoomLobbyLocal(); }catch(_){ }
-        }, 2000);
       });
 
       // SnakeTail relay: server -> iframe
@@ -3409,10 +3355,23 @@ try{
         postToMain({ type:"st_event", event: msg.event || {} });
       });
 
-      // 투게스터의 tg_players 릴레이와 완전히 동일한 패턴: 서버가 집계한
-      // "전체 인원 위치 스냅샷"을 그대로 iframe에 전달한다. 개별 sc_pos를
-      // 1:1 중계하던 예전 방식은 받는 쪽에 그 sid가 이미 있어야 한다는
-      // 전제가 있어 roster 타이밍 문제에 취약했다 — 이제는 그 전제가 없다.
+      // Soccer is Worker-authoritative: forward the native round/position/score
+      // protocol into the iframe without a second generic relay path.
+      room.onMessage("sc_round_state", (msg)=>{
+        postToMain(Object.assign({ type:"sc_round_state" }, msg || {}));
+      });
+      room.onMessage("sc_round_progress", (msg)=>{
+        postToMain(Object.assign({ type:"sc_round_progress" }, msg || {}));
+      });
+      room.onMessage("sc_math_ack", (msg)=>{
+        postToMain(Object.assign({ type:"sc_math_ack" }, msg || {}));
+      });
+      room.onMessage("sc_score_sync", (msg)=>{
+        postToMain(Object.assign({ type:"sc_score_sync" }, msg || {}));
+      });
+      room.onMessage("sc_time_pong", (msg)=>{
+        postToMain(Object.assign({ type:"sc_time_pong" }, msg || {}));
+      });
       room.onMessage("sc_players", (msg)=>{
         postToMain({ type:"sc_players", players: msg.players || {} });
       });
@@ -3433,8 +3392,7 @@ try{
       room.onMessage("sc_end", (msg)=>{
         postToMain({ type:"sc_end", scoreA: msg.scoreA, scoreB: msg.scoreB, winner: msg.winner, winnerNick: msg.winnerNick });
       });
-      // 투게스터의 tg_players 릴레이와 동일한 패턴 — 서버가 보낸 전체 인원
-      // 목록을 그대로 iframe에 전달. 게임 쪽이 이걸로 players{}를 보정한다.
+      // Keep the iframe roster aligned with the Worker's soccer roster.
       room.onMessage("sc_roster", (msg)=>{
         postToMain({ type:"sc_roster", players: msg.players || [] });
       });
@@ -3477,8 +3435,8 @@ try{
         if(duel.iframeEl) duel.iframeEl.src="about:blank";
       }
       room.onMessage("backToRoom", ()=> {
-        // Existing servers may still send this later (e.g. 6.5s). The cleanup is
-        // idempotent, so a late legacy backToRoom is harmless after the local 2s return.
+        // The server owns the game -> lobby transition. Result screens stay inside
+        // the iframe until this authoritative reset arrives, so ready/phase cannot diverge.
         returnToRoomLobbyLocal();
       });
 
