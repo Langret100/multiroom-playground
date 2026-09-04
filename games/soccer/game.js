@@ -385,6 +385,13 @@ let soccerCompatSeenSubmit={};
 let soccerCompatTickTimer=0;
 let soccerCompatLastHostVersion=0;
 let soccerCompatLastSubmit=null;
+// After the first kickoff quiz, goals restart from a neutral midfield ball.
+// This serial rides the already-deployed tg_state -> tg_players compatibility relay,
+// so every client clears stale local kick prediction without requiring a Worker change.
+let soccerCompatGoalResetSerial=0;
+let soccerCompatGoalResetApplied=0;
+let soccerCompatGoalResetTeam='';
+let goalCenterResumeTimer=0;
 
 let players={};      // sid -> {x,y,netX,netY,netVX,netVY,netT, seat,team,nick,color,dir,kickAt,kickCharge,tackle,_lastKickAt}
 let me=null;
@@ -2084,21 +2091,59 @@ function beginGoalVisual(team){
   pendingGoalVisual={team,targetX,goalDir,enteredAt:now,insideAt:0};
   sendBallSnapshot();
 }
-function scoreGoal(team){
-  if(goalPending||isRoundLocked()||!gameActive)return;
-  goalPending=true;
-  // Worker 승인 왕복 사이에도 로컬 입력/공 물리가 한두 프레임 더 진행되지 않게
-  // 즉시 짧은 잠금을 건다. 정상 승인 시 곧 도착하는 QUIZ 상태가 이 잠금을
-  // 라운드 종료시각까지 연장하고, 거부/유실 시에는 안전 잠금만 자동 만료된다.
-  restartLockUntil=Math.max(restartLockUntil,Date.now()+1800);
+function resetBallToNeutralCenter(holdMs=520){
+  const now=Date.now();
+  const hold=Math.max(260,Number(holdMs||520));
   clearRoundActions();
-  // 점수는 로컬에서 미리 올리지 않는다. Worker가 sc_goal을 승인한 뒤
-  // sc_goal과 방장 권위 호환 상태로 확정된 값만 스코어보드에 반영한다.
-  bridgeSend('sc_goal',{team,restartId:`g:${mySid}:${Date.now()}`});
+  localKickTrack=null;localDribbleVisualUntil=0;pendingClaimAt=0;pendingClaimUntil=0;
+  pendingGoalVisual=null;pendingFieldOut=null;fieldRestartTeam=null;fieldRestartTeamUntil=0;
+  kickoffUntil=0;
+  restartLockUntil=Math.max(restartLockUntil,now+hold);
+  ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:now+hold};
+  netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:now,visualAt:now,owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
+  gameActive=false;goalPending=true;
+  if(goalCenterResumeTimer)clearTimeout(goalCenterResumeTimer);
+  goalCenterResumeTimer=setTimeout(()=>{
+    goalCenterResumeTimer=0;
+    if(gameOver)return;
+    restartLockUntil=0;goalPending=false;gameActive=true;
+    // The host publishes the same neutral center ball on the normal ball channel too.
+    // The compatibility reset serial below remains the reliable old-Worker path.
+    if(isHost)sendBallSnapshot();
+  },hold);
+}
+function applyCompatGoalReset(packet){
+  const serial=Math.max(0,Number(packet?.goalResetSerial||0));
+  if(!serial||serial<=soccerCompatGoalResetApplied)return false;
+  soccerCompatGoalResetApplied=serial;
+  const team=packet?.goalTeam==='B'?'B':'A';
+  soccerCompatGoalResetTeam=team;
+  const newA=Math.max(0,Number(packet?.scoreA ?? score.A));
+  const newB=Math.max(0,Number(packet?.scoreB ?? score.B));
+  if(newA!==score.A)scoreAnimA=Date.now();
+  if(newB!==score.B)scoreAnimB=Date.now();
+  score.A=newA;score.B=newB;
+  resetBallToNeutralCenter(520);
   showGoalFlash(team);spawnGoalParticles(team);sfxGoal();addShake(8,400);
-  // 승인된 골이면 곧바로 QUIZ 상태가 와서 goalPending이 해제된다.
-  // 패킷이 거부/유실된 경우에도 영구 잠금되지 않도록 짧은 안전 타임아웃만 둔다.
-  setTimeout(()=>{goalPending=false;},1800);
+  return true;
+}
+function scoreGoal(team){
+  if(goalPending||isRoundLocked()||!gameActive||!isHost)return;
+  // Only the host confirms a goal. After the initial kickoff quiz there is no
+  // restart quiz: score once, clear ownership/prediction, put the ball at midfield,
+  // then let normal proximity ownership attach it to whoever reaches it first.
+  if(team==='A'){score.A=Math.max(0,Number(score.A||0))+1;scoreAnimA=Date.now();}
+  else {score.B=Math.max(0,Number(score.B||0))+1;scoreAnimB=Date.now();}
+  soccerCompatGoalResetSerial+=1;
+  soccerCompatGoalResetTeam=team==='B'?'B':'A';
+  applyCompatGoalReset({
+    goalResetSerial:soccerCompatGoalResetSerial,goalTeam:soccerCompatGoalResetTeam,
+    scoreA:score.A,scoreB:score.B
+  });
+  // Persist the reset serial in the host compatibility heartbeat. A guest that still
+  // shows its locally predicted kick will receive this through tg_state/tg_players
+  // and snap to the same midfield ball exactly once.
+  soccerCompatBroadcast();
 }
 
 let goalFlashUntil=0, goalFlashTeam=null;
@@ -2867,7 +2912,11 @@ function soccerCompatSnapshot(){
 function soccerCompatBroadcast(){
   if(!isHost||!soccerCompatRound)return;
   const snap=soccerCompatSnapshot();
-  bridgeSend('sc_compat',{packet:{kind:'state',hostSid:mySid,version:++soccerCompatLastHostVersion,snapshot:snap,scores:{...soccerCompatScores}}});
+  bridgeSend('sc_compat',{packet:{
+    kind:'state',hostSid:mySid,version:++soccerCompatLastHostVersion,snapshot:snap,scores:{...soccerCompatScores},
+    goalResetSerial:Number(soccerCompatGoalResetSerial||0),goalTeam:soccerCompatGoalResetTeam||'',
+    scoreA:Number(score.A||0),scoreB:Number(score.B||0)
+  }});
 }
 function soccerCompatScheduleTick(){
   if(soccerCompatTickTimer)clearTimeout(soccerCompatTickTimer);
@@ -2921,6 +2970,11 @@ function soccerCompatHandlePlayers(map){
   if(soccerCompatHostSid&&map[soccerCompatHostSid]?.__soccerCompat?.kind==='state')hostPacket=map[soccerCompatHostSid].__soccerCompat;
   if(!hostPacket){
     for(const [sid,st] of Object.entries(map)){const p=st&&st.__soccerCompat;if(p&&p.kind==='state'&&String(p.hostSid||'')===String(sid)){hostPacket=p;soccerCompatHostSid=String(sid);break;}}
+  }
+  if(hostPacket){
+    // Apply the goal-center serial before the ordinary PLAYING heartbeat. This clears
+    // a guest's stale localKickTrack even when the soccer-specific Worker packets are unavailable.
+    applyCompatGoalReset(hostPacket);
   }
   if(hostPacket?.snapshot){
     const snap={...hostPacket.snapshot};snap.selfRoundScore=Math.max(0,Number(hostPacket.scores?.[mySid]||0));
@@ -3136,28 +3190,18 @@ window.addEventListener('message', e=>{
   }
 
   if (d.type === 'sc_goal'){
+    // Legacy/newer Workers may still echo sc_goal. Never start another math quiz after
+    // a goal; just accept a higher score and force the same neutral center restart.
     localKickTrack=null;
-    const newA = Number(d.scoreA ?? score.A), newB = Number(d.scoreB ?? score.B);
-    if (newA !== score.A) scoreAnimA = Date.now();
-    if (newB !== score.B) scoreAnimB = Date.now();
-    score.A = newA; score.B = newB;
-    const hold=Math.max(650,Number(d.quizDelayMs||1050));
-    gameActive=false;restartLockUntil=Math.max(restartLockUntil,Date.now()+hold);clearRoundActions();
-
-    // A confirmed goal immediately returns the ball to midfield. Previously the old
-    // goal-line position stayed visible until countdown, making the restart look stuck.
-    ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:Date.now()+hold};
-    netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
-    pendingGoalVisual=null;goalPending=false;
-
-    if(isHost){
-      // Cancel the old round heartbeat before opening the restart quiz. Without this,
-      // one late PLAYING snapshot can overwrite the new QUIZ state after a goal.
-      if(soccerCompatTickTimer){try{clearTimeout(soccerCompatTickTimer);}catch(_){ }soccerCompatTickTimer=0;}
-      soccerCompatRound=null;
-      setTimeout(()=>{ if(isHost&&!gameOver) soccerCompatStartRound('restart'); },Math.min(720,hold));
+    const newA=Math.max(Number(score.A||0),Number(d.scoreA ?? score.A));
+    const newB=Math.max(Number(score.B||0),Number(d.scoreB ?? score.B));
+    const changed=(newA!==score.A)||(newB!==score.B);
+    score.A=newA;score.B=newB;
+    if(changed){
+      soccerCompatGoalResetSerial=Math.max(soccerCompatGoalResetSerial,soccerCompatGoalResetApplied)+1;
+      applyCompatGoalReset({goalResetSerial:soccerCompatGoalResetSerial,goalTeam:d.team,scoreA:newA,scoreB:newB});
+      if(isHost)soccerCompatBroadcast();
     }
-    showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400);
     return;
   }
 
