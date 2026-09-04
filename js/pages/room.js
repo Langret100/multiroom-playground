@@ -2706,7 +2706,8 @@ function handleDuelMatch(m){
     duel.ui.spectate?.classList.add("hidden");
     if ((duel.meta?.id || m.gameId) === "stackga") setDuelFrameLoading(true, "stackga");
     // Load iframe fresh
-    const src = `${duel.meta.embedPath}?embed=1&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
+    const duelEmbedSep = String(duel.meta.embedPath||'').includes('?') ? '&' : '?';
+    const src = `${duel.meta.embedPath}${duelEmbedSep}embed=1&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
     duel.iframeLoaded = false;
     duel.iframeReady = false;
     if (duel.iframeEl){
@@ -2819,7 +2820,8 @@ function startCoopEmbed(meta){
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
   const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-workerless-rootfix2" : `&_m=${Date.now()}`;
-  const src = `${meta.embedPath}?embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
+  const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
+  const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
@@ -2852,7 +2854,8 @@ function startCoopPractice(meta){
   if (duel.ui.duelLine) duel.ui.duelLine.textContent = (meta?.name || "협동") + " · 연습";
   if (duel.ui.duelSub) duel.ui.duelSub.textContent = "";
 
-  const src = `${meta.embedPath}?embed=1&practice=1&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
+  const practiceEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
+  const src = `${meta.embedPath}${practiceEmbedSep}embed=1&practice=1&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
