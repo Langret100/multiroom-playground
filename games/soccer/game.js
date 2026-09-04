@@ -392,6 +392,7 @@ let soccerCompatGoalResetSerial=0;
 let soccerCompatGoalResetApplied=0;
 let soccerCompatGoalResetTeam='';
 let goalCenterResumeTimer=0;
+let goalPlayerResetUntil=0;
 
 let players={};      // sid -> {x,y,netX,netY,netVX,netVY,netT, seat,team,nick,color,dir,kickAt,kickCharge,tackle,_lastKickAt}
 let me=null;
@@ -980,6 +981,10 @@ function applyRoster(list){
 function applyRemotePlayers(map){
   if (!map) return;
   const now = Date.now();
+  // 골 직후에는 각 클라이언트가 같은 킥오프 스폰으로 즉시 리셋한다.
+  // 리셋 직전에 날아온 오래된 위치 스냅샷이 선수들을 골대 근처로 되돌리지 않도록
+  // 짧은 재개 잠금 동안 원격 위치 갱신을 무시한다.
+  if(now < goalPlayerResetUntil) return;
   const actionIdIsUsable=(id)=>{
     // 액션 id는 생성 기기의 Date.now()를 식별자로만 쓴다. 서로 다른 PC/모바일의
     // 시계가 몇 초 이상 어긋날 수 있으므로 호스트 현재 시각과 비교해 폐기하지 않는다.
@@ -2091,22 +2096,42 @@ function beginGoalVisual(team){
   pendingGoalVisual={team,targetX,goalDir,enteredAt:now,insideAt:0};
   sendBallSnapshot();
 }
+function resetPlayersToKickoffSpawns(holdUntil){
+  for(const p of Object.values(players)){
+    const sp=getSpawn(p.seat);
+    p.x=sp.x;p.y=sp.y;p.vx=0;p.vy=0;
+    p.netX=sp.x;p.netY=sp.y;p.netVX=0;p.netVY=0;p.netT=Date.now();
+    p.dir=defaultDir(p.team);
+    p.tackle=false;p.dribble=false;p.kickAt=0;p.kickCharge=0;p.headerAt=0;p.tackleAt=0;p.claimAt=0;
+    p.dribbleBallX=sp.x;p.dribbleBallY=sp.y;p.claimBallX=sp.x;p.claimBallY=sp.y;
+    p.netSamples=[];
+    p._pendingKickAt=0;p._kickReceivedAt=0;p._kickPoseUntil=0;
+    p._headerPoseStart=0;p._headerPoseUntil=0;p._headerContactAt=0;
+    p._tacklePoseStart=0;p._tacklePoseUntil=0;
+    p._claimReceivedAt=0;p._claimAttempts=0;
+    p._noDribbleReportUntil=holdUntil;
+  }
+  me=players[mySid]||me;
+}
 function resetBallToNeutralCenter(holdMs=520){
   const now=Date.now();
   const hold=Math.max(260,Number(holdMs||520));
+  const holdUntil=now+hold;
   clearRoundActions();
   localKickTrack=null;localDribbleVisualUntil=0;pendingClaimAt=0;pendingClaimUntil=0;
   pendingGoalVisual=null;pendingFieldOut=null;fieldRestartTeam=null;fieldRestartTeamUntil=0;
   kickoffUntil=0;
-  restartLockUntil=Math.max(restartLockUntil,now+hold);
-  ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:now+hold};
+  restartLockUntil=Math.max(restartLockUntil,holdUntil);
+  goalPlayerResetUntil=Math.max(goalPlayerResetUntil,holdUntil);
+  resetPlayersToKickoffSpawns(holdUntil);
+  ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:holdUntil};
   netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:now,visualAt:now,owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
   gameActive=false;goalPending=true;
   if(goalCenterResumeTimer)clearTimeout(goalCenterResumeTimer);
   goalCenterResumeTimer=setTimeout(()=>{
     goalCenterResumeTimer=0;
     if(gameOver)return;
-    restartLockUntil=0;goalPending=false;gameActive=true;
+    restartLockUntil=0;goalPlayerResetUntil=0;goalPending=false;gameActive=true;
     // The host publishes the same neutral center ball on the normal ball channel too.
     // The compatibility reset serial below remains the reliable old-Worker path.
     if(isHost)sendBallSnapshot();
