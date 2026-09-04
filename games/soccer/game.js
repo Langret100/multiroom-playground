@@ -57,8 +57,8 @@ const GOAL_PLANE_LEFT_X = FX - GOAL_W*0.58;
 const GOAL_PLANE_RIGHT_X = FX + FW + GOAL_W*0.58;
 const PR=17, BR=11;
 // 공 전체가 네트 안쪽 깊이까지 들어간 뒤 골을 확정한다. BR 선언 뒤에 둔다.
-const GOAL_SCORE_LEFT_X = GOAL_PLANE_LEFT_X;
-const GOAL_SCORE_RIGHT_X = GOAL_PLANE_RIGHT_X;
+const GOAL_SCORE_LEFT_X = FX-GOAL_W-BR-8;
+const GOAL_SCORE_RIGHT_X = FX+FW+GOAL_W+BR+8;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
 const DRIBBLE_DISTANCE = PR+BR-1; // 몸에 붙이지 않고 발끝에서 한 박자씩 굴리는 기본 거리
@@ -385,12 +385,6 @@ let soccerCompatSeenSubmit={};
 let soccerCompatTickTimer=0;
 let soccerCompatLastHostVersion=0;
 let soccerCompatLastSubmit=null;
-let soccerCompatMatchEndsAt=0;
-let soccerCompatGoalSerial=0;
-let soccerCompatLastGoalTeam='';
-let soccerCompatLastGoalAt=0;
-let soccerCompatLastGoalId='';
-let lastAppliedCompatGoalSerial=0;
 
 let players={};      // sid -> {x,y,netX,netY,netVX,netVY,netT, seat,team,nick,color,dir,kickAt,kickCharge,tackle,_lastKickAt}
 let me=null;
@@ -694,10 +688,6 @@ function applySoccerRoundSnapshot(raw){
   if(d.phase==='playing')startTs=Date.now();else startTs=0;
   if(d.winner==='A')kickoffTeamLabel='RED 선공';else if(d.winner==='B')kickoffTeamLabel='BLUE 선공';
 
-  const matchA=Math.max(0,Number(d.scoreA||0)), matchB=Math.max(0,Number(d.scoreB||0));
-  if(matchA!==score.A)scoreAnimA=Date.now();
-  if(matchB!==score.B)scoreAnimB=Date.now();
-  score.A=matchA; score.B=matchB;
   const packet={...d,ownerSid:d.kickoffOwnerSid,scoreA:d.roundScoreA,scoreB:d.roundScoreB};
   switch(d.phase){
     case 'quiz':
@@ -706,20 +696,9 @@ function applySoccerRoundSnapshot(raw){
       if(accepted.phaseChanged)startMathKickoff(packet);
       setLiveRoundScores(d.roundScoreA,d.roundScoreB);
       break;
-    case 'goal': {
+    case 'goal':
       gameActive=false;kickoffUntil=0;clearRoundActions();mkEl.classList.remove('show');
-      const hold=700;
-      restartLockUntil=Math.max(restartLockUntil,Date.now()+hold);
-      ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:Date.now()+hold};
-      netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
-      pendingGoalVisual=null;goalPending=false;
-      if(Number(d.goalSerial||0)>lastAppliedCompatGoalSerial){
-        lastAppliedCompatGoalSerial=Number(d.goalSerial||0);
-        const gt=String(d.goalTeam||'');
-        if(gt==='A'||gt==='B'){showGoalFlash(gt);spawnGoalParticles(gt);sfxGoal();addShake(8,400);}
-      }
       break;
-    }
     case 'result':
       gameActive=false;
       if(accepted.phaseChanged)applyMathResult(packet);
@@ -1754,11 +1733,23 @@ function updateBallHost(advancePhysics=true){
     return;
   }
   if(pendingGoalVisual){
+    // 골문 입구부터 네트 안쪽까지 공이 실제로 굴러가거나 날아가는 모습을 유지한다.
     const g=pendingGoalVisual;
+    const goalDir=Number(g.goalDir||0)||1;
+    const targetX=Number(g.targetX||ball.x);
+    const towardSpeed=Math.max(1.35,Math.abs(ball.vx||0));
+    ball.vx=goalDir*towardSpeed;
     stepFreeBallState(ball,1);
-    ball.vx*=.90;ball.vy*=.90;ball.vz*=.88;
-    if(now-g.enteredAt>=180){
-      const team=g.team;pendingGoalVisual=null;scoreGoal(team);
+    ball.vx*=.965;ball.vy*=.94;ball.vz*=.91;
+    ball.y=clamp(ball.y,GOAL_Y1+GOAL_POST_HALF_Y+BR*.5,GOAL_Y2-GOAL_POST_HALF_Y-BR*.5);
+    const reached=goalDir>0?ball.x>=targetX:ball.x<=targetX;
+    if(reached){
+      ball.x=targetX;
+      ball.vx=goalDir*Math.max(.38,Math.abs(ball.vx)*.45);
+      if(!g.insideAt){g.insideAt=now;sendBallSnapshot();}
+      if(now-g.insideAt>=220){
+        const team=g.team;pendingGoalVisual=null;scoreGoal(team);
+      }
     }
     return;
   }
@@ -2085,20 +2076,29 @@ let pendingGoalVisual=null;
 function beginGoalVisual(team){
   if(pendingGoalVisual||goalPending)return;
   const now=Date.now();
-  ball.owner=null;ball.ownerUntil=0;ball.noPickupUntil=now+700;
-  pendingGoalVisual={team,enteredAt:now};
+  const goalDir=team==='A'?1:-1;
+  const targetX=team==='A'?GOAL_SCORE_RIGHT_X:GOAL_SCORE_LEFT_X;
+  ball.owner=null;ball.ownerUntil=0;ball.noPickupUntil=now+1400;
+  // 골문 입구를 통과한 순간부터 연출을 시작한다. 공은 여기서 멈추지 않고
+  // 네트 안쪽 목표선까지 실제 물리 좌표로 이동한 뒤에만 득점 처리된다.
+  pendingGoalVisual={team,targetX,goalDir,enteredAt:now,insideAt:0};
   sendBallSnapshot();
 }
 function scoreGoal(team){
-  if(goalPending||isRoundLocked()||!gameActive||!isHost)return;
+  if(goalPending||isRoundLocked()||!gameActive)return;
   goalPending=true;
-  gameActive=false;
+  // Worker 승인 왕복 사이에도 로컬 입력/공 물리가 한두 프레임 더 진행되지 않게
+  // 즉시 짧은 잠금을 건다. 정상 승인 시 곧 도착하는 QUIZ 상태가 이 잠금을
+  // 라운드 종료시각까지 연장하고, 거부/유실 시에는 안전 잠금만 자동 만료된다.
+  restartLockUntil=Math.max(restartLockUntil,Date.now()+1800);
   clearRoundActions();
-  const goalId=`g:${mySid}:${Date.now()}`;
-  // The already-working generic relay is the scoring authority visible to every client.
-  // Score/restart is carried by the existing host compat relay; no Worker upgrade is required.
-  soccerCompatConfirmGoal(team,goalId);
-  setTimeout(()=>{goalPending=false;},900);
+  // 점수는 로컬에서 미리 올리지 않는다. Worker가 sc_goal을 승인한 뒤
+  // sc_goal과 방장 권위 호환 상태로 확정된 값만 스코어보드에 반영한다.
+  bridgeSend('sc_goal',{team,restartId:`g:${mySid}:${Date.now()}`});
+  showGoalFlash(team);spawnGoalParticles(team);sfxGoal();addShake(8,400);
+  // 승인된 골이면 곧바로 QUIZ 상태가 와서 goalPending이 해제된다.
+  // 패킷이 거부/유실된 경우에도 영구 잠금되지 않도록 짧은 안전 타임아웃만 둔다.
+  setTimeout(()=>{goalPending=false;},1800);
 }
 
 let goalFlashUntil=0, goalFlashTeam=null;
@@ -2860,9 +2860,7 @@ function soccerCompatSnapshot(){
     phase:r.phase,roundId:r.id,kind:r.kind,seed:r.seed,beginsAt:r.beginsAt,endsAt:r.endsAt,
     resultUntil:r.resultUntil||0,kickoffAt:r.kickoffAt||0,winner:r.winner||'',tied:!!r.tied,
     roundScoreA:scoreA,roundScoreB:scoreB,scoreA:Number(score.A||0),scoreB:Number(score.B||0),
-    kickoffOwnerSid:String(r.kickoffOwnerSid||''),
-    remainingMs:Math.max(0,(soccerCompatMatchEndsAt||Date.now()+Number(durationMs||120000))-Date.now()),
-    goalSerial:soccerCompatGoalSerial,goalTeam:soccerCompatLastGoalTeam,goalAt:soccerCompatLastGoalAt,
+    kickoffOwnerSid:String(r.kickoffOwnerSid||''),remainingMs:Math.max(0,Number(durationMs||120000)),
     serverNow:Date.now(),roundSerial:Number(r.serial||0),selfRoundScore:Math.max(0,Number(soccerCompatScores[mySid]||0))
   };
 }
@@ -2877,9 +2875,7 @@ function soccerCompatScheduleTick(){
 }
 function soccerCompatStartRound(kind='initial'){
   if(!isHost)return;
-  const restart=kind==='restart',now=Date.now();
-  if(!restart && !soccerCompatMatchEndsAt) soccerCompatMatchEndsAt=now+120000;
-  const beginsAt=now+520,endsAt=beginsAt+(restart?5000:10000);
+  const restart=kind==='restart',now=Date.now(),beginsAt=now+520,endsAt=beginsAt+(restart?5000:10000);
   soccerCompatScores={};soccerCompatSeenSubmit={};
   soccerCompatRound={id:`compat-${restart?'r':'i'}-${++soccerCompatSerial}-${now}`,serial:soccerCompatSerial,kind:restart?'restart':'initial',
     seed:(Math.floor(Math.random()*2147483646)+1),phase:'quiz',beginsAt,endsAt,resultUntil:0,kickoffAt:0,winner:'',tied:false,kickoffOwnerSid:''};
@@ -2888,10 +2884,6 @@ function soccerCompatStartRound(kind='initial'){
 function soccerCompatTick(){
   if(!isHost||!soccerCompatRound)return;
   const r=soccerCompatRound,now=Date.now();
-  if(r.phase==='goal'){
-    if(now>=Number(r.goalUntil||0)){ soccerCompatStartRound('restart'); return; }
-    soccerCompatBroadcast(); soccerCompatScheduleTick(); return;
-  }
   if(r.phase==='quiz'&&now>=r.endsAt+150){
     let a=0,b=0;for(const [sid,v] of Object.entries(soccerCompatScores)){if(soccerCompatTeamOfSid(sid)==='A')a+=Number(v||0);else b+=Number(v||0);}
     r.tied=a===b;r.winner=r.tied?((r.seed&1)?'A':'B'):(a>b?'A':'B');r.kickoffOwnerSid=soccerCompatOwnerForTeam(r.winner);
@@ -2905,21 +2897,6 @@ function soccerCompatTick(){
     soccerCompatBroadcast();
   }
   soccerCompatScheduleTick();
-}
-function soccerCompatConfirmGoal(team,goalId){
-  if(!isHost||!soccerCompatRound||(team!=='A'&&team!=='B'))return false;
-  const id=String(goalId||'');
-  if(id&&id===soccerCompatLastGoalId)return false;
-  soccerCompatLastGoalId=id;
-  score[team]=Math.max(0,Number(score[team]||0))+1;
-  soccerCompatGoalSerial=(soccerCompatGoalSerial+1)>>>0;
-  soccerCompatLastGoalTeam=team;
-  soccerCompatLastGoalAt=Date.now();
-  soccerCompatRound.phase='goal';
-  soccerCompatRound.goalUntil=Date.now()+700;
-  soccerCompatBroadcast();
-  soccerCompatScheduleTick();
-  return true;
 }
 function soccerCompatAcceptSubmit(sid,p){
   if(!isHost||!soccerCompatRound||soccerCompatRound.phase!=='quiz'||!p)return;
@@ -2960,62 +2937,42 @@ window.addEventListener('message', e=>{
   if(d.type==='stop_audio'){setSoccerAudioAllowed(false);return;}
 
   if (d.type === 'bridge_init'){
-    // bridge_init 수신과 실제 월드 초기화를 분리한다.
-    // 부모 room state가 아직 좌석/로스터를 못 받은 순간에도 bridge_init 자체는 올 수 있다.
-    // 이때 gameInitialized를 먼저 true로 만들면 initGame()이 빈 roster 때문에 return한 뒤
-    // 영원히 '연결 대기 중...'에 남는다. 신원은 먼저 저장하되, 유효한 내 seat가 있는
-    // roster가 확보된 시점에만 gameInitialized를 확정한다.
+    // 협동게임용 정식 초기화에는 sessionId가 반드시 있다.
+    // 다른 게임의 범용 bridge_init이 먼저 들어오면 빈 sid로 초기화되어
+    // 경기장만 보이고 조작/퀴즈가 멈출 수 있으므로 무시한다.
     if(!d.sessionId) return;
     mySid = String(d.sessionId||'');
     myNick = String(d.nick||'Player');
+    mySeat = Number(d.seat ?? -1);
+    isHost = !!d.isHost || (mySeat===0);
 
     const incoming = (d.players||[]).map(p=>({
       sid: String(p.sid||p.sessionId||''),
       nick: String(p.nick||'Player'),
       seat: Number(p.seat ?? -1),
       isHost: !!p.isHost,
-    })).filter(p=>p.sid && p.seat>=0);
-
-    if (incoming.length) applyRoster(incoming);
-    const self = roster.find(p=>String(p.sid)===mySid) || null;
-    if(!self){
-      // 아직 room state에 내 좌석이 없다. 잘못된 초기화를 확정하지 않고
-      // 부모가 보내는 bridge_roster를 기다린다.
-      return;
-    }
-
-    mySeat = Number(self.seat);
-    isHost = !!self.isHost || !!d.isHost || (mySeat===0);
-    soccerCompatHostSid=String(roster.find(p=>p.isHost)?.sid||roster.find(p=>p.seat===0)?.sid||'');
+    })).filter(p=>p.seat>=0);
 
     if (gameInitialized){
+      applyRoster(incoming);
       flushPendingSoccerSnapshot();
+      // 부모가 bridge_init 직후 보낸 sync 응답은 느린 iframe에서 초기화보다
+      // 먼저 도착할 수 있다. iframe 자신도 매 init마다 권위 상태를 재요청한다.
       if(isHost){ if(!soccerCompatRound)soccerCompatStartRound('initial'); else soccerCompatBroadcast(); }
       return;
     }
-
+    gameInitialized = true;
+    roster = incoming;
+    soccerCompatHostSid=String(incoming.find(p=>p.isHost)?.sid||incoming.find(p=>p.seat===0)?.sid||'');
     const sAt = Number(d.startedAt||0);
+    // startedAt=0 means the Worker-owned quiz has not opened play yet. Treating it
+    // as Date.now() made the match clock count down on a permanently locked field
+    // whenever an old Worker failed to send sc_round_state.
     startTs = sAt>0 ? sAt : 0;
-    gameInitialized = true;
     initGame();
     flushPendingSoccerSnapshot();
-    if(isHost) setTimeout(()=>{ if(!soccerCompatRound) soccerCompatStartRound('initial'); },80);
-    return;
-  }
-
-  if (d.type === 'bridge_roster' && (!d.gameId || d.gameId === 'soccer')){
-    // room.js의 실제 room.state(players+order)에서 만든 로스터.
-    // Worker의 새 sc_roster 지원 여부와 무관하게 기존 방 상태만으로 시작을 완성한다.
-    applyRoster(d.players||[]);
-    if(!mySid || gameInitialized) return;
-    const self = roster.find(p=>String(p.sid)===mySid) || null;
-    if(!self) return;
-    mySeat = Number(self.seat);
-    isHost = !!self.isHost || (mySeat===0);
-    soccerCompatHostSid=String(roster.find(p=>p.isHost)?.sid||roster.find(p=>p.seat===0)?.sid||'');
-    gameInitialized = true;
-    initGame();
-    flushPendingSoccerSnapshot();
+    // Do not depend on new Worker soccer-round packets. The room host starts the
+    // compatible round authority over the legacy generic relay.
     if(isHost) setTimeout(()=>{ if(!soccerCompatRound) soccerCompatStartRound('initial'); },80);
     return;
   }
@@ -3180,13 +3137,27 @@ window.addEventListener('message', e=>{
 
   if (d.type === 'sc_goal'){
     localKickTrack=null;
-    const newA = Math.max(Number(score.A||0),Number(d.scoreA ?? score.A));
-    const newB = Math.max(Number(score.B||0),Number(d.scoreB ?? score.B));
+    const newA = Number(d.scoreA ?? score.A), newB = Number(d.scoreB ?? score.B);
     if (newA !== score.A) scoreAnimA = Date.now();
     if (newB !== score.B) scoreAnimB = Date.now();
     score.A = newA; score.B = newB;
-    // Do not let a late Worker goal response create a second restart authority.
-    // The host-compatible round relay already moved everyone through GOAL -> restart quiz.
+    const hold=Math.max(650,Number(d.quizDelayMs||1050));
+    gameActive=false;restartLockUntil=Math.max(restartLockUntil,Date.now()+hold);clearRoundActions();
+
+    // A confirmed goal immediately returns the ball to midfield. Previously the old
+    // goal-line position stayed visible until countdown, making the restart look stuck.
+    ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:Date.now()+hold};
+    netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
+    pendingGoalVisual=null;goalPending=false;
+
+    if(isHost){
+      // Cancel the old round heartbeat before opening the restart quiz. Without this,
+      // one late PLAYING snapshot can overwrite the new QUIZ state after a goal.
+      if(soccerCompatTickTimer){try{clearTimeout(soccerCompatTickTimer);}catch(_){ }soccerCompatTickTimer=0;}
+      soccerCompatRound=null;
+      setTimeout(()=>{ if(isHost&&!gameOver) soccerCompatStartRound('restart'); },Math.min(720,hold));
+    }
+    showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400);
     return;
   }
 
@@ -3204,9 +3175,8 @@ window.addEventListener('message', e=>{
   if (d.type === 'sc_end'){
     gameOver = true; gameActive = false;
     sfxWhistle(true);
-    const a = Math.max(Number(score.A||0),Number(d.scoreA||0)), b = Math.max(Number(score.B||0),Number(d.scoreB||0));
-    score.A=a;score.B=b;
-    const winner = a===b ? 'draw' : (a>b?'A':'B');
+    const a = Number(d.scoreA ?? score.A), b = Number(d.scoreB ?? score.B);
+    const winner = d.winner || (a===b ? 'draw' : (a>b?'A':'B'));
     const msg = winner==='draw' ? '무승부!' : (winner==='A' ? '🔴 A팀 승리!' : '🔵 B팀 승리!');
     showOverlay(msg, `최종 스코어  A ${a} : ${b} B`);
     return;

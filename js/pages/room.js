@@ -1974,24 +1974,6 @@ function updatePreview(modeId){
     }catch(_){ }
 
 
-    // Soccer startup must not depend on a new Worker sc_roster packet. The room already
-    // owns the live players + authoritative seat map, so publish that roster directly to
-    // the iframe whenever state renders. Only entries with a real seat are sent; this lets
-    // the iframe distinguish 'bridge received' from 'world can actually initialize'.
-    try{
-      if (coop?.active && coop?.meta?.id === "soccer" && phase !== "lobby" && duel?.iframeEl){
-        const soccerRoster = entries.map(([sid,p])=>({
-          sessionId: String(sid),
-          nick: p?.nick ? String(p.nick) : String(sid).slice(0,4),
-          seat: Number.isFinite(Number(seatOf[sid])) ? Number(seatOf[sid]) : -1,
-          isHost: !!p?.isHost
-        })).filter(x=>x.seat>=0);
-        if(soccerRoster.length){
-          postToMain({ type:"bridge_roster", gameId:"soccer", players:soccerRoster });
-        }
-      }
-    }catch(_){ }
-
     for (const [sid, p] of entries){
       const row = document.createElement("div");
       row.className = "pRow";

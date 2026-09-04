@@ -29,9 +29,6 @@
       roundScoreB: Math.max(0, toFinite(source.roundScoreB, 0)),
       scoreA: Math.max(0, toFinite(source.scoreA, 0)),
       scoreB: Math.max(0, toFinite(source.scoreB, 0)),
-      goalSerial: Math.max(0, Math.floor(toFinite(source.goalSerial, 0))),
-      goalTeam: source.goalTeam === 'A' || source.goalTeam === 'B' ? source.goalTeam : '',
-      goalAt: toFinite(source.goalAt, 0),
       selfRoundScore: Math.max(0, toFinite(source.selfRoundScore, 0)),
       remainingMs: Math.max(0, toFinite(source.remainingMs, fallbackRemainingMs)),
       serverNow: toFinite(source.serverNow, 0)
