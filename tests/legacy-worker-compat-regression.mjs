@@ -1,30 +1,28 @@
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 const read=p=>fs.readFileSync(new URL('../'+p, import.meta.url),'utf8');
 const room=read('js/pages/room.js');
 const soccer=read('games/soccer/game.js');
 const tg=read('games/togester/index.html');
 
-// Soccer now has one authoritative protocol: the Worker's native sc_* messages.
-for (const required of [
-  'room.send("sc_pos"', 'room.send("sc_math_submit"', 'room.send("sc_time_ping"',
-  'room.onMessage("sc_time_pong"', 'room.onMessage("sc_round_state"',
-  'room.onMessage("sc_round_progress"', 'room.onMessage("sc_math_ack"',
-  'room.onMessage("sc_score_sync"', 'room.onMessage("sc_players"',
-  'room.onMessage("sc_goal"', 'room.onMessage("sc_roster"'
+for (const forbidden of [
+  'room.send("tg_item"', 'room.send("sc_math_submit"', 'room.send("sc_time_ping"',
+  'room.onMessage("tg_item"', 'room.onMessage("sc_time_pong"', 'room.onMessage("sc_round_state"',
+  'room.onMessage("sc_round_progress"', 'room.onMessage("sc_math_ack"', 'room.onMessage("sc_score_sync"'
 ]) {
-  if (!room.includes(required)) throw new Error(`native soccer relay missing: ${required}`);
+  if (room.includes(forbidden)) throw new Error(`obsolete Worker-specific room path remains: ${forbidden}`);
 }
-if(!soccer.includes("bridgeSend('sc_math_submit'")) throw new Error('soccer math submit is not using native Worker protocol');
-if(!soccer.includes("bridgeSend('sc_sync'")) throw new Error('soccer native sync request missing');
-for (const forbidden of ['sc_compat','soccerCompat','soccerLegacyRelay','__soccerCompat','__soccerPos']) {
-  if ((room+soccer).includes(forbidden)) throw new Error(`removed soccer compatibility tunnel remains: ${forbidden}`);
-}
-
-// Togester intentionally keeps its established compatibility transport; this test
-// makes sure the soccer cleanup did not alter that unrelated game.
+if (/bridgeSend\(['"](?:tg_item|sc_math_submit|sc_time_ping)['"]/.test(tg+soccer)) throw new Error('obsolete Worker-specific iframe send path remains');
+if(!room.includes('__soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos')) throw new Error('soccer merged legacy tunnel missing');
+if(room.includes('room.send("sc_pos"')) throw new Error('soccer position still depends on Worker sc_pos path');
+if(!soccer.includes('if(st&&st.__soccerPos) legacyPos[sid]=st.__soccerPos')) throw new Error('soccer legacy position aggregate receiver missing');
+if(!room.includes('type:"sc_compat_players"')) throw new Error('soccer compatibility receive bridge missing');
+if(!soccer.includes("bridgeSend('sc_compat'")) throw new Error('soccer compat sender missing');
+if(soccer.includes("bridgeSend('sc_math_submit'")) throw new Error('soccer still depends on new sc_math_submit Worker API');
+if(!soccer.includes("d.type === 'sc_compat_players'")) throw new Error('soccer compat aggregate receiver missing');
 if(!tg.includes('itemRequest: itemCompatRequest')) throw new Error('togester item request not piggybacked on tg_state');
 if(!tg.includes('itemCompat: isHost ?')) throw new Error('togester host item authority snapshot missing');
-if(/bridgeSend\(['\"]tg_item['\"]/.test(tg)) throw new Error('togester unexpectedly depends on tg_item Worker API');
+if(/bridgeSend\(['\"]tg_item['\"]/.test(tg)) throw new Error('togester still depends on tg_item Worker API');
 
 const mx=read('games/mathexplorer/math-explorer-bridge.js');
 if(mx.includes("sendEvent('choice_done'")) throw new Error('mathexplorer choice_done still depends on guest mx_event allowlist');

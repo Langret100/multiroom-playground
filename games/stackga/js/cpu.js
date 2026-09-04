@@ -1,6 +1,6 @@
 import { COLS, ROWS, SHAPES, mulberry32 } from "./game.js";
 
-// CPU plans a placement once per piece, then executes it at a human-readable pace.
+// CPU는 같은 배치 탐색을 쓰되 난이도별로 판단 시간과 실제 조작 속도를 다르게 둡니다.
 function cloneBoard(b){
   return b.map(row => row.slice());
 }
@@ -90,15 +90,12 @@ export class CpuController {
     this.targetX = 3;
     this.targetRot = 0;
     this.actionAcc = 0;
-    this.pieceAge = 0;
-    this.pieceDelay = 0;
     const d = (String(difficulty||"low").toLowerCase());
     this.diff = (d === "high" || d === "hard" || d === "h") ? "high" : (d === "low" || d === "easy" || d === "l") ? "low" : "mid";
-    this.actionMs = (this.diff === "high") ? 55 : (this.diff === "low") ? 100 : 82;
-    this.jitterScale = (this.diff === "high") ? 4 : (this.diff === "low") ? 42 : 16;
-    this.thinkMs = (this.diff === "high") ? 420 : (this.diff === "low") ? 900 : 760;
-    this.softDropMs = (this.diff === "low") ? 150 : 0;
-    this.softDropAcc = 0;
+    this.actionMs = (this.diff === "high") ? 55 : (this.diff === "low") ? 145 : 95;
+    this.jitterScale = (this.diff === "high") ? 3 : (this.diff === "low") ? 32 : 12;
+    this.thinkMs = (this.diff === "high") ? 120 : (this.diff === "low") ? 650 : 360;
+    this.thinkLeft = 0;
   }
 
   _plan(){
@@ -110,10 +107,10 @@ export class CpuController {
     const key = `${type}:${g.current.id}:${g.next?.type||""}`;
     if(this.lastPieceKey === key) return;
     this.lastPieceKey = key;
-    this.pieceAge = 0;
-    this.actionAcc = 0;
-    this.pieceDelay = this.thinkMs + Math.floor(this.rnd() * (this.diff === "low" ? 500 : this.diff === "mid" ? 300 : 140));
-    this.softDropAcc = 0;
+    // 새 블록이 뜨자마자 정답 위치로 순간이동하듯 처리하지 않는다.
+    // 낮음은 약 0.7~1.0초 정도 보면서 실제 중력으로 먼저 내려오게 한다.
+    const thinkJitter = this.diff === "low" ? Math.floor(this.rnd()*260) : Math.floor(this.rnd()*80);
+    this.thinkLeft = this.thinkMs + thinkJitter;
 
     const base = cloneBoard(g.board);
     let best = { score: -1e18, x: g.current.x, rot: g.current.rot };
@@ -148,9 +145,12 @@ export class CpuController {
     const g = this.game;
     if(!g || g.dead || g.paused) return;
 
-    const beforeKey=this.lastPieceKey;
     this._plan();
-    if(this.lastPieceKey===beforeKey) this.pieceAge += dt;
+
+    if(this.thinkLeft > 0){
+      this.thinkLeft = Math.max(0, this.thinkLeft - dt);
+      return;
+    }
 
     this.actionAcc += dt;
     while(this.actionAcc >= this.actionMs){
@@ -171,16 +171,10 @@ export class CpuController {
         continue;
       }
 
-      // Easy CPU never teleports a freshly spawned piece to the floor.
-      // After a visible thinking period it advances the piece one row at a time,
-      // so the player can actually watch and react to the opponent's placement.
-      if(this.pieceAge < this.pieceDelay) continue;
+      // 낮음은 블록이 실제로 내려가는 모습을 보이면서 쌓는다.
+      // 중/높음만 기존 빠른 hard drop을 사용한다.
       if(this.diff === "low"){
-        this.softDropAcc += this.actionMs;
-        if(this.softDropAcc >= this.softDropMs){
-          this.softDropAcc = 0;
-          g.softDrop();
-        }
+        g.softDrop();
       }else{
         g.hardDrop();
       }
