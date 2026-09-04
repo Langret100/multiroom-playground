@@ -1747,9 +1747,11 @@ function updateBallHost(advancePhysics=true){
       ball.x=targetX;
       ball.vx=goalDir*Math.max(.38,Math.abs(ball.vx)*.45);
       if(!g.insideAt){g.insideAt=now;sendBallSnapshot();}
-      if(now-g.insideAt>=220){
-        const team=g.team;pendingGoalVisual=null;scoreGoal(team);
-      }
+    }
+    // Goal-line crossing is already authoritative. Do not make scoring wait for the
+    // ball to crawl all the way through the decorative net depth on slow shots.
+    if(reached||(now-Number(g.enteredAt||now)>=260)){
+      const team=g.team;pendingGoalVisual=null;scoreGoal(team);
     }
     return;
   }
@@ -2087,6 +2089,13 @@ function beginGoalVisual(team){
 function scoreGoal(team){
   if(goalPending||isRoundLocked()||!gameActive)return;
   goalPending=true;
+  // The host is already the ball/goal authority. Reflect that confirmed local edge
+  // immediately so old/slow Workers cannot leave the score and ball stuck at the net.
+  score[team]=Math.max(0,Number(score[team]||0))+1;
+  if(team==='A')scoreAnimA=Date.now();else scoreAnimB=Date.now();
+  const optimisticHold=1050;
+  ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastKicker:null,noPickupUntil:Date.now()+optimisticHold};
+  netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:ball.noPickupUntil};
   // Worker 승인 왕복 사이에도 로컬 입력/공 물리가 한두 프레임 더 진행되지 않게
   // 즉시 짧은 잠금을 건다. 정상 승인 시 곧 도착하는 QUIZ 상태가 이 잠금을
   // 라운드 종료시각까지 연장하고, 거부/유실 시에는 안전 잠금만 자동 만료된다.
@@ -2094,7 +2103,13 @@ function scoreGoal(team){
   clearRoundActions();
   // 점수는 로컬에서 미리 올리지 않는다. Worker가 sc_goal을 승인한 뒤
   // sc_goal과 방장 권위 호환 상태로 확정된 값만 스코어보드에 반영한다.
-  bridgeSend('sc_goal',{team,restartId:`g:${mySid}:${Date.now()}`});
+  const localGoalId=`g:${mySid}:${Date.now()}`;
+  bridgeSend('sc_goal',{team,restartId:localGoalId});
+  if(isHost){
+    if(soccerCompatTickTimer){try{clearTimeout(soccerCompatTickTimer);}catch(_){ }soccerCompatTickTimer=0;}
+    soccerCompatRound=null;
+    setTimeout(()=>{if(isHost&&!gameOver&&!soccerCompatRound)soccerCompatStartRound('restart');},420);
+  }
   showGoalFlash(team);spawnGoalParticles(team);sfxGoal();addShake(8,400);
   // 승인된 골이면 곧바로 QUIZ 상태가 와서 goalPending이 해제된다.
   // 패킷이 거부/유실된 경우에도 영구 잠금되지 않도록 짧은 안전 타임아웃만 둔다.
@@ -3151,11 +3166,10 @@ window.addEventListener('message', e=>{
     pendingGoalVisual=null;goalPending=false;
 
     if(isHost){
-      // Cancel the old round heartbeat before opening the restart quiz. Without this,
-      // one late PLAYING snapshot can overwrite the new QUIZ state after a goal.
-      if(soccerCompatTickTimer){try{clearTimeout(soccerCompatTickTimer);}catch(_){ }soccerCompatTickTimer=0;}
-      soccerCompatRound=null;
-      setTimeout(()=>{ if(isHost&&!gameOver) soccerCompatStartRound('restart'); },Math.min(720,hold));
+      // Native approval may arrive after the local authoritative host already opened
+      // the compatibility restart. Keep whichever restart round is active instead of
+      // tearing it down and creating a second one.
+      if(!soccerCompatRound)setTimeout(()=>{ if(isHost&&!gameOver&&!soccerCompatRound) soccerCompatStartRound('restart'); },Math.min(720,hold));
     }
     showGoalFlash(d.team); spawnGoalParticles(d.team); sfxGoal(); addShake(8,400);
     return;

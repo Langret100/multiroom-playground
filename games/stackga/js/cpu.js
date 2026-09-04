@@ -92,8 +92,8 @@ export class CpuController {
     this.actionAcc = 0;
     const d = (String(difficulty||"mid").toLowerCase());
     this.diff = (d === "high" || d === "hard" || d === "h") ? "high" : (d === "low" || d === "easy" || d === "l") ? "low" : "mid";
-    this.actionMs = (this.diff === "high") ? 38 : (this.diff === "low") ? 78 : 52;
-    this.jitterScale = (this.diff === "high") ? 3 : (this.diff === "low") ? 24 : 10;
+    this.actionMs = (this.diff === "high") ? 38 : (this.diff === "low") ? 105 : 52;
+    this.jitterScale = (this.diff === "high") ? 3 : (this.diff === "low") ? 180 : 10;
   }
 
   _plan(){

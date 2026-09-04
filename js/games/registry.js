@@ -3,7 +3,7 @@
   const GAME_REGISTRY = [
     {
       id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/starpaint/index.html?v=20260903-spaim1', cardImage:'assets/images/game_cards/starpaint.webp',
+      embedPath:'games/starpaint/index.html?v=20260904-itemfix1', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',
       descLines:['3개의 60초 라운드 동안 더 많은 블록을 자기 색으로 칠하세요.','1~4인은 기본 맵, 5~8인은 확장 맵에서 시작하며 10초마다 인원수에 맞춰 아이템이 보급됩니다.','아이템으로 상대를 밀치거나 바닥을 부수고, 3라운드에는 보스가 등장합니다.'],
       pcHint:'PC: ←→ 이동 · Z 점프 · X 액션 · 폭탄/로켓/대포는 X 길게 조준(↑↓ 각도) · C 아이템 교체',
@@ -93,7 +93,7 @@
     },
     {
       id:'soccer', name:'수학축구', category:'스포츠 · 수학', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/soccer/index.html', cardImage:'assets/images/game_cards/soccer.webp?v=20260831-cards7',
+      embedPath:'games/soccer/index.html?v=20260904-goalfix1', cardImage:'assets/images/game_cards/soccer.webp?v=20260831-cards7',
       lobbyDesc:'문제를 풀어 선공을 정하고 팀원과 패스·슛·태클로 더 많은 골을 노리는 수학 스포츠.',
       descLines:['문제를 풀어 선공을 정하고, 2분 동안 더 많은 골을 넣으면 승리!','이동 · 킥(길게 누르면 강슛) · 태클을 사용하세요.','골 뒤에도 짧은 문제 대결로 다음 선공을 정합니다.'],
       pcHint:'PC: WASD/방향키 이동 · Z/Space 길게 강슛 · X 헤딩 · C/Shift 태클',
@@ -103,7 +103,7 @@
     },
     {
       id:'geumchikeo', name:'금칙어 게임', category:'파티 · 언어', type:'coop', badgeClass:'coop', maxClients:4,
-      embedPath:'games/geumchikeo/index.html', cardImage:'assets/images/game_cards/geumchikeo.webp?v=20260831-cards7',
+      embedPath:'games/geumchikeo/index.html?v=20260904-spamfix1', cardImage:'assets/images/game_cards/geumchikeo.webp?v=20260831-cards7',
       lobbyDesc:'자연스럽게 대화하며 상대가 자신의 금칙어를 말하게 유도하고 점수를 지키는 심리 파티 게임.',
       descLines:['상대방이 금지된 단어를 말하게 만들면 점수가 깎입니다.','10초 이상 침묵해도 -30점! 사칙연산으로 점수 회복 가능.'],
       pcHint:'PC: 이동키로 캐릭터 이동 · 채팅 입력 후 Enter 또는 전송 버튼',

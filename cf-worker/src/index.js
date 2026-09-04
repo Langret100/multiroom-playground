@@ -1170,6 +1170,10 @@ export class RoomDO{
           }
         }
 
+        if (this._backToLobbyTimer){
+          try{ clearTimeout(this._backToLobbyTimer); }catch(_){ }
+          this._backToLobbyTimer = null;
+        }
         this.meta.phase = "playing";
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
@@ -3363,57 +3367,53 @@ export class RoomDO{
 
 
   _endAndBackToLobby(delayMs){
-    // Several clients may report the same shared game end nearly simultaneously.
-    // Schedule exactly one reset/backToRoom broadcast for the room.
+    // Result screens are client-side visuals; the room's authoritative lifecycle must
+    // not depend on a multi-second in-memory setTimeout. Reset phase/ready immediately
+    // so the same room can always start another game even if the DO hibernates.
+    const d = Math.max(0, Number(delayMs || 0));
+    this.meta.phase = "lobby";
+    this.meta.status = "waiting";
+    this.tour = null;
+
+    try{ this.tg.players = {}; this.tg.floors = {}; }catch(_){ }
+    if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
+    try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
+    if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
+    if (this.st && this.st._timer){ try{ clearTimeout(this.st._timer); }catch(_){ } this.st._timer = null; }
+    if (this.sc?.transitionTimer){ try{ clearTimeout(this.sc.transitionTimer); }catch(_){ } }
+    try{ this.sc.players = {}; this.sc.ball = null; this.sc.score = { A:0, B:0 }; this.sc.over = false; this.sc.phase = "idle"; this.sc.round = null; this.sc.playedMs = 0; this.sc.playStartedAt = 0; this.sc.kickoffOwnerSid = ""; }catch(_){ }
+    if (this.sc && this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
+    try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
+    try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.latestEvent = null; this.mx.lastActiveAt = 0; } }catch(_){ }
+    try{ if (this.br){ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; } }catch(_){ }
+    try{ this.da && this._daReset(); }catch(_){ }
+    try{ this._relayLimiter = new Map(); }catch(_){ }
+    this._stopCpu();
+    this._removeCpuUser();
+    for (const u of this.users.values()) u.ready = false;
+    for (const [ws, uid] of this.sockets.entries()){
+      if (!uid) continue;
+      const u = this.users.get(uid);
+      if (!u) continue;
+      wsSetAttachment(ws, { uid, nick: u.nick, ready:false, seat:u.seat });
+    }
+    this._scheduleLobbyUpdate();
+    // Broadcast lobby state now. This is the important durable state transition.
+    this._broadcast("room_state", this._snapshot());
+
+    // Keep the result/winner scene visible for the requested delay. If this visual-only
+    // timer is lost, clients still receive room_state=lobby and can ready/start again.
     if (this._backToLobbyTimer) return;
-    const d = Number(delayMs || 0);
-    this._backToLobbyTimer = setTimeout(()=>{
-      this._backToLobbyTimer = null;
-      this.meta.phase = "lobby";
-      this.meta.status = "waiting";
-      this.tour = null;
-
-
-      // Clear transient per-game snapshots so leaving the room leaves no server-side residue
-      try{ this.tg.players = {}; this.tg.floors = {}; }catch(_){ }
-      if (this.tg && this.tg.timer){ try{ clearTimeout(this.tg.timer); }catch(_){ } this.tg.timer = null; }
-      try{ this.st.players = {}; this.st.foods = []; this.st.scores = {}; this.st.startedAt = 0; }catch(_){ }
-      if (this.st && this.st.timer){ try{ clearTimeout(this.st.timer); }catch(_){ } this.st.timer = null; }
-      if (this.st && this.st._timer){ try{ clearTimeout(this.st._timer); }catch(_){ } this.st._timer = null; }
-
-      if (this.sc?.transitionTimer){ try{ clearTimeout(this.sc.transitionTimer); }catch(_){ } }
-      try{ this.sc.players = {}; this.sc.ball = null; this.sc.score = { A:0, B:0 }; this.sc.over = false; this.sc.phase = "idle"; this.sc.round = null; this.sc.playedMs = 0; this.sc.playStartedAt = 0; this.sc.kickoffOwnerSid = ""; }catch(_){ }
-      if (this.sc && this.sc.timer){ try{ clearTimeout(this.sc.timer); }catch(_){ } this.sc.timer = null; }
-
-      // Clear authoritative start payloads / transient coop caches when returning to lobby.
-      try{ if (this.sk) this.sk.startPayload = null; }catch(_){ }
-      try{ if (this.mx){ this.mx.startPayload = null; this.mx.latestStates = {}; this.mx.latestWorld = null; this.mx.latestPhase = null; this.mx.latestEvent = null; this.mx.lastActiveAt = 0; } }catch(_){ }
-      try{ if (this.br){ this.br.startPayload = null; this.br.latestStates = {}; this.br.latestWorld = null; this.br.latestChat = []; this.br.ending = false; } }catch(_){ }
-
-      try{ this.da && this._daReset(); }catch(_){ }
-      try{ this._relayLimiter = new Map(); }catch(_){ }
-
-      // stop CPU + remove CPU user when returning to lobby
-      this._stopCpu();
-      this._removeCpuUser();
-
-      // reset ready
-      for (const u of this.users.values()){
-        u.ready = false;
-      }
-
-      // update attachments
-      for (const [ws, uid] of this.sockets.entries()){
-        if (!uid) continue;
-        const u = this.users.get(uid);
-        if (!u) continue;
-        wsSetAttachment(ws, { uid, nick: u.nick, ready: !!u.ready, seat: u.seat });
-      }
-
-      this._scheduleLobbyUpdate();
+    const sendBack=()=>{
+      this._backToLobbyTimer=null;
+      // A new round may already have started during the result-screen delay.
+      // Never let an old visual timer pull an active round back into the lobby.
+      if (this.meta.phase !== "lobby") return;
       this._broadcast("backToRoom", { resetReady:true });
       this._broadcast("room_state", this._snapshot());
-    }, d);
+    };
+    if (d <= 0) sendBack();
+    else this._backToLobbyTimer=setTimeout(sendBack,d);
   }
 
   async fetch(request){

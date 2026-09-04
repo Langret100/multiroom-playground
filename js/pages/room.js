@@ -1944,6 +1944,12 @@ function updatePreview(modeId){
     // Layout hint for CSS (mobile: hide player list during play).
     try{
       document.body.classList.toggle("is-playing", phase !== "lobby");
+      if (phase === "lobby"){
+        // Server has authoritatively released the previous match. Never keep a stale
+        // local READY/game-in-progress latch after returning from an embedded game.
+        isReady = false;
+        forceLobbyUI = false;
+      }
       document.body.classList.toggle("is-lobby", phase === "lobby");
     }catch(_){ }
     els.players.innerHTML = "";

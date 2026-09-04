@@ -839,7 +839,7 @@ let mySessionId = new URLSearchParams(location.search).get('sid') || '';
 let bridgeInitDone = false;
 const WS_URL   = 'wss://multiroom-playground.tmdrb445-f03.workers.dev';
 const HTTP_URL = 'https://multiroom-playground.tmdrb445-f03.workers.dev';
-const GAME_SEC=200, SIL_SEC=30, PENALTY=30, RECOVER=25, SIGN_THR=40, KW_SEC=20, CHAT_CD=500, MAX_PLAYERS=4;
+const GAME_SEC=200, SIL_SEC=30, PENALTY=30, SPAM_PENALTY=10, RECOVER=25, SIGN_THR=40, KW_SEC=20, CHAT_CD=500, MAX_PLAYERS=4;
 
 let ws=null, myUid='', myNick='', roomId='', isHost=false;
 let roomPls={}, players={}, myKws=[];
@@ -1713,7 +1713,7 @@ function markElim(uid,reason){
   }
   $('elimName').textContent=p.nick+(uid===myUid?' (나)':'');
   $('elimName').style.color=COLORS_HEX[p.ci%8];
-  const rmap={sil:'⏰ 30초 침묵 패널티',kw:'🚫 금칙어를 말해버림',score:'📉 점수 0점',exit:'🚪 나감'};
+  const rmap={sil:'⏰ 30초 침묵 패널티',kw:'🚫 금칙어를 말해버림',spam:'🚨 연속 도배 패널티',score:'📉 점수 0점',exit:'🚪 나감'};
   $('elimReason').textContent=rmap[reason]||'💀 점수 0점';
   $('elimScore').textContent='최종 점수: '+p.score+'점';
   ov.classList.add('show');
@@ -1747,13 +1747,18 @@ function focusChat(){
   try{$('chatIn').focus();}catch(_){}
 }
 $('chatIn').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendChat();}});
+let lastOwnChatText='';
+function normalizeSpamText(v){return String(v||'').trim().replace(/\s+/g,' ');}
+function applyOwnSpamPenalty(){const p=players[myUid];if(!p||p.elim)return;const ns=Math.max(0,Number(p.score||0)-SPAM_PENALTY);p.score=ns;updateScoreUI();showSt(`🚨 도배 경고! -${SPAM_PENALTY} 체력`,1700);addLog(null,`🚨 도배 경고! ${esc(p.nick)} -${SPAM_PENALTY} 체력`,'pen');redFlash();sfx('penalty');if(entities[myUid]){entities[myUid].bubText='🚨 도배 경고!';entities[myUid].bubTimer=1900;entities[myUid].bubPenalty=true;entities[myUid].emotion='sad';setTimeout(()=>{if(entities[myUid])entities[myUid].emotion='neutral';},2100);}gSend('score',{score:ns,why:'spam',kw:''});if(ns<=0){p.elim=true;markElim(myUid,'spam');gSend('elim',{reason:'spam'});checkElim();}}
 function sendChat(){
   if(phase!=='playing')return;
   const inp=$('chatIn');const txt=inp.value.trim();if(!txt)return;
   const p=players[myUid];if(!p||p.elim)return;
+  const normalized=normalizeSpamText(txt);
+  if(normalized&&normalized===lastOwnChatText){inp.value='';applyOwnSpamPenalty();setTimeout(focusChat,30);return;}
   const now=Date.now();
   if(now-lastChatTs<CHAT_CD){showSt('⏱ '+((CHAT_CD-(now-lastChatTs))/1000).toFixed(1)+'초 후 가능',1200);return;}
-  lastChatTs=now;inp.value='';
+  lastChatTs=now;lastOwnChatText=normalized;inp.value='';
   p.lastSpk=now;
   gSend('chat',{text:txt});
   chkKws(txt);
@@ -1871,7 +1876,7 @@ function applyScore(uid,score,why,kw){
   const p=players[uid];if(!p)return;
   p.score=score;
   if(why){
-    addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${why==='sil'?'30초 침묵':'금칙어'})`,'pen');
+    addLog(null,`⚠️ ${esc(p.nick)} -${PENALTY}점 (${why==='sil'?'30초 침묵':why==='spam'?'도배 경고':'금칙어'})`,'pen');
     redFlash();
     if(why==='kw'&&kw){showKwBanner(p.nick,kw);zoomEntity(uid);}
     if(entities[uid]){entities[uid].bubText=why==='sil'?'😴 침묵!':'🚫 금칙어!';entities[uid].bubTimer=2000;entities[uid].bubPenalty=true;entities[uid].emotion='sad';}

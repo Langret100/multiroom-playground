@@ -644,7 +644,7 @@ function startCpuMode(reason){
 
   meGame = new StackGame(((Math.random()*2**32)>>>0), playRows||20);
   cpuGame = new StackGame(((Math.random()*2**32)>>>0), playRows||20);
-  cpuCtl = new CpuController(cpuGame);
+  cpuCtl = new CpuController(cpuGame, ((Math.random()*2**32)>>>0), "low");
   oppLastBoard = cpuGame.snapshot();
   comboStreak = 0;
   cpuComboStreak = 0;
