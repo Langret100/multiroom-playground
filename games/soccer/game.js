@@ -2096,9 +2096,8 @@ function scoreGoal(team){
   clearRoundActions();
   const goalId=`g:${mySid}:${Date.now()}`;
   // The already-working generic relay is the scoring authority visible to every client.
-  // Native sc_goal is only a best-effort mirror for Workers that already support it.
+  // Score/restart is carried by the existing host compat relay; no Worker upgrade is required.
   soccerCompatConfirmGoal(team,goalId);
-  bridgeSend('sc_goal',{team,restartId:goalId});
   setTimeout(()=>{goalPending=false;},900);
 }
 
@@ -2967,7 +2966,7 @@ window.addEventListener('message', e=>{
     if(!d.sessionId) return;
     mySid = String(d.sessionId||'');
     myNick = String(d.nick||'Player');
-    mySeat = Number(d.seat ?? d.selfSeat ?? -1);
+    mySeat = Number(d.seat ?? -1);
     isHost = !!d.isHost || (mySeat===0);
 
     const incoming = (d.players||[]).map(p=>({
@@ -2975,16 +2974,7 @@ window.addEventListener('message', e=>{
       nick: String(p.nick||'Player'),
       seat: Number(p.seat ?? -1),
       isHost: !!p.isHost,
-    })).filter(p=>p.seat>=0 && p.sid);
-
-    // Never commit an invalid early init. The parent can post bridge_init before the
-    // room order snapshot has assigned seats; committing here leaves roster empty and
-    // permanently keeps the default "연결 대기 중..." overlay. Ask for a fresh init
-    // and keep gameInitialized=false so the existing bridge_ready retries remain active.
-    if(mySeat<0 || !incoming.some(p=>p.sid===mySid)){
-      setTimeout(()=>{ if(!gameInitialized) bridgeSend('bridge_ready',{retry:true,needRoster:true}); },80);
-      return;
-    }
+    })).filter(p=>p.seat>=0);
 
     if (gameInitialized){
       applyRoster(incoming);

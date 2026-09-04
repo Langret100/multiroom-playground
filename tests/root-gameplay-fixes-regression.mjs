@@ -17,9 +17,9 @@ ok(!star.includes("type:'pb_hit'") && !star.includes("type:'pb_fx'"),'StarPaint 
 ok(star.includes('frontItem.taken=true') && star.includes('previewGuestItemUse(me,held,now)') && star.includes('previewVisualKnock(hitPreview.player'),'StarPaint immediate guest presentation missing');
 ok(!star.includes('maybeReturnToRoom(Date.now())'),'StarPaint still owns room return locally');
 
-// Room lifecycle: UI return only follows authoritative backToRoom.
+// Room lifecycle: StarPaint winner scene returns locally after ~2s; authoritative backToRoom still finalizes server state later.
 ok(room.includes('room.onMessage("backToRoom"') && room.includes('returnToRoomLobbyLocal();'),'authoritative room return missing');
-ok(!room.includes('__starpaintLocalBackTimer = setTimeout'),'premature local StarPaint room timer remains');
+ok(room.includes('__starpaintLocalBackTimer = setTimeout') && room.includes('}, 2000);'),'StarPaint 2s local winner return missing');
 
 // StackGa: low is the actual default and low never hard-drops after alignment.
 ok(room.includes('localStorage.getItem("cpu_difficulty") || "low"'),'room CPU default not low');

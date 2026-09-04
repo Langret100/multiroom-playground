@@ -2398,24 +2398,10 @@ function sendCoopBridgeInit(){
     // so we MUST NOT block bridge_init waiting for it. We only wait until we can
     // identify "me" in either `players` or the seat-map `order`. A single host is
     // elected deterministically (lowest seat / smallest sid) below.
-    // Soccer needs a real seat before bridge_init is committed. Sending an init
-    // with seat=-1 makes the iframe discard every roster entry and then wait forever.
-    // Wait only for the authoritative order entry; this is game-start initialization,
-    // not room join, so it does not slow room creation/entry.
-    const soccerSeatReady = !isSoccer || (()=>{
-      try{
-        const ord=room?.state?.order;
-        if(!ord) return false;
-        let v;
-        if(typeof ord.has==='function'){
-          if(!ord.has(mySessionId)) return false;
-          v=typeof ord.get==='function'?ord.get(mySessionId):undefined;
-        }else if(typeof ord==='object' && Object.prototype.hasOwnProperty.call(ord,mySessionId)) v=ord[mySessionId];
-        else return false;
-        return Number.isFinite(Number(v)) && Number(v)>=0;
-      }catch(_){ return false; }
-    })();
-    if (((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint) || (isSoccer && !soccerSeatReady))){
+    // Soccer는 서버 sc_roster/sc_sync가 권위 로스터를 바로 보완하므로
+    // room.state 스냅샷이 늦더라도 bridge_init을 막지 않는다. 이 대기가 걸리면
+    // 경기장만 보이고 입력·수학 퀴즈가 모두 비활성인 상태가 된다.
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -2501,28 +2487,21 @@ function sendCoopBridgeInit(){
   // 금칙어게임 등 players 배열이 필요한 게임을 위해 플레이어 목록 포함
   const bridgePlayers = (()=>{
     const arr = [];
-    const seen = new Set();
-    // Seat/order is the authoritative roster for co-op starts. Build from it first so
-    // Soccer does not depend on players MapSchema arriving in the same snapshot.
-    try{
-      const ord=room?.state?.order;
-      const add=(sid,seat)=>{
-        sid=String(sid||''); if(!sid || sid===CPU_SID || seen.has(sid)) return;
-        const n=Number(seat); if(!Number.isFinite(n) || n<0) return;
-        const pp=getPlayer(sid);
-        arr.push({sessionId:sid,nick:(pp&&pp.nick)?String(pp.nick):sid.slice(0,4),seat:n,isHost:!!(pp&&pp.isHost)||n===0});
-        seen.add(sid);
-      };
-      if(ord&&typeof ord.forEach==='function') ord.forEach((seat,sid)=>add(sid,seat));
-      else if(ord&&typeof ord==='object') Object.keys(ord).forEach(sid=>add(sid,ord[sid]));
-    }catch(_){}
     try{
       forEachPlayer((p, sid)=>{
-        sid=String(sid||''); if(!sid || sid===CPU_SID || seen.has(sid)) return;
-        let seat=Number(p?.seat);
-        if(!Number.isFinite(seat)||seat<0) return;
-        arr.push({sessionId:sid,nick:(p&&p.nick)?String(p.nick):sid.slice(0,4),seat,isHost:!!(p&&p.isHost)||seat===0});
-        seen.add(sid);
+        if (String(sid) === CPU_SID) return;
+        const ord = room?.state?.order;
+        let seat = 99;
+        try{
+          if (ord && typeof ord.get === 'function') seat = Number(ord.get(sid) ?? 99);
+          else if (ord && ord[sid] != null) seat = Number(ord[sid]);
+        }catch(_){}
+        arr.push({
+          sessionId: String(sid),
+          nick: (p && p.nick) ? String(p.nick) : String(sid).slice(0,4),
+          seat,
+          isHost: !!(p && p.isHost)
+        });
       });
     }catch(_){}
     // Soccer/StarPaint bridge_init은 room.state.players가 늦어도 반드시 내 항목을 포함한다.
