@@ -2960,42 +2960,62 @@ window.addEventListener('message', e=>{
   if(d.type==='stop_audio'){setSoccerAudioAllowed(false);return;}
 
   if (d.type === 'bridge_init'){
-    // 협동게임용 정식 초기화에는 sessionId가 반드시 있다.
-    // 다른 게임의 범용 bridge_init이 먼저 들어오면 빈 sid로 초기화되어
-    // 경기장만 보이고 조작/퀴즈가 멈출 수 있으므로 무시한다.
+    // bridge_init 수신과 실제 월드 초기화를 분리한다.
+    // 부모 room state가 아직 좌석/로스터를 못 받은 순간에도 bridge_init 자체는 올 수 있다.
+    // 이때 gameInitialized를 먼저 true로 만들면 initGame()이 빈 roster 때문에 return한 뒤
+    // 영원히 '연결 대기 중...'에 남는다. 신원은 먼저 저장하되, 유효한 내 seat가 있는
+    // roster가 확보된 시점에만 gameInitialized를 확정한다.
     if(!d.sessionId) return;
     mySid = String(d.sessionId||'');
     myNick = String(d.nick||'Player');
-    mySeat = Number(d.seat ?? -1);
-    isHost = !!d.isHost || (mySeat===0);
 
     const incoming = (d.players||[]).map(p=>({
       sid: String(p.sid||p.sessionId||''),
       nick: String(p.nick||'Player'),
       seat: Number(p.seat ?? -1),
       isHost: !!p.isHost,
-    })).filter(p=>p.seat>=0);
+    })).filter(p=>p.sid && p.seat>=0);
+
+    if (incoming.length) applyRoster(incoming);
+    const self = roster.find(p=>String(p.sid)===mySid) || null;
+    if(!self){
+      // 아직 room state에 내 좌석이 없다. 잘못된 초기화를 확정하지 않고
+      // 부모가 보내는 bridge_roster를 기다린다.
+      return;
+    }
+
+    mySeat = Number(self.seat);
+    isHost = !!self.isHost || !!d.isHost || (mySeat===0);
+    soccerCompatHostSid=String(roster.find(p=>p.isHost)?.sid||roster.find(p=>p.seat===0)?.sid||'');
 
     if (gameInitialized){
-      applyRoster(incoming);
       flushPendingSoccerSnapshot();
-      // 부모가 bridge_init 직후 보낸 sync 응답은 느린 iframe에서 초기화보다
-      // 먼저 도착할 수 있다. iframe 자신도 매 init마다 권위 상태를 재요청한다.
       if(isHost){ if(!soccerCompatRound)soccerCompatStartRound('initial'); else soccerCompatBroadcast(); }
       return;
     }
-    gameInitialized = true;
-    roster = incoming;
-    soccerCompatHostSid=String(incoming.find(p=>p.isHost)?.sid||incoming.find(p=>p.seat===0)?.sid||'');
+
     const sAt = Number(d.startedAt||0);
-    // startedAt=0 means the Worker-owned quiz has not opened play yet. Treating it
-    // as Date.now() made the match clock count down on a permanently locked field
-    // whenever an old Worker failed to send sc_round_state.
     startTs = sAt>0 ? sAt : 0;
+    gameInitialized = true;
     initGame();
     flushPendingSoccerSnapshot();
-    // Do not depend on new Worker soccer-round packets. The room host starts the
-    // compatible round authority over the legacy generic relay.
+    if(isHost) setTimeout(()=>{ if(!soccerCompatRound) soccerCompatStartRound('initial'); },80);
+    return;
+  }
+
+  if (d.type === 'bridge_roster' && (!d.gameId || d.gameId === 'soccer')){
+    // room.js의 실제 room.state(players+order)에서 만든 로스터.
+    // Worker의 새 sc_roster 지원 여부와 무관하게 기존 방 상태만으로 시작을 완성한다.
+    applyRoster(d.players||[]);
+    if(!mySid || gameInitialized) return;
+    const self = roster.find(p=>String(p.sid)===mySid) || null;
+    if(!self) return;
+    mySeat = Number(self.seat);
+    isHost = !!self.isHost || (mySeat===0);
+    soccerCompatHostSid=String(roster.find(p=>p.isHost)?.sid||roster.find(p=>p.seat===0)?.sid||'');
+    gameInitialized = true;
+    initGame();
+    flushPendingSoccerSnapshot();
     if(isHost) setTimeout(()=>{ if(!soccerCompatRound) soccerCompatStartRound('initial'); },80);
     return;
   }
