@@ -7,7 +7,7 @@ const ok=(v,m)=>{if(!v)throw new Error(m)};
 const ps=src.indexOf('function previewGuestItemUse('), pe=src.indexOf('const keyMap=',ps);
 ok(ps>=0&&pe>ps,'previewGuestItemUse missing');
 const preview=src.slice(ps,pe);
-ok(preview.includes('localPredictedUseSeq=input.useSeq>>>0'),'predicted use sequence missing');
+ok(preview.includes('localPredictedUseSeq=seq')&&preview.includes('localPredictedItem=t'),'predicted use sequence/item missing');
 ok(!preview.includes("spawnFx('itemuse'")&&!preview.includes('playItemSound('),'guest prediction still duplicates authoritative use FX/sound');
 const ms=src.indexOf('function mergeRemotePlayers('), me=src.indexOf('function applyPlayerSnapshots',ms);
 const merge=src.slice(ms,me);

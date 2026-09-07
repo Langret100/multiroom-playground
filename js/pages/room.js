@@ -2837,7 +2837,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-workerless-rootfix2" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-instant-use-dash-once-rootfix" : `&_m=${Date.now()}`;
   const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
   const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
