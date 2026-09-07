@@ -34,6 +34,6 @@ ok(src.includes("f.type==='itemuse'")&&src.includes('drawPixelStarRing(x,y,10+k*
 ok(src.includes("pr.type==='beacon'")&&src.includes("drawPixelStarRing(rx,ry,pulse"),'beacon target frame is not star-shaped');
 
 // Cache must force the cleaned game code, while retaining the existing local return flow.
-ok(room.includes('sp-single-action-starfx-rootfix'),'StarPaint iframe cache key not advanced');
+ok(room.includes('sp-respawn-lifecycle-rootfix'),'StarPaint iframe cache key not advanced');
 ok(room.includes('scheduleStarpaintLocalReturn(1950)'),'winner return flow was lost');
 console.log('STARPAINT_SINGLE_ACTION_STARFX_REGRESSION_OK');

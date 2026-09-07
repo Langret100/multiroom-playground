@@ -7,7 +7,7 @@ const must=[
   'hitAirborne=!p.onGround',
   'mag>7.2',
   'LOW_SPEC?5:8',
-  'single-action-starfx-rootfix'
+  'respawn-lifecycle-rootfix'
 ];
 for(const x of must){if(!(s.includes(x)||reg.includes(x))) throw new Error('missing '+x)}
 // The trail must be render-derived only: no new bridge/postMessage event names.
