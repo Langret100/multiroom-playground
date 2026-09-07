@@ -56,9 +56,9 @@ const GOAL_Y1 = FY + FH*0.13, GOAL_Y2 = FY + FH*0.48;
 const GOAL_PLANE_LEFT_X = FX - GOAL_W*0.58;
 const GOAL_PLANE_RIGHT_X = FX + FW + GOAL_W*0.58;
 const PR=17, BR=11;
-// 공 전체가 네트 안쪽 깊이까지 들어간 뒤 골을 확정한다. BR 선언 뒤에 둔다.
-const GOAL_SCORE_LEFT_X = FX-GOAL_W-BR-8;
-const GOAL_SCORE_RIGHT_X = FX+FW+GOAL_W+BR+8;
+// 골문 유효 평면을 통과하면 짧은 골 연출 뒤 즉시 득점을 확정한다.
+const GOAL_SCORE_LEFT_X = GOAL_PLANE_LEFT_X;
+const GOAL_SCORE_RIGHT_X = GOAL_PLANE_RIGHT_X;
 const KICK_RANGE = PR+BR+16;   // 강슛이 닿는 사거리(접촉보다 살짝 넉넉하게)
 const TACKLE_RANGE = PR+5;       // 실제 접촉에 가까운 태클 판정
 const DRIBBLE_DISTANCE = PR+BR-1; // 몸에 붙이지 않고 발끝에서 한 박자씩 굴리는 기본 거리
@@ -391,6 +391,7 @@ let soccerCompatLastSubmit=null;
 let soccerCompatGoalResetSerial=0;
 let soccerCompatGoalResetApplied=0;
 let soccerCompatGoalResetTeam='';
+let soccerCompatGoalSerial=0;
 let goalCenterResumeTimer=0;
 let goalPlayerResetUntil=0;
 
@@ -1745,23 +1746,18 @@ function updateBallHost(advancePhysics=true){
     return;
   }
   if(pendingGoalVisual){
-    // 골문 입구부터 네트 안쪽까지 공이 실제로 굴러가거나 날아가는 모습을 유지한다.
+    // 골문을 통과한 뒤에는 득점 확정을 깊은 네트 좌표까지 기다리지 않는다.
+    // 이전 패치에서 GOAL_SCORE_*를 골대 뒤쪽으로 밀어 둔 탓에 공이 골대에
+    // 박힌 것처럼 오래 남거나 저속 공에서 득점이 늦어질 수 있었다.
     const g=pendingGoalVisual;
     const goalDir=Number(g.goalDir||0)||1;
-    const targetX=Number(g.targetX||ball.x);
     const towardSpeed=Math.max(1.35,Math.abs(ball.vx||0));
     ball.vx=goalDir*towardSpeed;
     stepFreeBallState(ball,1);
     ball.vx*=.965;ball.vy*=.94;ball.vz*=.91;
     ball.y=clamp(ball.y,GOAL_Y1+GOAL_POST_HALF_Y+BR*.5,GOAL_Y2-GOAL_POST_HALF_Y-BR*.5);
-    const reached=goalDir>0?ball.x>=targetX:ball.x<=targetX;
-    if(reached){
-      ball.x=targetX;
-      ball.vx=goalDir*Math.max(.38,Math.abs(ball.vx)*.45);
-      if(!g.insideAt){g.insideAt=now;sendBallSnapshot();}
-      if(now-g.insideAt>=220){
-        const team=g.team;pendingGoalVisual=null;scoreGoal(team);
-      }
+    if(now-g.enteredAt>=180){
+      const team=g.team;pendingGoalVisual=null;scoreGoal(team);
     }
     return;
   }
@@ -2152,23 +2148,35 @@ function applyCompatGoalReset(packet){
   showGoalFlash(team);spawnGoalParticles(team);sfxGoal();addShake(8,400);
   return true;
 }
-function scoreGoal(team){
-  if(goalPending||isRoundLocked()||!gameActive||!isHost)return;
-  // Only the host confirms a goal. After the initial kickoff quiz there is no
-  // restart quiz: score once, clear ownership/prediction, put the ball at midfield,
-  // then let normal proximity ownership attach it to whoever reaches it first.
-  if(team==='A'){score.A=Math.max(0,Number(score.A||0))+1;scoreAnimA=Date.now();}
-  else {score.B=Math.max(0,Number(score.B||0))+1;scoreAnimB=Date.now();}
+function soccerCompatConfirmGoal(team,goalId){
+  if(!isHost||goalPending||isRoundLocked()||!gameActive)return false;
+  team=team==='B'?'B':'A';
+  const id=String(goalId||`${team}:${Date.now()}`);
+  if(!soccerCompatConfirmGoal.seen)soccerCompatConfirmGoal.seen=new Set();
+  if(soccerCompatConfirmGoal.seen.has(id))return false;
+  soccerCompatConfirmGoal.seen.add(id);
+  if(soccerCompatConfirmGoal.seen.size>48){
+    const first=soccerCompatConfirmGoal.seen.values().next().value;
+    soccerCompatConfirmGoal.seen.delete(first);
+  }
+  score[team]=Math.max(0,Number(score[team]||0))+1;
+  if(team==='A')scoreAnimA=Date.now();else scoreAnimB=Date.now();
+  soccerCompatGoalSerial+=1;
   soccerCompatGoalResetSerial+=1;
-  soccerCompatGoalResetTeam=team==='B'?'B':'A';
+  soccerCompatGoalResetTeam=team;
   applyCompatGoalReset({
-    goalResetSerial:soccerCompatGoalResetSerial,goalTeam:soccerCompatGoalResetTeam,
+    goalResetSerial:soccerCompatGoalResetSerial,goalSerial:soccerCompatGoalSerial,goalTeam:team,
     scoreA:score.A,scoreB:score.B
   });
-  // Persist the reset serial in the host compatibility heartbeat. A guest that still
-  // shows its locally predicted kick will receive this through tg_state/tg_players
-  // and snap to the same midfield ball exactly once.
+  // 점수/중앙 리셋은 이미 배포되어 동작 중인 tg_state -> tg_players 호환
+  // 권위 경로 하나로 확정한다. Worker sc_goal은 늦게 오더라도 점수를 내릴 수 없다.
   soccerCompatBroadcast();
+  return true;
+}
+function scoreGoal(team){
+  if(goalPending||isRoundLocked()||!gameActive||!isHost)return;
+  const goalId=`goal:${team}:${Date.now()}:${hostBallSeq}`;
+  soccerCompatConfirmGoal(team,goalId);
 }
 
 let goalFlashUntil=0, goalFlashTeam=null;
@@ -2931,7 +2939,8 @@ function soccerCompatSnapshot(){
     resultUntil:r.resultUntil||0,kickoffAt:r.kickoffAt||0,winner:r.winner||'',tied:!!r.tied,
     roundScoreA:scoreA,roundScoreB:scoreB,scoreA:Number(score.A||0),scoreB:Number(score.B||0),
     kickoffOwnerSid:String(r.kickoffOwnerSid||''),remainingMs:Math.max(0,Number(durationMs||120000)),
-    serverNow:Date.now(),roundSerial:Number(r.serial||0),selfRoundScore:Math.max(0,Number(soccerCompatScores[mySid]||0))
+    serverNow:Date.now(),roundSerial:Number(r.serial||0),goalSerial:Number(soccerCompatGoalSerial||0),goalTeam:soccerCompatGoalResetTeam||'',
+    selfRoundScore:Math.max(0,Number(soccerCompatScores[mySid]||0))
   };
 }
 function soccerCompatBroadcast(){
@@ -2939,7 +2948,7 @@ function soccerCompatBroadcast(){
   const snap=soccerCompatSnapshot();
   bridgeSend('sc_compat',{packet:{
     kind:'state',hostSid:mySid,version:++soccerCompatLastHostVersion,snapshot:snap,scores:{...soccerCompatScores},
-    goalResetSerial:Number(soccerCompatGoalResetSerial||0),goalTeam:soccerCompatGoalResetTeam||'',
+    goalResetSerial:Number(soccerCompatGoalResetSerial||0),goalSerial:Number(soccerCompatGoalSerial||0),goalTeam:soccerCompatGoalResetTeam||'',
     scoreA:Number(score.A||0),scoreB:Number(score.B||0)
   }});
 }

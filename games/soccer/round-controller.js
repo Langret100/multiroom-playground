@@ -23,6 +23,8 @@
       resultUntil: toFinite(source.resultUntil, 0),
       kickoffAt: toFinite(source.kickoffAt, 0),
       kickoffOwnerSid: String(source.kickoffOwnerSid||''),
+      goalSerial: Math.max(0, Math.floor(toFinite(source.goalSerial, 0))),
+      goalTeam: source.goalTeam === 'A' || source.goalTeam === 'B' ? source.goalTeam : '',
       winner: source.winner === 'A' || source.winner === 'B' ? source.winner : '',
       tied: !!source.tied,
       roundScoreA: Math.max(0, toFinite(source.roundScoreA, 0)),

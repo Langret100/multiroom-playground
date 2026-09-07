@@ -1,0 +1,20 @@
+import fs from 'node:fs';
+const read=p=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
+const game=read('games/soccer/game.js');
+const room=read('js/pages/room.js');
+const round=read('games/soccer/round-controller.js');
+const html=read('games/soccer/index.html');
+const roomHtml=read('room.html');
+function ok(v,m){ if(!v){ console.error('FAIL',m); process.exitCode=1; } else console.log('PASS',m); }
+ok(game.includes('function soccerCompatConfirmGoal(team,goalId)'),'goal has one host compat authority function');
+ok(game.includes('score[team]=Math.max(0,Number(score[team]||0))+1'),'goal increments score exactly in compat authority');
+ok(game.includes('soccerCompatConfirmGoal(team,goalId);'),'goal detector routes through compat authority');
+ok(game.includes('GOAL_SCORE_LEFT_X = GOAL_PLANE_LEFT_X')&&game.includes('GOAL_SCORE_RIGHT_X = GOAL_PLANE_RIGHT_X'),'goal confirmation no longer waits for deep-net coordinates');
+ok(game.includes('if(now-g.enteredAt>=180)'),'goal is confirmed shortly after crossing mouth');
+ok(game.includes('resetBallToNeutralCenter(520)'),'goal reset returns ball to neutral center');
+ok(round.includes('goalSerial:')&&round.includes('goalTeam:'),'round snapshots preserve goal edge identity');
+ok(room.includes('const soccerLegacyActionSticky')&&room.includes('soccerLegacyActionSticky.until=now+760'),'short soccer actions survive aggregate overwrite window');
+ok(room.includes('...(stickyAction||{})'),'sticky action rides normal movement snapshots');
+ok(!room.includes('room.send("sc_pos"'),'soccer still avoids Worker-specific position dependency');
+ok(html.includes('game.js?v=20260907-goal-possession-rootfix1'),'soccer cache bust advanced');
+ok(roomHtml.includes('room.js?v=20260907-soccer-goal-possession-rootfix1'),'room bridge cache bust advanced');

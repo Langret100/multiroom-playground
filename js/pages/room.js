@@ -992,6 +992,25 @@ function updatePreview(modeId){
 
   const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
   const soccerLegacyRelayState = { round:null, pos:null };
+  const soccerLegacyActionSticky = { until:0, fields:null };
+  function soccerStickyActionFields(d){
+    const event=!!(d?.kickAt||d?.headerAt||d?.tackleAt||d?.claimAt);
+    const now=Date.now();
+    if(event){
+      soccerLegacyActionSticky.until=now+760;
+      soccerLegacyActionSticky.fields={
+        claimAt:d.claimAt,claimBallX:d.claimBallX,claimBallY:d.claimBallY,
+        kickAt:d.kickAt,kickCharge:d.kickCharge,kickX:d.kickX,kickY:d.kickY,kickDir:d.kickDir,
+        kickVX:d.kickVX,kickVY:d.kickVY,kickBallX:d.kickBallX,kickBallY:d.kickBallY,
+        headerAt:d.headerAt,headerX:d.headerX,headerY:d.headerY,headerDir:d.headerDir,
+        headerBallX:d.headerBallX,headerBallY:d.headerBallY,
+        tackle:d.tackle,tackleAt:d.tackleAt
+      };
+    }
+    if(now<soccerLegacyActionSticky.until&&soccerLegacyActionSticky.fields)return soccerLegacyActionSticky.fields;
+    if(soccerLegacyActionSticky.fields){soccerLegacyActionSticky.fields=null;soccerLegacyActionSticky.until=0;}
+    return null;
+  }
   function sendSoccerLegacyRelay(){
     try{ room.send("tg_state", { state:{ __soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos } }); }catch(_){ }
   }
@@ -1555,16 +1574,15 @@ function updatePreview(modeId){
       // Old Workers can drop soccer-specific sc_pos for players that missed their
       // registration window. Carry movement through the long-standing tg_state relay
       // instead, merged with the math-round packet so neither overwrites the other.
+      const stickyAction=soccerStickyActionFields(d);
       soccerLegacyRelayState.pos = {
         stateSeq:Number(d.stateSeq||0), x:Number(d.x||0), y:Number(d.y||0), dir:Number(d.dir||0),
         vx:Number(d.vx||0), vy:Number(d.vy||0),
         dribble:d.dribble==null?undefined:!!d.dribble, dribbleBallX:d.dribbleBallX, dribbleBallY:d.dribbleBallY,
-        claimAt:d.claimAt, claimBallX:d.claimBallX, claimBallY:d.claimBallY,
-        kickAt:d.kickAt, kickCharge:d.kickCharge, tackle:d.tackle,
-        kickX:d.kickX, kickY:d.kickY, kickDir:d.kickDir, kickVX:d.kickVX, kickVY:d.kickVY,
-        kickBallX:d.kickBallX, kickBallY:d.kickBallY,
-        headerAt:d.headerAt, headerX:d.headerX, headerY:d.headerY, headerDir:d.headerDir,
-        headerBallX:d.headerBallX, headerBallY:d.headerBallY, tackleAt:d.tackleAt
+        ...(stickyAction||{}),
+        // event가 없고 sticky도 만료된 뒤에는 0을 명시해 오래된 액션이 남지 않게 한다.
+        claimAt:stickyAction?.claimAt||0,kickAt:stickyAction?.kickAt||0,headerAt:stickyAction?.headerAt||0,tackleAt:stickyAction?.tackleAt||0,
+        tackle:stickyAction?!!stickyAction.tackle:!!d.tackle
       };
       sendSoccerLegacyRelay();
       return;
