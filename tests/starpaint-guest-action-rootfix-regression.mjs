@@ -1,0 +1,13 @@
+import fs from 'node:fs';
+const src=fs.readFileSync(new URL('../games/starpaint/index.html', import.meta.url),'utf8');
+const ok=(v,m)=>{if(!v)throw new Error(m)};
+const applyStart=src.indexOf('function applyPlayerSnapshots(players)'), applyEnd=src.indexOf('function playerRenderX',applyStart);
+ok(applyStart>=0&&applyEnd>applyStart,'applyPlayerSnapshots missing');
+const applySrc=src.slice(applyStart,applyEnd);
+for(const field of ['pickSeq','useSeq','swapSeq','respawnSeq','shotAngleDeg','shotPower','shotCharged']) ok(applySrc.includes(`p.input.${field}`),`missing ${field}`);
+ok(applySrc.indexOf('p.input.useSeq=')<applySrc.indexOf('if(seq&&seq<='),'action must be consumed before stale movement rejection');
+ok(src.includes("if(useSeq!==p.lastUseSeq){p.lastUseSeq=useSeq;useItem(p)}"),'one-shot use gate missing');
+ok(src.includes("it.taken=true;const dropped=addInventoryItem(p,it.type);p.actionState='pickup'"),'authoritative pickup missing');
+ok(src.includes('actionState:p.actionState')&&src.includes('itemsHeld:normalizeInventory(p).slice(0,2)'),'action/inventory state not serialized');
+ok(src.includes('sfxEvents:game.sfxEvents,fxEvents:game.fxEvents'),'effect events not serialized');
+console.log('STARPAINT_GUEST_ACTION_ROOTFIX_OK');
