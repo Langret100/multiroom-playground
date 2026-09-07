@@ -401,7 +401,12 @@ let ball={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,owner:null,ownerUntil:0,lastK
 let netBall={x:FX+FW/2,y:KICKOFF_Y,z:0,vx:0,vy:0,vz:0,netX:FX+FW/2,netY:KICKOFF_Y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:0,owner:null,samples:[],lastKicker:null,noPickupUntil:0};
 let localDribbleVisualUntil=0;
 let score={A:0,B:0};
-let startTs=0, durationMs=120000;
+const MATCH_DURATION_MS=120000;
+let startTs=0, durationMs=MATCH_DURATION_MS;
+// One authoritative match deadline. Repeated round heartbeats may refresh the
+// remaining time, but they must never restart the local clock from zero.
+let matchDeadlineAt=0;
+let soccerCompatMatchDeadlineAt=0;
 let gameInitialized=false, gameActive=false, gameOver=false;
 let pendingSoccerSnapshot=null;
 const soccerRoundController = new SoccerRoundCore.SoccerRoundController();
@@ -693,8 +698,20 @@ function applySoccerRoundSnapshot(raw){
   if(d.serverNow>0&&!soccerClockSynced) soccerServerOffset=d.serverNow-Date.now();
   // Compatibility rounds use the host's wall clock; no Worker clock API required.
 
-  durationMs=d.remainingMs;
-  if(d.phase==='playing')startTs=Date.now();else startTs=0;
+  durationMs=Math.max(0,Number(d.remainingMs||0));
+  if(d.phase==='playing'){
+    // remainingMs is authoritative at receipt. For the same playing match the
+    // deadline may move earlier, never later: a delayed/old Worker heartbeat with
+    // a stale constant remainingMs must not extend the game forever.
+    const candidateDeadline=Date.now()+durationMs;
+    const continuingSamePlay=!accepted.roundChanged&&accepted.prev?.phase==='playing'&&matchDeadlineAt>0;
+    matchDeadlineAt=continuingSamePlay?Math.min(matchDeadlineAt,candidateDeadline):candidateDeadline;
+    durationMs=Math.max(0,matchDeadlineAt-Date.now());
+    startTs=matchDeadlineAt-MATCH_DURATION_MS;
+  }else{
+    startTs=0;
+    if(d.phase==='over')matchDeadlineAt=Date.now();
+  }
   if(d.winner==='A')kickoffTeamLabel='RED 선공';else if(d.winner==='B')kickoffTeamLabel='BLUE 선공';
 
   const packet={...d,ownerSid:d.kickoffOwnerSid,scoreA:d.roundScoreA,scoreB:d.roundScoreB};
@@ -735,7 +752,16 @@ function applySoccerRoundSnapshot(raw){
       }
       break;
     case 'over':
-      gameActive=false;kickoffUntil=0;restartLockUntil=0;
+      gameActive=false;kickoffUntil=0;restartLockUntil=0;durationMs=0;matchDeadlineAt=Date.now();
+      if(!gameOver){
+        gameOver=true;
+        sfxWhistle(true);
+        score.A=Math.max(Number(score.A||0),Number(d.scoreA||0));
+        score.B=Math.max(Number(score.B||0),Number(d.scoreB||0));
+        const winner=score.A===score.B?'draw':(score.A>score.B?'A':'B');
+        const msg=winner==='draw'?'무승부!':(winner==='A'?'🔴 A팀 승리!':'🔵 B팀 승리!');
+        showOverlay(msg,`최종 스코어  A ${score.A} : ${score.B} B`);
+      }
       break;
     default:
       gameActive=false;
@@ -910,6 +936,7 @@ function initGame(){
     netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:null,samples:[],lastKicker:null,noPickupUntil:0 };
   gameOver = false;
   gameActive = false;
+  matchDeadlineAt=0;
   hideOverlay();
   restartLockUntil=Date.now()+20000;
   startLoop();
@@ -1471,36 +1498,18 @@ function updateNetBall(){
   const visualDt=clamp(now-Number(netBall.visualAt||now),0,34);
   netBall.visualAt=now;
 
-  // 권위상 내가 공 소유자가 된 순간에는 이전 킥 예측/보정을 즉시 끝낸다.
-  // 이 우선순위가 localKickTrack보다 뒤에 있으면, 호스트 화면은 재드리블 중인데
-  // 게스트 화면만 공이 마지막 킥 위치에 남아 있는 현상이 생긴다.
-  if(netBall.owner===mySid&&me&&(netBall.netZ||0)<5){
-    localKickTrack=null;
-    netBall.kickReconcile=null;
-    netBall.samples=[];
-    netBall.renderOffsetX=0;netBall.renderOffsetY=0;netBall.renderOffsetZ=0;
-    netBall.renderOffsetUntil=0;
-    localDribbleVisualUntil=now+260;
-    const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
-    // 자기 소유 공은 네트워크 스냅샷을 보간해 따라오게 하지 않는다.
-    // 호스트가 owner=mySid로 승인한 뒤에는 매 틱 동일한 발앞 목표를 직접 사용한다.
-    // 여기서 lerp를 쓰면 이전 킥 위치의 x축이 오래 남아 위아래만 따라오는 것처럼 보인다.
-    netBall.x=target.x;
-    netBall.y=target.y;
-    netBall.z=0;netBall.vz=0;
-    netBall.vx=(me.vx||0)*.78;
-    netBall.vy=(me.vy||0)*.78;
-    return;
-  }
-
-  // 호스트 확정 전까지만 로컬 예측을 사용한다. 확정되면 실제 판정 좌표는
-  // 즉시 권위 공으로 전환하고, 화면 위치만 짧은 오프셋으로 이어 붙인다.
+  // A local kick may be shown immediately, but it is only a short presentation lead.
+  // Once the matching host impact arrives, converge to the one authoritative ball path.
   if(localKickTrack){
     const track=localKickTrack;
     const dt=clamp(now-(track.lastAt||now),0,34);
     track.lastAt=now;
 
-    if(!track.confirmed){
+    // If the host has already assigned ownership, that owner state wins immediately.
+    if(netBall.owner){
+      localKickTrack=null;
+      netBall.kickReconcile=null;
+    }else if(!track.confirmed){
       stepFreeBallState(netBall,dt/(1000/60));
       const predictionAge=now-Number(track.createdAt||now);
       const rejectedByAuthority=predictionAge>BALL_PREDICTION_MIN_WAIT_MS&&
@@ -1512,125 +1521,69 @@ function updateNetBall(){
           vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
         },track,now);
       }
-      return;
-    }
-
-    // 확정 뒤에는 권위 스냅샷을 현재 수신 시각까지 전진시킨 위치를 기준으로
-    // 표시한다. 예측 선행량은 420ms 동안 줄이되 전진축 좌표는 절대 감소시키지 않는다.
-    const dx=Number(track.dirX||0),dy=Number(track.dirY||0),sx=-dy,sy=dx;
-    const authSteps=clamp(now-Number(track.authReceivedAt||now),0,120)/(1000/60);
-    const auth={x:Number(track.authX||0),y:Number(track.authY||0),z:Math.max(0,Number(track.authZ||0)),
-      vx:Number(track.authVX||0),vy:Number(track.authVY||0),vz:Number(track.authVZ||0)};
-    stepFreeBallState(auth,authSteps);
-    const u=clamp((now-Number(track.confirmedAt||now))/420,0,1);
-    const lead=Number(track.visualLead||0)*(1-u)*(1-u);
-    const authAlong=auth.x*dx+auth.y*dy;
-    const oldAlong=Number(netBall.x||0)*dx+Number(netBall.y||0)*dy;
-    const authAcross=auth.x*sx+auth.y*sy;
-    const oldAcross=Number(netBall.x||0)*sx+Number(netBall.y||0)*sy;
-    const nextAlong=Math.max(oldAlong,authAlong+lead);
-    const nextAcross=lerp(oldAcross,authAcross,.34);
-    netBall.x=dx*nextAlong+sx*nextAcross;
-    netBall.y=dy*nextAlong+sy*nextAcross;
-    netBall.z=lerp(Number(netBall.z||0),auth.z,.32);
-    netBall.vx=lerp(Number(netBall.vx||0),auth.vx,.30);
-    netBall.vy=lerp(Number(netBall.vy||0),auth.vy,.30);
-    netBall.vz=lerp(Number(netBall.vz||0),auth.vz,.34);
-
-    if(u>=1){
-      netBall.kickReconcile={dirX:dx,dirY:dy,until:now+1400};
-      netBall.samples=[];
+      if(localKickTrack)return;
+    }else{
+      const dx=Number(track.dirX||0),dy=Number(track.dirY||0),sx=-dy,sy=dx;
+      const authSteps=clamp(now-Number(track.authReceivedAt||now),0,90)/(1000/60);
+      const auth={x:Number(track.authX||0),y:Number(track.authY||0),z:Math.max(0,Number(track.authZ||0)),
+        vx:Number(track.authVX||0),vy:Number(track.authVY||0),vz:Number(track.authVZ||0)};
+      stepFreeBallState(auth,authSteps);
+      const u=clamp((now-Number(track.confirmedAt||now))/160,0,1);
+      const lead=Number(track.visualLead||0)*(1-u)*(1-u);
+      const authAlong=auth.x*dx+auth.y*dy;
+      const oldAlong=Number(netBall.x||0)*dx+Number(netBall.y||0)*dy;
+      const authAcross=auth.x*sx+auth.y*sy;
+      const oldAcross=Number(netBall.x||0)*sx+Number(netBall.y||0)*sy;
+      const nextAlong=Math.max(oldAlong,authAlong+lead);
+      const nextAcross=lerp(oldAcross,authAcross,.55);
+      netBall.x=dx*nextAlong+sx*nextAcross;
+      netBall.y=dy*nextAlong+sy*nextAcross;
+      netBall.z=lerp(Number(netBall.z||0),auth.z,.58);
+      netBall.vx=lerp(Number(netBall.vx||0),auth.vx,.55);
+      netBall.vy=lerp(Number(netBall.vy||0),auth.vy,.55);
+      netBall.vz=lerp(Number(netBall.vz||0),auth.vz,.58);
+      if(u<1)return;
       localKickTrack=null;
     }
-    return;
   }
 
-  const claimedByOther=!!(netBall.owner&&netBall.owner!==mySid);
-  if(netBall.owner===mySid)localDribbleVisualUntil=now+220;
-
-  // 게스트가 자유공에 실제로 닿은 순간은 화면에서 즉시 발앞 반응을 준다.
-  // 판정 소유권은 여전히 호스트가 결정하고, 이 로컬 반응은 짧은 시각 예측뿐이다.
-  if(!netBall.owner&&!localKickTrack&&me&&(netBall.netZ||0)<5&&now>=Number(netBall.noPickupUntil||0)){
+  // Contact only sends a claim. Do NOT move the guest's ball to its own locally
+  // predicted feet: that was the main reason the same owned ball appeared at
+  // different coordinates on each screen.
+  if(!netBall.owner&&me&&(netBall.netZ||0)<AUTH_CLIENT_PICKUP_Z&&now>=Number(netBall.noPickupUntil||0)){
     const controlX=me.x+Math.cos(me.dir)*Math.min(8,Math.hypot(me.vx||0,me.vy||0)*1.1);
     const controlY=me.y+Math.sin(me.dir)*Math.min(8,Math.hypot(me.vx||0,me.vy||0)*1.1);
-    const visiblePickupDist=Math.hypot(netBall.x-controlX,netBall.y-controlY);
     const authorityPickupDist=Math.hypot(Number(netBall.netX||netBall.x)-controlX,Number(netBall.netY||netBall.y)-controlY);
-    const pickupDist=Math.min(visiblePickupDist,authorityPickupDist);
-    if(pickupDist<PR+BR+16){
-      if(now>=pendingClaimUntil){
-        pendingClaimAt=now; pendingClaimUntil=now+520;
-        pendingClaimBallX=netBall.x; pendingClaimBallY=netBall.y;
-      }
-      localDribbleVisualUntil=Math.max(localDribbleVisualUntil,now+180);
-      const target=dribbleTargetForPlayer(me,me.vx||0,me.vy||0,now);
-      netBall.x=lerp(netBall.x,target.x,.94);
-      netBall.y=lerp(netBall.y,target.y,.94);
-      netBall.z=lerp(netBall.z||0,0,.70);
-      netBall.vx=lerp(netBall.vx||0,(me.vx||0)*.78,.48);
-      netBall.vy=lerp(netBall.vy||0,(me.vy||0)*.78,.48);
-      return;
+    if(authorityPickupDist<PR+BR+16&&now>=pendingClaimUntil){
+      pendingClaimAt=now;pendingClaimUntil=now+520;
+      pendingClaimBallX=Number(netBall.netX||netBall.x);pendingClaimBallY=Number(netBall.netY||netBall.y);
     }
   }
 
-  // 자유공의 최종 소유권은 호스트가 한 명을 선정한 sc_ball 스냅샷으로 확정한다.
-  const ownerPlayer=netBall.owner?players[netBall.owner]:null;
-  const dribblePlayer=ownerPlayer;
-  if(dribblePlayer&&(netBall.netZ||0)<5){
-    const isMine=dribblePlayer===me;
-    const pvx=isMine?(dribblePlayer.vx||0):(dribblePlayer.netVX||0);
-    const pvy=isMine?(dribblePlayer.vy||0):(dribblePlayer.netVY||0);
-    const target=dribbleTargetForPlayer(dribblePlayer,pvx,pvy,now);
-    netBall.x=lerp(netBall.x,target.x,isMine?.92:.55);
-    netBall.y=lerp(netBall.y,target.y,isMine?.92:.55);
-    netBall.z=lerp(netBall.z||0,0,.55);netBall.vz=0;
-    netBall.vx=lerp(netBall.vx||0,pvx*.78,.30);
-    netBall.vy=lerp(netBall.vy||0,pvy*.78,.30);
-    return;
-  }
-
-  // 자유공은 다음 네트워크 패킷을 기다리며 멈추지 않는다. 화면 공을 매 프레임
-  // 현재 속도로 먼저 진행한 뒤 최신 권위 위치와의 작은 오차만 부드럽게 보정한다.
-  if(visualDt>0)stepFreeBallState(netBall,visualDt/(1000/60));
+  // Render only the host's authoritative ball state. Both free-ball and owned-ball
+  // use this same path; no client derives the ball again from its local player pose.
   const samples=Array.isArray(netBall.samples)?netBall.samples:[];
   const latest=samples.length?samples[samples.length-1]:null;
-  let tx=Number(netBall.netX||netBall.x),ty=Number(netBall.netY||netBall.y),tz=Math.max(0,Number(netBall.netZ||0));
-  let tvx=Number(netBall.netVX||0),tvy=Number(netBall.netVY||0),tvz=Number(netBall.netVZ||0);
+  let auth={x:Number(netBall.netX||netBall.x),y:Number(netBall.netY||netBall.y),z:Math.max(0,Number(netBall.netZ||0)),
+    vx:Number(netBall.netVX||0),vy:Number(netBall.netVY||0),vz:Number(netBall.netVZ||0)};
   if(latest){
-    const age=clamp(now-latest.t,0,100);
-    const auth={x:latest.x,y:latest.y,z:latest.z||0,vx:latest.vx||0,vy:latest.vy||0,vz:latest.vz||0};
+    auth={x:Number(latest.x),y:Number(latest.y),z:Math.max(0,Number(latest.z||0)),
+      vx:Number(latest.vx||0),vy:Number(latest.vy||0),vz:Number(latest.vz||0)};
+    const age=clamp(now-Number(latest.t||now),0,70);
     stepFreeBallState(auth,age/(1000/60));
-    tx=auth.x;ty=auth.y;tz=auth.z;tvx=auth.vx;tvy=auth.vy;tvz=auth.vz;
   }
-  const err=Math.hypot(tx-netBall.x,ty-netBall.y);
-  const oldX=netBall.x,oldY=netBall.y;
-  let nextX,nextY;
-  if(err>180){nextX=tx;nextY=ty;netBall.z=tz;}
-  else{
-    const correction=err>90?.40:(err>38?.25:.12);
-    nextX=lerp(netBall.x,tx,correction);
-    nextY=lerp(netBall.y,ty,correction);
-    netBall.z=lerp(netBall.z||0,tz,err>40?.38:.28);
+  const err=Math.hypot(auth.x-Number(netBall.x||0),auth.y-Number(netBall.y||0));
+  if(err>120){
+    netBall.x=auth.x;netBall.y=auth.y;netBall.z=auth.z;
+  }else{
+    const k=err>48?.62:.46;
+    netBall.x=lerp(Number(netBall.x||0),auth.x,k);
+    netBall.y=lerp(Number(netBall.y||0),auth.y,k);
+    netBall.z=lerp(Number(netBall.z||0),auth.z,.55);
   }
-  const reconcile=netBall.kickReconcile;
-  if(reconcile&&now<Number(reconcile.until||0)){
-    const dx=Number(reconcile.dirX||0),dy=Number(reconcile.dirY||0);
-    const oldAlong=oldX*dx+oldY*dy;
-    const targetAlong=tx*dx+ty*dy;
-    const nextAlong=nextX*dx+nextY*dy;
-    if(targetAlong<oldAlong-1){
-      // 호스트 좌표가 아직 뒤라면 앞으로 가던 공을 되감지 않고 좌우 오차만 보정한다.
-      const sx=-dy,sy=dx;
-      const nextAcross=nextX*sx+nextY*sy;
-      nextX=dx*oldAlong+sx*nextAcross;
-      nextY=dy*oldAlong+sy*nextAcross;
-    }else if(targetAlong>=oldAlong-1&&Math.abs(targetAlong-oldAlong)<10){
-      netBall.kickReconcile=null;
-    }
-  }else if(reconcile){netBall.kickReconcile=null;}
-  netBall.x=nextX;netBall.y=nextY;
-  netBall.vx=lerp(netBall.vx||0,tvx,.22);
-  netBall.vy=lerp(netBall.vy||0,tvy,.22);
-  netBall.vz=lerp(netBall.vz||0,tvz,.24);
+  netBall.vx=lerp(Number(netBall.vx||0),auth.vx,.55);
+  netBall.vy=lerp(Number(netBall.vy||0),auth.vy,.55);
+  netBall.vz=lerp(Number(netBall.vz||0),auth.vz,.58);
 }
 
 
@@ -2790,8 +2743,10 @@ function drawParticles(){
 
 function drawHUD(){
   const now=Date.now();
-  let sec=Math.max(0,Math.ceil((durationMs-(now-startTs))/1000));
-  if(!startTs) sec=Math.ceil(durationMs/1000);
+  const roundPhase=String(soccerRoundController.current?.phase||'');
+  const clockRunning=roundPhase==='playing'&&matchDeadlineAt>0&&!gameOver;
+  const remaining=clockRunning?Math.max(0,matchDeadlineAt-now):Math.max(0,durationMs);
+  let sec=Math.ceil(remaining/1000);
   const lowTime=sec<=10&&gameActive&&!gameOver;
   const mm=String(Math.floor(sec/60)).padStart(2,'0');
   const ss=String(sec%60).padStart(2,'0');
@@ -2938,7 +2893,8 @@ function soccerCompatSnapshot(){
     phase:r.phase,roundId:r.id,kind:r.kind,seed:r.seed,beginsAt:r.beginsAt,endsAt:r.endsAt,
     resultUntil:r.resultUntil||0,kickoffAt:r.kickoffAt||0,winner:r.winner||'',tied:!!r.tied,
     roundScoreA:scoreA,roundScoreB:scoreB,scoreA:Number(score.A||0),scoreB:Number(score.B||0),
-    kickoffOwnerSid:String(r.kickoffOwnerSid||''),remainingMs:Math.max(0,Number(durationMs||120000)),
+    kickoffOwnerSid:String(r.kickoffOwnerSid||''),
+    remainingMs:soccerCompatMatchDeadlineAt>0?Math.max(0,soccerCompatMatchDeadlineAt-Date.now()):Math.max(0,Number(durationMs||MATCH_DURATION_MS)),
     serverNow:Date.now(),roundSerial:Number(r.serial||0),goalSerial:Number(soccerCompatGoalSerial||0),goalTeam:soccerCompatGoalResetTeam||'',
     selfRoundScore:Math.max(0,Number(soccerCompatScores[mySid]||0))
   };
@@ -2959,6 +2915,9 @@ function soccerCompatScheduleTick(){
 function soccerCompatStartRound(kind='initial'){
   if(!isHost)return;
   const restart=kind==='restart',now=Date.now(),beginsAt=now+520,endsAt=beginsAt+(restart?5000:10000);
+  if(!restart){
+    durationMs=MATCH_DURATION_MS;matchDeadlineAt=0;soccerCompatMatchDeadlineAt=0;gameOver=false;
+  }
   soccerCompatScores={};soccerCompatSeenSubmit={};
   soccerCompatRound={id:`compat-${restart?'r':'i'}-${++soccerCompatSerial}-${now}`,serial:soccerCompatSerial,kind:restart?'restart':'initial',
     seed:(Math.floor(Math.random()*2147483646)+1),phase:'quiz',beginsAt,endsAt,resultUntil:0,kickoffAt:0,winner:'',tied:false,kickoffOwnerSid:''};
@@ -2967,13 +2926,24 @@ function soccerCompatStartRound(kind='initial'){
 function soccerCompatTick(){
   if(!isHost||!soccerCompatRound)return;
   const r=soccerCompatRound,now=Date.now();
+  if(r.phase==='playing'&&soccerCompatMatchDeadlineAt>0&&now>=soccerCompatMatchDeadlineAt){
+    r.phase='over';durationMs=0;matchDeadlineAt=now;
+    const finalSnap=soccerCompatSnapshot();
+    applySoccerRoundSnapshot(finalSnap);
+    soccerCompatBroadcast();
+    soccerCompatScheduleTick();
+    return;
+  }
   if(r.phase==='quiz'&&now>=r.endsAt+150){
     let a=0,b=0;for(const [sid,v] of Object.entries(soccerCompatScores)){if(soccerCompatTeamOfSid(sid)==='A')a+=Number(v||0);else b+=Number(v||0);}
     r.tied=a===b;r.winner=r.tied?((r.seed&1)?'A':'B'):(a>b?'A':'B');r.kickoffOwnerSid=soccerCompatOwnerForTeam(r.winner);
     // Keep the decision readable without freezing the field for six extra seconds.
     r.phase='result';r.resultUntil=now+1600;r.kickoffAt=r.resultUntil+1900;soccerCompatBroadcast();
   }else if(r.phase==='result'&&now>=r.resultUntil){r.phase='countdown';soccerCompatBroadcast();
-  }else if(r.phase==='countdown'&&now>=r.kickoffAt){r.phase='playing';soccerCompatBroadcast();
+  }else if(r.phase==='countdown'&&now>=r.kickoffAt){
+    r.phase='playing';
+    if(!soccerCompatMatchDeadlineAt)soccerCompatMatchDeadlineAt=now+Math.max(0,Number(durationMs||MATCH_DURATION_MS));
+    soccerCompatBroadcast();
   }else{
     // Heartbeat lets reloads/late iframe initialization recover the current round
     // from the legacy relay without any Worker-side cache/API additions.
@@ -3000,11 +2970,19 @@ function soccerCompatHandlePlayers(map){
       const p=st&&st.__soccerCompat;if(p&&p.kind==='submit')soccerCompatAcceptSubmit(sid,p);
     }
   }
-  let hostPacket=null;
-  if(soccerCompatHostSid&&map[soccerCompatHostSid]?.__soccerCompat?.kind==='state')hostPacket=map[soccerCompatHostSid].__soccerCompat;
-  if(!hostPacket){
-    for(const [sid,st] of Object.entries(map)){const p=st&&st.__soccerCompat;if(p&&p.kind==='state'&&String(p.hostSid||'')===String(sid)){hostPacket=p;soccerCompatHostSid=String(sid);break;}}
+  let hostState=null,hostPacket=null;
+  if(soccerCompatHostSid&&map[soccerCompatHostSid]?.__soccerCompat?.kind==='state'){
+    hostState=map[soccerCompatHostSid];hostPacket=hostState.__soccerCompat;
   }
+  if(!hostPacket){
+    for(const [sid,st] of Object.entries(map)){
+      const p=st&&st.__soccerCompat;
+      if(p&&p.kind==='state'&&String(p.hostSid||'')===String(sid)){
+        hostState=st;hostPacket=p;soccerCompatHostSid=String(sid);break;
+      }
+    }
+  }
+  if(hostState?.__soccerBall)applyAuthoritativeBallSnapshot(hostState.__soccerBall);
   if(hostPacket){
     // Apply the goal-center serial before the ordinary PLAYING heartbeat. This clears
     // a guest's stale localKickTrack even when the soccer-specific Worker packets are unavailable.
@@ -3016,95 +2994,8 @@ function soccerCompatHandlePlayers(map){
   }
 }
 
-/* ── 브릿지 메시지 수신 ── */
-window.addEventListener('message', e=>{
-  const d = e.data;
-  if (!d || typeof d !== 'object') return;
 
-  if(d.type==='audio_pref'){setSoccerAudioAllowed(!!d.enabled);return;}
-  if(d.type==='stop_audio'){setSoccerAudioAllowed(false);return;}
-
-  if (d.type === 'bridge_init'){
-    // 협동게임용 정식 초기화에는 sessionId가 반드시 있다.
-    // 다른 게임의 범용 bridge_init이 먼저 들어오면 빈 sid로 초기화되어
-    // 경기장만 보이고 조작/퀴즈가 멈출 수 있으므로 무시한다.
-    if(!d.sessionId) return;
-    mySid = String(d.sessionId||'');
-    myNick = String(d.nick||'Player');
-    mySeat = Number(d.seat ?? -1);
-    isHost = !!d.isHost || (mySeat===0);
-
-    const incoming = (d.players||[]).map(p=>({
-      sid: String(p.sid||p.sessionId||''),
-      nick: String(p.nick||'Player'),
-      seat: Number(p.seat ?? -1),
-      isHost: !!p.isHost,
-    })).filter(p=>p.seat>=0);
-
-    if (gameInitialized){
-      applyRoster(incoming);
-      flushPendingSoccerSnapshot();
-      // 부모가 bridge_init 직후 보낸 sync 응답은 느린 iframe에서 초기화보다
-      // 먼저 도착할 수 있다. iframe 자신도 매 init마다 권위 상태를 재요청한다.
-      if(isHost){ if(!soccerCompatRound)soccerCompatStartRound('initial'); else soccerCompatBroadcast(); }
-      return;
-    }
-    gameInitialized = true;
-    roster = incoming;
-    soccerCompatHostSid=String(incoming.find(p=>p.isHost)?.sid||incoming.find(p=>p.seat===0)?.sid||'');
-    const sAt = Number(d.startedAt||0);
-    // startedAt=0 means the Worker-owned quiz has not opened play yet. Treating it
-    // as Date.now() made the match clock count down on a permanently locked field
-    // whenever an old Worker failed to send sc_round_state.
-    startTs = sAt>0 ? sAt : 0;
-    initGame();
-    flushPendingSoccerSnapshot();
-    // Do not depend on new Worker soccer-round packets. The room host starts the
-    // compatible round authority over the legacy generic relay.
-    if(isHost) setTimeout(()=>{ if(!soccerCompatRound) soccerCompatStartRound('initial'); },80);
-    return;
-  }
-
-  // room.js는 room.state.players(방 전체의 실시간 상태)를 감시하다가 방장이
-  // 바뀔 때마다 이 메시지를 보내준다 — 투게스터 등 다른 협동 게임들이 방장
-  // 승계를 안정적으로 처리하는 데 쓰는 바로 그 채널이다. sc_roster는 축구
-  // 전용 보조 채널이라 타이밍이 늦거나 빠질 수 있으니, 항상 이걸 1차 소스로
-  // 삼는다.
-  if (d.type === 'bridge_host'){
-    const prevHost = isHost;
-    isHost = !!d.isHost;
-    soccerCompatHostSid=String(d.hostSessionId||soccerCompatHostSid||'');
-    if (isHost && !prevHost){
-      // 막 방장이 됐다면, 기존에 보던 netBall 위치/속도를 그대로 물려받아
-      // 공이 순간이동하듯 튀지 않게 하고, 즉시 공 계산을 이어받는다.
-      ball = { x:netBall.x, y:netBall.y, z:netBall.z||0, vx:netBall.vx||0, vy:netBall.vy||0, vz:netBall.vz||0,
-        owner:netBall.owner||null, ownerUntil:Date.now()+120 };
-      hostBallSeq=Math.max(hostBallSeq,Number(netBall.lastAcceptedBallSeq||0));
-      lastBallSpeedSeen = Math.hypot(ball.vx, ball.vy);
-      if(!soccerCompatRound)soccerCompatStartRound(mathKickoff.kind==='restart'?'restart':'initial'); else soccerCompatBroadcast();
-    }
-    return;
-  }
-
-  if (d.type === 'sc_compat_players'){
-    soccerCompatHandlePlayers(d.players||{});
-    return;
-  }
-
-
-
-  if (d.type === 'sc_players'){
-    const hasUrgentAction=Object.values(d.players||{}).some(s=>s&&(s.kickAt||s.headerAt||s.tackleAt||s.claimAt));
-    applyRemotePlayers(d.players);
-    // 게스트 액션이 도착했는데 다음 requestAnimationFrame까지 기다리면 네트워크
-    // 왕복 뒤 최대 16ms가 더 붙는다. 액션 edge가 든 패킷만 호스트 판정을
-    // 같은 메시지 호출 안에서 한 번 진행한다. 각 edge id의 _last* 검사 때문에
-    // 다음 일반 프레임에서 힘이 중복 적용되지는 않는다.
-    if(isHost&&hasUrgentAction)updateBallHost(false);
-    return;
-  }
-
-  if (d.type === 'sc_ball'){
+function applyAuthoritativeBallSnapshot(d){
     const now=Date.now();
     if(isRoundLocked(now)){
       netBall.owner=null;localKickTrack=null;localDribbleVisualUntil=0;
@@ -3221,7 +3112,99 @@ window.addEventListener('message', e=>{
       lastBallSpeedSeen=Math.hypot(netBall.vx,netBall.vy);
     }
     return;
+  
+}
+
+/* ── 브릿지 메시지 수신 ── */
+window.addEventListener('message', e=>{
+  const d = e.data;
+  if (!d || typeof d !== 'object') return;
+
+  if(d.type==='audio_pref'){setSoccerAudioAllowed(!!d.enabled);return;}
+  if(d.type==='stop_audio'){setSoccerAudioAllowed(false);return;}
+
+  if (d.type === 'bridge_init'){
+    // 협동게임용 정식 초기화에는 sessionId가 반드시 있다.
+    // 다른 게임의 범용 bridge_init이 먼저 들어오면 빈 sid로 초기화되어
+    // 경기장만 보이고 조작/퀴즈가 멈출 수 있으므로 무시한다.
+    if(!d.sessionId) return;
+    mySid = String(d.sessionId||'');
+    myNick = String(d.nick||'Player');
+    mySeat = Number(d.seat ?? -1);
+    isHost = !!d.isHost || (mySeat===0);
+
+    const incoming = (d.players||[]).map(p=>({
+      sid: String(p.sid||p.sessionId||''),
+      nick: String(p.nick||'Player'),
+      seat: Number(p.seat ?? -1),
+      isHost: !!p.isHost,
+    })).filter(p=>p.seat>=0);
+
+    if (gameInitialized){
+      applyRoster(incoming);
+      flushPendingSoccerSnapshot();
+      // 부모가 bridge_init 직후 보낸 sync 응답은 느린 iframe에서 초기화보다
+      // 먼저 도착할 수 있다. iframe 자신도 매 init마다 권위 상태를 재요청한다.
+      if(isHost){ if(!soccerCompatRound)soccerCompatStartRound('initial'); else soccerCompatBroadcast(); }
+      return;
+    }
+    gameInitialized = true;
+    roster = incoming;
+    soccerCompatHostSid=String(incoming.find(p=>p.isHost)?.sid||incoming.find(p=>p.seat===0)?.sid||'');
+    const sAt = Number(d.startedAt||0);
+    // startedAt=0 means the Worker-owned quiz has not opened play yet. Treating it
+    // as Date.now() made the match clock count down on a permanently locked field
+    // whenever an old Worker failed to send sc_round_state.
+    startTs = sAt>0 ? sAt : 0;
+    if(sAt>0&&!matchDeadlineAt)matchDeadlineAt=sAt+durationMs;
+    initGame();
+    flushPendingSoccerSnapshot();
+    // Do not depend on new Worker soccer-round packets. The room host starts the
+    // compatible round authority over the legacy generic relay.
+    if(isHost) setTimeout(()=>{ if(!soccerCompatRound) soccerCompatStartRound('initial'); },80);
+    return;
   }
+
+  // room.js는 room.state.players(방 전체의 실시간 상태)를 감시하다가 방장이
+  // 바뀔 때마다 이 메시지를 보내준다 — 투게스터 등 다른 협동 게임들이 방장
+  // 승계를 안정적으로 처리하는 데 쓰는 바로 그 채널이다. sc_roster는 축구
+  // 전용 보조 채널이라 타이밍이 늦거나 빠질 수 있으니, 항상 이걸 1차 소스로
+  // 삼는다.
+  if (d.type === 'bridge_host'){
+    const prevHost = isHost;
+    isHost = !!d.isHost;
+    soccerCompatHostSid=String(d.hostSessionId||soccerCompatHostSid||'');
+    if (isHost && !prevHost){
+      // 막 방장이 됐다면, 기존에 보던 netBall 위치/속도를 그대로 물려받아
+      // 공이 순간이동하듯 튀지 않게 하고, 즉시 공 계산을 이어받는다.
+      ball = { x:netBall.x, y:netBall.y, z:netBall.z||0, vx:netBall.vx||0, vy:netBall.vy||0, vz:netBall.vz||0,
+        owner:netBall.owner||null, ownerUntil:Date.now()+120 };
+      hostBallSeq=Math.max(hostBallSeq,Number(netBall.lastAcceptedBallSeq||0));
+      lastBallSpeedSeen = Math.hypot(ball.vx, ball.vy);
+      if(!soccerCompatRound)soccerCompatStartRound(mathKickoff.kind==='restart'?'restart':'initial'); else soccerCompatBroadcast();
+    }
+    return;
+  }
+
+  if (d.type === 'sc_compat_players'){
+    soccerCompatHandlePlayers(d.players||{});
+    return;
+  }
+
+
+
+  if (d.type === 'sc_players'){
+    const hasUrgentAction=Object.values(d.players||{}).some(s=>s&&(s.kickAt||s.headerAt||s.tackleAt||s.claimAt));
+    applyRemotePlayers(d.players);
+    // 게스트 액션이 도착했는데 다음 requestAnimationFrame까지 기다리면 네트워크
+    // 왕복 뒤 최대 16ms가 더 붙는다. 액션 edge가 든 패킷만 호스트 판정을
+    // 같은 메시지 호출 안에서 한 번 진행한다. 각 edge id의 _last* 검사 때문에
+    // 다음 일반 프레임에서 힘이 중복 적용되지는 않는다.
+    if(isHost&&hasUrgentAction)updateBallHost(false);
+    return;
+  }
+
+  if (d.type === 'sc_ball'){ applyAuthoritativeBallSnapshot(d); return; }
 
   if (d.type === 'sc_goal'){
     // Legacy/newer Workers may still echo sc_goal. Never start another math quiz after

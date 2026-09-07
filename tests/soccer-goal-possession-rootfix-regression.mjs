@@ -16,5 +16,5 @@ ok(round.includes('goalSerial:')&&round.includes('goalTeam:'),'round snapshots p
 ok(room.includes('const soccerLegacyActionSticky')&&room.includes('soccerLegacyActionSticky.until=now+760'),'short soccer actions survive aggregate overwrite window');
 ok(room.includes('...(stickyAction||{})'),'sticky action rides normal movement snapshots');
 ok(!room.includes('room.send("sc_pos"'),'soccer still avoids Worker-specific position dependency');
-ok(html.includes('game.js?v=20260907-goal-possession-rootfix1'),'soccer cache bust advanced');
-ok(roomHtml.includes('room.js?v=20260907-starpaint-respawn-lifecycle1'),'room bridge cache bust advanced');
+ok(html.includes('game.js?v=20260907-ball-clock-rootfix1'),'soccer cache bust advanced');
+ok(roomHtml.includes('room.js?v=20260907-soccer-ball-clock-rootfix1'),'room bridge cache bust advanced');

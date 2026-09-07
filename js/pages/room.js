@@ -1009,7 +1009,7 @@ function updatePreview(modeId){
   }
 
   const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
-  const soccerLegacyRelayState = { round:null, pos:null };
+  const soccerLegacyRelayState = { round:null, pos:null, ball:null };
   const soccerLegacyActionSticky = { until:0, fields:null };
   function soccerStickyActionFields(d){
     const event=!!(d?.kickAt||d?.headerAt||d?.tackleAt||d?.claimAt);
@@ -1030,7 +1030,7 @@ function updatePreview(modeId){
     return null;
   }
   function sendSoccerLegacyRelay(){
-    try{ room.send("tg_state", { state:{ __soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos } }); }catch(_){ }
+    try{ room.send("tg_state", { state:{ __soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos, __soccerBall:soccerLegacyRelayState.ball } }); }catch(_){ }
   }
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
@@ -1613,13 +1613,16 @@ function updatePreview(modeId){
     }
     if (d.type === "sc_ball"){
       if (!fromMainForSoccer) return;
-      try{ room.send("sc_ball", {
+      // Keep the authoritative ball in the same combined legacy state as round + player.
+      // This avoids a second soccer-specific transport whose delivery can differ per client.
+      soccerLegacyRelayState.ball = {
         x:Number(d.x||0), y:Number(d.y||0), z:Number(d.z||0),
         vx:Number(d.vx||0), vy:Number(d.vy||0), vz:Number(d.vz||0), owner:d.owner||null,
         sentAt:Number(d.sentAt||Date.now()), ballSeq:Number(d.ballSeq||0),
         impactAt:String(d.impactAt||""), impactPower:Number(d.impactPower||0), impactDir:Number(d.impactDir||0),
         restartText:String(d.restartText||""), restartUntil:Number(d.restartUntil||0), restartSerial:Number(d.restartSerial||0)
-      }); }catch(_){ }
+      };
+      sendSoccerLegacyRelay();
       return;
     }
     if (d.type === "sc_goal"){
@@ -2861,7 +2864,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-respawn-lifecycle-rootfix" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-respawn-paint-lifecycle-rootfix" : `&_m=${Date.now()}`;
   const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
   const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
