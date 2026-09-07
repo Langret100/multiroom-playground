@@ -17,4 +17,4 @@ ok(room.includes('const soccerLegacyActionSticky')&&room.includes('soccerLegacyA
 ok(room.includes('...(stickyAction||{})'),'sticky action rides normal movement snapshots');
 ok(!room.includes('room.send("sc_pos"'),'soccer still avoids Worker-specific position dependency');
 ok(html.includes('game.js?v=20260907-goal-possession-rootfix1'),'soccer cache bust advanced');
-ok(roomHtml.includes('room.js?v=20260907-starpaint-precision-sync-fx-return1'),'room bridge cache bust advanced');
+ok(roomHtml.includes('room.js?v=20260907-starpaint-single-action-starfx1'),'room bridge cache bust advanced');

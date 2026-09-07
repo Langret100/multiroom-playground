@@ -12,8 +12,8 @@ ok(preview.includes("spawnFx('itemuse'")&&preview.includes("spawnFx('itemflare'"
 ok(src.includes('localPredictedStart')&&src.includes('ev.useStart')&&src.includes('ev.useSeq'),'same-use authoritative start FX dedupe missing');
 const ms=src.indexOf('function mergeRemotePlayers('), me=src.indexOf('function applyPlayerSnapshots',ms);
 const merge=src.slice(ms,me);
-ok(merge.includes('predictedUseAck')&&merge.includes('suppressAuthoritativeActionUntil'),'authoritative action replay suppression missing');
-ok(merge.includes('p.actionUntil=0;p.actionState=null;p.actionItem=null'),'same use sequence still restarts local action');
+ok(merge.includes('handledOwnUse')&&merge.includes('localVisualHandledUseSeq'),'authoritative action replay suppression missing');
+ok(merge.includes('if(handledOwnUse){p.actionUntil=0;p.actionState=null;p.actionItem=null}'),'same use sequence still restarts local action');
 
 // Respawn must choose an alive top block instead of falling through a destroyed fixed spawn column.
 const rs=src.indexOf('function chooseRespawnSpot('), re=src.indexOf('function previewGuestRespawn',rs);

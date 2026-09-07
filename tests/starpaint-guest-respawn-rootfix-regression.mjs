@@ -10,7 +10,7 @@ const fnSrc=src.slice(fnStart,fnEnd);
 const respawnCheck=fnSrc.indexOf('const respawnSeq=');
 const moveSeqCheck=fnSrc.indexOf('if(seq&&seq<=');
 ok(respawnCheck>=0&&moveSeqCheck>=0&&respawnCheck<moveSeqCheck,'respawn sequence must be consumed before stale movement rejection');
-ok(fnSrc.includes('if(respawnSeq&&respawnSeq!==lastRespawnSeq)') && fnSrc.includes('if(p.deadUntil>Date.now()){respawn(p);continue}'),'host-authoritative respawn sequence path missing');
+ok(fnSrc.includes('if(seq32Newer(respawnSeq,lastRespawnSeq))') && fnSrc.includes('if(p.deadUntil>Date.now()){respawn(p);continue}'),'host-authoritative monotonic respawn sequence path missing');
 
 // Execute the real applyPlayerSnapshots function body for the critical case:
 // the guest is dead and the forced respawn snapshot has a stale movement seq.
@@ -27,7 +27,8 @@ const context={
   remoteHistory:{},
   recordRemoteSnapshot(){},
   performance:{now:()=>0},
-  console
+  console,
+  seq32Newer(next,prev){next=Number(next)>>>0;prev=Number(prev)>>>0;const d=(next-prev)>>>0;return d!==0&&d<0x80000000}
 };
 vm.createContext(context);
 vm.runInContext(fnSrc,context);

@@ -4,7 +4,7 @@ const checks=[
  ['separate local predicted dash clock', /localPredictedDashUntil/],
  ['movement uses effective one-shot dash', /effectiveDashUntil=Math\.max\(Number\(p\.dashUntil\)\|\|0,localDashUntil\)/],
  ['preview does not restart authoritative dashUntil', /if\(t==='dash'\)\{p\.localPredictedDashUntil=now\+430/],
- ['same use ack blocks authoritative dash restart', /samePredictedUse&&p\.localPredictedItem==='dash'\)\{p\.dashUntil=0\}/],
+ ['same use ack blocks authoritative dash restart', /handledOwnUse&&p\.localPredictedItem==='dash'\)p\.dashUntil=0/],
  ['predicted projectile collection exists', /predictedProjectiles:\[\]/],
  ['projectile preview updates before host state', /function updatePredictedProjectiles\(dt\)/],
  ['chargeable use previews projectile instantly', /addPredictedProjectile\(p,t,aim,seq,now\)/],
