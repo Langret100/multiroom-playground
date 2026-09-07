@@ -3,12 +3,13 @@ import vm from 'node:vm';
 const src=fs.readFileSync(new URL('../games/starpaint/index.html', import.meta.url),'utf8');
 const ok=(v,m)=>{if(!v)throw new Error(m)};
 
-// Guest use prediction must not replay the authoritative FX locally.
+// Guest use prediction should render immediately, while same-use authoritative start FX is deduplicated.
 const ps=src.indexOf('function previewGuestItemUse('), pe=src.indexOf('const keyMap=',ps);
 ok(ps>=0&&pe>ps,'previewGuestItemUse missing');
 const preview=src.slice(ps,pe);
 ok(preview.includes('localPredictedUseSeq=seq')&&preview.includes('localPredictedItem=t'),'predicted use sequence/item missing');
-ok(!preview.includes("spawnFx('itemuse'")&&!preview.includes('playItemSound('),'guest prediction still duplicates authoritative use FX/sound');
+ok(preview.includes("spawnFx('itemuse'")&&preview.includes("spawnFx('itemflare'"),'guest item use no longer renders immediately');
+ok(src.includes('localPredictedStart')&&src.includes('ev.useStart')&&src.includes('ev.useSeq'),'same-use authoritative start FX dedupe missing');
 const ms=src.indexOf('function mergeRemotePlayers('), me=src.indexOf('function applyPlayerSnapshots',ms);
 const merge=src.slice(ms,me);
 ok(merge.includes('predictedUseAck')&&merge.includes('suppressAuthoritativeActionUntil'),'authoritative action replay suppression missing');

@@ -968,6 +968,24 @@ function updatePreview(modeId){
     }
   }
 
+  function returnStarpaintToRoomLobbyLocal(){
+    try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
+    window.__starpaintLocalBackTimer = null;
+    try{ exitGameFullscreen(); }catch(_){ }
+    try{ stopGameBgm(); }catch(_){ }
+    try{ hideResultOverlay(); }catch(_){ }
+    try{ showDuelUI(false); }catch(_){ }
+    try{ duel.active=null; duel.meta=null; }catch(_){ }
+    try{ coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.iframeLoaded=false; coop.iframeReady=false; coop.level=1; }catch(_){ }
+    try{ isReady=false; }catch(_){ }
+    try{ postToAllIframes({ type:'duel_back' }); }catch(_){ }
+    try{ if(duel.iframeEl) duel.iframeEl.src='about:blank'; }catch(_){ }
+  }
+  function scheduleStarpaintLocalReturn(delay=1950){
+    try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
+    window.__starpaintLocalBackTimer=setTimeout(()=>{ try{ returnStarpaintToRoomLobbyLocal(); }catch(_){ } },Math.max(0,Number(delay)||0));
+  }
+
   // iframe -> parent bridge
   let lastDuelStateSent = 0;
   let lastTgStateSent = 0;
@@ -1509,8 +1527,14 @@ function updatePreview(modeId){
       starpaintCompatSyncUntil = Date.now() + 1800;
       return;
     }
+    if (d.type === 'pb_finish_visible'){
+      if (!fromMainForPb || !pbModeLikely) return;
+      scheduleStarpaintLocalReturn(1950);
+      return;
+    }
     if (d.type === "pb_over"){
       if (!fromMainForPb || !pbModeLikely) return;
+      scheduleStarpaintLocalReturn(1950);
       try{ room.send("pb_over", { winnerSeat:Number(d.winnerSeat)||0, scores:Array.isArray(d.scores)?d.scores:[] }); }catch(_){ }
       return;
     }
@@ -2837,7 +2861,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-instant-use-dash-once-rootfix" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-precision-sync-fx-return-rootfix" : `&_m=${Date.now()}`;
   const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
   const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
@@ -3397,10 +3421,7 @@ try{
         // StarPaint owns its winner scene. Keep it visible for about 2 seconds,
         // then return only the local game UI to the room. The deployed Worker
         // will still authoritatively reset phase/ready with its later backToRoom.
-        try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
-        window.__starpaintLocalBackTimer = setTimeout(()=>{
-          try{ returnToRoomLobbyLocal(); }catch(_){ }
-        }, 2000);
+        scheduleStarpaintLocalReturn(1950);
       });
 
       // SnakeTail relay: server -> iframe
@@ -3475,24 +3496,12 @@ try{
         try{ stopGameBgm(); }catch(_){ }
         // StarPaint has its own winner character/name scene. Do not cover it with
         // the generic room result overlay during the 2-second finish window.
-        if (String(r?.mode || "") !== "starpaint") showResultOverlay(r);
+        const starpaintResultActive=String(r?.mode||'')==='starpaint'||String(coop?.meta?.id||'')==='starpaint'||String(room?.state?.mode||'')==='starpaint';
+        if (!starpaintResultActive) showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });
       });
-      function returnToRoomLobbyLocal(){
-        try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
-        window.__starpaintLocalBackTimer = null;
-        try{ exitGameFullscreen(); }catch(_){ }
-        try{ stopGameBgm(); }catch(_){ }
-        hideResultOverlay();
-        showDuelUI(false);
-        duel.active=null; duel.meta=null;
-        coop.active=false; coop.practice=false; coop.meta=null; coop.mxFrameWin=null; coop.soccerFrameWin=null; coop.iframeLoaded=false; coop.iframeReady=false;
-        coop.level = 1;
-        isReady = false;
-        postToAllIframes({ type: "duel_back" });
-        if(duel.iframeEl) duel.iframeEl.src="about:blank";
-      }
+      function returnToRoomLobbyLocal(){ returnStarpaintToRoomLobbyLocal(); }
       room.onMessage("backToRoom", ()=> {
         // Existing servers may still send this later (e.g. 6.5s). The cleanup is
         // idempotent, so a late legacy backToRoom is harmless after the local 2s return.
