@@ -710,6 +710,9 @@ function updatePreview(modeId){
     starpaintCompatStateCache = null;
     starpaintCompatSyncUntil = 0;
     lastStarpaintMoveSent = 0;
+    clearTimeout(starpaintMoveTimer);
+    starpaintMoveTimer = null;
+    starpaintPendingMove = null;
   }
 
   function updateBracketUI(){
@@ -991,6 +994,8 @@ function updatePreview(modeId){
   let lastTgStateSent = 0;
   let lastBrStateSent = 0;
   let lastStarpaintMoveSent = 0;
+  let starpaintMoveTimer = null;
+  let starpaintPendingMove = null;
   let starpaintNativePbStateSeen = false;
   let starpaintCompatStateNeeded = false;
   let starpaintCompatProbeStartedAt = 0;
@@ -1485,18 +1490,28 @@ function updatePreview(modeId){
       if (!fromMainForPb || !pbModeLikely) return;
       // Movement uses the exact same proven relay shape as Togester:
       // client snapshot -> tg_state -> server aggregate -> tg_players (~20Hz).
-      const now = Date.now();
-      if (now - lastStarpaintMoveSent < 40) return;
-      lastStarpaintMoveSent = now;
-      try{
-        const relayState = { __starpaintMove:d.player || {} };
-        // GitHub-only compatibility must ride in the SAME tg_state record as movement.
-        // RoomDO keeps only the latest per-player tg_state, so separate sync/state
-        // packets can be overwritten by the next 40ms movement packet before broadcast.
-        if (Date.now() < starpaintCompatSyncUntil) relayState.__starpaintSyncReq = Date.now();
-        if (getMyIsHost() && starpaintCompatStateNeeded && starpaintCompatStateCache) relayState.__starpaintState = starpaintCompatStateCache;
-        room.send("tg_state", { state:relayState });
-      }catch(_){ }
+      // The unchanged Worker rejects tg_state packets less than 40ms apart.
+      // Coalesce into the earliest available slot instead of dropping a forced action
+      // or sending it into the Worker's rate limiter. Keep the action pose in the snapshot.
+      starpaintPendingMove = d.player || {};
+      if (!starpaintMoveTimer){
+        const flush = ()=>{
+          starpaintMoveTimer = null;
+          const player = starpaintPendingMove;
+          starpaintPendingMove = null;
+          if (!player) return;
+          lastStarpaintMoveSent = Date.now();
+          try{
+            const relayState = { __starpaintMove:player };
+            if (Date.now() < starpaintCompatSyncUntil) relayState.__starpaintSyncReq = Date.now();
+            if (getMyIsHost() && starpaintCompatStateNeeded && starpaintCompatStateCache) relayState.__starpaintState = starpaintCompatStateCache;
+            room.send("tg_state", { state:relayState });
+          }catch(_){ }
+        };
+        const wait = Math.max(0, 42 - (Date.now() - lastStarpaintMoveSent));
+        if (wait) starpaintMoveTimer = setTimeout(flush, wait);
+        else flush();
+      }
       return;
     }
     if (d.type === "pb_input"){
@@ -2864,7 +2879,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-respawn-paint-lifecycle-rootfix" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-guest-item-legacy-verified-v3" : `&_m=${Date.now()}`;
   const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
   const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
