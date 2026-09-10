@@ -1049,6 +1049,7 @@ function updatePreview(modeId){
     const isTgPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("tg_")) && d.gameId === "togester";
     const isSoccerPacket = SOCCER_BRIDGE_TYPES.has(String(d.type||""));
     const isPbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("pb_")) && (!d.gameId || d.gameId === "starpaint");
+    const isWbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("wb_")) && (!d.gameId || d.gameId === "waterblast");
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
     const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
     const fromStoredMxWin = !!(coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
@@ -1060,6 +1061,7 @@ function updatePreview(modeId){
     const tgModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='togester') || (duel?.iframeEl && /embedGame=togester/.test(String(duel.iframeEl.src || ''))));
     const soccerModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='soccer') || (duel?.iframeEl && /embedGame=soccer/.test(String(duel.iframeEl.src || ''))));
     const pbModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='starpaint') || (duel?.iframeEl && /embedGame=starpaint/.test(String(duel.iframeEl.src || ''))));
+    const wbModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='waterblast') || (duel?.iframeEl && /embedGame=waterblast/.test(String(duel.iframeEl.src || ''))));
     const coopOriginOk = !e.origin || e.origin === location.origin;
     // 일부 모바일 WebView는 iframe postMessage의 e.source를 null로 전달한다.
     // 현재 게임 모드 + 동일 출처 + 명시적 gameId가 모두 일치할 때만 보조 경로를 연다.
@@ -1075,6 +1077,8 @@ function updatePreview(modeId){
     const fromMainForSoccer = fromMain || fromStoredSoccerWin || fromSoccerCoopFallback;
     const fromPbCoopFallback = !!(isPbPacket && pbModeLikely && coopOriginOk && !fromCpu);
     const fromMainForPb = fromMain || fromPbCoopFallback;
+    const fromWbCoopFallback = !!(isWbPacket && wbModeLikely && coopOriginOk && !fromCpu);
+    const fromMainForWb = fromMain || fromWbCoopFallback;
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
     }
@@ -1132,7 +1136,7 @@ function updatePreview(modeId){
     if (d.type === "bridge_ready"){
       if(fromMain) focusGameIframeSoon();
       // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
-      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback || fromPbCoopFallback){
+      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback || fromPbCoopFallback || fromWbCoopFallback){
         duel.iframeReady = true;
         coop.iframeReady = true;
       }
@@ -1151,8 +1155,8 @@ function updatePreview(modeId){
       // StarPaint posts bridge_ready from its running script before heavy assets are loaded.
       // For StarPaint that signal is sufficient to initialize the bridge immediately;
       // waiting for iframe.onload needlessly serializes networking behind document resources.
-      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb);
-      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coopInitReady){
+      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb || fromMainForWb);
+      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || fromMainForWb || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coopInitReady){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
@@ -1482,6 +1486,30 @@ function updatePreview(modeId){
         success: !!d.success,
         reason: d.reason
       });
+      return;
+    }
+
+    // WaterBlast: reuse the deployed generic tg_state/tg_players relay.
+    // No Worker change is required; data stays namespaced under __waterblast*.
+    if (d.type === "wb_state"){
+      if (!fromMainForWb || !wbModeLikely) return;
+      const now = Date.now();
+      if (!coop._waterblastLastSent) coop._waterblastLastSent = 0;
+      if (now - coop._waterblastLastSent >= 45){
+        coop._waterblastLastSent = now;
+        try{ room.send("tg_state", { state:d.state || {} }); }catch(_){ }
+      }
+      return;
+    }
+    if (d.type === "wb_over"){
+      if (!fromMainForWb || !wbModeLikely) return;
+      // The current Worker already ends any playing room on tg_over. The embedded
+      // game owns its winner scene, so this is used only to reset phase/ready.
+      try{ room.send("tg_over", { success:true, reason:"waterblast" }); }catch(_){ }
+      return;
+    }
+    if (d.type === "wb_quit"){
+      if (!fromMainForWb || !wbModeLikely) return;
       return;
     }
 
@@ -2019,10 +2047,10 @@ function updatePreview(modeId){
     // StarPaint keeps gameplay authority in the current host, but its iframe also
     // needs the live room roster so departed players cannot remain as stale actors.
     try{
-      if (coop?.active && coop?.meta?.id === "starpaint" && phase !== "lobby" && duel?.iframeEl){
+      if (coop?.active && (coop?.meta?.id === "starpaint" || coop?.meta?.id === "waterblast") && phase !== "lobby" && duel?.iframeEl){
         postToMain({
           type: "bridge_roster",
-          gameId: "starpaint",
+          gameId: String(coop.meta.id),
           players: entries.map(([sid,p])=>({
             sessionId: String(sid),
             nick: p?.nick ? String(p.nick) : String(sid).slice(0,4),
@@ -2568,7 +2596,7 @@ function sendCoopBridgeInit(){
     // Soccer/StarPaint bridge_init은 room.state.players가 늦어도 반드시 내 항목을 포함한다.
     // StarPaint는 이후 bridge_roster가 실시간 참가자 명단을 보완한다.
     try{
-      if ((coop?.meta?.id === 'soccer' || coop?.meta?.id === 'starpaint') && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
+      if ((coop?.meta?.id === 'soccer' || coop?.meta?.id === 'starpaint' || coop?.meta?.id === 'waterblast') && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
         arr.push({
           sessionId:String(mySessionId),
           nick:myNick || 'Player',
@@ -3352,9 +3380,12 @@ try{
       room.onMessage("tg_players", (msg)=>{
         const playerMap = msg.players || {};
         const relayModeId = String(coop?.meta?.id || room?.state?.mode || "");
-        // StarPaint consumes only its namespaced movement slice below. Avoid also
-        // posting the full Togester aggregate into the StarPaint iframe every tick.
-        if (relayModeId !== "starpaint") postToMain({ type:"tg_players", players: playerMap });
+        // Keep each embedded game's transport surface isolated. WaterBlast reuses
+        // the deployed aggregate relay only on the server side, then receives a
+        // game-specific message inside its iframe. Existing games keep their
+        // previous tg_players behavior unchanged.
+        if (relayModeId === "waterblast") postToMain({ type:"wb_players", gameId:"waterblast", players: playerMap });
+        else if (relayModeId !== "starpaint") postToMain({ type:"tg_players", players: playerMap });
         // StarPaint only reuses the existing aggregate movement relay. The data is
         // namespaced inside the packet and consumed only while this room is in StarPaint.
         try{
@@ -3514,7 +3545,7 @@ try{
         try{ stopGameBgm(); }catch(_){ }
         // StarPaint has its own winner character/name scene. Do not cover it with
         // the generic room result overlay during the 2-second finish window.
-        const starpaintResultActive=String(r?.mode||'')==='starpaint'||String(coop?.meta?.id||'')==='starpaint'||String(room?.state?.mode||'')==='starpaint';
+        const starpaintResultActive=String(r?.mode||'')==='starpaint'||String(coop?.meta?.id||'')==='starpaint'||String(room?.state?.mode||'')==='starpaint'||String(coop?.meta?.id||'')==='waterblast'||String(room?.state?.mode||'')==='waterblast';
         if (!starpaintResultActive) showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });

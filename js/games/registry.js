@@ -2,6 +2,16 @@
   // Game registry. Room creation cards and the in-room help panel both read this metadata.
   const GAME_REGISTRY = [
     {
+      id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:8,
+      embedPath:'games/waterblast/index.html?v=slime-art1', cardImage:'assets/images/game_cards/waterblast.svg',
+      lobbyDesc:'최대 8명이 미로에서 말랑 슬라임을 설치·밀고, 색이 변하며 터지는 물줄기를 피해 겨루는 아케이드 대전.',
+      descLines:['슬라임은 연파랑→초록→핑크로 변하며 터질 준비를 하고 손으로 밀 수 있습니다.','물줄기에 맞으면 같은 색의 끈적한 늪에 빠지고, 탈출 실패 시 기절 후 탈락합니다.','빗자루를 얻으면 잠시 날아다니며 상자 위를 지나고 슬라임을 설치할 수 있습니다.'],
+      pcHint:'PC: 방향키/WASD 이동 · X/SPACE 슬라임 설치 · 빠졌을 때 방향키 연타로 탈출',
+      mobileHint:'모바일: 왼쪽 조이스틱 이동 · 오른쪽 슬라임 버튼 · 빠졌을 때 이동 조작으로 탈출',
+      pcControls:[['WASD / 방향키','이동'],['X / SPACE','슬라임 설치'],['방향키 연타','슬라임 탈출']],
+      mobileControls:[['왼쪽 조이스틱','이동'],['🫧','슬라임 설치'],['조이스틱 반복','슬라임 탈출']]
+    },
+    {
       id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
       embedPath:'games/starpaint/index.html?v=20260907-shot-trajectory-rootfix', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',
