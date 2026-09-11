@@ -1,4 +1,18 @@
 (function(){
+  // Older Workers classify unknown mode IDs as tournaments. Carry Slime Arena
+  // over the existing co-op mode; decode its reserved title tag at every entry.
+  const WATERBLAST_TAG = "[WB]";
+  function roomTitleLimit(mode){ return mode === "waterblast" ? 30 - WATERBLAST_TAG.length : 30; }
+  function wireRoomOptions(opts){
+    if(opts?.mode !== "waterblast") return opts || {};
+    return {...opts, mode:"togester", title:WATERBLAST_TAG + safeText(opts.title || "슬라임 아레나", roomTitleLimit(opts.mode))};
+  }
+  function clientRoomMeta(meta){
+    if(meta?.mode === "togester" && String(meta.title || "").startsWith(WATERBLAST_TAG)){
+      return {...meta, mode:"waterblast", title:meta.title.slice(WATERBLAST_TAG.length)};
+    }
+    return meta;
+  }
   function nowHHMM(){
     const d = new Date();
     const hh = String(d.getHours()).padStart(2,'0');
@@ -94,7 +108,7 @@
     }
     _applyStateSnapshot(snap){
       // snap: {meta, players:[...]}
-      const meta = snap.meta || {};
+      const meta = clientRoomMeta(snap.meta || {});
       this.state.title = meta.title ?? this.state.title;
       this.state.mode  = meta.mode  ?? this.state.mode;
       this.state.phase = meta.phase ?? this.state.phase;
@@ -169,6 +183,10 @@ if (isDuel && humans.length === 1){
         return;
       }
 
+      if(this.kind === "room" && this.state.mode === "waterblast" &&
+          ["started","result"].includes(translated.type) && translated.payload?.mode === "togester"){
+        translated.payload = {...translated.payload, mode:"waterblast"};
+      }
       this._emit(translated.type, translated.payload);
     }
   }
@@ -222,7 +240,7 @@ if (isDuel && humans.length === 1){
       if(msg.t === "lobby_chat") return { type:"chat", payload: msg.d };
       if(msg.t === "system") return { type:"system", payload: msg.d };
       if(msg.t === "presence") return { type:"presence", payload: msg.d };
-      if(msg.t === "rooms") return { type:"rooms", payload: msg.d };
+      if(msg.t === "rooms") return { type:"rooms", payload: Array.isArray(msg.d) ? msg.d.map(clientRoomMeta) : {...msg.d, list:(msg.d?.list || []).map(clientRoomMeta)} };
       if(msg.t === "room_created") return { type:"room_created", payload: msg.d };
       return null;
     }
@@ -362,7 +380,7 @@ if (isDuel && humans.length === 1){
       const res = await fetch(this.httpBase + "/api/rooms", {
         method:"POST",
         headers:{ "content-type":"application/json" },
-        body: JSON.stringify(opts || {})
+        body: JSON.stringify(wireRoomOptions(opts))
       });
       if(!res.ok) throw new Error("Create room failed");
       const data = await res.json();
@@ -374,7 +392,7 @@ if (isDuel && humans.length === 1){
       if(!res.ok) throw new Error("rooms fetch failed");
       const data = await res.json();
       // match Colyseus getAvailableRooms shape
-      return (data.list || []).map(r => ({
+      return (data.list || []).map(clientRoomMeta).map(r => ({
         roomId: r.roomId,
         clients: r.players,
         maxClients: r.maxPlayers,
@@ -396,6 +414,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-09-02-starpaint-sync2";
-  window.Net = { nowHHMM, makeClient, safeText, setStatus };
+  window.__BUILD_ID = "2026-09-10-waterblast-v6";
+  window.Net = { nowHHMM, makeClient, safeText, setStatus, roomTitleLimit };
 })();

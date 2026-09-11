@@ -3,13 +3,13 @@
   const GAME_REGISTRY = [
     {
       id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/waterblast/index.html?v=slime-art1', cardImage:'assets/images/game_cards/waterblast.svg',
-      lobbyDesc:'최대 8명이 미로에서 말랑 슬라임을 설치·밀고, 색이 변하며 터지는 물줄기를 피해 겨루는 아케이드 대전.',
-      descLines:['슬라임은 연파랑→초록→핑크로 변하며 터질 준비를 하고 손으로 밀 수 있습니다.','물줄기에 맞으면 같은 색의 끈적한 늪에 빠지고, 탈출 실패 시 기절 후 탈락합니다.','빗자루를 얻으면 잠시 날아다니며 상자 위를 지나고 슬라임을 설치할 수 있습니다.'],
-      pcHint:'PC: 방향키/WASD 이동 · X/SPACE 슬라임 설치 · 빠졌을 때 방향키 연타로 탈출',
-      mobileHint:'모바일: 왼쪽 조이스틱 이동 · 오른쪽 슬라임 버튼 · 빠졌을 때 이동 조작으로 탈출',
-      pcControls:[['WASD / 방향키','이동'],['X / SPACE','슬라임 설치'],['방향키 연타','슬라임 탈출']],
-      mobileControls:[['왼쪽 조이스틱','이동'],['🫧','슬라임 설치'],['조이스틱 반복','슬라임 탈출']]
+      embedPath:'games/waterblast/index.html?v=20260910-waterblast-v6', cardImage:'assets/images/game_cards/waterblast-v7.webp',
+      lobbyDesc:'최대 8명이 미로에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
+      descLines:['슬라임은 파랑→초록→핑크로 변한 뒤 십자 물줄기로 터집니다.','물줄기에 맞으면 끈적한 늪에 빠집니다. 9번 연타해 탈출하세요!','상자를 부수어 강화 아이템과 빗자루를 얻으세요. 빗자루로 잠시 상자 위를 날 수 있습니다.'],
+      pcHint:'PC: 방향키/WASD 이동 · X/SPACE 슬라임 설치 · 갇히면 방향키 또는 X/SPACE 연타',
+      mobileHint:'모바일: 왼쪽 조이스틱 이동 · 오른쪽 슬라임 버튼 · 갇히면 버튼 연타',
+      pcControls:[['WASD / 방향키','이동'],['X / SPACE','슬라임 설치'],['이동키 / 설치키 연타','슬라임 탈출']],
+      mobileControls:[['왼쪽 조이스틱','이동'],['🫧 버튼','슬라임 설치'],['🫧 버튼 연타','슬라임 탈출']]
     },
     {
       id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,

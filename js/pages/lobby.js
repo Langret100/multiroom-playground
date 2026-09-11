@@ -424,6 +424,8 @@ function statusDot(room){
     const meta = window.gameById ? window.gameById(id) : null;
     if(!meta || meta.disabled) return;
     els.gameMode.value=id;
+    els.roomTitle.maxLength = window.Net.roomTitleLimit?.(id) || 30;
+    if(els.roomTitleCount) els.roomTitleCount.textContent=`${els.roomTitle.value.length}/${els.roomTitle.maxLength}`;
     els.gameCardGrid?.querySelectorAll('.createGameCard').forEach(card=>{
       const on=card.dataset.game===id; card.classList.toggle('selected',on); card.setAttribute('aria-checked',on?'true':'false');
       if(on && animate){ card.classList.remove('pickPop'); void card.offsetWidth; card.classList.add('pickPop'); }
@@ -481,7 +483,12 @@ function statusDot(room){
     let rawTitle = (els.roomTitle.value || "").toString().trim();
     const defTitle = (els.roomTitle.dataset && els.roomTitle.dataset.defaultTitle) ? els.roomTitle.dataset.defaultTitle : defaultRoomTitle();
     if (!rawTitle || rawTitle === "새 방") rawTitle = defTitle;
-    const title = safeText(rawTitle, 30);
+    if(rawTitle.length > els.roomTitle.maxLength){
+      setStatus(`방 제목은 ${els.roomTitle.maxLength}자까지 입력해 주세요.`, "error");
+      els.roomTitle.focus();
+      return;
+    }
+    const title = safeText(rawTitle, els.roomTitle.maxLength);
     const mode = els.gameMode.value || ((window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id) ? window.GAME_REGISTRY[0].id : "stackga");
     const meta = (window.gameById ? window.gameById(mode) : null);
     const modeType = meta?.type || "coop";
@@ -511,7 +518,7 @@ function statusDot(room){
     }
     buildGameCards();
     try{ els.gameMode.addEventListener('change',()=>selectGameCard(els.gameMode.value,false)); }catch(_){ }
-    try{ els.roomTitle?.addEventListener('input',()=>{ if(els.roomTitleCount) els.roomTitleCount.textContent=`${els.roomTitle.value.length}/30`; }); }catch(_){ }
+    try{ els.roomTitle?.addEventListener('input',()=>{ if(els.roomTitleCount) els.roomTitleCount.textContent=`${els.roomTitle.value.length}/${els.roomTitle.maxLength}`; }); }catch(_){ }
 
     els.refreshBtn.addEventListener("click", ()=> refreshRooms());
 

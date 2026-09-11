@@ -385,6 +385,9 @@ let soccerCompatSeenSubmit={};
 let soccerCompatTickTimer=0;
 let soccerCompatLastHostVersion=0;
 let soccerCompatLastSubmit=null;
+let soccerCompatHandoff=null;
+const soccerStunEvents={};
+const soccerStunSeen={};
 // After the first kickoff quiz, goals restart from a neutral midfield ball.
 // This serial rides the already-deployed tg_state -> tg_players compatibility relay,
 // so every client clears stale local kick prediction without requiring a Worker change.
@@ -411,7 +414,9 @@ let gameInitialized=false, gameActive=false, gameOver=false;
 let pendingSoccerSnapshot=null;
 const soccerRoundController = new SoccerRoundCore.SoccerRoundController();
 let initialKickoffResolved=false;
-let lastPosSent=0, lastBallSent=0, localStateSeq=0;
+// A reloaded iframe must start above its previous movement sequence so remote
+// players accept new input immediately, even while the Worker retains old state.
+let lastPosSent=0, lastBallSent=0, localStateSeq=Date.now()*64;
 function nextStateSeq(){ return ++localStateSeq; }
 let stunUntilMap = {};       // sid -> 스턴 해제 시각(ms)
 let particles = [];          // 골 세리머니/충격 파티클
@@ -685,7 +690,7 @@ function prepareAuthoritativeKickoff(d){
   if(owner){
     owner.x=owner.netX=FX+FW/2+(String(d.winner||'')==='A'?-DRIBBLE_DISTANCE:DRIBBLE_DISTANCE);
     owner.y=owner.netY=KICKOFF_Y;owner.dir=defaultDir(owner.team);
-    const t=dribbleTarget(owner);ball.x=t.x;ball.y=t.y;ball.owner=ownerSid;ball.ownerUntil=Number(d.kickoffAt||Date.now())+1200;ball.ownerSince=Date.now();
+    const t=dribbleTargetForPlayer(owner,0,0);ball.x=t.x;ball.y=t.y;ball.owner=ownerSid;ball.ownerUntil=Number(d.kickoffAt||Date.now())+1200;ball.ownerSince=Date.now();
   }
   netBall={x:ball.x,y:ball.y,z:0,vx:0,vy:0,vz:0,netX:ball.x,netY:ball.y,netZ:0,netVX:0,netVY:0,netVZ:0,netT:Date.now(),visualAt:Date.now(),owner:ball.owner,samples:[],lastKicker:null,noPickupUntil:0};
 }
@@ -1003,6 +1008,7 @@ function applyRoster(list){
   // 네트워크 패킷 순서가 바뀌어도 문제 화면과 입력 잠금이 정상적으로 이어진다.
   if(loopRunning && me){
     flushPendingSoccerSnapshot();
+    if(isHost&&!soccerCompatRound)soccerCompatPromoteHost();
   }
 }
 
@@ -1744,7 +1750,7 @@ function updateBallHost(advancePhysics=true){
       Number.isFinite(reportedPlayerX)&&Number.isFinite(reportedPlayerY)&&
       Number.isFinite(reportedBallX)&&Number.isFinite(reportedBallY)&&
       Math.hypot(reportedBallX-reportedPlayerX,reportedBallY-reportedPlayerY)<minD+18&&
-      Math.hypot(ball.x-reportedBallX,ball.y-reportedBallY)<72);
+      Math.hypot(ball.x-reportedBallX,ball.y-reportedBallY)<72&&d<minD+8);
 
     const claimPending=!!(p.claimAt&&p.claimAt!==p._lastClaimAt);
     let claimValid=false,claimExpired=false;
@@ -1923,12 +1929,14 @@ function updateBallHost(advancePhysics=true){
     // 서버는 sc_stun을 seat 0(호스트)만 보낼 수 있게 막아뒀으므로, 태클
     // "판정" 자체는 반드시 호스트 쪽에서 해야 한다 — 그래서 각 클라이언트는
     // 의사만(sc_pos.tackle) 보내고, 실제 스턴 발생은 여기 호스트 루프에서만.
-    if (p.tackle){
+    if (p.tackle && now < (sid===mySid?tackleActiveUntil:Number(p._tacklePoseUntil||0))){
       for (const q of Object.values(players)){
         if (q === p || q.team === p.team) continue;
         if (isStunned(playerSidOf(q), now)) continue;
         const qd = Math.hypot(q.x-p.x, q.y-p.y);
-        if (qd < TACKLE_RANGE){
+        // Movement separates bodies at PR*1.72, so contact must be reachable
+        // without requiring the players to overlap through that collision boundary.
+        if (qd < Math.max(TACKLE_RANGE,PR*1.72+4)){
           const qsid = playerSidOf(q);
           const key = qsid;
           if ((p._tackleHitAt && p._tackleHitAt[key] && now - p._tackleHitAt[key] < 700)) continue;
@@ -2022,7 +2030,10 @@ function applyStun(sid, dur, notifyServer){
     else { sfxTackle(); }
   }
   if (notifyServer){
-    bridgeSend('sc_stun', { sid, dur });
+    soccerStunEvents[sid]={id:`${mySid}:${sid}:${now}`,until:now+dur};
+    sendBallSnapshot();
+    // The same authoritative event is repeated in legacy ball snapshots. Sending
+    // sc_stun too would apply the stun twice when that optional Worker API exists.
   }
 }
 
@@ -2161,7 +2172,8 @@ function sendBallSnapshot(){
   bridgeSend('sc_ball', {
     x:ball.x,y:ball.y,z:ball.z||0,vx:ball.vx,vy:ball.vy,vz:ball.vz||0,owner:ball.owner||null,
     impactAt:ball.impactAt||'',impactPower:ball.impactPower||0,impactDir:ball.impactDir||0,
-    restartText:fieldRestartText||'',restartUntil:fieldRestartUntil||0,restartSerial:fieldRestartSerial||0,sentAt,ballSeq
+    restartText:fieldRestartText||'',restartUntil:fieldRestartUntil||0,restartSerial:fieldRestartSerial||0,sentAt,ballSeq,
+    stunEvents:Object.entries(soccerStunEvents).filter(([,e])=>e.until>sentAt).map(([sid,e])=>({sid,id:e.id,dur:e.until-sentAt}))
   });
 }
 function netSends(){
@@ -2958,6 +2970,36 @@ function soccerCompatAcceptSubmit(sid,p){
   soccerCompatScores[String(sid)]=Math.max(Number(soccerCompatScores[String(sid)]||0),Math.max(0,Math.floor(Number(p.score)||0)));
   soccerCompatBroadcast();
 }
+function soccerCompatPromoteHost(){
+  if(!isHost||!gameInitialized||!me)return;
+  if(soccerCompatRound){soccerCompatBroadcast();soccerCompatScheduleTick();return;}
+  const saved=soccerCompatHandoff;
+  const snap=soccerRoundController.hasSnapshot?soccerRoundController.current:null;
+  if(!saved||!snap||saved.snapshot.roundId!==snap.roundId){soccerCompatStartRound('initial');return;}
+  ball={x:netBall.x,y:netBall.y,z:netBall.z||0,vx:netBall.vx||0,vy:netBall.vy||0,vz:netBall.vz||0,
+    owner:netBall.owner||null,ownerUntil:Date.now()+120,lastKicker:netBall.lastKicker||null,noPickupUntil:netBall.noPickupUntil||0};
+  hostBallSeq=Math.max(hostBallSeq,Number(netBall.lastAcceptedBallSeq||0));
+  lastBallSpeedSeen=Math.hypot(ball.vx,ball.vy);
+  // Convert the previous host's quiz timestamps to this device's clock. The
+  // already-running local match deadline is preserved instead of starting 120s again.
+  const offset=soccerServerOffset;
+  const localTime=v=>v?Number(v)-offset:0;
+  soccerCompatSerial=Math.max(soccerCompatSerial,snap.roundSerial);
+  soccerCompatRound={id:snap.roundId,serial:snap.roundSerial,kind:snap.kind,seed:snap.seed,phase:snap.phase,
+    beginsAt:localTime(snap.beginsAt),endsAt:localTime(snap.endsAt),resultUntil:localTime(snap.resultUntil),
+    kickoffAt:localTime(snap.kickoffAt),winner:snap.winner,tied:snap.tied,kickoffOwnerSid:snap.kickoffOwnerSid};
+  soccerCompatScores={...saved.scores};soccerCompatSeenSubmit={};
+  soccerCompatGoalSerial=Math.max(soccerCompatGoalSerial,Number(saved.goalSerial||0));
+  soccerCompatGoalResetSerial=Math.max(soccerCompatGoalResetApplied,Number(saved.goalResetSerial||0));
+  soccerCompatGoalResetTeam=saved.goalTeam||'';
+  soccerCompatLastHostVersion=Math.max(soccerCompatLastHostVersion,Number(saved.version||0));
+  soccerCompatMatchDeadlineAt=snap.phase==='playing'?matchDeadlineAt:0;
+  mathKickoff.beginsAt=localTime(mathKickoff.beginsAt);mathKickoff.endsAt=localTime(mathKickoff.endsAt);
+  soccerServerOffset=0;soccerClockSynced=false;
+  soccerCompatHostSid=mySid;
+  soccerCompatTick();
+  sendBallSnapshot();
+}
 function soccerCompatHandlePlayers(map){
   map=map||{};
   // Movement also rides the legacy tg_state relay. This fixes the old-Worker race
@@ -2974,7 +3016,7 @@ function soccerCompatHandlePlayers(map){
   if(soccerCompatHostSid&&map[soccerCompatHostSid]?.__soccerCompat?.kind==='state'){
     hostState=map[soccerCompatHostSid];hostPacket=hostState.__soccerCompat;
   }
-  if(!hostPacket){
+  if(!hostPacket&&!soccerCompatHostSid){
     for(const [sid,st] of Object.entries(map)){
       const p=st&&st.__soccerCompat;
       if(p&&p.kind==='state'&&String(p.hostSid||'')===String(sid)){
@@ -2991,12 +3033,21 @@ function soccerCompatHandlePlayers(map){
   if(hostPacket?.snapshot){
     const snap={...hostPacket.snapshot};snap.selfRoundScore=Math.max(0,Number(hostPacket.scores?.[mySid]||0));
     queueOrApplySoccerSnapshot(snap);
+    if(!isHost&&(!soccerCompatHandoff||hostPacket.hostSid!==soccerCompatHandoff.hostSid||Number(hostPacket.version||0)>Number(soccerCompatHandoff.version||0))){
+      soccerCompatHandoff={...hostPacket,snapshot:{...snap},scores:{...hostPacket.scores}};
+    }
   }
 }
 
 
 function applyAuthoritativeBallSnapshot(d){
     const now=Date.now();
+    if(!isHost)for(const event of (Array.isArray(d.stunEvents)?d.stunEvents:[])){
+      const sid=String(event.sid||''),id=String(event.id||'');
+      if(players[sid]&&id&&soccerStunSeen[sid]!==id&&Number(event.dur)>0){
+        soccerStunSeen[sid]=id;applyStun(sid,Math.min(STUN_MS,Number(event.dur)),false);
+      }
+    }
     if(isRoundLocked(now)){
       netBall.owner=null;localKickTrack=null;localDribbleVisualUntil=0;
       if(kickoffUntil>0){
@@ -3057,7 +3108,10 @@ function applyAuthoritativeBallSnapshot(d){
         netBall.vz=lerp(netBall.vz||0,netBall.netVZ,.26);
       }
     }
-    netBall.owner = d.owner ? String(d.owner) : null;
+    // A self-owned snapshot without this kick's impact can still be in flight
+    // from before the shot. It must not cancel prediction and report dribble again.
+    const preKickOwner=!!(localKickTrack&&!localKickTrack.confirmed&&String(d.owner||'')===mySid&&!confirmsLocalKick);
+    netBall.owner = preKickOwner?null:(d.owner ? String(d.owner) : null);
     const localOwnerConfirmed=netBall.owner===mySid;
     if(netBall.owner!==mySid&&now>=pendingClaimUntil)localDribbleVisualUntil=0;
     if(localOwnerConfirmed){
@@ -3088,7 +3142,7 @@ function applyAuthoritativeBallSnapshot(d){
       localKickTrack.authX=netBall.netX;localKickTrack.authY=netBall.netY;localKickTrack.authZ=netBall.netZ;
       localKickTrack.authVX=netBall.netVX;localKickTrack.authVY=netBall.netVY;localKickTrack.authVZ=netBall.netVZ;
       netBall.owner=null;
-    }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)){
+    }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)&&!preKickOwner){
       // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
       localKickTrack=null;
     }else if(localKickTrack&&netBall.owner){
@@ -3145,7 +3199,7 @@ window.addEventListener('message', e=>{
       flushPendingSoccerSnapshot();
       // 부모가 bridge_init 직후 보낸 sync 응답은 느린 iframe에서 초기화보다
       // 먼저 도착할 수 있다. iframe 자신도 매 init마다 권위 상태를 재요청한다.
-      if(isHost){ if(!soccerCompatRound)soccerCompatStartRound('initial'); else soccerCompatBroadcast(); }
+      if(isHost){ if(!soccerCompatRound)soccerCompatPromoteHost(); else soccerCompatBroadcast(); }
       return;
     }
     gameInitialized = true;
@@ -3174,14 +3228,16 @@ window.addEventListener('message', e=>{
     const prevHost = isHost;
     isHost = !!d.isHost;
     soccerCompatHostSid=String(d.hostSessionId||soccerCompatHostSid||'');
-    if (isHost && !prevHost){
+    if (isHost && (!prevHost||!soccerCompatRound)){
       // 막 방장이 됐다면, 기존에 보던 netBall 위치/속도를 그대로 물려받아
       // 공이 순간이동하듯 튀지 않게 하고, 즉시 공 계산을 이어받는다.
       ball = { x:netBall.x, y:netBall.y, z:netBall.z||0, vx:netBall.vx||0, vy:netBall.vy||0, vz:netBall.vz||0,
         owner:netBall.owner||null, ownerUntil:Date.now()+120 };
       hostBallSeq=Math.max(hostBallSeq,Number(netBall.lastAcceptedBallSeq||0));
       lastBallSpeedSeen = Math.hypot(ball.vx, ball.vy);
-      if(!soccerCompatRound)soccerCompatStartRound(mathKickoff.kind==='restart'?'restart':'initial'); else soccerCompatBroadcast();
+      soccerCompatPromoteHost();
+    }else if(!isHost&&soccerCompatTickTimer){
+      clearTimeout(soccerCompatTickTimer);soccerCompatTickTimer=0;soccerCompatRound=null;
     }
     return;
   }

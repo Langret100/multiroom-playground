@@ -713,6 +713,7 @@ function updatePreview(modeId){
     clearTimeout(starpaintMoveTimer);
     starpaintMoveTimer = null;
     starpaintPendingMove = null;
+    starpaintFastActionKey = "0:0:0:0";
   }
 
   function updateBracketUI(){
@@ -996,6 +997,7 @@ function updatePreview(modeId){
   let lastStarpaintMoveSent = 0;
   let starpaintMoveTimer = null;
   let starpaintPendingMove = null;
+  let starpaintFastActionKey = "0:0:0:0";
   let starpaintNativePbStateSeen = false;
   let starpaintCompatStateNeeded = false;
   let starpaintCompatProbeStartedAt = 0;
@@ -1049,7 +1051,7 @@ function updatePreview(modeId){
     const isTgPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("tg_")) && d.gameId === "togester";
     const isSoccerPacket = SOCCER_BRIDGE_TYPES.has(String(d.type||""));
     const isPbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("pb_")) && (!d.gameId || d.gameId === "starpaint");
-    const isWbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("wb_")) && (!d.gameId || d.gameId === "waterblast");
+    const isWbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("wb_")) && d.gameId === "waterblast";
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
     const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
     const fromStoredMxWin = !!(coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
@@ -1077,7 +1079,7 @@ function updatePreview(modeId){
     const fromMainForSoccer = fromMain || fromStoredSoccerWin || fromSoccerCoopFallback;
     const fromPbCoopFallback = !!(isPbPacket && pbModeLikely && coopOriginOk && !fromCpu);
     const fromMainForPb = fromMain || fromPbCoopFallback;
-    const fromWbCoopFallback = !!(isWbPacket && wbModeLikely && coopOriginOk && !fromCpu);
+    const fromWbCoopFallback = !!(isWbPacket && wbModeLikely && coopOriginOk && !srcWin && !fromCpu);
     const fromMainForWb = fromMain || fromWbCoopFallback;
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
@@ -1489,31 +1491,29 @@ function updatePreview(modeId){
       return;
     }
 
-    // WaterBlast: reuse the deployed generic tg_state/tg_players relay.
-    // No Worker change is required; data stays namespaced under __waterblast*.
+    // StarPaint (coop competitive) iframe -> server relay
+    // Slime Arena uses only existing generic Worker messages. Never replace
+    // StarPaint or Soccer's transport while registering the new game.
+    if (d.type === "wb_sync"){
+      if (!fromMainForWb || !wbModeLikely) return;
+      try{ room.send("tg_sync", {}); }catch(_){ }
+      return;
+    }
     if (d.type === "wb_state"){
       if (!fromMainForWb || !wbModeLikely) return;
-      const now = Date.now();
-      if (!coop._waterblastLastSent) coop._waterblastLastSent = 0;
-      if (now - coop._waterblastLastSent >= 45){
-        coop._waterblastLastSent = now;
-        try{ room.send("tg_state", { state:d.state || {} }); }catch(_){ }
-      }
+      try{ room.send("tg_state", {state:d.state || {}}); }catch(_){ }
+      return;
+    }
+    if (d.type === "wb_action"){
+      if (!fromMainForWb || !wbModeLikely) return;
+      try{ room.send("duel_event", {event:{__waterblastFast:1,input:d.input || {}}}); }catch(_){ }
       return;
     }
     if (d.type === "wb_over"){
-      if (!fromMainForWb || !wbModeLikely) return;
-      // The current Worker already ends any playing room on tg_over. The embedded
-      // game owns its winner scene, so this is used only to reset phase/ready.
-      try{ room.send("tg_over", { success:true, reason:"waterblast" }); }catch(_){ }
+      if (!fromMainForWb || !wbModeLikely || !getMyIsHost()) return;
+      try{ room.send("tg_over", {success:true,reason:"waterblast"}); }catch(_){ }
       return;
     }
-    if (d.type === "wb_quit"){
-      if (!fromMainForWb || !wbModeLikely) return;
-      return;
-    }
-
-    // StarPaint (coop competitive) iframe -> server relay
     if (d.type === "pb_player"){
       if (!fromMainForPb || !pbModeLikely) return;
       // Movement uses the exact same proven relay shape as Togester:
@@ -1521,6 +1521,13 @@ function updatePreview(modeId){
       // The unchanged Worker rejects tg_state packets less than 40ms apart.
       // Coalesce into the earliest available slot instead of dropping a forced action
       // or sending it into the Worker's rate limiter. Keep the action pose in the snapshot.
+      // Sparse actions use the existing immediate event relay. tg_state remains
+      // the retry path; the game deduplicates both by the same action sequence.
+      const fastKey = [d.player?.useSeq,d.player?.pickSeq,d.player?.swapSeq,d.player?.respawnSeq].map(v=>Number(v)>>>0).join(":");
+      if (!getMyIsHost() && fastKey !== starpaintFastActionKey){
+        starpaintFastActionKey = fastKey;
+        try{ room.send("duel_event", { event:{__starpaintFast:1,kind:"action",player:d.player || {}} }); }catch(_){ }
+      }
       starpaintPendingMove = d.player || {};
       if (!starpaintMoveTimer){
         const flush = ()=>{
@@ -1552,6 +1559,9 @@ function updatePreview(modeId){
       const now = Date.now();
       if (!starpaintCompatProbeStartedAt) starpaintCompatProbeStartedAt = now;
       starpaintCompatStateCache = d.state || {};
+      if (d.urgent && getMyIsHost()){
+        try{ room.send("duel_event", { event:{__starpaintFast:1,kind:"state",state:starpaintCompatStateCache} }); }catch(_){ }
+      }
       try{ room.send("pb_state", { state:starpaintCompatStateCache }); }catch(_){ }
       // If the deployed Worker predates pb_state, enable the compatibility data,
       // but piggyback it on the host's normal movement record. Sending a separate
@@ -1663,6 +1673,7 @@ function updatePreview(modeId){
         vx:Number(d.vx||0), vy:Number(d.vy||0), vz:Number(d.vz||0), owner:d.owner||null,
         sentAt:Number(d.sentAt||Date.now()), ballSeq:Number(d.ballSeq||0),
         impactAt:String(d.impactAt||""), impactPower:Number(d.impactPower||0), impactDir:Number(d.impactDir||0),
+        stunEvents:Array.isArray(d.stunEvents)?d.stunEvents:[],
         restartText:String(d.restartText||""), restartUntil:Number(d.restartUntil||0), restartSerial:Number(d.restartSerial||0)
       };
       sendSoccerLegacyRelay();
@@ -2616,6 +2627,7 @@ function sendCoopBridgeInit(){
     selfSeat: bridgeIdentity.selfSeat,
     seat,
     isHost: effectiveIsHost,
+    ...(["starpaint","waterblast"].includes(coop.meta.id) ? {hostSessionId:String(bridgePlayers.find(p=>p.isHost)?.sessionId || (effectiveIsHost ? mySessionId : coop._lastHostSid) || "")} : {}),
     solo,
     expectedHumans,
     humanCount,
@@ -2907,7 +2919,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-guest-item-legacy-verified-v3" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-guest-hit-fast-legacy-v4" : `&_m=${Date.now()}`;
   const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
   const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
@@ -3286,6 +3298,14 @@ try{
       });
 
       room.onMessage("duel_event", (msg)=>{
+        if (msg?.event?.__waterblastFast === 1){
+          if (String(coop?.meta?.id || room?.state?.mode || "") === "waterblast") postToMain({type:"wb_action",gameId:"waterblast",sid:msg.sid,input:msg.event.input});
+          return;
+        }
+        if (msg?.event?.__starpaintFast === 1){
+          if (String(coop?.meta?.id || room?.state?.mode || "") === "starpaint") postToMain({ type:"pb_fast",sid:msg.sid,event:msg.event });
+          return;
+        }
         // Relay to embedded iframes (player + optional CPU)
         postToAllIframes({ type:"duel_event", sid: msg.sid, event: msg.event });
       });
@@ -3380,11 +3400,9 @@ try{
       room.onMessage("tg_players", (msg)=>{
         const playerMap = msg.players || {};
         const relayModeId = String(coop?.meta?.id || room?.state?.mode || "");
-        // Keep each embedded game's transport surface isolated. WaterBlast reuses
-        // the deployed aggregate relay only on the server side, then receives a
-        // game-specific message inside its iframe. Existing games keep their
-        // previous tg_players behavior unchanged.
-        if (relayModeId === "waterblast") postToMain({ type:"wb_players", gameId:"waterblast", players: playerMap });
+        // StarPaint consumes only its namespaced movement slice below. Avoid also
+        // posting the full Togester aggregate into the StarPaint iframe every tick.
+        if (relayModeId === "waterblast") postToMain({type:"wb_players",gameId:"waterblast",players:playerMap});
         else if (relayModeId !== "starpaint") postToMain({ type:"tg_players", players: playerMap });
         // StarPaint only reuses the existing aggregate movement relay. The data is
         // namespaced inside the packet and consumed only while this room is in StarPaint.
@@ -3545,7 +3563,7 @@ try{
         try{ stopGameBgm(); }catch(_){ }
         // StarPaint has its own winner character/name scene. Do not cover it with
         // the generic room result overlay during the 2-second finish window.
-        const starpaintResultActive=String(r?.mode||'')==='starpaint'||String(coop?.meta?.id||'')==='starpaint'||String(room?.state?.mode||'')==='starpaint'||String(coop?.meta?.id||'')==='waterblast'||String(room?.state?.mode||'')==='waterblast';
+        const starpaintResultActive=[r?.mode,coop?.meta?.id,room?.state?.mode].some(id=>id==='starpaint'||id==='waterblast');
         if (!starpaintResultActive) showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });
