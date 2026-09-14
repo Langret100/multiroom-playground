@@ -713,7 +713,7 @@ function updatePreview(modeId){
     clearTimeout(starpaintMoveTimer);
     starpaintMoveTimer = null;
     starpaintPendingMove = null;
-    starpaintFastActionKey = "0:0:0:0";
+    starpaintFastActionKey = "0:0:0:0:0";
   }
 
   function updateBracketUI(){
@@ -997,7 +997,7 @@ function updatePreview(modeId){
   let lastStarpaintMoveSent = 0;
   let starpaintMoveTimer = null;
   let starpaintPendingMove = null;
-  let starpaintFastActionKey = "0:0:0:0";
+  let starpaintFastActionKey = "0:0:0:0:0";
   let starpaintNativePbStateSeen = false;
   let starpaintCompatStateNeeded = false;
   let starpaintCompatProbeStartedAt = 0;
@@ -1523,8 +1523,8 @@ function updatePreview(modeId){
       // or sending it into the Worker's rate limiter. Keep the action pose in the snapshot.
       // Sparse actions use the existing immediate event relay. tg_state remains
       // the retry path; the game deduplicates both by the same action sequence.
-      const fastKey = [d.player?.useSeq,d.player?.pickSeq,d.player?.swapSeq,d.player?.respawnSeq].map(v=>Number(v)>>>0).join(":");
-      if (!getMyIsHost() && fastKey !== starpaintFastActionKey){
+      const fastKey = [d.player?.useSeq,d.player?.pickSeq,d.player?.swapSeq,d.player?.respawnSeq,d.player?.correctionAck].map(v=>Number(v)>>>0).join(":");
+      if (fastKey !== starpaintFastActionKey){
         starpaintFastActionKey = fastKey;
         try{ room.send("duel_event", { event:{__starpaintFast:1,kind:"action",player:d.player || {}} }); }catch(_){ }
       }

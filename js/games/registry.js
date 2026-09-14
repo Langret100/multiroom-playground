@@ -2,20 +2,10 @@
   // Game registry. Room creation cards and the in-room help panel both read this metadata.
   const GAME_REGISTRY = [
     {
-      id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/waterblast/index.html?v=20260910-waterblast-v6', cardImage:'assets/images/game_cards/waterblast-v7.webp',
-      lobbyDesc:'최대 8명이 미로에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
-      descLines:['슬라임은 파랑→초록→핑크로 변한 뒤 십자 물줄기로 터집니다.','물줄기에 맞으면 끈적한 늪에 빠집니다. 9번 연타해 탈출하세요!','상자를 부수어 강화 아이템과 빗자루를 얻으세요. 빗자루로 잠시 상자 위를 날 수 있습니다.'],
-      pcHint:'PC: 방향키/WASD 이동 · X/SPACE 슬라임 설치 · 갇히면 방향키 또는 X/SPACE 연타',
-      mobileHint:'모바일: 왼쪽 조이스틱 이동 · 오른쪽 슬라임 버튼 · 갇히면 버튼 연타',
-      pcControls:[['WASD / 방향키','이동'],['X / SPACE','슬라임 설치'],['이동키 / 설치키 연타','슬라임 탈출']],
-      mobileControls:[['왼쪽 조이스틱','이동'],['🫧 버튼','슬라임 설치'],['🫧 버튼 연타','슬라임 탈출']]
-    },
-    {
       id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/starpaint/index.html?v=20260907-shot-trajectory-rootfix', cardImage:'assets/images/game_cards/starpaint.webp',
+      embedPath:'games/starpaint/index.html?v=20260914-starpaint-prediction-v10', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',
-      descLines:['3개의 60초 라운드 동안 더 많은 블록을 자기 색으로 칠하세요.','1~4인은 기본 맵, 5~8인은 확장 맵에서 시작하며 10초마다 인원수에 맞춰 아이템이 보급됩니다.','아이템으로 상대를 밀치거나 바닥을 부수고, 3라운드에는 보스가 등장합니다.'],
+      descLines:['3개의 60초 라운드 동안 더 많은 블록을 자기 색으로 칠하세요.','1~4인은 기본 맵, 5~8인은 확장 맵에서 시작하며 10초마다 인원수에 맞춰 아이템이 보급됩니다.','아이템으로 상대를 밀치거나 바닥을 부수세요. 빙결 아이템은 X를 짧게 누르면 바로 앞에 던집니다. 3라운드에는 보스가 등장합니다.'],
       pcHint:'PC: ←→ 이동 · Z 점프 · X 액션 · 폭탄/로켓/대포는 X 길게 조준(↑↓ 각도) · C 아이템 교체',
       mobileHint:'모바일: 조이스틱 이동 · 점프/액션/교체 · 폭탄/로켓/대포는 액션 길게 누르고 위아래 드래그해 조준',
       pcControls:[['← →','이동'],['Z','점프'],['X','액션 · 짧게 즉시 사용 / 길게 조준'],['↑ ↓','조준 중 발사 각도'],['C','아이템 1↔2 교체']],
@@ -120,6 +110,16 @@
       mobileHint:'모바일: 조이스틱으로 이동 · 채팅 패널에서 입력/전송',
       pcControls:[['WASD','이동'],['ENTER','채팅 전송'],['💬','대화 유도']],
       mobileControls:[['◉','조이스틱 이동'],['💬','채팅 입력'],['SEND','전송']]
+    },
+    {
+      id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:8,
+      embedPath:'games/waterblast/index.html?v=20260911-waterblast-garden-v8', cardImage:'assets/images/game_cards/waterblast-v7.webp',
+      lobbyDesc:'최대 8명이 정원에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
+      descLines:['Z로 설치, X로 자기 슬라임을 바라보는 방향으로 1칸 밉니다.','제거 포션은 최대 1개. 갇힘·탈락 직전 기절 중 C로 탈출합니다.','희귀 빗자루는 맞을 때까지 계속 탑승합니다. 고정벽은 통과할 수 없습니다.'],
+      pcHint:'PC: 방향키/WASD 이동 · Z/SPACE 설치 · X 자기 슬라임 밀기 · C 제거 포션',
+      mobileHint:'모바일: 조이스틱 이동 · 설치 / 밀기 / 제거 포션 버튼',
+      pcControls:[['WASD / 방향키','이동'],['Z / SPACE','슬라임 설치'],['X','자기 슬라임 밀기'],['C','제거 포션 · 최대 1개'],['이동키 / 설치키 연타','슬라임 탈출']],
+      mobileControls:[['왼쪽 조이스틱','이동'],['Z · 설치 버튼','슬라임 설치 / 갇히면 연타'],['X · 밀기 버튼','자기 슬라임 밀기'],['제거 포션 버튼','갇힘/기절 중 사용 · 최대 1개']]
     }
   ];
 
