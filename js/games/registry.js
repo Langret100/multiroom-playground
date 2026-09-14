@@ -93,7 +93,7 @@
     },
     {
       id:'soccer', name:'수학축구', category:'스포츠 · 수학', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/soccer/index.html?v=20260907-ball-clock-rootfix1', cardImage:'assets/images/game_cards/soccer.webp?v=20260831-cards7',
+      embedPath:'games/soccer/index.html?v=20260915-soccer-ball-v12', cardImage:'assets/images/game_cards/soccer.webp?v=20260831-cards7',
       lobbyDesc:'문제를 풀어 선공을 정하고 팀원과 패스·슛·태클로 더 많은 골을 노리는 수학 스포츠.',
       descLines:['문제를 풀어 선공을 정하고, 2분 동안 더 많은 골을 넣으면 승리!','이동 · 킥(길게 누르면 강슛) · 태클을 사용하세요.','골 뒤에도 짧은 문제 대결로 다음 선공을 정합니다.'],
       pcHint:'PC: WASD/방향키 이동 · Z/Space 길게 강슛 · X 헤딩 · C/Shift 태클',

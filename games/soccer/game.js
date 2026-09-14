@@ -1161,9 +1161,7 @@ let pendingKickVX=0, pendingKickVY=0;
 let pendingHeaderAt=0,pendingHeaderUntil=0;
 let pendingHeaderX=0,pendingHeaderY=0,pendingHeaderDir=0,pendingHeaderBallX=0,pendingHeaderBallY=0;
 let pendingTackleAt=0,pendingTackleUntil=0;
-// 게스트가 직접 찬 공은 로컬 예측/호스트 확인/일반 보간으로 갈아타지 않는다.
-// 하나의 표시 궤도를 계속 적분하고, 호스트 스냅샷은 진행 방향을 거스르지 않는
-// 작은 오차 보정과 속도 동기화에만 사용한다.
+// Local kicks predict briefly, then join the host trajectory after confirmation.
 const AUTH_CLIENT_PICKUP_Z=5;
 let localKickTrack=null;
 let pendingClaimAt=0, pendingClaimUntil=0, pendingClaimBallX=0, pendingClaimBallY=0;
@@ -1463,10 +1461,8 @@ function beginBallAuthorityHandoff(auth, now=Date.now(), duration=220){
 }
 
 function confirmBallAuthoritySmooth(auth, track, now=Date.now()){
-  // 확정 순간 과거 권위 좌표로 갈아타지 않는다. 현재 로컬 예측 위치와
-  // 최신 권위 위치의 전진축 차이를 visualLead로 저장하고, 권위 공은 계속
-  // 앞으로 움직이는 동안 그 차이만 서서히 줄인다. 따라서 화면 공은 한 번도
-  // 뒤로 가지 않으면서 최종적으로 호스트 궤도에 합류한다.
+  // Confirm a kick once. Repeated snapshots must not restart its handoff clock.
+  if(!track)return;
   let dx=Number(track?.dirX||auth.vx||0),dy=Number(track?.dirY||auth.vy||0);
   const dl=Math.hypot(dx,dy)||1;dx/=dl;dy/=dl;
   const px=Number(netBall.x||0),py=Number(netBall.y||0);
@@ -1483,6 +1479,17 @@ function confirmBallAuthoritySmooth(auth, track, now=Date.now()){
   netBall.samples=[];
 }
 function ballRenderState(b){
+  // Ownership is decided by the host. Draw an owned ball relative to the same
+  // player pose being drawn on this screen, rather than mixing a current player
+  // with an older independently interpolated ball. Never write this display pose
+  // back into collision state or a possession claim.
+  const owner=b.owner&&players[b.owner];
+  if(owner&&(Number(b.z)||0)<AUTH_CLIENT_PICKUP_Z){
+    const vx=owner===me?Number(owner.vx)||0:Number(owner.netVX)||0;
+    const vy=owner===me?Number(owner.vy)||0:Number(owner.netVY)||0;
+    const target=dribbleTargetForPlayer(owner,vx,vy);
+    return {...b,x:target.x,y:target.y,z:0};
+  }
   if(b!==netBall)return b;
   const now=Date.now(), until=Number(b.renderOffsetUntil||0), start=Number(b.renderOffsetStartedAt||0);
   if(until<=now||until<=start){
@@ -1541,7 +1548,8 @@ function updateNetBall(){
       const oldAlong=Number(netBall.x||0)*dx+Number(netBall.y||0)*dy;
       const authAcross=auth.x*sx+auth.y*sy;
       const oldAcross=Number(netBall.x||0)*sx+Number(netBall.y||0)*sy;
-      const nextAlong=Math.max(oldAlong,authAlong+lead);
+      // A block, return, or tackle may legitimately reverse the host's ball.
+      const nextAlong=lerp(oldAlong,authAlong+lead,.55);
       const nextAcross=lerp(oldAcross,authAcross,.55);
       netBall.x=dx*nextAlong+sx*nextAcross;
       netBall.y=dy*nextAlong+sy*nextAcross;
@@ -2000,7 +2008,7 @@ function updateBallImpactFx(){
   lastBallSpeedSeen=Math.hypot(b.vx||0,b.vy||0);
 }
 function updateBallTrail(){
-  const b = ball_or_netball();
+  const b = ballRenderState(ball_or_netball());
   const spd = Math.hypot(b.vx||0, b.vy||0);
   if (spd > 3){
     ballTrail.push({ x:b.x, y:b.y, z:b.z||0, life:1 });
@@ -2832,7 +2840,7 @@ function draw(){
   drawBallTrail();
   const renderables=[];
   for (const [sid,p] of Object.entries(players)) renderables.push({depth:p.y,type:'player',fn:()=>drawPlayer(p,sid===mySid,sid)});
-  const shownBall=ball_or_netball();
+  const shownBall=ballRenderState(ball_or_netball());
   renderables.push({depth:(shownBall.y||FY)+((shownBall.z||0)>0?1:0),type:'ball',fn:()=>drawBall(shownBall)});
   renderables.sort((a,b)=>a.depth-b.depth+(a.type==='ball'?0.01:0));
   for(const r of renderables) r.fn();
@@ -3131,7 +3139,10 @@ function applyAuthoritativeBallSnapshot(d){
     if(localOwnerConfirmed){
       // 소유권 확정은 킥 예측 확정보다 항상 우선한다. updateNetBall()이 다음 고정 틱에서
       // 자기 발앞 목표로 즉시 배치하므로 여기서는 권위 owner를 그대로 보존한다.
-    }else if(confirmsLocalKick&&localKickTrack){
+    }else if(localKickTrack&&(newImpact&&!confirmsLocalKick&&!preKickOwner||netBall.owner)){
+      // Another impact or confirmed owner supersedes this client's trajectory.
+      localKickTrack=null;
+    }else if(confirmsLocalKick&&localKickTrack&&!localKickTrack.confirmed){
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
         vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
@@ -3142,13 +3153,6 @@ function applyAuthoritativeBallSnapshot(d){
       localKickTrack.authReceivedAt=now;
       localKickTrack.authX=netBall.netX;localKickTrack.authY=netBall.netY;localKickTrack.authZ=netBall.netZ;
       localKickTrack.authVX=netBall.netVX;localKickTrack.authVY=netBall.netVY;localKickTrack.authVZ=netBall.netVZ;
-      netBall.owner=null;
-    }else if(localKickTrack&&newImpact&&incomingImpact!==String(localKickTrack.id)&&!preKickOwner){
-      // 다른 선수의 새 타격이 확정되면 그때만 내 예측 궤도를 종료한다.
-      localKickTrack=null;
-    }else if(localKickTrack&&netBall.owner){
-      // 다른 선수의 소유권이 킥 이전 스냅샷으로 늦게 도착한 경우에만 예측을 유지한다.
-      // 내 소유권(owner===mySid)은 위 localOwnerConfirmed 분기에서 절대 지우지 않는다.
       netBall.owner=null;
     }
     if(!Array.isArray(netBall.samples)) netBall.samples=[];
