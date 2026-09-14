@@ -1037,6 +1037,7 @@ function updatePreview(modeId){
     return null;
   }
   function sendSoccerLegacyRelay(){
+    if(String(coop?.meta?.id||room?.state?.mode||'')!=='soccer')return;
     try{ room.send("tg_state", { state:{ __soccerCompat:soccerLegacyRelayState.round, __soccerPos:soccerLegacyRelayState.pos, __soccerBall:soccerLegacyRelayState.ball } }); }catch(_){ }
   }
   window.addEventListener("message", (e)=>{
@@ -1534,7 +1535,7 @@ function updatePreview(modeId){
           starpaintMoveTimer = null;
           const player = starpaintPendingMove;
           starpaintPendingMove = null;
-          if (!player) return;
+          if (!player || String(coop?.meta?.id||room?.state?.mode||'')!=='starpaint') return;
           lastStarpaintMoveSent = Date.now();
           try{
             const relayState = { __starpaintMove:player };
@@ -2882,7 +2883,9 @@ function startCoopEmbed(meta){
   }
   coop.active = true;
   coop.meta = meta;
-  if (meta && meta.id === "starpaint") resetStarpaintBridgeState();
+  resetStarpaintBridgeState();
+  soccerLegacyRelayState.round=null;soccerLegacyRelayState.pos=null;soccerLegacyRelayState.ball=null;
+  soccerLegacyActionSticky.fields=null;soccerLegacyActionSticky.until=0;
   coop.iframeLoaded = false;
   coop.iframeReady = false;
   coop._mxGameStartAck = false;
@@ -3415,7 +3418,7 @@ try{
               if (packet && packet.__starpaintSyncReq && String(sid) !== String(mySessionId)) starpaintCompatStateNeeded = true;
               if (packet && packet.__starpaintState){
                 starpaintCompatStateNeeded = true;
-                postToMain({ type:"pb_state", state:packet.__starpaintState });
+                postToMain({ type:"pb_state", sid:String(sid), state:packet.__starpaintState });
               }
             });
             if (Object.keys(moves).length) postToMain({ type:"pb_players", players:moves });

@@ -874,7 +874,8 @@ function updateKickoffCountdown(){
   if (!kickoffSoundsDone.has(key) && sec<=3){ kickoffSoundsDone.add(key); sfxTick(); }
 }
 
-function isRoundLocked(now=Date.now()){ return now < Math.max(restartLockUntil||0,kickoffUntil||0,fieldRestartUntil||0); }
+// Field-return notices are informational; only real round/kickoff pauses lock play.
+function isRoundLocked(now=Date.now()){ return now < Math.max(restartLockUntil||0,kickoffUntil||0); }
 
 function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
 function lerp(a,b,t){ return a+(b-a)*t; }
@@ -3089,7 +3090,7 @@ function applyAuthoritativeBallSnapshot(d){
     if(Number(d.restartSerial||0)>Number(netBall.restartSerial||0)){
       netBall.restartSerial=Number(d.restartSerial||0);
       fieldRestartText=String(d.restartText||'');
-      fieldRestartUntil=Number(d.restartUntil||0);
+      fieldRestartUntil=now+clamp(Number(d.restartUntil||0)-Number(d.sentAt||now),0,1500);
       localKickTrack=null;localDribbleVisualUntil=0;pendingClaimAt=0;pendingClaimUntil=0;
     }
     netBall.netBallSeq=incomingBallSeq||netBall.netBallSeq||0;
@@ -3130,7 +3131,7 @@ function applyAuthoritativeBallSnapshot(d){
     if(localOwnerConfirmed){
       // 소유권 확정은 킥 예측 확정보다 항상 우선한다. updateNetBall()이 다음 고정 틱에서
       // 자기 발앞 목표로 즉시 배치하므로 여기서는 권위 owner를 그대로 보존한다.
-    }else if(confirmsLocalKick){
+    }else if(confirmsLocalKick&&localKickTrack){
       confirmBallAuthoritySmooth({
         x:netBall.netX,y:netBall.netY,z:netBall.netZ,
         vx:netBall.netVX,vy:netBall.netVY,vz:netBall.netVZ
