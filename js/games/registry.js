@@ -113,7 +113,7 @@
     },
     {
       id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/waterblast/index.html?v=20260915-waterblast-arcade-v18', cardImage:'assets/images/game_cards/waterblast-v7.webp',
+      embedPath:'games/waterblast/index.html?v=20260915-waterblast-arcade-v20', cardImage:'assets/images/game_cards/waterblast-v7.webp',
       lobbyDesc:'최대 8명이 정원에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
       descLines:['Z로 설치, X로 자기 슬라임을 바라보는 방향으로 1칸 밉니다.','제거 포션은 최대 1개. 갇힘·탈락 직전 기절 중 C로 탈출합니다.','희귀 빗자루는 맞을 때까지 계속 탑승합니다. 고정벽은 통과할 수 없습니다.'],
       pcHint:'PC: 방향키/WASD 이동 · Z/SPACE 설치 · X 자기 슬라임 밀기 · C 제거 포션',
