@@ -65,3 +65,81 @@ header{background:linear-gradient(180deg,#f4fbff 0%,#def5ff 100%) !important;bor
 .item .item-effect{display:flex !important;align-items:center !important;justify-content:center !important;width:100% !important;min-height:24px !important;padding:3px 4px !important;font-size:9px !important;font-weight:700 !important;line-height:1.1 !important;white-space:normal !important;text-align:center !important}
 .item.empty .slot-icon{opacity:.55}.item.empty .item-effect{font-size:8px !important;font-weight:500 !important}
 @media(max-width:720px){.item{grid-template-rows:50px 24px !important;min-height:84px !important}.item .slot-icon{width:50px !important;height:50px !important}.item .slot-icon img{width:44px !important;height:44px !important}.item .item-effect{font-size:8px !important}}
+
+/* Bloomshot roster: compact vertical list at upper-left */
+#roster{
+  top:62px !important;
+  left:14px !important;
+  right:auto !important;
+  width:172px !important;
+  max-height:250px !important;
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:stretch !important;
+  gap:5px !important;
+  overflow-y:auto !important;
+  overflow-x:hidden !important;
+  pointer-events:none !important;
+}
+#roster .player{
+  width:100% !important;
+  max-width:none !important;
+  min-height:31px !important;
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+  gap:6px !important;
+  padding:5px 8px !important;
+  font-size:9px !important;
+  white-space:nowrap !important;
+}
+#roster .player b{
+  min-width:0 !important;
+  overflow:hidden !important;
+  text-overflow:ellipsis !important;
+  white-space:nowrap !important;
+}
+#roster .player span{
+  flex:0 0 auto !important;
+  margin-left:4px !important;
+  font-size:8px !important;
+  white-space:nowrap !important;
+}
+@media(max-width:720px){
+  #roster{
+    top:45px !important;
+    left:7px !important;
+    width:116px !important;
+    max-height:184px !important;
+    gap:3px !important;
+  }
+  #roster .player{
+    min-height:24px !important;
+    padding:3px 5px !important;
+    border-radius:8px !important;
+    border-left-width:3px !important;
+    font-size:7px !important;
+    gap:3px !important;
+  }
+  #roster .player span{
+    display:inline !important;
+    margin:0 !important;
+    font-size:6px !important;
+  }
+}
+#characters .random-choice{position:relative;overflow:hidden;align-items:center;justify-content:flex-start}
+#characters .random-choice .random-mark{width:82px;height:82px;display:grid;place-items:center;flex:0 0 auto;border:2px solid #b0e8d7;border-radius:14px;background:radial-gradient(circle at 50% 38%,#fffde9 0%,#e7fbff 62%,#d9f3f0 100%);color:#5b7291;font:900 50px/1 system-ui;text-shadow:0 2px 0 #fff,0 0 12px #ffe99a88;box-sizing:border-box}
+#characters .random-choice .random-label{font-weight:900;color:#315e6d}
+#characters .random-choice.selected .random-mark{border-color:#83db95;background:radial-gradient(circle at 50% 38%,#fffbd2 0%,#edffd9 68%,#d8f7cb 100%);color:#55724c}
+@media(max-width:720px){#characters .random-choice .random-mark{width:56px;height:56px;font-size:36px;border-radius:12px}}
+
+/* Battle mode selector */
+.mode-label{margin:0 0 7px;padding:9px 11px;border-radius:12px;background:linear-gradient(90deg,#e7faff 0%,#f6fff0 100%);color:#447280;font-size:9px;font-weight:900;letter-spacing:.8px}
+.mode-label span{float:right;font-size:9px;font-weight:600;letter-spacing:0;color:#7197a3}
+#battleMode{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-bottom:14px}
+#battleMode button{min-height:42px;border:2px solid #a9dfeb;border-radius:12px;background:linear-gradient(180deg,#fbffff 0%,#e9f9fd 100%);box-shadow:0 0 0 1px #fff inset,0 4px 0 #c2e7ee;color:#426c78;text-shadow:none;font-size:11px;font-weight:900}
+#battleMode button.selected{border-color:#8bd59a;background:linear-gradient(180deg,#fbfff0 0%,#e4ffd9 100%);box-shadow:0 0 0 1px #fff inset,0 4px 0 #a8daa8;color:#396443}
+#battleMode button:disabled{opacity:.38}
+#roster .player.team-0{--color:#61b8ff!important}
+#roster .player.team-1{--color:#ff7b8f!important}
+@media(max-width:720px){.mode-label{padding:7px 8px;font-size:8px;margin-bottom:5px}.mode-label span{font-size:7px;max-width:66%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#battleMode{gap:5px;margin-bottom:10px}#battleMode button{min-height:34px;font-size:9px;border-radius:9px;padding:6px}}
