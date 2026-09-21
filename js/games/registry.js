@@ -122,9 +122,9 @@
       mobileControls:[['◉','조이스틱 이동'],['💬','채팅 입력'],['SEND','전송']]
     },
     {
-      id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/waterblast/index.html?v=20260921-waterblast-v22', cardImage:'assets/images/game_cards/waterblast-v7.webp',
-      lobbyDesc:'최대 8명이 정원에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
+      id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:4,
+      embedPath:'games/waterblast/index.html?v=20260921-waterblast-v25', cardImage:'assets/images/game_cards/waterblast-v7.webp',
+      lobbyDesc:'최대 4명이 넓어진 정원에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
       descLines:['Z로 설치, X로 자기 슬라임을 바라보는 방향으로 1칸 밉니다.','제거 포션은 최대 1개. 갇힘·탈락 직전 기절 중 C로 탈출합니다.','희귀 빗자루는 맞을 때까지 계속 탑승합니다. 고정벽은 통과할 수 없습니다.'],
       pcHint:'PC: 방향키/WASD 이동 · Z/SPACE 설치 · X 자기 슬라임 밀기 · C 제거 포션',
       mobileHint:'모바일: 조이스틱 이동 · 설치 / 밀기 / 제거 포션 버튼',
