@@ -1,0 +1,74 @@
+{
+  "version": 12,
+  "temporary": false,
+  "characters": [
+    "assets/portrait-0.webp",
+    "assets/portrait-1.webp",
+    "assets/portrait-2.webp",
+    "assets/portrait-3.webp",
+    "assets/portrait-4.webp",
+    "assets/portrait-5.webp",
+    "assets/portrait-6.webp",
+    "assets/portrait-7.webp"
+  ],
+  "audio": {
+    "sprite": "assets/bloomshot-sfx.ogg",
+    "cues": "assets/sfx-cues.json",
+    "license": "original-generated"
+  },
+  "spriteSheets": [
+    "assets/sprite-0.webp",
+    "assets/sprite-1.webp",
+    "assets/sprite-2.webp",
+    "assets/sprite-3.webp",
+    "assets/sprite-4.webp",
+    "assets/sprite-5.webp",
+    "assets/sprite-6.webp",
+    "assets/sprite-7.webp"
+  ],
+  "bgm": "assets/bloombit.mp3",
+  "maps": [
+    {
+      "background": "assets/maps/map-0-bg.webp",
+      "foreground": "assets/maps/map-0-fg.webp",
+      "preview": "assets/maps/map-0-preview.webp"
+    },
+    {
+      "background": "assets/maps/map-1-bg.webp",
+      "foreground": "assets/maps/map-1-fg.webp",
+      "preview": "assets/maps/map-1-preview.webp"
+    },
+    {
+      "background": "assets/maps/map-2-bg.webp",
+      "foreground": "assets/maps/map-2-fg.webp",
+      "preview": "assets/maps/map-2-preview.webp"
+    },
+    {
+      "background": "assets/maps/map-3-bg.webp",
+      "foreground": "assets/maps/map-3-fg.webp",
+      "preview": "assets/maps/map-3-preview.webp"
+    },
+    {
+      "background": "assets/maps/map-4-bg.webp",
+      "foreground": "assets/maps/map-4-fg.webp",
+      "preview": "assets/maps/map-4-preview.webp"
+    }
+  ],
+  "supply": {
+    "air": "assets/supply-crate.png",
+    "ground": "assets/supply-crate-ground.png"
+  },
+  "card": "assets/card-bloomshot.webp",
+  "portraits": [
+    "assets/portrait-0.webp",
+    "assets/portrait-1.webp",
+    "assets/portrait-2.webp",
+    "assets/portrait-3.webp",
+    "assets/portrait-4.webp",
+    "assets/portrait-5.webp",
+    "assets/portrait-6.webp",
+    "assets/portrait-7.webp"
+  ],
+  "atlas": "assets/gameplay-atlas.webp",
+  "atlasMeta": "assets/gameplay-atlas.json"
+}

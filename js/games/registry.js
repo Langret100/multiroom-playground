@@ -2,6 +2,16 @@
   // Game registry. Room creation cards and the in-room help panel both read this metadata.
   const GAME_REGISTRY = [
     {
+      id:'bloomshot', name:'블룸샷', category:'턴제 · 포격', type:'coop', badgeClass:'coop', maxClients:8,
+      embedPath:'games/bloomshot/index.html?v=20260921-11', cardImage:'games/bloomshot/assets/card-bloomshot.webp?v=1',
+      lobbyDesc:'귀여운 정령 대포로 겨루는 최대 8인 턴제 포격전. 각도·바람·지형 파괴를 읽고 끝까지 살아남으세요.',
+      descLines:['30초 턴 안에 이동하고 각도·파워를 맞춰 일반탄과 특수탄을 발사하세요.','폭발로 발판이 부서지고 낙하산 보급이 내려옵니다. 2연발·파워·회복 아이템을 적절히 활용하세요.','정령 8종마다 체력, 이동력, 탄 모양, 특수탄, 연출이 다르며 혼자 시작하면 CPU와 연습합니다.'],
+      pcHint:'PC: ←→ 이동 · ↑↓ 각도 · A/D 파워 · Space 누르고 놓기 발사 · J 점프 · 1/2/3 아이템',
+      mobileHint:'모바일: 이동 버튼 · 점프 · 각도/파워 슬라이더 · 탄 선택 후 발사',
+      pcControls:[['← →','이동 / 방향'],['↑ ↓','각도'],['A D','파워'],['SPACE','길게 누른 뒤 놓아 발사'],['J','점프'],['1 2 3','아이템'],['드래그 / Q E','화면 이동']],
+      mobileControls:[['◀ ▶','이동 / 방향'],['점프','점프'],['슬라이더','각도 / 파워'],['발사','현재 탄 발사']]
+    },
+    {
       id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
       embedPath:'games/starpaint/index.html?v=20260915-game-recovery-v11', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',

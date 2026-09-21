@@ -360,6 +360,7 @@ function setupBgm(audioElId, btnId){
   };
 
   const BRIEFING_FLOW = {
+    bloomshot: "정령·맵 선택 → 이동·조준 → 발사 → 최후의 생존자",
     starpaint: "색칠 점령 → 아이템 견제 → 3R 보스전 → 최종 집계",
     stackga: "블록 배치 → 줄 삭제 → 상대 압박",
     suika: "도형 낙하 → 같은 도형 합치기 → 최고 단계",
@@ -374,6 +375,7 @@ function setupBgm(audioElId, btnId){
   };
 
   const BRIEFING_TIP = {
+    bloomshot: "바람을 보고 파워를 조절하세요. 회복은 턴을 소모하지 않으며, 파괴된 지형 아래로 떨어지면 추가 피해를 받습니다.",
     starpaint: "밟은 블록은 내 색으로 덮어쓸 수 있고, 파괴된 블록은 점수에 포함되지 않습니다.",
     stackga: "연속 삭제를 노리되 빈틈이 너무 높아지지 않게 관리하세요.",
     suika: "큰 도형을 한쪽에 모으면 다음 합체 공간을 만들기 쉽습니다.",
@@ -1492,6 +1494,15 @@ function updatePreview(modeId){
       return;
     }
 
+    // Bloomshot: dedicated, mode-isolated relay, authenticated by the Worker.
+    if (String(d.type || '').startsWith('bs_')) {
+      if (!fromMain || d.gameId !== 'bloomshot' || coop?.meta?.id !== 'bloomshot') return;
+      if (d.type === 'bs_quit') { try { room.send('bs_quit', {}); } catch (_) {} leaveToLobby(); return; }
+      if (!['bs_input','bs_state','bs_sync','bs_over'].includes(d.type)) return;
+      if ((d.type === 'bs_state' || d.type === 'bs_over') && !getMyIsHost()) return;
+      try { room.send(d.type, { input:d.input, state:d.state, winnerSeat:d.winnerSeat }); } catch (_) {}
+      return;
+    }
     // StarPaint (coop competitive) iframe -> server relay
     // Slime Arena uses only existing generic Worker messages. Never replace
     // StarPaint or Soccer's transport while registering the new game.
@@ -2059,7 +2070,7 @@ function updatePreview(modeId){
     // StarPaint keeps gameplay authority in the current host, but its iframe also
     // needs the live room roster so departed players cannot remain as stale actors.
     try{
-      if (coop?.active && (coop?.meta?.id === "starpaint" || coop?.meta?.id === "waterblast") && phase !== "lobby" && duel?.iframeEl){
+      if (coop?.active && (coop?.meta?.id === "starpaint" || coop?.meta?.id === "waterblast" || coop?.meta?.id === "bloomshot") && phase !== "lobby" && duel?.iframeEl){
         postToMain({
           type: "bridge_roster",
           gameId: String(coop.meta.id),
@@ -2161,7 +2172,11 @@ const isSuhakTokki = (modeId === "suhaktokki");
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
-  if (isTogester && humanCount === 1){
+  if (modeId === 'bloomshot' && humanCount === 1){
+    canStart = true;
+    startText = 'CPU 연습 시작';
+    startAction = 'start';
+  } else if (isTogester && humanCount === 1){
     // 투게스터: 혼자일 때는 방 안 연습 모드(서버 시작 없이 iframe만 실행)
     canStart = true;
     startText = "연습 시작";
@@ -2628,7 +2643,7 @@ function sendCoopBridgeInit(){
     selfSeat: bridgeIdentity.selfSeat,
     seat,
     isHost: effectiveIsHost,
-    ...(["starpaint","waterblast"].includes(coop.meta.id) ? {hostSessionId:String(bridgePlayers.find(p=>p.isHost)?.sessionId || (effectiveIsHost ? mySessionId : coop._lastHostSid) || "")} : {}),
+    ...(["starpaint","waterblast","bloomshot"].includes(coop.meta.id) ? {hostSessionId:String(bridgePlayers.find(p=>p.isHost)?.sessionId || (effectiveIsHost ? mySessionId : coop._lastHostSid) || "")} : {}),
     solo,
     expectedHumans,
     humanCount,
@@ -3470,6 +3485,12 @@ try{
         postToMain({ type:"tg_floor_quota", used: msg.used, limit: msg.limit });
       });
 
+      for (const kind of ['bs_input','bs_state','bs_over','bs_sync']) {
+        room.onMessage(kind, (msg)=>{
+          if (String(coop?.meta?.id || room?.state?.mode || '') !== 'bloomshot') return;
+          postToMain({ ...msg, type:kind, gameId:'bloomshot' });
+        });
+      }
       // StarPaint relay: server -> iframe. Keep pb_* packets isolated to StarPaint
       // so a late packet can never leak into another game's iframe after a mode switch.
       room.onMessage("pb_input", (msg)=>{
@@ -3566,7 +3587,7 @@ try{
         try{ stopGameBgm(); }catch(_){ }
         // StarPaint has its own winner character/name scene. Do not cover it with
         // the generic room result overlay during the 2-second finish window.
-        const starpaintResultActive=[r?.mode,coop?.meta?.id,room?.state?.mode].some(id=>id==='starpaint'||id==='waterblast');
+        const starpaintResultActive=[r?.mode,coop?.meta?.id,room?.state?.mode].some(id=>id==='starpaint'||id==='waterblast'||id==='bloomshot');
         if (!starpaintResultActive) showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });

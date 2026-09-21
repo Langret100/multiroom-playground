@@ -2,12 +2,14 @@
   // Older Workers classify unknown mode IDs as tournaments. Carry Slime Arena
   // over the existing co-op mode; decode its reserved title tag at every entry.
   const WATERBLAST_TAG = "[WB]";
-  function roomTitleLimit(mode){ return mode === "waterblast" ? 30 - WATERBLAST_TAG.length : 30; }
+  function roomTitleLimit(mode){ return mode === "bloomshot" ? 26 : mode === "waterblast" ? 30 - WATERBLAST_TAG.length : 30; }
   function wireRoomOptions(opts){
+    if(opts?.mode === "bloomshot") return {...opts,mode:"suhaktokki",title:"[BS]"+safeText(opts.title||"블룸샷",26)};
     if(opts?.mode !== "waterblast") return opts || {};
     return {...opts, mode:"togester", title:WATERBLAST_TAG + safeText(opts.title || "슬라임 아레나", roomTitleLimit(opts.mode))};
   }
   function clientRoomMeta(meta){
+    if(meta?.mode === "suhaktokki" && String(meta.title||"").startsWith("[BS]"))return {...meta,mode:"bloomshot",title:meta.title.slice(4)};
     if(meta?.mode === "togester" && String(meta.title || "").startsWith(WATERBLAST_TAG)){
       return {...meta, mode:"waterblast", title:meta.title.slice(WATERBLAST_TAG.length)};
     }
@@ -98,6 +100,14 @@
       if(arr){ for(const fn of arr){ try{ fn(payload); }catch(e){} } }
     }
     send(type, payload){
+      if(this.kind==='room'&&this.state.mode==='bloomshot'&&type.startsWith('bs_')){
+        if(type==='bs_quit'){this.leave();return;}
+        const host=this.state.players.get(this.sessionId)?.isHost;
+        if((type==='bs_state'||type==='bs_over')&&!host)return;
+        if(type==='bs_over'){this.ws.send(JSON.stringify({t:'sk_over',d:{}}));return;}
+        if(type==='bs_sync'&&host){queueMicrotask(()=>this._emit('bs_state',{state:this._bloomSnapshot||null,hostTime:Date.now()}));return;}
+        this.ws.send(JSON.stringify({t:'duel_event',d:{event:{ns:'bloomshot-v3',type,...payload}}}));return;
+      }
       // translate legacy colyseus message names to server protocol
       const msg = translateOut(this.kind, type, payload);
       if(!msg) return;
@@ -111,6 +121,7 @@
       const meta = clientRoomMeta(snap.meta || {});
       this.state.title = meta.title ?? this.state.title;
       this.state.mode  = meta.mode  ?? this.state.mode;
+      if(meta.phase==='lobby')this._bloomSnapshot=null;
       this.state.phase = meta.phase ?? this.state.phase;
       this.state.maxClients = meta.maxClients ?? this.state.maxClients;
 
@@ -145,7 +156,7 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const COOP_MODES = new Set(["togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo","starpaint","waterblast"]);
+const COOP_MODES = new Set(["bloomshot","togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo","starpaint","waterblast"]);
 const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
 const isSoccer = (String(this.state.mode||"") === "soccer");
@@ -154,7 +165,7 @@ if (isDuel && humans.length === 1){
   // 1인 듀얼은 서버가 CPU를 붙여 시작하므로 ready 조건을 true로 봄(프론트 UX용)
   this.state.allReady = true;
 } else {
-  const soloCoopOk = isCoop && humans.length === 1 && new Set(["suhaktokki","snaketail","mathexplorer","math-explorer","starpaint"]).has(String(this.state.mode||""));
+  const soloCoopOk = isCoop && humans.length === 1 && new Set(["bloomshot","suhaktokki","snaketail","mathexplorer","math-explorer","starpaint"]).has(String(this.state.mode||""));
   const baseReady = soloCoopOk || (humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready));
   // 수학축구: 반드시 짝수 인원(2·4·6·8)이어야 시작 가능
   const evenOk = !isSoccer || (humans.length % 2 === 0);
@@ -173,6 +184,13 @@ if (isDuel && humans.length === 1){
         return;
       }
 
+      if(this.kind==='room'&&this.state.mode==='bloomshot'&&msg.t==='duel_event'){
+        const e=msg.d?.event,sid=String(msg.d?.sid||'');if(e?.ns!=='bloomshot-v3'||this.state.phase!=='playing')return;
+        if(e.type==='bs_state'){if(!this.state.players.get(sid)?.isHost)return;this._bloomSnapshot=e.state;this._emit('bs_state',{state:e.state,hostTime:e.state?.hostTime});}
+        if(e.type==='bs_input')this._emit('bs_input',{from:sid,input:e.input});
+        if(e.type==='bs_sync')this._emit('bs_sync',{from:sid});
+        return;
+      }
       const translated = translateIn(this.kind, msg);
       if(!translated) return;
 
@@ -187,6 +205,7 @@ if (isDuel && humans.length === 1){
           ["started","result"].includes(translated.type) && translated.payload?.mode === "togester"){
         translated.payload = {...translated.payload, mode:"waterblast"};
       }
+      if(this.kind==='room'&&this.state.mode==='bloomshot'&&['started','result'].includes(translated.type))translated.payload={...translated.payload,mode:'bloomshot'};
       this._emit(translated.type, translated.payload);
     }
   }
@@ -260,6 +279,8 @@ if (isDuel && humans.length === 1){
         "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over",
         // Togester
         "tg_players","tg_level","tg_button","tg_buttons","tg_reset","tg_push","tg_item","tg_floors","tg_floor","tg_floor_remove","tg_boxes","tg_box_impulse","tg_puzzle","tg_floor_quota",
+        // Bloomshot
+        "bs_input","bs_state","bs_over",
         // StarPaint
         "pb_input","pb_state","pb_over",
         // SnakeTail
