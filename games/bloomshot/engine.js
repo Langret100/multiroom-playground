@@ -88,12 +88,12 @@ function spawnEnv(s,at){
  if(!env)return null;s.envs.push(env);event(s,'env_spawn',{envType:env.type,x:env.x,y:env.y,top:env.top,dir:env.dir,radius:env.radius});return env;
 }
 function advanceEnvs(s,t){while(s.nextEnvAt&&t>=s.nextEnvAt){if(s.envs.length<2)spawnEnv(s,s.nextEnvAt);s.nextEnvAt+=18000+Math.round(random(s)*16000);}s.envs=s.envs.filter(e=>e.ends>t);}
-function start(s,now){if(s.phase!=='setup')return false;s.simAt=now;s.phase='aim';s.turn=Math.max(0,s.players.findIndex(p=>p.hp>0));s.turnSerial++;s.deadline=now+10000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
+function start(s,now){if(s.phase!=='setup')return false;s.simAt=now;s.phase='aim';s.turn=Math.max(0,s.players.findIndex(p=>p.hp>0));s.turnSerial++;s.deadline=now+15000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
 function checkWinner(s,now){const alive=s.players.filter(p=>p.hp>0);if(alive.length>1)return false;s.phase='over';s.winner=alive[0]?.sid||null;s.deadline=now+7000;return true;}
 function next(s,now){
  if(checkWinner(s,now))return;for(let i=0;i<s.players.length;i++){s.turn=(s.turn+1)%s.players.length;if(s.turn===0)s.round++;if(s.players[s.turn].hp>0)break;}
  const p=s.players[s.turn];turnEffects(s,p);if(p.hp<=0){next(s,now);return;}p.fuel=p.frozen>0?p.maxFuel*.5:p.maxFuel;if(p.frozen>0)p.frozen--;p.boost=null;
- s.phase='aim';s.turnSerial++;s.deadline=now+10000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
+ s.phase='aim';s.turnSerial++;s.deadline=now+15000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
 }
 function turnEffects(s,p){
  if(p.poison?.turns>0){hurt(s,p,p.poison.damage,'poison');p.poison.turns--;if(!p.poison.turns)p.poison=null;}
@@ -118,7 +118,14 @@ function impact(s,pr){
 }
 function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
  const c=spec(p),w=weaponSpec(p,weapon),rad=(angle+extraAngle)*Math.PI/180,speed=power*11.1*c.speed*(w.speed||1),m=muzzlePosition(s,p);
- return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*2.475,radius:c.radius*w.blast*1.83,craterRadius:c.radius*w.crater*1.86,drawRadius:w.size*1.58,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
+ const smallShot=w.size<=5||p.character===3||p.character===7||c.special==='star';
+ const blastScale=smallShot?1.94:1.83;
+ const craterScale=smallShot?2.35:1.96;
+ const drawScale=smallShot?2.05:1.68;
+ const blastRadius=Math.max(c.radius*w.blast*blastScale,smallShot?48:0);
+ const craterRadius=Math.max(c.radius*w.crater*craterScale,smallShot?54:0);
+ const drawRadius=Math.max(w.size*drawScale,smallShot?8.6:0);
+ return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*2.475,radius:blastRadius,craterRadius,drawRadius,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
 }
 function launch(s,q){const p=s.players.find(p=>p.sid===q.sid);if(!p||p.hp<=0)return;const w=weaponSpec(p,q.weapon),m=muzzlePosition(s,p);for(const a of w.spread){const pr=projectile(s,p,q.angle,q.power,q.weapon,q.boost,s.simAt,a);pr.damage*=1+Math.max(0,s.round-10)*.08;s.projectiles.push(pr);}event(s,'launch',{sid:p.sid,x:m.x,y:m.y,character:p.character,weapon:q.weapon,effect:q.weapon==='special'?spec(p).special:''});}
 function command(s,sid,c,now,hostSid){

@@ -1,5 +1,5 @@
 {
-  "version": 30,
+  "version": 31,
   "temporary": false,
   "characters": [
     "assets/portrait-0.webp",
@@ -58,5 +58,8 @@
   "atlas": "assets/gameplay-atlas.webp",
   "atlasMeta": "assets/gameplay-atlas.json",
   "fxAtlas": "assets/fx-atlas.webp",
-  "fxAtlasMeta": "assets/fx-atlas.json"
+  "fxAtlasMeta": "assets/fx-atlas.json",
+  "projectileFxAtlas": "assets/projectile-fx-atlas.webp",
+  "projectileFxMeta": "assets/projectile-fx-atlas.json",
+  "itemUI": "assets/item-ui.webp"
 }
