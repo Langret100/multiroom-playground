@@ -1,5 +1,5 @@
 {
-  "version": 12,
+  "version": 26,
   "temporary": false,
   "characters": [
     "assets/portrait-0.webp",
@@ -16,16 +16,6 @@
     "cues": "assets/sfx-cues.json",
     "license": "original-generated"
   },
-  "spriteSheets": [
-    "assets/sprite-0.webp",
-    "assets/sprite-1.webp",
-    "assets/sprite-2.webp",
-    "assets/sprite-3.webp",
-    "assets/sprite-4.webp",
-    "assets/sprite-5.webp",
-    "assets/sprite-6.webp",
-    "assets/sprite-7.webp"
-  ],
   "bgm": "assets/bloombit.mp3",
   "maps": [
     {
@@ -54,10 +44,6 @@
       "preview": "assets/maps/map-4-preview.webp"
     }
   ],
-  "supply": {
-    "air": "assets/supply-crate.png",
-    "ground": "assets/supply-crate-ground.png"
-  },
   "card": "assets/card-bloomshot.webp",
   "portraits": [
     "assets/portrait-0.webp",
@@ -70,5 +56,7 @@
     "assets/portrait-7.webp"
   ],
   "atlas": "assets/gameplay-atlas.webp",
-  "atlasMeta": "assets/gameplay-atlas.json"
+  "atlasMeta": "assets/gameplay-atlas.json",
+  "fxAtlas": "assets/fx-atlas.webp",
+  "fxAtlasMeta": "assets/fx-atlas.json"
 }

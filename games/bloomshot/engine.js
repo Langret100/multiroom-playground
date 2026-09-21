@@ -50,15 +50,19 @@ function surfaceAngle(s,x,y){
 }
 function muzzlePosition(s,p){const tilt=(p.falling||s.jump?.sid===p.sid)?0:surfaceAngle(s,p.x,p.y),lx=p.face*29,ly=-44,cs=Math.cos(tilt),sn=Math.sin(tilt);return{x:p.x+lx*cs-ly*sn,y:p.y+lx*sn+ly*cs,tilt};}
 function bodyBlocked(s,x,y){return [-15,0,15].some(dx=>[-12,-30,-49].some(dy=>solidAt(s,x+dx,y+dy)));}
+function ensureSlots(p){if(!Array.isArray(p.slots)||p.slots.length!==4){const order=['double','power','heal','move','shield','poison','freeze','wind'],slots=[];for(const key of order){const n=Math.max(0,p.items?.[key]||0);for(let i=0;i<n&&slots.length<4;i++)slots.push(key);}while(slots.length<4)slots.push(null);p.slots=slots;}return p.slots;}
+function slotCount(p){return ensureSlots(p).filter(Boolean).length;}
+function addSlot(p,item){const slots=ensureSlots(p);const idx=slots.indexOf(null);if(idx<0)return false;slots[idx]=item;return true;}
+function removeSlot(p,item){const slots=ensureSlots(p);const idx=slots.indexOf(item);if(idx<0)return false;slots[idx]=null;const filled=slots.filter(Boolean);while(filled.length<4)filled.push(null);p.slots=filled;return true;}
 function destroy(s,x,y,radius,rough=false,depth=1){for(let i=Math.max(0,Math.floor((x-radius)/STEP));i<=Math.min(s.solids.length-1,Math.ceil((x+radius)/STEP));i++){const dx=i*STEP-x;if(Math.abs(dx)>=radius)continue;const h=Math.sqrt(radius*radius-dx*dx)*depth*(rough?.35+.65*(.5+.5*Math.sin(i*.58)):1),lo=Math.floor(y-h),hi=Math.ceil(y+h),out=[];const c=s.solids[i];for(let j=0;j<c.length;j+=2){const a=c[j],b=c[j+1];if(b<lo||a>hi)out.push(a,b);else{if(a<lo)out.push(a,lo);if(b>hi)out.push(hi,b);}}s.solids[i]=out;s.terrain[i]=out[0]??H+120;}}
 
 function spec(p){return CHARACTERS[p.character]||CHARACTERS[0];}
 function event(s,type,data={}){s.eventSeq++;s.events.push({id:s.eventSeq,type,at:s.simAt,...data});if(s.events.length>35)s.events.shift();}
 function configure(p){const c=spec(p);p.maxHp=c.hp;p.hp=c.hp;p.maxFuel=c.move;p.fuel=c.move;p.shield=0;p.frozen=0;p.poison=null;p.boost=null;}
 function create(roster,seed=1234,now=Date.now()){
- const s={version:8,seed:seed>>>0,id:String(seed)+'-'+now,seq:0,phase:'setup',map:0,turn:0,turnSerial:0,round:1,wind:0,deadline:0,simAt:now,nextDropAt:0,nextEnvAt:0,dropSeq:0,envSeq:0,eventSeq:0,events:[],drops:[],zones:[],envs:[],projectiles:[],queue:[],repeatShot:null,jump:null,solids:[],terrain:[],players:[],shot:null,winner:null};
- s.players=roster.slice(0,8).map((r,i)=>({sid:String(r.sessionId),nick:String(r.nick||'정령').slice(0,24),seat:Number(r.seat)||0,character:i%8,x:0,y:0,face:1,items:{double:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0},lastSeq:0,cpu:!!r.cpu,lastAngle:45,lastPower:60}));
- if(s.players.length===1)s.players.push({...s.players[0],sid:'bloom-cpu',nick:'연습 정령',seat:1,character:2,cpu:true,items:{...s.players[0].items}});
+ const s={version:9,seed:seed>>>0,id:String(seed)+'-'+now,seq:0,phase:'setup',map:0,turn:0,turnSerial:0,round:1,wind:0,deadline:0,simAt:now,nextDropAt:0,nextEnvAt:0,dropSeq:0,envSeq:0,eventSeq:0,events:[],drops:[],zones:[],envs:[],projectiles:[],queue:[],repeatShot:null,jump:null,solids:[],terrain:[],players:[],shot:null,winner:null};
+ s.players=roster.slice(0,8).map((r,i)=>({sid:String(r.sessionId),nick:String(r.nick||'정령').slice(0,24),seat:Number(r.seat)||0,character:i%8,x:0,y:0,face:1,items:{double:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0},slots:['double','power','heal',null],lastSeq:0,cpu:!!r.cpu,lastAngle:45,lastPower:60}));
+ if(s.players.length===1)s.players.push({...s.players[0],sid:'bloom-cpu',nick:'연습 정령',seat:1,character:2,cpu:true,items:{...s.players[0].items},slots:[...s.players[0].slots]});
  s.players.forEach(configure);buildMap(s);return s;
 }
 function buildMap(s){
@@ -76,20 +80,20 @@ function buildMap(s){
  s.terrain=s.solids.map(c=>c[0]??H+120);
  s.players.forEach((p,i)=>{const target=260+i*((W-520)/Math.max(1,s.players.length-1));let x=target;for(let distance=0;distance<500;distance+=STEP){const candidates=[target+distance,target-distance];const found=candidates.find(xx=>xx>50&&xx<W-50&&ground(s,xx)>70&&ground(s,xx)<850&&Math.abs(ground(s,xx-26)-ground(s,xx+26))<18&&!s.players.slice(0,i).some(q=>Math.abs(q.x-xx)<50));if(found!==undefined){x=found;break;}}p.x=x;p.y=ground(s,x);p.face=p.x<W/2?1:-1;p.falling=false;p.fallVy=0;});
 }
-function setWind(s){s.wind=Math.round((random(s)-.5)*100);}
+function setWind(s){s.wind=Math.round((random(s)-.5)*76);}
 function spawnDrop(s,at){const keys=Object.keys(ITEMS),d={id:++s.dropSeq,item:keys[Math.floor(random(s)*keys.length)],x:100+random(s)*(W-200),y:-60,born:at,status:'chute',vy:0,cutAt:0};s.drops.push(d);event(s,'supply',{dropId:d.id,x:d.x,item:d.item});return d;}
 function spawnEnv(s,at){
  let env=null;
- for(let tries=0;tries<18&&!env;tries++){const type=random(s)<.55?'wind':'fire',x=180+random(s)*(W-360),floor=ground(s,x);if(floor<180||floor>930)continue;if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<140))continue;const height=(type==='wind'?240:190)+random(s)*(type==='wind'?90:70),radius=type==='wind'?42:34;env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(58,floor-height),radius,strength:28+random(s)*16,dir:random(s)<.5?-1:1,boost:1.22+random(s)*.12,born:at,ends:at+9000+random(s)*5000};}
+ for(let tries=0;tries<18&&!env;tries++){const type=random(s)<.55?'wind':'fire',x=180+random(s)*(W-360),floor=ground(s,x);if(floor<180||floor>930)continue;if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<140))continue;const height=(type==='wind'?300:250)+random(s)*(type==='wind'?120:95),radius=type==='wind'?46:40;env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:22+random(s)*10,dir:random(s)<.5?-1:1,boost:1.18+random(s)*.09,born:at,ends:at+9000+random(s)*5000};}
  if(!env)return null;s.envs.push(env);event(s,'env_spawn',{envType:env.type,x:env.x,y:env.y,top:env.top,dir:env.dir,radius:env.radius});return env;
 }
 function advanceEnvs(s,t){while(s.nextEnvAt&&t>=s.nextEnvAt){if(s.envs.length<2)spawnEnv(s,s.nextEnvAt);s.nextEnvAt+=18000+Math.round(random(s)*16000);}s.envs=s.envs.filter(e=>e.ends>t);}
-function start(s,now){if(s.phase!=='setup')return false;s.simAt=now;s.phase='aim';s.turn=Math.max(0,s.players.findIndex(p=>p.hp>0));s.turnSerial++;s.deadline=now+30000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
+function start(s,now){if(s.phase!=='setup')return false;s.simAt=now;s.phase='aim';s.turn=Math.max(0,s.players.findIndex(p=>p.hp>0));s.turnSerial++;s.deadline=now+10000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
 function checkWinner(s,now){const alive=s.players.filter(p=>p.hp>0);if(alive.length>1)return false;s.phase='over';s.winner=alive[0]?.sid||null;s.deadline=now+7000;return true;}
 function next(s,now){
  if(checkWinner(s,now))return;for(let i=0;i<s.players.length;i++){s.turn=(s.turn+1)%s.players.length;if(s.turn===0)s.round++;if(s.players[s.turn].hp>0)break;}
  const p=s.players[s.turn];turnEffects(s,p);if(p.hp<=0){next(s,now);return;}p.fuel=p.frozen>0?p.maxFuel*.5:p.maxFuel;if(p.frozen>0)p.frozen--;p.boost=null;
- s.phase='aim';s.turnSerial++;s.deadline=now+30000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
+ s.phase='aim';s.turnSerial++;s.deadline=now+10000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
 }
 function turnEffects(s,p){
  if(p.poison?.turns>0){hurt(s,p,p.poison.damage,'poison');p.poison.turns--;if(!p.poison.turns)p.poison=null;}
@@ -97,12 +101,12 @@ function turnEffects(s,p){
  if(burn&&p.hp>0)hurt(s,p,burn,'fire');
  s.zones=s.zones.filter(z=>s.players.some(q=>q.hp>0&&(z.pending?.[q.sid]||0)>0));
 }
-function pickup(s,p){for(const d of s.drops)if(d.status==='ground'&&Math.abs(d.x-p.x)<38&&Math.abs(d.y-(p.y-14))<40){p.items[d.item]=(p.items[d.item]||0)+1;d.status='taken';event(s,'pickup',{sid:p.sid,item:d.item,x:d.x,y:d.y});}}
+function pickup(s,p){for(const d of s.drops)if(d.status==='ground'&&Math.abs(d.x-p.x)<38&&Math.abs(d.y-(p.y-14))<40){if(slotCount(p)>=4)continue;if(!addSlot(p,d.item))continue;p.items[d.item]=(p.items[d.item]||0)+1;d.status='taken';event(s,'pickup',{sid:p.sid,item:d.item,x:d.x,y:d.y});}}
 function hurt(s,p,amount,kind,armorPierce=0){let damage=Math.max(1,Math.round(amount*(['fall','poison','fire'].includes(kind)?1:1-spec(p).armor*(1-armorPierce))));const absorb=Math.min(p.shield,damage);p.shield-=absorb;damage-=absorb;p.hp=Math.max(0,p.hp-damage);if(damage)event(s,'damage',{sid:p.sid,x:p.x,y:p.y-80,damage,kind});}
 function settle(s){for(const p of s.players){if(p.hp<=0||s.jump?.sid===p.sid)continue;const y=ground(s,p.x,p.y-2);if(y>p.y+2){if(!p.falling){p.falling=true;p.fallFrom=p.y;p.fallVy=0;}}else{p.y=y;pickup(s,p);}}}
 function advanceFalls(s){for(const p of s.players){if(!p.falling||p.hp<=0)continue;const floor=ground(s,p.x,p.y-2);p.fallVy+=760*DT;p.y+=p.fallVy*DT;if(p.y>H+50){p.hp=0;p.falling=false;event(s,'fall',{sid:p.sid,x:p.x,y:p.y});}else if(p.y>=floor){p.y=floor;p.falling=false;if(p.y-p.fallFrom>90)hurt(s,p,(p.y-p.fallFrom-90)*.22,'fall');pickup(s,p);event(s,'land',{sid:p.sid,x:p.x,y:p.y});}}}
 function impact(s,pr){
- const {x,y,radius,damage,effect}=pr;event(s,'blast',{x,y,radius:Math.max(radius,pr.craterRadius),color:pr.color,character:pr.character,weapon:pr.weapon,effect:pr.effect,direct:!!pr.hitSid,hitSid:pr.hitSid||''});
+ const {x,y,radius,damage,effect}=pr;event(s,'blast',{x,y,radius:Math.max(radius,pr.craterRadius),color:pr.color,character:pr.character,weapon:pr.weapon,effect:pr.effect,envType:pr.envType||'',envWind:!!pr.envWind,envFire:!!pr.envFire,boostVisual:pr.boostVisual||'',statusEffect:pr.statusEffect||'',direct:!!pr.hitSid,hitSid:pr.hitSid||''});
  for(const p of s.players){if(p.hp<=0)continue;const dist=Math.hypot(p.x-x,p.y-25-y),direct=p.sid===pr.hitSid;if(direct||dist<radius+20){
   hurt(s,p,damage*(direct?1:Math.max(0,1-dist/(radius+20))),'hit',pr.armorPierce);
   if(effect==='ice'||pr.statusEffect==='freeze')p.frozen=1;
@@ -114,7 +118,7 @@ function impact(s,pr){
 }
 function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
  const c=spec(p),w=weaponSpec(p,weapon),rad=(angle+extraAngle)*Math.PI/180,speed=power*11.1*c.speed*(w.speed||1),m=muzzlePosition(s,p);
- return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1),radius:c.radius*w.blast,craterRadius:c.radius*w.crater,drawRadius:w.size,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,effect:weapon==='special'?c.special:'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
+ return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*1.65,radius:c.radius*w.blast*1.22,craterRadius:c.radius*w.crater*1.24,drawRadius:w.size*1.34,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
 }
 function launch(s,q){const p=s.players.find(p=>p.sid===q.sid);if(!p||p.hp<=0)return;const w=weaponSpec(p,q.weapon),m=muzzlePosition(s,p);for(const a of w.spread){const pr=projectile(s,p,q.angle,q.power,q.weapon,q.boost,s.simAt,a);pr.damage*=1+Math.max(0,s.round-10)*.08;s.projectiles.push(pr);}event(s,'launch',{sid:p.sid,x:m.x,y:m.y,character:p.character,weapon:q.weapon,effect:q.weapon==='special'?spec(p).special:''});}
 function command(s,sid,c,now,hostSid){
@@ -134,17 +138,17 @@ function command(s,sid,c,now,hostSid){
  if(c.kind==='item'){
   const item=c.item;if(!ITEMS[item]||!p.items[item])return false;
   if(['double','power','poison','freeze'].includes(item)){p.boost=p.boost===item?null:item;return true;}
-  if(item==='heal'){if(p.hp>=p.maxHp)return false;p.hp=Math.min(p.maxHp,p.hp+p.maxHp*.5);}if(item==='move')p.fuel=p.maxFuel;if(item==='shield')p.shield+=35;if(item==='wind')s.wind=-s.wind;p.items[item]--;event(s,'item',{sid,item});return true;
+  if(item==='heal'){if(p.hp>=p.maxHp)return false;p.hp=Math.min(p.maxHp,p.hp+p.maxHp*.5);}if(item==='move')p.fuel=p.maxFuel;if(item==='shield')p.shield+=35;if(item==='wind')s.wind=-s.wind;p.items[item]--;removeSlot(p,item);event(s,'item',{sid,item});return true;
  }
  if(c.kind!=='fire'||!Number.isFinite(c.angle)||!Number.isFinite(c.power)||!['normal','special'].includes(c.weapon))return false;
- const cfg=spec(p),angle=clamp(c.angle,...cfg.angle),power=clamp(c.power,10,100),boost=p.boost;if(boost){if(!p.items[boost])return false;p.items[boost]--;p.boost=null;}
+ const cfg=spec(p),angle=clamp(c.angle,...cfg.angle),power=clamp(c.power,10,100),boost=p.boost;if(boost){if(!p.items[boost])return false;p.items[boost]--;removeSlot(p,boost);p.boost=null;}
  p.lastAngle=angle;p.lastPower=power;s.shot={id:s.turnSerial,owner:sid,angle,power,weapon:c.weapon,boost,at:now};s.phase='flight';s.queue=[{sid,angle,power,weapon:c.weapon,boost,at:now}];s.repeatShot=boost==='double'?{sid,angle,power,weapon:c.weapon,boost:null}:null;s.deadline=now+16000;s.flightEnd=0;return true;
 }
 function advanceDrops(s,t){
  while(t>=s.nextDropAt){spawnDrop(s,s.nextDropAt);s.nextDropAt+=DROP_MS;}
  for(const d of s.drops){
-  if(d.status==='chute'){d.x=clamp(d.x+s.wind*.065*DT,35,W-35);const f=clamp((t-d.born)/DROP_MS,0,1);d.y=-60+(ground(s,d.x)-14+60)*f;if(f>=1){d.status='ground';event(s,'land',{x:d.x,y:d.y});}}
-  else if(d.status==='fall'){const floor=ground(s,d.x,d.y+12)-14;d.vy+=900*DT;d.y+=d.vy*DT;if(d.y>=floor){d.y=floor;d.status='ground';event(s,'land',{x:d.x,y:d.y});}}
+  if(d.status==='chute'){d.x=clamp(d.x+s.wind*.048*DT,35,W-35);const f=clamp((t-d.born)/DROP_MS,0,1);d.y=-60+(ground(s,d.x)-14+60)*f;if(f>=1){d.status='ground';d.landedAt=t;event(s,'land',{x:d.x,y:d.y});}}
+  else if(d.status==='fall'){const floor=ground(s,d.x,d.y+12)-14;d.vy+=900*DT;d.y+=d.vy*DT;if(d.y>=floor){d.y=floor;d.status='ground';d.landedAt=t;event(s,'land',{x:d.x,y:d.y});}}
   else if(d.status==='ground'){const floor=ground(s,d.x,d.y+12);if(floor>d.y+16){d.status='fall';d.vy=0;}else d.y=floor-14;}
   if(d.y>H+50)d.status='taken';
  }
@@ -154,11 +158,11 @@ function updateProjectiles(s,t){
  while(s.queue.length&&s.queue[0].at<=t)launch(s,s.queue.shift());
  for(const pr of s.projectiles){pr.age+=DT;const dt=DT/4;
   for(let k=0;k<4&&!pr.dead;k++){
-   pr.vx+=s.wind*dt;pr.vy+=330*dt;
+   pr.vx+=s.wind*dt*.72;pr.vy+=330*dt;
    if(pr.homing&&pr.vy>0){const target=s.players.filter(p=>p.hp>0&&p.sid!==pr.owner&&Math.hypot(p.x-pr.x,p.y-28-pr.y)<300).sort((a,b)=>Math.hypot(a.x-pr.x,a.y-28-pr.y)-Math.hypot(b.x-pr.x,b.y-28-pr.y))[0];if(target){const speed=Math.hypot(pr.vx,pr.vy),heading=Math.atan2(pr.vy,pr.vx),desired=Math.atan2(target.y-28-pr.y,target.x-pr.x),diff=Math.atan2(Math.sin(desired-heading),Math.cos(desired-heading));if(Math.abs(diff)<Math.PI*.6){const direction=heading+clamp(diff,-.5*dt,.5*dt);pr.vx=Math.cos(direction)*speed;pr.vy=Math.sin(direction)*speed;}}}
    pr.x+=pr.vx*dt;pr.y+=pr.vy*dt;if(pr.pierceActive)pr.pierceLeft=Math.max(0,pr.pierceLeft-Math.hypot(pr.vx,pr.vy)*dt);
-   for(const env of s.envs){if(pr.x>env.x-env.radius&&pr.x<env.x+env.radius&&pr.y>env.top&&pr.y<env.y){if(env.type==='wind'){pr.vx+=env.dir*env.strength*dt*4.2;pr.vy-=90*dt;pr.envType='wind';}
-     else{if(!pr.fireBoosted?.includes(env.id)){pr.damage*=env.boost;pr.radius*=1.12;pr.craterRadius*=1.1;pr.vx*=1.08;pr.vy*=1.08;pr.fireBoosted=(pr.fireBoosted||[]);pr.fireBoosted.push(env.id);event(s,'env_touch',{envType:'fire',x:pr.x,y:pr.y});}pr.vy-=26*dt;pr.envType='fire';}}}
+   for(const env of s.envs){if(pr.x>env.x-env.radius&&pr.x<env.x+env.radius&&pr.y>env.top&&pr.y<env.y){if(env.type==='wind'){if(!pr.windTouched?.includes(env.id)){pr.windTouched=(pr.windTouched||[]);pr.windTouched.push(env.id);pr.envWind=true;event(s,'env_touch',{envType:'wind',x:pr.x,y:pr.y});}pr.vx+=env.dir*env.strength*dt*2.75;pr.vy-=62*dt;pr.envType='wind';}
+     else{if(!pr.fireBoosted?.includes(env.id)){pr.damage*=env.boost;pr.radius*=1.12;pr.craterRadius*=1.1;pr.vx*=1.08;pr.vy*=1.08;pr.fireBoosted=(pr.fireBoosted||[]);pr.fireBoosted.push(env.id);pr.envFire=true;event(s,'env_touch',{envType:'fire',x:pr.x,y:pr.y});}pr.vy-=26*dt;pr.envType='fire';}}}
    for(const d of s.drops)if(d.status==='chute'&&(Math.hypot(pr.x-d.x,pr.y-d.y)<25||Math.hypot(pr.x-d.x,pr.y-(d.y-52))<35)){d.status='fall';d.vy=800;d.cutAt=t;event(s,'cut',{x:d.x,y:d.y});}
    // Above-camera shots remain alive. Only bounded side/bottom misses disappear.
    if(pr.x < -480||pr.x>W+480||pr.y>H+80||pr.age>15){pr.dead=true;event(s,'miss',{x:pr.x,y:pr.y});break;}
@@ -171,7 +175,7 @@ function updateProjectiles(s,t){
   }
   pr.trail.push([Math.round(pr.x),Math.round(pr.y)]);if(pr.trail.length>22)pr.trail.shift();
  }
- s.projectiles=s.projectiles.filter(p=>!p.dead);if(!s.projectiles.length&&!s.queue.length&&s.repeatShot){s.queue.push({...s.repeatShot,at:t+350});s.repeatShot=null;}if(s.phase==='flight'&&!s.projectiles.length&&!s.queue.length){if(!s.flightEnd)s.flightEnd=t+900;if(t>=s.flightEnd)next(s,t);}
+ s.projectiles=s.projectiles.filter(p=>!p.dead);if(!s.projectiles.length&&!s.queue.length&&s.repeatShot){s.queue.push({...s.repeatShot,at:t+350});s.repeatShot=null;}if(s.phase==='flight'&&!s.projectiles.length&&!s.queue.length){if(!s.flightEnd)s.flightEnd=t+320;if(t>=s.flightEnd)next(s,t);}
 }
 function tick(s,now){
  if(s.phase==='setup'||s.phase==='over')return false;let changed=false;const limit=Math.min(now,s.simAt+120000);
@@ -186,8 +190,8 @@ function tick(s,now){
  }return changed;
 }
 function roster(s,players,now){const ids=new Set(players.map(p=>String(p.sessionId)));let changed=false;for(const p of s.players)if(!p.cpu&&!ids.has(p.sid)&&p.hp>0){p.hp=0;changed=true;}if(changed&&s.phase==='aim'){if(!checkWinner(s,now)&&s.players[s.turn].hp<=0)next(s,now);}return changed;}
-function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]];let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT;pr.vy+=330*DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const victim=s.players.find(q=>q.hp>0&&(q!==p||i>14)&&Math.hypot(q.x-pr.x,q.y-28-pr.y)<25);if(victim||(pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y))){hit={x:pr.x,y:pr.y,miss:false};break;}}return {path,hit};}
+function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]];let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT*.72;pr.vy+=330*DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const victim=s.players.find(q=>q.hp>0&&(q!==p||i>14)&&Math.hypot(q.x-pr.x,q.y-28-pr.y)<25);if(victim||(pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y))){hit={x:pr.x,y:pr.y,miss:false};break;}}return {path,hit};}
 function cpuAim(s,precise=false){const p=s.players[s.turn],target=s.players.filter(q=>q!==p&&q.hp>0).sort((a,b)=>Math.abs(a.x-p.x)-Math.abs(b.x-p.x))[0];if(!target)return{angle:45,power:65};p.face=target.x>p.x?1:-1;let best={angle:45,power:75},score=Infinity;for(let a=Math.max(25,spec(p).angle[0]);a<=spec(p).angle[1];a+=4)for(let v=25;v<=100;v+=3){const t=trace(s,p,a,v),d=Math.hypot(t.hit.x-target.x,t.hit.y-target.y)+(t.hit.miss?1000:0);if(d<score){score=d;best={angle:a,power:v};}}if(!precise){const mild=random(s)<.22,angleError=(random(s)*2-1)*(mild?2:9),powerError=(random(s)*2-1)*(mild?3:13);best.angle=clamp(best.angle+angleError,...spec(p).angle);best.power=clamp(best.power+powerError,18,100);}return best;}
-function shiftClock(s,delta){s.simAt+=delta;s.deadline+=delta;if(s.nextDropAt)s.nextDropAt+=delta;if(s.nextEnvAt)s.nextEnvAt+=delta;if(s.shot)s.shot.at+=delta;if(s.jump)s.jump.at+=delta;if(s.flightEnd)s.flightEnd+=delta;for(const d of s.drops){d.born+=delta;if(d.cutAt)d.cutAt+=delta;}for(const env of s.envs){env.born+=delta;env.ends+=delta;}for(const q of s.queue)q.at+=delta;for(const p of s.projectiles)p.born+=delta;for(const e of s.events)e.at+=delta;}
+function shiftClock(s,delta){s.simAt+=delta;s.deadline+=delta;if(s.nextDropAt)s.nextDropAt+=delta;if(s.nextEnvAt)s.nextEnvAt+=delta;if(s.shot)s.shot.at+=delta;if(s.jump)s.jump.at+=delta;if(s.flightEnd)s.flightEnd+=delta;for(const d of s.drops){d.born+=delta;if(d.cutAt)d.cutAt+=delta;if(d.landedAt)d.landedAt+=delta;}for(const env of s.envs){env.born+=delta;env.ends+=delta;}for(const q of s.queue)q.at+=delta;for(const p of s.projectiles)p.born+=delta;for(const e of s.events)e.at+=delta;}
 root.BloomEngine={W,H,STEP,DROP_MS,WEAPONS,NORMALS,weaponSpec,weaponDescription,MAPS,solidAt,surfaceAngle,muzzlePosition,destroy,settle,CHARACTERS,ITEMS,create,ground,buildMap,start,command,tick,roster,trace,cpuAim,shiftClock,spawnDrop,spec};
 })(typeof globalThis!=='undefined'?globalThis:this);
