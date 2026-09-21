@@ -118,7 +118,7 @@ function impact(s,pr){
 }
 function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
  const c=spec(p),w=weaponSpec(p,weapon),rad=(angle+extraAngle)*Math.PI/180,speed=power*11.1*c.speed*(w.speed||1),m=muzzlePosition(s,p);
- return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*1.65,radius:c.radius*w.blast*1.22,craterRadius:c.radius*w.crater*1.24,drawRadius:w.size*1.34,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
+ return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*2.475,radius:c.radius*w.blast*1.83,craterRadius:c.radius*w.crater*1.86,drawRadius:w.size*1.58,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
 }
 function launch(s,q){const p=s.players.find(p=>p.sid===q.sid);if(!p||p.hp<=0)return;const w=weaponSpec(p,q.weapon),m=muzzlePosition(s,p);for(const a of w.spread){const pr=projectile(s,p,q.angle,q.power,q.weapon,q.boost,s.simAt,a);pr.damage*=1+Math.max(0,s.round-10)*.08;s.projectiles.push(pr);}event(s,'launch',{sid:p.sid,x:m.x,y:m.y,character:p.character,weapon:q.weapon,effect:q.weapon==='special'?spec(p).special:''});}
 function command(s,sid,c,now,hostSid){
