@@ -143,3 +143,41 @@ header{background:linear-gradient(180deg,#f4fbff 0%,#def5ff 100%) !important;bor
 #roster .player.team-0{--color:#61b8ff!important}
 #roster .player.team-1{--color:#ff7b8f!important}
 @media(max-width:720px){.mode-label{padding:7px 8px;font-size:8px;margin-bottom:5px}.mode-label span{font-size:7px;max-width:66%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#battleMode{gap:5px;margin-bottom:10px}#battleMode button{min-height:34px;font-size:9px;border-radius:9px;padding:6px}}
+
+/* Team battle roster: split teams to opposite sides, with clear team identity colors. */
+#roster.team-mode{
+  top:62px !important;
+  left:14px !important;
+  right:14px !important;
+  width:auto !important;
+  max-height:none !important;
+  display:block !important;
+  overflow:visible !important;
+}
+#roster.team-mode .team-roster{
+  position:absolute;
+  top:0;
+  width:172px;
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+}
+#roster.team-mode .team-left{left:0;align-items:stretch}
+#roster.team-mode .team-right{right:0;align-items:stretch}
+#roster.team-mode .team-roster>strong{
+  padding:4px 8px;
+  border-radius:10px;
+  background:#ffffffdd;
+  font:900 10px/1 system-ui;
+  letter-spacing:.08em;
+  box-shadow:0 2px 8px #18384a22;
+}
+#roster.team-mode .team-left>strong{color:#1676cf;border:2px solid #79c4ff}
+#roster.team-mode .team-right>strong{color:#cf3048;border:2px solid #ff91a0;text-align:right}
+#roster.team-mode .team-0{border-color:#79c4ff !important;border-left-color:#4aa8ff !important}
+#roster.team-mode .team-1{border-color:#ff91a0 !important;border-left-color:#ff5f72 !important}
+@media(max-width:720px){
+  #roster.team-mode{top:45px !important;left:7px !important;right:7px !important;width:auto !important}
+  #roster.team-mode .team-roster{width:116px;gap:3px}
+  #roster.team-mode .team-roster>strong{padding:3px 5px;font-size:7px;border-radius:7px}
+}
