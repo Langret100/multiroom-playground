@@ -112,17 +112,18 @@ function start(s,now){if(s.phase!=='setup')return false;if(s.players.some(p=>!p.
 function checkWinner(s,now){const alive=s.players.filter(p=>p.hp>0);if(s.mode==='team'){const teams=[...new Set(alive.map(p=>p.team))];if(teams.length>1)return false;s.phase='over';s.winnerTeam=teams.length===1?teams[0]:null;s.winner=alive.find(p=>p.team===s.winnerTeam)?.sid||null;s.deadline=now+7000;return true;}if(alive.length>1)return false;s.phase='over';s.winnerTeam=null;s.winner=alive[0]?.sid||null;s.deadline=now+7000;return true;}
 function next(s,now){
  if(checkWinner(s,now))return;for(let i=0;i<s.players.length;i++){s.turn=(s.turn+1)%s.players.length;if(s.turn===0)s.round++;if(s.players[s.turn].hp>0)break;}
- const p=s.players[s.turn];advanceZones(s);zoneTurnDamage(s);turnEffects(s,p);decayZones(s);if(p.hp<=0){next(s,now);return;}p.fuel=p.frozen>0?p.maxFuel*.5:p.maxFuel;if(p.frozen>0)p.frozen--;p.boost=null;
+ const p=s.players[s.turn];if(!Array.isArray(s.zones))s.zones=[];advanceZones(s);zoneTurnDamage(s);turnEffects(s,p);decayZones(s);if(p.hp<=0){next(s,now);return;}p.fuel=p.frozen>0?p.maxFuel*.5:p.maxFuel;if(p.frozen>0)p.frozen--;p.boost=null;
  s.phase='aim';s.turnSerial++;s.deadline=now+15000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
 }
 function turnEffects(s,p){
  if(p.poison?.turns>0){hurt(s,p,p.poison.damage,'poison');p.poison.turns--;if(!p.poison.turns)p.poison=null;}
 }
 function zoneTurnDamage(s){
+ const zones=Array.isArray(s.zones)?s.zones:[];if(!zones.length)return;
  for(const p of s.players){
   if(p.hp<=0)continue;
   let zoneDamage=0,zoneKind='fire';
-  for(const z of s.zones)if(zoneHitsPlayer(z,p)&&z.damage>=zoneDamage){zoneDamage=z.damage;zoneKind=z.type;}
+  for(const z of zones)if(zoneHitsPlayer(z,p)&&z.damage>=zoneDamage){zoneDamage=z.damage;zoneKind=z.type;}
   if(zoneDamage)hurt(s,p,zoneDamage,zoneKind==='poison'?'poison':'fire');
  }
 }

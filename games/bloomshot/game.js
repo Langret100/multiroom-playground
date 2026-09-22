@@ -244,16 +244,34 @@ function backdrop(now){
  drawAmbientWindParticles(now);
 }
 function terrain(){
- const m=E.MAPS[state.map],from=Math.max(0,Math.floor(camera.x/E.STEP)-1),to=Math.min(state.solids.length-1,Math.ceil((camera.x+camera.w)/E.STEP)+1),fg=art.mapForegrounds[state.map];
- if(fg?.complete&&fg.naturalWidth){const padX=28,padY=8;ctx.save();ctx.beginPath();for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.rect(Math.max(0,x-padX),Math.max(0,top-padY),Math.min(E.W,x+E.STEP+padX)-Math.max(0,x-padX),Math.min(E.H,bottom+padY)-Math.max(0,top-padY));}}ctx.clip();ctx.imageSmoothingEnabled=false;ctx.drawImage(fg,0,0,E.W,E.H);ctx.restore();
-  ctx.save();for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.fillStyle='#ffffff14';ctx.fillRect(x,top,E.STEP+1,Math.min(state.map===2?10:6,bottom-top));ctx.fillStyle='#0b122033';ctx.fillRect(x,bottom-7,E.STEP+1,7);}}ctx.restore();return;}
- for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.fillStyle=m.rock;ctx.fillRect(x,top,E.STEP+1,bottom-top);ctx.fillStyle='#111b3540';ctx.fillRect(x,bottom-9,E.STEP+1,9);ctx.fillStyle=m.edge;ctx.fillRect(x,top,E.STEP+1,Math.min(state.map===2?10:5,bottom-top));
-   if(i%8===0){ctx.fillStyle='#ffffff18';for(let y=top+17;y<bottom-10;y+=22)ctx.fillRect(x,y,Math.min(12,E.STEP),3);}
-   if((state.map===0||state.map===1)&&i%11===0){ctx.fillStyle=m.edge;ctx.fillRect(x,top-5,3,6);}
-   if(state.map===0&&i%19===0){ctx.fillStyle='#6a995f';ctx.fillRect(x,bottom-3,3,15+(i%7)*3);ctx.fillRect(x-4,bottom+4,6,3);}
-   if(state.map===2&&i%17===0){ctx.fillStyle='#b1e7f1';ctx.beginPath();ctx.moveTo(x,bottom);ctx.lineTo(x+7,bottom);ctx.lineTo(x+3,bottom+14);ctx.fill();}
-   if(state.map===3&&i%9===0){ctx.fillStyle='#e6b694';ctx.fillRect(x,top+10,3,3);}
- }}
+ const m=E.MAPS[state.map],fg=art.mapForegrounds[state.map],from=Math.max(0,Math.floor(camera.x/E.STEP)-2),to=Math.min(state.solids.length-1,Math.ceil((camera.x+camera.w)/E.STEP)+2);
+ if(fg?.complete&&fg.naturalWidth){
+  const rev=`${state.map}:${state.eventSeq||0}:${state.solids.length}`;
+  if(!terrain._canvas){terrain._canvas=document.createElement('canvas');terrain._canvas.width=E.W;terrain._canvas.height=E.H;terrain._ctx=terrain._canvas.getContext('2d');terrain._rev='';}
+  if(terrain._rev!==rev){
+   const tc=terrain._ctx;
+   tc.setTransform(1,0,0,1,0,0);tc.clearRect(0,0,E.W,E.H);
+   tc.globalCompositeOperation='source-over';tc.imageSmoothingEnabled=false;
+   tc.drawImage(fg,0,0,E.W,E.H);
+   tc.globalCompositeOperation='destination-in';tc.fillStyle='#fff';
+   for(let i=0;i<state.solids.length;i++){
+    const c=state.solids[i],x=i*E.STEP;
+    for(let j=0;j<c.length;j+=2){
+     const top=c[j],bottom=c[j+1];
+     // Small overlap only in the cached mask. Avoids visible seams without hundreds
+     // of heavily-overlapping live clip rectangles every animation frame.
+     tc.fillRect(Math.max(0,x-3),Math.max(0,top-5),Math.min(E.W,x+E.STEP+4)-Math.max(0,x-3),Math.min(E.H,bottom+6)-Math.max(0,top-5));
+    }
+   }
+   tc.globalCompositeOperation='source-over';
+   terrain._rev=rev;
+  }
+  ctx.imageSmoothingEnabled=false;ctx.drawImage(terrain._canvas,0,0);
+  ctx.save();
+  for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.fillStyle='#ffffff12';ctx.fillRect(x,top,E.STEP+1,Math.min(state.map===2?9:5,bottom-top));ctx.fillStyle='#0b12202c';ctx.fillRect(x,Math.max(top,bottom-6),E.STEP+1,Math.min(6,bottom-top));}}
+  ctx.restore();return;
+ }
+ for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.fillStyle=m.rock;ctx.fillRect(x,top,E.STEP+1,bottom-top);ctx.fillStyle='#111b3540';ctx.fillRect(x,bottom-9,E.STEP+1,9);ctx.fillStyle=m.edge;ctx.fillRect(x,top,E.STEP+1,Math.min(state.map===2?10:5,bottom-top));}}
 }
 function recentEventAge(type,sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i];if(e.type===type&&(!sid||e.sid===sid))return now-e.at;}return 1e9;}
 function recentItemUse(sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i];if(e.type==='item'&&e.sid===sid&&now-e.at<1650)return {item:e.item,age:now-e.at};}return null;}
