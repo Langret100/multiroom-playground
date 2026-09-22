@@ -1082,8 +1082,16 @@ function updatePreview(modeId){
     const fromMainForSoccer = fromMain || fromStoredSoccerWin || fromSoccerCoopFallback;
     const fromPbCoopFallback = !!(isPbPacket && pbModeLikely && coopOriginOk && !fromCpu);
     const fromMainForPb = fromMain || fromPbCoopFallback;
-    const fromWbCoopFallback = !!(isWbPacket && wbModeLikely && coopOriginOk && !srcWin && !fromCpu);
-    const fromMainForWb = fromMain || fromWbCoopFallback;
+    // Waterblast/Slime Arena can post bridge_ready before duel.iframeEl's
+    // contentWindow reference has settled. Treat a same-origin, explicitly tagged
+    // waterblast packet as the active game frame while waterblast mode is active.
+    // This avoids dropping bridge_ready and leaving the child stuck on 'connecting'.
+    const fromStoredWbWin = !!(coop && coop.wbFrameWin && srcWin === coop.wbFrameWin);
+    const fromWbCoopFallback = !!(isWbPacket && wbModeLikely && coopOriginOk && !fromCpu);
+    const fromMainForWb = fromMain || fromStoredWbWin || fromWbCoopFallback;
+    if (fromWbCoopFallback && srcWin){
+      try{ coop.wbFrameWin = srcWin; }catch(_){ }
+    }
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
     }
@@ -1500,6 +1508,13 @@ function updatePreview(modeId){
       if (d.type === 'bs_quit') { try { room.send('bs_quit', {}); } catch (_) {} leaveToLobby(); return; }
       if (!['bs_input','bs_state','bs_sync','bs_over'].includes(d.type)) return;
       if ((d.type === 'bs_state' || d.type === 'bs_over') && !getMyIsHost()) return;
+      if (d.type === 'bs_over') {
+        // Current deployed room Worker has no native bloomshot end handler.
+        // Reuse its generic tg_over end/reset path so phase returns to lobby and
+        // every player's READY state is authoritatively cleared.
+        try { room.send('tg_over', { success:true, reason:'bloomshot' }); } catch (_) {}
+        return;
+      }
       try { room.send(d.type, { input:d.input, state:d.state, winnerSeat:d.winnerSeat }); } catch (_) {}
       return;
     }
@@ -3585,12 +3600,18 @@ try{
       });
       room.onMessage("result", (r)=> {
         try{ stopGameBgm(); }catch(_){ }
-        // StarPaint has its own winner character/name scene. Do not cover it with
-        // the generic room result overlay during the 2-second finish window.
-        const starpaintResultActive=[r?.mode,coop?.meta?.id,room?.state?.mode].some(id=>id==='starpaint'||id==='waterblast'||id==='bloomshot');
+        // StarPaint/Bloomshot/Slime Arena own their result presentation.
+        const activeEmbeddedId=String(coop?.meta?.id||room?.state?.mode||'');
+        const starpaintResultActive=[r?.mode,activeEmbeddedId].some(id=>id==='starpaint'||id==='waterblast'||id==='bloomshot');
         if (!starpaintResultActive) showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });
+        // Bloomshot and Slime Arena: winner/loser screen stays visible briefly,
+        // then all clients return to this same room. The authoritative Worker
+        // follows with backToRoom and resets every READY flag to false.
+        if (activeEmbeddedId === 'bloomshot' || activeEmbeddedId === 'waterblast') {
+          scheduleStarpaintLocalReturn(1000);
+        }
       });
       function returnToRoomLobbyLocal(){ returnStarpaintToRoomLobbyLocal(); }
       room.onMessage("backToRoom", ()=> {

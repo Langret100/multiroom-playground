@@ -486,7 +486,7 @@ function loop(t){
  if(bridge.isHost){
   if(!world&&bridge.ready&&assetsReady&&roster().length>=bridge.expectedHumans)world=makeWorld();
   while(acc>=TICK/1000){previousLocal=world?.players?.[bridge.sid]?{...world.players[bridge.sid]}:null;simulate(TICK/1000,Object.assign({},guestInputs,{[bridge.sid]:input}),gameNow());acc-=TICK/1000;}
-  if(world?.ended&&!finishSent&&gameNow()>=world.endAt+4400){finishSent=true;post('wb_over',{winnerSeat:world.winnerSeat});}
+  if(world?.ended&&!finishSent){finishSent=true;post('wb_over',{winnerSeat:world.winnerSeat});}
  }else {while(acc>=TICK/1000){previousLocal=motion.pose?{...motion.pose}:null;predictMotion();acc-=TICK/1000;}}
  sendState(t);draw();requestAnimationFrame(loop);
 }requestAnimationFrame(loop);

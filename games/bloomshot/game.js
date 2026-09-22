@@ -77,8 +77,8 @@ fetch(`${ATLAS_META_PATH}?v=33`).then(r=>r.json()).then(meta=>{art.atlasMeta=met
 art.atlas=load(`${GAMEPLAY_ATLAS}?v=33`,()=>refreshPortraitAssets());
 fetch(`${FX_META_PATH}?v=33`).then(r=>r.json()).then(meta=>{art.fxMeta=meta;buildItemIconURLs();}).catch(()=>{});
 art.fxAtlas=load(`${FX_ATLAS}?v=33`,()=>buildItemIconURLs());
-fetch(`${PROJECTILE_META}?v=33`).then(r=>r.json()).then(meta=>{art.projectileMeta=meta;}).catch(()=>{});
-art.projectileFx=load(`${PROJECTILE_FX}?v=33`);
+fetch(`${PROJECTILE_META}?v=36`).then(r=>r.json()).then(meta=>{art.projectileMeta=meta;}).catch(()=>{});
+art.projectileFx=load(`${PROJECTILE_FX}?v=36`);
 fetch(`${CRATE_META}?v=33`).then(r=>r.json()).then(meta=>{art.crateMeta=meta;}).catch(()=>{});
 art.crateAtlas=load(`${CRATE_ATLAS}?v=33`);
 art.hazardFire=load(`${HAZARD_FIRE}?v=35`);
@@ -444,7 +444,7 @@ function hostTick(){
  const now=Date.now();if(state&&bridge.isHost){E.tick(state,now);const p=state.players[state.turn];
   if(state.phase==='aim'&&p?.cpu&&!p.falling&&state.deadline-now<8500&&cpuTurn!==state.turnSerial){cpuTurn=state.turnSerial;const aim=E.cpuAim(state);if(p.hp<p.maxHp*.35&&p.items.heal)E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'item',item:'heal'},now,bridge.hostSid);else if(state.round>=4&&state.turnSerial%4===0&&p.items.double)E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'item',item:'double'},now,bridge.hostSid);E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'fire',weapon:state.round%3===0?'special':'normal',...aim},now,bridge.hostSid);publish();}
   if(state.eventSeq!==publishedEvent||state.phase!==publishedPhase||now-lastSent>2000)publish();
-  if(state.phase==='over'&&!reported&&now>state.deadline-2000){reported=true;send('bs_over',{winnerSeat:state.players.find(p=>p.sid===state.winner)?.seat??-1,winnerTeam:state.winnerTeam??null,mode:state.mode||'solo'});}
+  if(state.phase==='over'&&!reported){reported=true;send('bs_over',{winnerSeat:state.players.find(p=>p.sid===state.winner)?.seat??-1,winnerTeam:state.winnerTeam??null,mode:state.mode||'solo'});}
  }
  if(state&&!bridge.isHost)E.tick(state,now+offset);
  if(embedded&&bridge.ready&&(!state||(!bridge.isHost&&now-received>3500))&&now-lastSync>2000){lastSync=now;send('bs_sync');}
