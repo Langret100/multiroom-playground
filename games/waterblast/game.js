@@ -5,6 +5,7 @@ const cvs=document.getElementById('c'),screenCtx=cvs.getContext('2d'),statusEl=d
 let ctx=screenCtx;
 let DPR=1,CW=0,CH=0,cell=48,ox=0,oy=0,viewX=0,viewY=0,viewW=0,viewH=0;
 const camera={ox:0,oy:0,ready:false};
+let gardenCache=null,gardenCacheKey='';
 function resize(){DPR=Math.min(2,devicePixelRatio||1);CW=innerWidth;CH=innerHeight;cvs.width=Math.round(CW*DPR);cvs.height=Math.round(CH*DPR);ctx.setTransform(DPR,0,0,DPR,0,0);ctx.imageSmoothingEnabled=false;
  const touch=typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches,wide=CW>=1000&&CH>=600&&!touch,land=CW>CH;
  const left=wide?192:land?106:6,right=land&&!wide?84:6,top=wide?48:land?38:122,bottom=wide?28:land?8:180;
@@ -323,7 +324,7 @@ function drawGarden(){
  for(const [x,y,n]of [[ox-54,oy-22,'tree'],[ox+cell*W+4,oy+12,'flowers'],[ox-56,oy+cell*H-60,'fountain'],[ox+cell*W-38,oy+cell*H+10,'hedge']])ws(n,x,y,52,52);
  ctx.fillStyle='#50734d';ctx.fillRect(ox-5,oy-5,cell*W+10,cell*H+10);ctx.fillStyle='#f5db9c';ctx.fillRect(ox-3,oy-3,cell*W+6,cell*H+6);
 }
-let gardenCache=null,gardenCacheKey='';
+
 function drawArenaBackground(){
  if(!assetsReady)return;
  const k=[CW,CH,DPR,ox,oy,cell].join('|');
