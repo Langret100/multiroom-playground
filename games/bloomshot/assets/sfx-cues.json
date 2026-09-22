@@ -1,1 +1,162 @@
-{"version":4,"cues":{"launch_0_normal":{"start":0.0,"duration":0.54},"impact_0_normal":{"start":0.584989,"duration":0.82},"launch_0_special":{"start":1.449977,"duration":0.68},"impact_0_special":{"start":2.174966,"duration":1.06},"launch_1_normal":{"start":3.279955,"duration":0.54},"impact_1_normal":{"start":3.864943,"duration":0.82},"launch_1_special":{"start":4.729932,"duration":0.68},"impact_1_special":{"start":5.454921,"duration":1.06},"launch_2_normal":{"start":6.559909,"duration":0.54},"impact_2_normal":{"start":7.144898,"duration":0.82},"launch_2_special":{"start":8.009887,"duration":0.68},"impact_2_special":{"start":8.734875,"duration":1.06},"launch_3_normal":{"start":9.839864,"duration":0.54},"impact_3_normal":{"start":10.424853,"duration":0.82},"launch_3_special":{"start":11.289841,"duration":0.68},"impact_3_special":{"start":12.01483,"duration":1.06},"launch_4_normal":{"start":13.119819,"duration":0.54},"impact_4_normal":{"start":13.704807,"duration":0.82},"launch_4_special":{"start":14.569796,"duration":0.68},"impact_4_special":{"start":15.294785,"duration":1.06},"launch_5_normal":{"start":16.399773,"duration":0.54},"impact_5_normal":{"start":16.984762,"duration":0.82},"launch_5_special":{"start":17.849751,"duration":0.68},"impact_5_special":{"start":18.574739,"duration":1.06},"launch_6_normal":{"start":19.679728,"duration":0.54},"impact_6_normal":{"start":20.264717,"duration":0.82},"launch_6_special":{"start":21.129705,"duration":0.68},"impact_6_special":{"start":21.854694,"duration":1.06},"launch_7_normal":{"start":22.959683,"duration":0.54},"impact_7_normal":{"start":23.544671,"duration":0.82},"launch_7_special":{"start":24.40966,"duration":0.68},"impact_7_special":{"start":25.134649,"duration":1.06},"direct_hit":{"start":26.239637,"duration":0.249977},"terrain_crack":{"start":26.534603,"duration":0.48},"pickup":{"start":27.059592,"duration":0.230023},"cut":{"start":27.334603,"duration":0.28},"item":{"start":27.659592,"duration":0.24},"ui_on":{"start":27.94458,"duration":0.149977}}}
+{
+  "cues": {
+    "launch_0_normal": {
+      "start": 0.0,
+      "duration": 0.52
+    },
+    "impact_0_normal": {
+      "start": 0.565,
+      "duration": 0.92
+    },
+    "launch_0_special": {
+      "start": 1.53,
+      "duration": 0.66
+    },
+    "impact_0_special": {
+      "start": 2.235,
+      "duration": 1.12
+    },
+    "launch_1_normal": {
+      "start": 3.4,
+      "duration": 0.52
+    },
+    "impact_1_normal": {
+      "start": 3.965,
+      "duration": 0.92
+    },
+    "launch_1_special": {
+      "start": 4.93,
+      "duration": 0.66
+    },
+    "impact_1_special": {
+      "start": 5.635,
+      "duration": 1.12
+    },
+    "launch_2_normal": {
+      "start": 6.8,
+      "duration": 0.52
+    },
+    "impact_2_normal": {
+      "start": 7.365,
+      "duration": 0.92
+    },
+    "launch_2_special": {
+      "start": 8.33,
+      "duration": 0.66
+    },
+    "impact_2_special": {
+      "start": 9.035,
+      "duration": 1.12
+    },
+    "launch_3_normal": {
+      "start": 10.2,
+      "duration": 0.52
+    },
+    "impact_3_normal": {
+      "start": 10.765,
+      "duration": 0.92
+    },
+    "launch_3_special": {
+      "start": 11.73,
+      "duration": 0.66
+    },
+    "impact_3_special": {
+      "start": 12.435,
+      "duration": 1.12
+    },
+    "launch_4_normal": {
+      "start": 13.6,
+      "duration": 0.52
+    },
+    "impact_4_normal": {
+      "start": 14.165,
+      "duration": 0.92
+    },
+    "launch_4_special": {
+      "start": 15.13,
+      "duration": 0.66
+    },
+    "impact_4_special": {
+      "start": 15.835,
+      "duration": 1.12
+    },
+    "launch_5_normal": {
+      "start": 17.0,
+      "duration": 0.52
+    },
+    "impact_5_normal": {
+      "start": 17.565,
+      "duration": 0.92
+    },
+    "launch_5_special": {
+      "start": 18.53,
+      "duration": 0.66
+    },
+    "impact_5_special": {
+      "start": 19.235,
+      "duration": 1.12
+    },
+    "launch_6_normal": {
+      "start": 20.4,
+      "duration": 0.52
+    },
+    "impact_6_normal": {
+      "start": 20.965,
+      "duration": 0.92
+    },
+    "launch_6_special": {
+      "start": 21.93,
+      "duration": 0.66
+    },
+    "impact_6_special": {
+      "start": 22.635,
+      "duration": 1.12
+    },
+    "launch_7_normal": {
+      "start": 23.8,
+      "duration": 0.52
+    },
+    "impact_7_normal": {
+      "start": 24.365,
+      "duration": 0.92
+    },
+    "launch_7_special": {
+      "start": 25.33,
+      "duration": 0.66
+    },
+    "impact_7_special": {
+      "start": 26.035,
+      "duration": 1.12
+    },
+    "direct_hit": {
+      "start": 27.2,
+      "duration": 0.26
+    },
+    "terrain_crack": {
+      "start": 27.505,
+      "duration": 0.46
+    },
+    "pickup": {
+      "start": 28.01,
+      "duration": 0.22
+    },
+    "cut": {
+      "start": 28.275,
+      "duration": 0.26
+    },
+    "item": {
+      "start": 28.58,
+      "duration": 0.22
+    },
+    "ui_on": {
+      "start": 28.845,
+      "duration": 0.14
+    }
+  },
+  "impactSource": {
+    "artist": "Kenney",
+    "license": "CC0",
+    "type": "generic game impact",
+    "oldImpactCuesReused": false
+  }
+}

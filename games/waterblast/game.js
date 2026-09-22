@@ -31,7 +31,8 @@ function key(x,y){return x+','+y}function clamp(v,a,b){return Math.max(a,Math.mi
 function makeWorld(seedOverride){
  const rs=roster(),seed=(Number(seedOverride)||freshSeed())>>>0,R=rng(seed),crates={},clear=new Set();
  for(const[sx,sy]of spawns)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)if(Math.abs(dx)+Math.abs(dy)<=1)clear.add(key(sx+dx,sy+dy));
- for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){if(x%2===0&&y%2===0||clear.has(key(x,y)))continue;if(y*W+x>(H-1-y)*W+(W-1-x))continue;if(R()<.76){crates[key(x,y)]=1;crates[key(W-1-x,H-1-y)]=1}}
+ const crateCellAllowed=(x,y)=>!isWall(x,y)&&!clear.has(key(x,y))&&!isWall(x,y+1);
+ for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const mx=W-1-x,my=H-1-y;if(!crateCellAllowed(x,y)||!crateCellAllowed(mx,my))continue;if(y*W+x>my*W+mx)continue;if(R()<.76){crates[key(x,y)]=1;crates[key(mx,my)]=1}}
  const players={};rs.forEach((p,i)=>{const q=spawns[i];players[String(p.sessionId)]={sid:String(p.sessionId),nick:String(p.nick||'Player').slice(0,18),seat:Number(p.seat??i),x:q[0]+.5,y:q[1]+.5,alive:true,bubbled:false,bubbleUntil:0,dizzyUntil:0,mash:0,speed:3.05,range:2,maxBombs:1,bombs:0,kos:0,lastHitBy:'',face:'d',moving:false,pushUntil:0,broom:false,potions:0,rescueUntil:0,broomStartAt:0,broomDismountUntil:0,stuckColor:'blue'}});
  const startAt=gameNow()+1800;
  return {v:4,roundId:bridge.sid+':'+seed+':'+startAt,mapSeed:seed,stateSeq:0,serverNow:gameNow(),startAt,endAt:startAt+ROUND_MS,players,crates,items:{},bombs:[],fx:[],seq:1,ended:false,winnerSid:'',winnerSeat:0};
@@ -404,9 +405,9 @@ function townFloor(){
 
 function townObstacle(x,y){const px=ox+x*cell,py=oy+y*cell,s=cell;
  if(townImg.naturalWidth){const edge=x===0||y===0||x===W-1||y===H-1,index=edge?((x+y)%3===0?5:4):(Math.min(x,W-1-x)===4&&Math.min(y,H-1-y)===2)?3:Math.floor(Math.min(y,H-1-y)/2)%3;
- const height=s*(edge?1:index===3?1.65:1.42),width=s*(edge?1.08:index===3?1.18:1.20),foot=py+s;
+ const height=s*(edge?1:index===3?1.65:1.42),width=s*(edge?1.08:.96),foot=py+s;
  if(!edge){ctx.fillStyle='#315b7138';ctx.beginPath();ctx.ellipse(px+s*.5,foot-s*.10,s*.43,s*.13,0,0,Math.PI*2);ctx.fill();}
- ctx.drawImage(townImg,(index%4)*96,Math.floor(index/4)*96,96,96,px+(s-width)/2,foot-height,width,height);return;}
+ const fw=townImg.naturalWidth/4,fh=townImg.naturalHeight/2;ctx.drawImage(townImg,(index%4)*fw,Math.floor(index/4)*fh,fw,fh,px+(s-width)/2,foot-height,width,height);return;}
 
  ctx.save();ctx.translate(px,py);ctx.scale(s/48,s/48);
  const edge=x===0||y===0||x===W-1||y===H-1;
@@ -414,7 +415,7 @@ function townObstacle(x,y){const px=ox+x*cell,py=oy+y*cell,s=cell;
  else if((x+2*y)%8===0){arcadePixel(20,29,9,17,'#9e6d43');arcadePixel(7,12,34,25,'#2f9273');arcadePixel(12,3,25,30,'#46ac76');arcadePixel(16,0,17,20,'#83ce78');arcadePixel(9,25,30,5,'#65be72');}
  else{const roof=['#ee8069','#66b9db','#edbf59'][(x/2+y/2)%3];arcadePixel(5,20,38,26,'#b39769');arcadePixel(7,17,34,26,'#fff0c6');arcadePixel(3,11,42,13,'#805965');arcadePixel(7,5,34,17,roof);arcadePixel(12,0,24,8,roof);arcadePixel(10,8,28,3,'#ffffff66');arcadePixel(18,29,12,17,'#578b99');arcadePixel(21,32,6,7,'#b9e9ed');arcadePixel(8,27,7,8,'#75b7c6');arcadePixel(33,27,7,8,'#75b7c6');arcadePixel(17,43,15,3,'#eee0b2');}
  ctx.restore();}
-function slimeAtlasFrame(name,x,y,size,flip=false,rotation=0,alpha=.78){if(!slimeAtlasImg?.naturalWidth)return false;const map={b0:0,b1:1,b2:2,b3:3,y0:4,y1:5,y2:6,y3:7,p0:8,p1:9,p2:10,p3:11,bb0:12,bb1:13,bb2:14,yy0:15,yy1:16,yy2:17,pp0:18,pp1:19,pp2:20,pre0:21,pre1:22,boom0:23,boom1:24,boom2:25},idx=map[name];if(idx==null)return false;const cellA=96,col=idx%8,row=Math.floor(idx/8);ctx.save();ctx.translate(x,y);ctx.rotate(rotation);if(flip)ctx.scale(-1,1);ctx.globalAlpha=alpha;ctx.imageSmoothingEnabled=false;ctx.drawImage(slimeAtlasImg,col*cellA,row*cellA,cellA,cellA,-size/2,-size/2,size,size);ctx.restore();return true;}
+function slimeAtlasFrame(name,x,y,size,flip=false,rotation=0,alpha=.78){if(!slimeAtlasImg?.naturalWidth)return false;const map={b0:0,b1:1,b2:2,b3:3,y0:4,y1:5,y2:6,y3:7,p0:8,p1:9,p2:10,p3:11,bb0:12,bb1:13,bb2:14,yy0:15,yy1:16,yy2:17,pp0:18,pp1:19,pp2:20,pre0:21,pre1:22,boom0:23,boom1:24,boom2:25},idx=map[name];if(idx==null)return false;const cellA=slimeAtlasImg.naturalWidth/8,col=idx%8,row=Math.floor(idx/8),cellH=slimeAtlasImg.naturalHeight/4;ctx.save();ctx.translate(x,y);ctx.rotate(rotation);if(flip)ctx.scale(-1,1);ctx.globalAlpha=alpha;ctx.imageSmoothingEnabled=false;ctx.drawImage(slimeAtlasImg,col*cellA,row*cellH,cellA,cellH,-size/2,-size/2,size,size);ctx.restore();return true;}
 function arcadeSlime(b,now){let v=arcade.bombViews.get(b.id);if(!v){v={x:b.x,y:b.y,at:now,tx:b.x,ty:b.y,pushAt:0,pushDx:0,pushDy:0};arcade.bombViews.set(b.id,v);}if(v.tx!==b.x||v.ty!==b.y){v.pushDx=b.x-v.tx;v.pushDy=b.y-v.ty;v.tx=b.x;v.ty=b.y;v.pushAt=now;}const step=Math.max(0,Math.min(.4,(now-v.at)/100));v.at=now;v.x+=clamp(b.x-v.x,-step,step);v.y+=clamp(b.y-v.y,-step,step);const x=ox+(v.x+.5)*cell,y=oy+(v.y+.5)*cell,age=Math.max(0,now-b.bornAt),life=clamp(age/FUSE,0,1),color=slimeColor(b,now),prefix=color==='blue'?'b':color==='yellow'?'y':'p',pushAge=now-(v.pushAt||0),size=cell*1.10;
  ctx.save();ctx.fillStyle='#236e6530';ctx.beginPath();ctx.ellipse(x,y+cell*.28,cell*.31,cell*.085,0,0,7);ctx.fill();ctx.restore();
  let drawn=false;if(pushAge>=0&&pushAge<300&&(v.pushDx||v.pushDy)){const f=Math.min(2,Math.floor(pushAge/100)),name=(color==='blue'?'bb':color==='yellow'?'yy':'pp')+f,vertical=Math.abs(v.pushDy)>Math.abs(v.pushDx),flip=!vertical&&v.pushDx<0,rotation=vertical?(v.pushDy<0?-Math.PI/2:Math.PI/2):0;drawn=slimeAtlasFrame(name,x,y,size*1.08,flip,rotation,.76);}else if(life>.93){const f=Math.floor(now/95)%2;drawn=slimeAtlasFrame(f?'pre1':'pre0',x,y,size*1.11,false,0,.76);}else{const f=Math.floor(now/125+b.id.length)%4;drawn=slimeAtlasFrame(prefix+f,x,y,size,false,0,.74+.05*Math.sin(now/150));}
@@ -435,12 +436,12 @@ function arcadeItem(k,it,now){const [tx,ty]=k.split(',').map(Number),x=ox+(tx+.5
 }
 function drawShieldAura(x,y,now){if(!shieldFxImg?.naturalWidth)return false;const frames=6,fw=Math.floor(shieldFxImg.naturalWidth/frames),fh=shieldFxImg.naturalHeight,frame=Math.floor(now/110)%frames,w=cell*1.42,h=cell*1.78;ctx.save();ctx.globalAlpha=.43+.08*Math.sin(now/150);ctx.drawImage(shieldFxImg,frame*fw,0,fw,fh,x-w/2,y-h*.88,w,h);ctx.globalAlpha=.18+.07*Math.sin(now/260);ctx.strokeStyle='#a9ecff';ctx.lineWidth=Math.max(1,cell*.03);ctx.beginPath();ctx.ellipse(x,y-cell*.18,cell*.40,cell*.54,0,0,7);ctx.stroke();ctx.restore();return true;}
 function drawKnockout(p,x,y){const flight=arcade.outFlights?.get(p.sid),elapsed=flight?performance.now()-flight.at:1500,dir=flight?.dir||1,progress=clamp(elapsed/650,0,1),col=elapsed<650?0:elapsed<950?1:2+Math.floor(elapsed/700)%2,dx=dir*cell*.55*progress,lift=elapsed<650?Math.sin(progress*Math.PI)*cell*1.15:0,size=cell*(col<2?1.5:1.65);
- if(knockoutImg.naturalWidth){ctx.drawImage(knockoutImg,col*64,(p.seat%4)*64,64,64,x+dx-size/2,y+cell*.3-lift-size,size,size);if(elapsed>650&&elapsed<1000){ctx.strokeStyle='#d4f9ff';ctx.lineWidth=cell*.05;ctx.beginPath();ctx.ellipse(x+dx,y+cell*.23,cell*(.25+(elapsed-650)/800),cell*.12,0,0,7);ctx.stroke();}}else cs(charFrame(p,gameNow()),x,y+cell*.3,cell,cell*1.4);
+ if(knockoutImg.naturalWidth){const fw=knockoutImg.naturalWidth/4,fh=knockoutImg.naturalHeight/4;ctx.drawImage(knockoutImg,col*fw,(p.seat%4)*fh,fw,fh,x+dx-size/2,y+cell*.3-lift-size,size,size);if(elapsed>650&&elapsed<1000){ctx.strokeStyle='#d4f9ff';ctx.lineWidth=cell*.05;ctx.beginPath();ctx.ellipse(x+dx,y+cell*.23,cell*(.25+(elapsed-650)/800),cell*.12,0,0,7);ctx.stroke();}}else cs(charFrame(p,gameNow()),x,y+cell*.3,cell,cell*1.4);
 }
 // Each new locomotion cell uses one fixed scale and foot anchor. Never stretch
 // individual frames to their own bounding box (that makes the body pulse).
 function locomotionCell(p){const flip=charName(p)==='silver'&&p.face==='l',row=flip?3:(({d:0,u:1,l:2,r:3})[p.face||'d']??0);return {row,flip,col:p.moving?1+(p._walkFrame||0)%4:0};}
-function drawLocomotion(p,x,y){const img=walkImages[charName(p)];if(!img?.naturalWidth)return false;const {row,col,flip}=locomotionCell(p),size=cell*1.65;ctx.save();ctx.translate(Math.round(x*DPR)/DPR,Math.round(y*DPR)/DPR);if(flip)ctx.scale(-1,1);ctx.drawImage(img,col*96,row*96,96,96,-size/2,-size+size*4/96,size,size);ctx.restore();return true;}
+function drawLocomotion(p,x,y){const img=walkImages[charName(p)];if(!img?.naturalWidth)return false;const {row,col,flip}=locomotionCell(p),size=cell*1.65,fw=img.naturalWidth/5,fh=img.naturalHeight/4;ctx.save();ctx.translate(Math.round(x*DPR)/DPR,Math.round(y*DPR)/DPR);if(flip)ctx.scale(-1,1);ctx.drawImage(img,col*fw,row*fh,fw,fh,-size/2,-size+size*4/96,size,size);ctx.restore();return true;}
 function arcadePlayer(p,now){arcade.walks??=new Map();const previous=arcade.walks.get(p.sid),distance=previous?Math.hypot(p.x-previous.x,p.y-previous.y):0;
  const canWalk=p.alive&&!p.bubbled&&!(p.dizzyUntil>now)&&!p.broom;
  const moved=canWalk&&distance>.001&&distance<.4,travel=(previous?.travel||0)+(moved?distance:0),lastMotionAt=moved?now:previous?.lastMotionAt||0;
