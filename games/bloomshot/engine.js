@@ -19,7 +19,7 @@ const WEAPONS={
  petal:{count:2,damage:.58,blast:.7,crater:.58,size:6,spread:[-2.5,2.5],desc:'2발 · 발당 피해 58% / 파괴 반경 58% · 집중 연사, 모두 맞으면 합계 116%'},
  poison:{count:1,damage:.6,blast:.85,crater:.3,size:7,spread:[0],desc:'직격 피해 60% / 파괴 반경 30% · 독안개 지대: 바닥에 퍼지며 총 3턴 동안 피해'},
  pierce:{count:1,damage:1.2,blast:.4,crater:.2,size:4,spread:[0],pierce:100,armorPierce:.65,desc:'피해 120% / 파괴 반경 20% · 작은 탄, 지형 약 100 관통 · 방어력 65% 무시'},
- crater:{count:1,damage:.65,blast:.8,crater:1.445,size:10,spread:[0],desc:'피해 65% / 파괴 반경 145% · 체력보다 발판 파괴·낙사 유도'},
+ crater:{count:1,damage:.65,blast:.8,crater:1.3005,size:10,spread:[0],desc:'피해 65% / 파괴 반경 130% · 체력보다 발판 파괴·낙사 유도'},
  fire:{count:1,damage:.55,blast:.9,crater:.45,size:8,spread:[0],desc:'피해 55% / 파괴 반경 45% · 불길 지대: 바닥을 따라 번지며 총 3턴 동안 피해'},
  ice:{count:1,damage:.65,blast:.9,crater:.4,size:7,spread:[0],desc:'피해 65% / 파괴 반경 40% · 상대 다음 턴 이동력 절반'},
  star:{count:3,damage:.546,blast:.6,crater:.245,size:5,spread:[-4,0,4],homing:true,homingRadius:360,homingTurn:4.8,desc:'3발 · 발당 피해는 기존 길잡이 별보다 30% 감소 · 파괴 반경도 30% 감소 · 비행 중 가까운 적을 락온하면 궤도를 크게 꺾어 확정 직격'}
@@ -36,7 +36,14 @@ const NORMALS=[
 ];
 function weaponSpec(p,weapon){return weapon==='special'?WEAPONS[spec(p).special]:NORMALS[p.character]||NORMALS[0];}
 function characterDamageScale(p){return p.character===CHARACTERS.length-1?.665:.85;} // 번개비: 기존 30% 감소 후 추가 5%, 나머지 캐릭터: 추가 15% 감소
-function terrainDestroyScale(p){return (p.character===4||p.character===CHARACTERS.length-1)?1:1.15;} // 바위콩/번개비 제외 전 캐릭터 지형 파괴 반경 +15%
+function terrainDestroyScale(p,weapon,baseRadius){
+ const isSuper=p.character===CHARACTERS.length-1;
+ const isCraterShell=p.character===4&&weapon==='special';
+ let scale=(p.character===4||isSuper)?1:1.15; // 기존 조정: 바위콩/번개비 제외 전 캐릭터 +15%
+ // 추가 조정: 지반 파괴탄과 번개비는 건드리지 않고, 현재 실효 파괴 반경이 100 미만인 작은 공격만 +10%.
+ if(!isSuper&&!isCraterShell&&baseRadius*scale<100)scale*=1.10;
+ return scale;
+}
 function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 착탄 지점 바닥에 퍼져 1·2턴에는 양옆으로 번지고 3턴에는 유지된 뒤 사라지며 매 턴 피해를 줍니다.',pierce:'작은 관통탄. 지형 약 100 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 착탄 지점 바닥에 붙어 1·2턴에는 양옆으로 번지고 3턴에는 유지된 뒤 사라지며 매 턴 피해를 줍니다.',ice:'서리 단발. 상대 다음 자기 턴 이동력을 절반으로 줄입니다.',star:'길잡이 별 3발. 비행 중 360 이내 적이 잡히면 조준 표시 후 궤도를 크게 꺾어 해당 적에게 확정 직격합니다. 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
 
 const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 ×2',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 2배'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 6 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대의 다음 이동력 절반'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
@@ -69,10 +76,12 @@ function destroy(s,x,y,radius,rough=false,depth=1){for(let i=Math.max(0,Math.flo
 function spec(p){return CHARACTERS[p.character]||CHARACTERS[0];}
 function event(s,type,data={}){s.eventSeq++;s.events.push({id:s.eventSeq,type,at:s.simAt,...data});if(s.events.length>35)s.events.shift();}
 function assignTeams(s){const ordered=s.players.filter(p=>!p.cpu);const half=Math.floor(ordered.length/2);ordered.forEach((p,i)=>p.team=i<half?0:1);const cpus=s.players.filter(p=>p.cpu);cpus.forEach((p,i)=>p.team=i%2);}
+function shuffledIndices(s,indices){const out=indices.slice();for(let i=out.length-1;i>0;i--){const j=Math.floor(random(s)*(i+1));[out[i],out[j]]=[out[j],out[i]];}return out;}
+function prepareTurnOrder(s){const alive=s.players.map((p,i)=>p.hp>0?i:-1).filter(i=>i>=0);s.turnOrder=shuffledIndices(s,alive);s.turnCursor=0;s.teamTurnOrder=[shuffledIndices(s,alive.filter(i=>s.players[i].team===0)),shuffledIndices(s,alive.filter(i=>s.players[i].team===1))];s.teamCursor=[0,0];s.startTeam=random(s)<.5?0:1;}
 function resetStartingInventory(p){const superTank=p.character===CHARACTERS.length-1;p.items={double:superTank?0:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0};p.slots=superTank?['power','heal',null,null]:['double','power','heal',null];}
 function configure(p){const c=spec(p);p.maxHp=c.hp;p.hp=c.hp;p.maxFuel=c.move;p.fuel=c.move;p.shield=0;p.frozen=0;p.poison=null;p.boost=null;p.deathType='';}
 function create(roster,seed=1234,now=Date.now()){
- const s={version:12,seed:seed>>>0,id:String(seed)+'-'+now,seq:0,phase:'setup',mode:'solo',map:0,turn:0,turnSerial:0,round:1,wind:0,deadline:0,simAt:now,nextDropAt:0,nextEnvAt:0,dropSeq:0,envSeq:0,zoneSeq:0,eventSeq:0,events:[],drops:[],zones:[],envs:[],projectiles:[],queue:[],repeatShot:null,jump:null,solids:[],terrain:[],players:[],shot:null,winner:null,winnerTeam:null};
+ const s={version:12,seed:seed>>>0,id:String(seed)+'-'+now,seq:0,phase:'setup',mode:'solo',map:0,turn:0,turnSerial:0,round:1,wind:0,deadline:0,simAt:now,nextDropAt:0,nextEnvAt:0,dropSeq:0,envSeq:0,zoneSeq:0,eventSeq:0,events:[],drops:[],zones:[],envs:[],projectiles:[],queue:[],repeatShot:null,jump:null,solids:[],terrain:[],players:[],shot:null,winner:null,winnerTeam:null,teamLastTurn:[-1,-1],turnOrder:[],turnCursor:0,teamTurnOrder:[[],[]],teamCursor:[0,0],startTeam:0};
  s.players=roster.slice(0,8).map((r,i)=>({sid:String(r.sessionId),nick:String(r.nick||'정령').slice(0,24),seat:Number(r.seat)||0,team:0,character:i%7,characterReady:!!r.cpu,randomSelected:false,x:0,y:0,face:1,items:{double:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0},slots:['double','power','heal',null],lastSeq:0,cpu:!!r.cpu,lastAngle:45,lastPower:60,deathType:''}));
  if(s.players.length===1)s.players.push({...s.players[0],sid:'bloom-cpu',nick:'연습 정령',seat:1,team:1,character:2,cpu:true,items:{...s.players[0].items},slots:[...s.players[0].slots]});
  assignTeams(s);s.players.forEach(p=>{configure(p);resetStartingInventory(p);});buildMap(s);return s;
@@ -111,10 +120,19 @@ function spawnEnv(s,at){
 function advanceEnvs(s,t){while(s.nextEnvAt&&t>=s.nextEnvAt){if(s.envs.length<2)spawnEnv(s,s.nextEnvAt);s.nextEnvAt+=18000+Math.round(random(s)*16000);}s.envs=s.envs.filter(e=>e.ends>t);}
 function windColumnContains(pr,env){const halfWidth=Math.max((env.radius||46)*2.1,66)+(pr.drawRadius||0),top=Math.max(-40,(env.top??0)-280),bottom=(env.y??H)+10;return Math.abs(pr.x-env.x)<=halfWidth&&pr.y>=top&&pr.y<=bottom;}
 function applyWindColumn(pr,env,dt,firstTouch=false){const flow=env.flow||-1,strength=env.strength||26;if(firstTouch){pr.vx+=env.dir*strength*3.6;pr.vy+=flow*strength*5.4;}pr.vx+=env.dir*strength*dt*8.2;pr.vy+=flow*strength*dt*14.2;}
-function start(s,now){if(s.phase!=='setup')return false;if(s.players.some(p=>!p.cpu&&!p.characterReady))return false;const humans=s.players.filter(p=>!p.cpu).length;if(s.mode==='team'&&(humans<2||humans%2!==0))return false;for(const p of s.players){if(p.randomSelected){p.character=Math.floor(random(s)*CHARACTERS.length);p.randomSelected=false;configure(p);resetStartingInventory(p);}}s.winner=null;s.winnerTeam=null;s.simAt=now;s.phase='aim';s.turn=Math.max(0,s.players.findIndex(p=>p.hp>0));s.turnSerial++;s.deadline=now+15000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
+function start(s,now){if(s.phase!=='setup')return false;if(s.players.some(p=>!p.cpu&&!p.characterReady))return false;const humans=s.players.filter(p=>!p.cpu).length;if(s.mode==='team'&&(humans<2||humans%2!==0))return false;for(const p of s.players){if(p.randomSelected){p.character=Math.floor(random(s)*CHARACTERS.length);p.randomSelected=false;configure(p);resetStartingInventory(p);}}s.winner=null;s.winnerTeam=null;s.simAt=now;s.phase='aim';prepareTurnOrder(s);if(s.mode==='team'){let team=s.startTeam;if(!s.teamTurnOrder[team].length)team=team?0:1;s.startTeam=team;s.turn=s.teamTurnOrder[team][0]??0;s.teamCursor[team]=s.teamTurnOrder[team].length?1%s.teamTurnOrder[team].length:0;}else{s.turn=s.turnOrder[0]??0;s.turnCursor=s.turnOrder.length?1%s.turnOrder.length:0;}s.teamLastTurn=[-1,-1];if(s.mode==='team'&&s.players[s.turn])s.teamLastTurn[s.players[s.turn].team]=s.turn;s.turnSerial++;s.deadline=now+15000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
 function checkWinner(s,now){const alive=s.players.filter(p=>p.hp>0);if(s.mode==='team'){const teams=[...new Set(alive.map(p=>p.team))];if(teams.length>1)return false;if(alive.length&&alive.every(p=>p.falling))return false;s.phase='over';s.winnerTeam=teams.length===1?teams[0]:null;s.winner=alive.find(p=>p.team===s.winnerTeam)?.sid||null;s.deadline=now+7000;return true;}if(alive.length>1)return false;if(alive.length===1&&alive[0].falling)return false;s.phase='over';s.winnerTeam=null;s.winner=alive[0]?.sid||null;s.deadline=now+7000;return true;}
+function nextTeamTurn(s){
+ const current=s.players[s.turn],currentTeam=current?.team===1?1:0,targetTeam=currentTeam===0?1:0;
+ if(!Array.isArray(s.teamTurnOrder)||!Array.isArray(s.teamTurnOrder[targetTeam])||!s.teamTurnOrder[targetTeam].length)prepareTurnOrder(s);
+ const order=s.teamTurnOrder[targetTeam]||[];if(!order.length)return false;
+ let cursor=Number.isInteger(s.teamCursor?.[targetTeam])?s.teamCursor[targetTeam]:0,pick=-1;
+ for(let n=0;n<order.length;n++){const pos=(cursor+n)%order.length,idx=order[pos];if(s.players[idx]?.hp>0){pick=idx;s.teamCursor[targetTeam]=(pos+1)%order.length;break;}}
+ if(pick<0)return false;if(targetTeam===s.startTeam)s.round++;s.turn=pick;if(!Array.isArray(s.teamLastTurn))s.teamLastTurn=[-1,-1];s.teamLastTurn[targetTeam]=pick;return true;
+}
+function nextSoloTurn(s){if(!Array.isArray(s.turnOrder)||!s.turnOrder.length)prepareTurnOrder(s);const order=s.turnOrder;if(!order.length)return false;let cursor=Number.isInteger(s.turnCursor)?s.turnCursor:0;for(let n=0;n<order.length;n++){const pos=(cursor+n)%order.length,idx=order[pos];if(s.players[idx]?.hp>0){if(pos<cursor||n+cursor>=order.length)s.round++;s.turn=idx;s.turnCursor=(pos+1)%order.length;return true;}}return false;}
 function next(s,now){
- if(checkWinner(s,now))return;for(let i=0;i<s.players.length;i++){s.turn=(s.turn+1)%s.players.length;if(s.turn===0)s.round++;if(s.players[s.turn].hp>0)break;}
+ if(checkWinner(s,now))return;if(s.mode==='team'){if(!nextTeamTurn(s)){checkWinner(s,now);return;}}else if(!nextSoloTurn(s)){checkWinner(s,now);return;}
  const p=s.players[s.turn];if(!Array.isArray(s.zones))s.zones=[];advanceZones(s);zoneTurnDamage(s);turnEffects(s,p);decayZones(s);if(p.hp<=0){next(s,now);return;}p.fuel=p.frozen>0?p.maxFuel*.5:p.maxFuel;if(p.frozen>0)p.frozen--;p.boost=null;
  s.phase='aim';s.turnSerial++;s.deadline=now+15000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
 }
@@ -155,7 +173,7 @@ function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
  const drawScale=smallShot?2.05:1.68;
  const blastRadius=Math.max(c.radius*w.blast*blastScale,smallShot?48:0);
  const baseCraterRadius=Math.max(c.radius*w.crater*craterScale,smallShot?54:0);
- const craterRadius=baseCraterRadius*terrainDestroyScale(p);
+ const craterRadius=baseCraterRadius*terrainDestroyScale(p,weapon,baseCraterRadius);
  const drawRadius=Math.max(w.size*drawScale,smallShot?8.6:0);
  return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*1.98*characterDamageScale(p),radius:blastRadius,craterRadius,drawRadius,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,homingRadius:w.homingRadius||300,homingTurn:w.homingTurn||.5,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
 }
@@ -197,20 +215,21 @@ function advanceDrops(s,t){
  }
  for(const p of s.players)if(p.hp>0)pickup(s,p);s.drops=s.drops.filter(d=>d.status!=='taken');
 }
+function projectileHitsPlayer(pr,p){const rx=24+(pr.drawRadius||0),ry=38+(pr.drawRadius||0),dx=(p.x-pr.x)/rx,dy=((p.y-30)-pr.y)/ry;return dx*dx+dy*dy<=1;}
 function updateProjectiles(s,t){
  while(s.queue.length&&s.queue[0].at<=t)launch(s,s.queue.shift());
  for(const pr of s.projectiles){pr.age+=DT;const dt=DT/4;
   for(let k=0;k<4&&!pr.dead;k++){
    pr.vx+=s.wind*dt*.72;pr.vy+=330*dt;
    if(pr.homing){let target=pr.lockSid?s.players.find(p=>p.sid===pr.lockSid&&p.hp>0):null;if(!target){const owner=s.players.find(p=>p.sid===pr.owner),used=new Set(s.projectiles.filter(q=>q!==pr&&q.owner===pr.owner&&q.homing&&q.lockSid).map(q=>q.lockSid));const candidates=s.players.filter(p=>p.hp>0&&p.sid!==pr.owner&&!(s.mode==='team'&&owner&&p.team===owner.team)&&Math.hypot(p.x-pr.x,p.y-28-pr.y)<(pr.homingRadius||360)).sort((a,b)=>{const au=used.has(a.sid)?1:0,bu=used.has(b.sid)?1:0;if(au!==bu)return au-bu;return Math.hypot(a.x-pr.x,a.y-28-pr.y)-Math.hypot(b.x-pr.x,b.y-28-pr.y);});target=candidates[0]||null;if(target){pr.lockSid=target.sid;event(s,'lock_on',{owner:pr.owner,targetSid:target.sid,x:target.x,y:target.y-28,shotIndex:pr.shotIndex||0});}}
-    if(target){const tx=target.x,ty=target.y-28,dx=tx-pr.x,dy=ty-pr.y,dist=Math.hypot(dx,dy);if(dist<22+pr.drawRadius){pr.hitSid=target.sid;pr.x=tx;pr.y=ty;impact(s,pr);pr.dead=true;break;}const speed=Math.max(360,Math.hypot(pr.vx,pr.vy)),heading=Math.atan2(pr.vy,pr.vx),desired=Math.atan2(dy,dx),diff=Math.atan2(Math.sin(desired-heading),Math.cos(desired-heading)),maxTurn=(pr.homingTurn||4.8)*dt,direction=heading+clamp(diff,-maxTurn,maxTurn);pr.vx=Math.cos(direction)*speed;pr.vy=Math.sin(direction)*speed;pr.locked=true;}}
+    if(target){const tx=target.x,ty=target.y-28,dx=tx-pr.x,dy=ty-pr.y,dist=Math.hypot(dx,dy);if(projectileHitsPlayer(pr,target)){pr.hitSid=target.sid;pr.x=tx;pr.y=ty;impact(s,pr);pr.dead=true;break;}const speed=Math.max(360,Math.hypot(pr.vx,pr.vy)),heading=Math.atan2(pr.vy,pr.vx),desired=Math.atan2(dy,dx),diff=Math.atan2(Math.sin(desired-heading),Math.cos(desired-heading)),maxTurn=(pr.homingTurn||4.8)*dt,direction=heading+clamp(diff,-maxTurn,maxTurn);pr.vx=Math.cos(direction)*speed;pr.vy=Math.sin(direction)*speed;pr.locked=true;}}
    pr.x+=pr.vx*dt;pr.y+=pr.vy*dt;if(pr.pierceActive)pr.pierceLeft=Math.max(0,pr.pierceLeft-Math.hypot(pr.vx,pr.vy)*dt);
    for(const env of s.envs){const withinColumn=env.type==='wind'?windColumnContains(pr,env):(Math.abs(pr.x-env.x)<=env.radius+pr.drawRadius+18&&pr.y>=env.top-18&&pr.y<=env.y+10);if(withinColumn){if(env.type==='wind'){const firstTouch=!pr.windTouched?.includes(env.id);if(firstTouch){pr.windTouched=(pr.windTouched||[]);pr.windTouched.push(env.id);pr.envWind=true;pr.envWindDir=env.flow||-1;event(s,'env_touch',{envType:'wind',x:pr.x,y:pr.y,flow:env.flow||-1});}applyWindColumn(pr,env,dt,firstTouch);pr.envType='wind';}
      else{if(!pr.fireBoosted?.includes(env.id)){pr.damage*=env.boost;pr.radius*=1.12;pr.craterRadius*=1.1;pr.vx*=1.08;pr.vy*=1.08;pr.fireBoosted=(pr.fireBoosted||[]);pr.fireBoosted.push(env.id);pr.envFire=true;event(s,'env_touch',{envType:'fire',x:pr.x,y:pr.y,boost:env.boost});}pr.vy-=34*dt;pr.envType='fire';}}}
    for(const d of s.drops)if(d.status==='chute'&&(Math.hypot(pr.x-d.x,pr.y-d.y)<25||Math.hypot(pr.x-d.x,pr.y-(d.y-52))<35)){d.status='fall';d.vy=800;d.cutAt=t;event(s,'cut',{x:d.x,y:d.y});}
    // Above-camera shots remain alive. Only bounded side/bottom misses disappear.
    if(pr.x < -480||pr.x>W+480||pr.y>H+80||pr.age>15){pr.dead=true;event(s,'miss',{x:pr.x,y:pr.y});break;}
-   const hit=pr.lockSid?s.players.find(p=>p.hp>0&&p.sid===pr.lockSid&&Math.hypot(p.x-pr.x,p.y-28-pr.y)<17+pr.drawRadius):s.players.find(p=>p.hp>0&&(p.sid!==pr.owner||pr.age>.25)&&Math.hypot(p.x-pr.x,p.y-28-pr.y)<17+pr.drawRadius);
+   const hit=pr.lockSid?s.players.find(p=>p.hp>0&&p.sid===pr.lockSid&&projectileHitsPlayer(pr,p)):s.players.find(p=>p.hp>0&&(p.sid!==pr.owner||pr.age>.25)&&projectileHitsPlayer(pr,p));
    if(hit){pr.hitSid=hit.sid;impact(s,pr);pr.dead=true;}
    else if(!pr.lockSid&&pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y)){
     if(pr.pierceLeft>0){pr.pierceActive=true;destroy(s,pr.x,pr.y,pr.craterRadius);settle(s);if(pr.pierceLeft<=0){impact(s,pr);pr.dead=true;}}
@@ -233,7 +252,7 @@ function tick(s,now){
  }return changed;
 }
 function roster(s,players,now){const ids=new Set(players.map(p=>String(p.sessionId)));let changed=false;for(const p of s.players)if(!p.cpu&&!ids.has(p.sid)&&p.hp>0){p.hp=0;changed=true;}if(changed&&s.phase==='aim'){if(!checkWinner(s,now)&&s.players[s.turn].hp<=0)next(s,now);}return changed;}
-function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]],windTouched=new Set();let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT*.72;pr.vy+=330*DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;for(const env of s.envs||[]){if(env.type!=='wind'||!windColumnContains(pr,env))continue;const firstTouch=!windTouched.has(env.id);if(firstTouch)windTouched.add(env.id);applyWindColumn(pr,env,DT,firstTouch);}if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const victim=s.players.find(q=>q.hp>0&&(q!==p||i>14)&&Math.hypot(q.x-pr.x,q.y-28-pr.y)<25);if(victim||(pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y))){hit={x:pr.x,y:pr.y,miss:false};break;}}return {path,hit};}
+function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]],windTouched=new Set();let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT*.72;pr.vy+=330*DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;for(const env of s.envs||[]){if(env.type!=='wind'||!windColumnContains(pr,env))continue;const firstTouch=!windTouched.has(env.id);if(firstTouch)windTouched.add(env.id);applyWindColumn(pr,env,DT,firstTouch);}if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const victim=s.players.find(q=>q.hp>0&&(q!==p||i>14)&&projectileHitsPlayer(pr,q));if(victim||(pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y))){hit={x:pr.x,y:pr.y,miss:false};break;}}return {path,hit};}
 function cpuAim(s,precise=false){const p=s.players[s.turn],target=s.players.filter(q=>q!==p&&q.hp>0&&!(s.mode==='team'&&q.team===p.team)).sort((a,b)=>Math.abs(a.x-p.x)-Math.abs(b.x-p.x))[0];if(!target)return{angle:45,power:65};p.face=target.x>p.x?1:-1;let best={angle:45,power:75},score=Infinity;for(let a=Math.max(25,spec(p).angle[0]);a<=spec(p).angle[1];a+=4)for(let v=25;v<=100;v+=3){const t=trace(s,p,a,v),d=Math.hypot(t.hit.x-target.x,t.hit.y-target.y)+(t.hit.miss?1000:0);if(d<score){score=d;best={angle:a,power:v};}}if(!precise){const mild=random(s)<.22,angleError=(random(s)*2-1)*(mild?2:9),powerError=(random(s)*2-1)*(mild?3:13);best.angle=clamp(best.angle+angleError,...spec(p).angle);best.power=clamp(best.power+powerError,18,100);}return best;}
 function shiftClock(s,delta){s.simAt+=delta;s.deadline+=delta;if(s.nextDropAt)s.nextDropAt+=delta;if(s.nextEnvAt)s.nextEnvAt+=delta;if(s.shot)s.shot.at+=delta;if(s.jump)s.jump.at+=delta;if(s.flightEnd)s.flightEnd+=delta;for(const d of s.drops){d.born+=delta;if(d.cutAt)d.cutAt+=delta;if(d.landedAt)d.landedAt+=delta;}for(const env of s.envs){env.born+=delta;env.ends+=delta;}for(const q of s.queue)q.at+=delta;for(const p of s.projectiles)p.born+=delta;for(const e of s.events)e.at+=delta;}
 root.BloomEngine={W,H,STEP,DROP_MS,WEAPONS,NORMALS,weaponSpec,weaponDescription,MAPS,solidAt,surfaceAngle,muzzlePosition,aimAngle,destroy,settle,CHARACTERS,ITEMS,create,ground,buildMap,start,command,tick,roster,trace,cpuAim,shiftClock,spawnDrop,spec};

@@ -205,3 +205,42 @@ header{background:linear-gradient(180deg,#f4fbff 0%,#def5ff 100%) !important;bor
 .aim-sliders label:first-child b{display:none !important}
 @media(max-width:1000px){.dashboard{grid-template-columns:160px 260px minmax(0,1fr) !important}.aim-top{grid-template-columns:136px minmax(70px,1fr) !important}#dial{width:136px !important;height:94px !important}}
 @media(max-width:720px){.dashboard{grid-template-columns:108px minmax(0,1fr) !important}.inventory{grid-column:1/-1 !important}.aim-top{grid-template-columns:118px minmax(64px,1fr) !important;height:88px !important}#dial{width:118px !important;height:88px !important}.aim-sliders{gap:5px !important}.aim-sliders label:first-child::after{font-size:7px !important}}
+
+
+/* v42: team roster below battlefield; never cover the map */
+body.team-battle .arena{bottom:calc(var(--dash-h,136px) + 74px) !important;}
+body.team-battle #roster.team-mode{
+  top:auto !important;
+  bottom:calc(var(--dash-h,136px) + 25px) !important;
+  left:18px !important;
+  right:18px !important;
+  width:auto !important;
+  height:42px !important;
+  max-height:42px !important;
+  display:grid !important;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;
+  gap:12px !important;
+  overflow:hidden !important;
+  z-index:4 !important;
+}
+body.team-battle #roster.team-mode .team-roster{
+  position:static !important;
+  width:auto !important;
+  min-width:0 !important;
+  display:flex !important;
+  flex-direction:row !important;
+  align-items:center !important;
+  gap:5px !important;
+  overflow:hidden !important;
+}
+body.team-battle #roster.team-mode .team-right{justify-content:flex-end !important;}
+body.team-battle #roster.team-mode .team-roster>strong{flex:0 0 auto !important;white-space:nowrap !important;}
+body.team-battle #roster.team-mode .player{width:auto !important;max-width:150px !important;min-width:0 !important;flex:0 1 auto !important;}
+@media(max-width:720px){
+ body.team-battle .arena{bottom:calc(var(--dash-h,250px) + 66px) !important;}
+ body.team-battle #roster.team-mode{left:8px !important;right:8px !important;bottom:calc(var(--dash-h,250px) + 18px) !important;height:40px !important;max-height:40px !important;gap:6px !important;}
+ body.team-battle #roster.team-mode .team-roster{gap:2px !important;}
+ body.team-battle #roster.team-mode .team-roster>strong{font-size:6px !important;padding:3px 4px !important;}
+ body.team-battle #roster.team-mode .player{max-width:88px !important;padding:3px 4px !important;font-size:7px !important;}
+ body.team-battle #roster.team-mode .player span{font-size:6px !important;}
+}

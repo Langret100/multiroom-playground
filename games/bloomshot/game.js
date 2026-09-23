@@ -211,6 +211,7 @@ function renderUI(){
  $('modeSolo').classList.toggle('selected',state.mode!=='team');$('modeTeam').classList.toggle('selected',state.mode==='team');$('modeSolo').disabled=!bridge.isHost||state.phase!=='setup';$('modeTeam').disabled=!bridge.isHost||state.phase!=='setup'||!teamEligible;
  $('modeHint').textContent=!teamEligible?'참가자가 홀수라 팀전을 선택할 수 없습니다.':state.mode==='team'?'참가 순서 위쪽 절반 A팀 / 아래쪽 절반 B팀':'방장이 전투 방식을 고릅니다';
  $('start').disabled=!bridge.isHost||!state||!allReady||(state.mode==='team'&&!teamEligible);$('start').textContent=bridge.isHost?(allReady?'READY TO BATTLE ▶':`캐릭터 선택 ${readyCount}/${selectable.length}`):'방장의 시작을 기다리는 중';
+ document.body.classList.toggle('team-battle',state.mode==='team'&&state.phase!=='setup');
  const modeText=state.mode==='team'?'팀전':'개인전';$('setupHint').textContent=state.players.some(p=>p.cpu)?`1인 CPU 연습 · 쉬움 · ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 후 출발`:`${state.players.length}명 온라인 ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 시 방장이 시작할 수 있습니다.`;
  const startingSpans=document.querySelectorAll('.starting span');if(startingSpans.length>=3){startingSpans[0].hidden=!!(p?.characterReady&&p.character===C.length-1);startingSpans[1].hidden=false;startingSpans[2].hidden=false;}
  if(p){const setupKey=p.randomSelected?-99:p.character;if(setupCharacter!==setupKey){setupCharacter=setupKey;selectionProfile(p);if(!p.randomSelected){$('angle').min=c.angle[0];$('angle').max=c.angle[1];$('angle').value=Math.max(c.angle[0],Math.min(c.angle[1],Number($('angle').value)));}}}
@@ -235,7 +236,7 @@ function renderUI(){
  if(state.phase==='over'){const winnerText=state.mode==='team'&&state.winnerTeam!==null?`${state.winnerTeam===0?'A':'B'}팀 승리!`:state.winner?`${state.players.find(p=>p.sid===state.winner)?.nick} 승리!`:'무승부';$('winner').textContent=winnerText;$('resultHint').textContent=embedded?'잠시 후 같은 방 대기실로 돌아갑니다.':'다른 정령과 전장으로 다시 도전하세요.';$('again').hidden=embedded;}
  $('angle').oninput();$('power').oninput();
 }
-function resize(){const rect=canvas.getBoundingClientRect(),dpr=Math.min(2,devicePixelRatio||1),w=Math.round(rect.width*dpr),h=Math.round(rect.height*dpr);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}camera.h=1080;camera.w=1080*rect.width/rect.height;}
+function resize(){const dash=document.querySelector('.dashboard');if(dash)document.documentElement.style.setProperty('--dash-h',Math.ceil(dash.getBoundingClientRect().height)+'px');const rect=canvas.getBoundingClientRect(),dpr=Math.min(2,devicePixelRatio||1),w=Math.round(rect.width*dpr),h=Math.round(rect.height*dpr);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}camera.h=1080;camera.w=1080*rect.width/rect.height;}
 function clearGhostOverlay(){const n=$('notice');if(n&&!String(n.textContent||'').trim())n.style.display='none';const t=document.getElementById('weaponTooltip');if(t&&(!t.textContent||!t.textContent.trim()))t.hidden=true;}
 function text(t,x,y,size=14,color='#fff',align='center'){ctx.font=`900 ${size}px system-ui`;ctx.textAlign=align;ctx.lineWidth=4;ctx.strokeStyle='#19243ccc';ctx.strokeText(t,x,y);ctx.fillStyle=color;ctx.fillText(t,x,y);}
 function seeded01(seed){const x=Math.sin(seed*12.9898+seed*78.233)*43758.5453;return x-Math.floor(x);}
