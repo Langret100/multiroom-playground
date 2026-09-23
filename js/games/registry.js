@@ -3,7 +3,7 @@
   const GAME_REGISTRY = [
     {
       id:'bloomshot', name:'블룸샷', category:'턴제 · 포격', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/bloomshot/index.html?v=20260922-28', cardImage:'games/bloomshot/assets/card-bloomshot.webp?v=1',
+      embedPath:'games/bloomshot/index.html?v=20260923-random-spawn-v1', cardImage:'games/bloomshot/assets/card-bloomshot.webp?v=1',
       lobbyDesc:'귀여운 정령 대포로 겨루는 최대 8인 턴제 포격전. 각도·바람·지형 파괴를 읽고 끝까지 살아남으세요.',
       descLines:['30초 턴 안에 이동하고 각도·파워를 맞춰 일반탄과 특수탄을 발사하세요.','폭발로 발판이 부서지고 낙하산 보급이 내려옵니다. 2연발·파워·회복 아이템을 적절히 활용하세요.','정령 8종마다 체력, 이동력, 탄 모양, 특수탄, 연출이 다르며 혼자 시작하면 CPU와 연습합니다.'],
       pcHint:'PC: ←→ 이동 · ↑↓ 각도 · A/D 파워 · Space 누르고 놓기 발사 · J 점프 · 1/2/3 아이템',
