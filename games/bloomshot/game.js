@@ -477,7 +477,6 @@ function draw(now){
  const point=(a,r)=>{const rr=a*Math.PI/180,wx=face*Math.cos(rr),wy=-Math.sin(rr),cs=Math.cos(tilt),sn=Math.sin(tilt);return{x:p.x+(wx*cs-wy*sn)*r,y:p.y-42+(wx*sn+wy*cs)*r};};
  ctx.save();ctx.strokeStyle='#6ee8ff88';ctx.lineWidth=5;ctx.beginPath();let started=false;for(let a=cfg.angle[0];a<=cfg.angle[1]+.01;a+=2){const q=point(a,92);if(!started){ctx.moveTo(q.x,q.y);started=true;}else ctx.lineTo(q.x,q.y);}ctx.stroke();
  for(let a=Math.ceil(cfg.angle[0]/10)*10;a<=cfg.angle[1];a+=10){const a1=point(a,82),a2=point(a,96);ctx.strokeStyle='#b8efe477';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(a1.x,a1.y);ctx.lineTo(a2.x,a2.y);ctx.stroke();}
- ctx.strokeStyle='#8ba8b8aa';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(p.x-72*Math.cos(tilt),p.y-42-72*Math.sin(tilt));ctx.lineTo(p.x+72*Math.cos(tilt),p.y-42+72*Math.sin(tilt));ctx.stroke();
  ctx.strokeStyle='#fff1a8dd';ctx.lineWidth=2.5;ctx.setLineDash([4,7]);ctx.beginPath();ctx.moveTo(m.x,m.y);ctx.lineTo(m.x+Math.cos(worldAngle)*125*face,m.y-Math.sin(worldAngle)*125);ctx.stroke();ctx.setLineDash([]);text(`${angleText()}°`,m.x+Math.cos(worldAngle)*147*face,m.y-Math.sin(worldAngle)*147,16,'#ffeab4');ctx.restore();}
  drawHomingLocks(now);for(const pr of state.projectiles)drawProjectile(pr,now);
  drawFx(now);ctx.restore();ctx.restore();drawMinimap();drawDial();
