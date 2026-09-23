@@ -14,7 +14,7 @@ const SHOT_VISUALS=[
 const MAPS=E.MAPS.map(m=>m.name),ICONS={double:'Ⅱ',power:'✦',heal:'✚',move:'➟',shield:'⬡',poison:'♨',freeze:'❄',wind:'↔'},ITEM_SHORT={double:'한 번 더 발사',power:'피해 2배',heal:'체력 50% 회복',move:'이동력 회복',shield:'피해 35 흡수',poison:'맞추면 중독',freeze:'맞추면 둔화',wind:'바람 방향 반전'};
 const embedded=parent!==window,bridge={sid:'local',hostSid:'local',isHost:!embedded,ready:!embedded};
 let state=null,roster=[],sequence=0,pending=null,offset=0,received=0,lastSent=0,lastSync=0,reported=false,weapon='normal',sound=true,audio=null,audioBuffer=null,audioCues=null,audioLoad=null,bgmAudio=null,noticeUntil=0,lastEvent=0,setupCharacter=-1,lastTurn=-1,lastLocalTurn=-1,cpuTurn=-1,bootAt=Date.now(),itemIconUrls={};
-let publishedEvent=-1,publishedPhase=null,lastCountdownTurn=-1,lastCountdownValue=99,lastHomingCueAt=0;
+let publishedEvent=-1,publishedPhase=null,lastCountdownTurn=-1,lastCountdownValue=99,lastHomingCueAt=0,visualState=null,visualSeq=-1;
 let charge=null,moveHeld=0,lastMove=0,panHeld=0,aimHeld=0,powerHeld=0,frameAt=0,windParticles=[];
 const camera={x:0,y:0,manual:false,w:1200,h:700,targetX:0,targetY:0},art={characters:[],portraitsSmall:[],portraitsLarge:[],portraitsPilot:[],mapBackdrops:Array(5).fill(null),mapForegrounds:Array(5).fill(null),mapPreviewImages:[],atlas:null,atlasMeta:null,fxAtlas:null,fxMeta:null,itemUI:null,projectileFx:null,projectileMeta:null,crateAtlas:null,crateMeta:null,hazardFire:null,hazardPoison:null,whiteFlag:null,smokePuffs:null},visualPlayers=new Map(),mapPreviews=[];
 const MAP_ART=[
@@ -104,8 +104,11 @@ function playHomingCue(){if(!sound)return;const stamp=performance.now();if(stamp
 function mine(){return state?.players.find(p=>p.sid===bridge.sid);}
 function canAct(){return state?.phase==='aim'&&state.players[state.turn]?.sid===bridge.sid&&!state.players[state.turn]?.falling&&(!embedded||bridge.isHost||Date.now()-received<4000);}
 function act(kind,extra={}){
- if(!state||pending)return;const c={kind,seq:++sequence,match:state.id,turnSerial:state.turnSerial,...extra};
+ if(!state)return;
+ if(pending&&kind!=='move')return;
+ const c={kind,seq:++sequence,match:state.id,turnSerial:state.turnSerial,...extra};
  if(bridge.isHost){E.tick(state,Date.now());if(E.command(state,bridge.sid,c,Date.now(),bridge.hostSid)){publish();renderUI();}return;}
+ if(kind==='move'){send('bs_input',{input:c});return;}
  pending={command:c,sent:Date.now(),created:Date.now()};send('bs_input',{input:c});
 }
 function adopt(incoming,hostTime){
@@ -114,7 +117,7 @@ function adopt(incoming,hostTime){
  if(!state&&incomingBorn&&incomingBorn<bootAt-12000)return;
  if(state&&incoming.id!==state.id)return;
  if(state&&incoming.id===state.id&&incoming.seq<state.seq)return;
- state=incoming;received=Date.now();offset=(Number(hostTime)||Date.now())-Date.now();
+ state=incoming;received=Date.now();offset=(Number(hostTime)||Date.now())-Date.now();visualState=null;visualSeq=-1;
  const p=mine();sequence=Math.max(sequence,p?.lastSeq||0);if(pending&&(p?.lastSeq>=pending.command.seq||pending.command.match!==state.id))pending=null;
 }
 window.addEventListener('message',e=>{
@@ -479,7 +482,7 @@ function hostTick(){
 }
 let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frameAt)/1000:0;frameAt=now;
  if(canAct()){if(aimHeld){$('angle').value=Number($('angle').value)+aimHeld*28*dt;$('angle').oninput();}if(powerHeld&&!charge){$('power').value=Number($('power').value)+powerHeld*32*dt;$('power').oninput();}}
- if(moveHeld&&canAct()&&!pending&&now-lastMove>70){lastMove=now;act('move',{value:moveHeld});}
+ if(moveHeld&&canAct()&&now-lastMove>70){lastMove=now;act('move',{value:moveHeld});}
  if(charge){if(!canAct())endCharge(true);else if(now-charge.at>180){$('fire').classList.add('charging');const f=((now-charge.at-180)/1500)%2;$('power').value=Math.round(10+90*(f<=1?f:2-f));$('power').oninput();}}
  if(state){for(const ev of state.events){if(ev.id<=lastEvent)continue;lastEvent=ev.id;
   if(ev.type==='pickup'){toast(`${state.players.find(p=>p.sid===ev.sid)?.nick} · 보급 획득!`);playSfx('pickup',.38);}
@@ -489,7 +492,17 @@ let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frame
   if(ev.type==='lock_on')playHomingCue();
   if(ev.type==='blast'){const rate=1+((ev.character||0)-3.5)*.012+(ev.weapon==='special'?.03:0),baseVol=ev.weapon==='special'?.98:.92;playSfx(`impact_${ev.character||0}_${ev.weapon==='special'?'special':'normal'}`,Math.min(1,baseVol+(ev.direct?.06:0)),rate);if(ev.direct)playSfx('direct_hit',.7);else playSfx('terrain_crack',.48);}
  }}
- if(now>noticeUntil)$('notice').textContent='';if(now-uiAt>150){uiAt=now;renderUI();}draw(now+offset);requestAnimationFrame(loop);
+ if(now>noticeUntil)$('notice').textContent='';if(now-uiAt>150){uiAt=now;renderUI();}
+ if(state&&!bridge.isHost&&state.phase!=='setup'&&state.phase!=='over'){
+  try{
+   if(!visualState||visualSeq!==state.seq||visualState.id!==state.id){
+    visualState=typeof structuredClone==='function'?structuredClone(state):JSON.parse(JSON.stringify(state));visualSeq=state.seq;
+   }
+   E.tick(visualState,now+offset);
+   const authoritative=state;state=visualState;draw(now+offset);state=authoritative;
+  }catch(_){visualState=null;visualSeq=-1;draw(now+offset);}
+ }else draw(now+offset);
+ requestAnimationFrame(loop);
 }
 if(!embedded){state=E.create([{sessionId:'local',nick:'나',seat:0}],Date.now()>>>0);roster=[{sessionId:'local',nick:'나',seat:0}];renderUI();}else send('bridge_ready');
 setInterval(hostTick,16);requestAnimationFrame(loop);

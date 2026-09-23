@@ -156,7 +156,10 @@ function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
 }
 function launch(s,q){const p=s.players.find(p=>p.sid===q.sid);if(!p||p.hp<=0)return;const w=weaponSpec(p,q.weapon);if(p.character===7&&q.weapon==='normal'&&!q.volleyExpanded){const groups=[[-5,0,5],[-5,0,5],[-5,0,5]];groups.forEach((spread,i)=>s.queue.push({...q,volleyExpanded:true,spreadOverride:spread,shotIndexBase:i*3,at:s.simAt+i*180}));s.queue.sort((a,b)=>a.at-b.at);return;}const m=muzzlePosition(s,p),spread=q.spreadOverride||w.spread;let shotIndex=q.shotIndexBase||0;for(const a of spread){const pr=projectile(s,p,q.angle,q.power,q.weapon,q.boost,s.simAt,a);pr.shotIndex=shotIndex++;pr.damage*=1+Math.max(0,s.round-10)*.08;s.projectiles.push(pr);}event(s,'launch',{sid:p.sid,x:m.x,y:m.y,character:p.character,weapon:q.weapon,effect:q.weapon==='special'?spec(p).special:'',boostVisual:q.boost||'',statusEffect:q.boost==='poison'?'poison':q.boost==='freeze'?'freeze':''});}
 function command(s,sid,c,now,hostSid){
- if(!c||!Number.isSafeInteger(c.seq)||c.seq<1||c.match!==s.id)return false;if(s.phase!=='setup'&&Number.isInteger(c.turnSerial)&&c.turnSerial!==s.turnSerial)return false;const p=s.players.find(p=>p.sid===sid);if(!p||c.seq<=p.lastSeq)return false;p.lastSeq=c.seq;
+ if(!c||!Number.isSafeInteger(c.seq)||c.seq<1||c.match!==s.id)return false;
+ const p=s.players.find(p=>p.sid===sid);if(!p||c.seq<=p.lastSeq)return false;
+ if(s.phase!=='setup'&&Number.isInteger(c.turnSerial)&&c.turnSerial!==s.turnSerial){p.lastSeq=c.seq;return false;}
+ p.lastSeq=c.seq;
  if(s.phase==='setup'){
   if(c.kind==='character'&&Number.isInteger(c.value)&&c.value>=0&&c.value<CHARACTERS.length){if(c.value===CHARACTERS.length-1){p.randomSelected=true;p.characterReady=true;return true;}p.character=c.value;p.randomSelected=false;p.characterReady=true;configure(p);resetStartingInventory(p);return true;}
   if(c.kind==='map'&&sid===hostSid&&Number.isInteger(c.value)&&c.value>=0&&c.value<MAPS.length){s.map=c.value;buildMap(s);return true;}
