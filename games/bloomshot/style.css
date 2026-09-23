@@ -186,3 +186,22 @@ header{background:linear-gradient(180deg,#f4fbff 0%,#def5ff 100%) !important;bor
 .profile-art.random-hidden{position:relative;display:flex;align-items:center;justify-content:center;min-height:124px}
 .profile-art.random-hidden img{display:none!important}
 .profile-art.random-hidden::after{content:"?";display:flex;align-items:center;justify-content:center;width:104px;height:104px;border:3px solid rgba(255,255,255,.72);border-radius:22px;background:linear-gradient(145deg,#22324a,#111a2b);color:#fff1a8;font:900 68px/1 system-ui;box-shadow:0 10px 30px #0006,inset 0 0 24px #8bc8ff22}
+
+/* v39 fortress-style angle dial + touch aiming */
+.aim-top{height:98px !important;display:grid !important;grid-template-columns:156px minmax(0,1fr) !important;gap:10px !important;align-items:center !important}
+#dial{display:block !important;width:156px !important;height:102px !important;touch-action:none !important;cursor:crosshair !important;image-rendering:auto !important}
+.aim-sliders{display:flex !important;flex-direction:column !important;justify-content:center !important;gap:10px !important;min-width:0 !important}
+.aim-sliders label:first-child{height:20px !important;margin:0 !important;pointer-events:none !important}
+.aim-sliders label:first-child input{position:absolute !important;opacity:0 !important;width:1px !important;height:1px !important;pointer-events:none !important}
+.aim-sliders label:first-child::after{content:'각도 게이지를 드래그' !important;display:block !important;margin-top:3px !important;font-size:8px !important;letter-spacing:0 !important;color:#7597a1 !important}
+.aim-sliders label:last-child{margin-top:2px !important}
+.dashboard{grid-template-columns:185px 340px minmax(0,1fr) !important}
+@media(max-width:1000px){.dashboard{grid-template-columns:160px 310px minmax(0,1fr) !important}.aim-top{grid-template-columns:148px minmax(0,1fr) !important}#dial{width:148px !important;height:98px !important}}
+@media(max-width:720px){.dashboard{grid-template-columns:1fr !important}.aim-top{grid-template-columns:148px minmax(0,1fr) !important;height:94px !important}#dial{width:148px !important;height:96px !important}}
+/* v39 layout safeguard: keep the existing responsive dashboard proportions */
+.dashboard{grid-template-columns:185px 310px minmax(0,1fr) !important}
+.aim-top{grid-template-columns:minmax(130px,156px) minmax(72px,1fr) !important}
+.aim-sliders label:first-child{font-size:0 !important}
+.aim-sliders label:first-child b{display:none !important}
+@media(max-width:1000px){.dashboard{grid-template-columns:160px 260px minmax(0,1fr) !important}.aim-top{grid-template-columns:136px minmax(70px,1fr) !important}#dial{width:136px !important;height:94px !important}}
+@media(max-width:720px){.dashboard{grid-template-columns:108px minmax(0,1fr) !important}.inventory{grid-column:1/-1 !important}.aim-top{grid-template-columns:118px minmax(64px,1fr) !important;height:88px !important}#dial{width:118px !important;height:88px !important}.aim-sliders{gap:5px !important}.aim-sliders label:first-child::after{font-size:7px !important}}
