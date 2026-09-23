@@ -1056,6 +1056,7 @@ function updatePreview(modeId){
     const isPbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("pb_")) && (!d.gameId || d.gameId === "starpaint");
     const isWbPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("wb_")) && d.gameId === "waterblast";
     const isBsPacket = (d.type === "bridge_ready" || String(d.type || "").startsWith("bs_")) && d.gameId === "bloomshot";
+    const isSkPacket = (d.type === "bridge_ready" || d.type === "sk_msg") && d.gameId === "suhaktokki";
     const mxGameTagOk = (!d.gameId || d.gameId === "mathexplorer" || d.gameId === "math-explorer");
     const mxModeLikely = !!((coop && coop.active && isMathExplorerCoopMode()) || (duel?.iframeEl && /embedGame=(mathexplorer|math-explorer)/.test(String(duel.iframeEl.src || ""))));
     const fromStoredMxWin = !!(coop && coop.mxFrameWin && srcWin === coop.mxFrameWin);
@@ -1069,6 +1070,7 @@ function updatePreview(modeId){
     const pbModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='starpaint') || (duel?.iframeEl && /embedGame=starpaint/.test(String(duel.iframeEl.src || ''))));
     const wbModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='waterblast') || (duel?.iframeEl && /embedGame=waterblast/.test(String(duel.iframeEl.src || ''))));
     const bsModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='bloomshot') || (duel?.iframeEl && /embedGame=bloomshot/.test(String(duel.iframeEl.src || ''))));
+    const skModeLikely = !!((coop && coop.active && String(coop?.meta?.id||'')==='suhaktokki') || (duel?.iframeEl && /embedGame=suhaktokki/.test(String(duel.iframeEl.src || ''))));
     const coopOriginOk = !e.origin || e.origin === location.origin;
     // 일부 모바일 WebView는 iframe postMessage의 e.source를 null로 전달한다.
     // 현재 게임 모드 + 동일 출처 + 명시적 gameId가 모두 일치할 때만 보조 경로를 연다.
@@ -1094,11 +1096,17 @@ function updatePreview(modeId){
     const fromStoredBsWin = !!(coop && coop.bsFrameWin && srcWin === coop.bsFrameWin);
     const fromBsCoopFallback = !!(isBsPacket && bsModeLikely && coopOriginOk && !fromCpu);
     const fromMainForBs = fromMain || fromStoredBsWin || fromBsCoopFallback;
+    const fromStoredSkWin = !!(coop && coop.skFrameWin && srcWin === coop.skFrameWin);
+    const fromSkCoopFallback = !!(isSkPacket && skModeLikely && coopOriginOk && !fromCpu);
+    const fromMainForSk = fromMain || fromStoredSkWin || fromSkCoopFallback;
     if (fromWbCoopFallback && srcWin){
       try{ coop.wbFrameWin = srcWin; }catch(_){ }
     }
     if (fromBsCoopFallback && srcWin){
       try{ coop.bsFrameWin = srcWin; }catch(_){ }
+    }
+    if (fromSkCoopFallback && srcWin){
+      try{ coop.skFrameWin = srcWin; }catch(_){ }
     }
     if (mxModeLikely && isMxPacket && mxGameTagOk && srcWin){
       try{ coop.mxFrameWin = srcWin; }catch(_){ }
@@ -1157,7 +1165,7 @@ function updatePreview(modeId){
     if (d.type === "bridge_ready"){
       if(fromMain) focusGameIframeSoon();
       // backrooms3d 포함 모든 coop: fromMain이면 ready 처리 (투게스터와 동일)
-      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback || fromPbCoopFallback || fromWbCoopFallback){
+      if (fromMain || fromMxCoopFallback || fromSoccerCoopFallback || fromBrCoopFallback || fromTgCoopFallback || fromPbCoopFallback || fromWbCoopFallback || fromBsCoopFallback || fromSkCoopFallback){
         duel.iframeReady = true;
         coop.iframeReady = true;
       }
@@ -1176,8 +1184,8 @@ function updatePreview(modeId){
       // StarPaint posts bridge_ready from its running script before heavy assets are loaded.
       // For StarPaint that signal is sufficient to initialize the bridge immediately;
       // waiting for iframe.onload needlessly serializes networking behind document resources.
-      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb || fromMainForWb || fromMainForBs);
-      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || fromMainForWb || fromMainForBs || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coopInitReady){
+      const coopInitReady = !!(coop.iframeLoaded || fromMainForPb || fromMainForWb || fromMainForBs || fromMainForSk);
+      if ((fromMainForMx || fromMainForSoccer || fromMainForBr || fromMainForTg || fromMainForPb || fromMainForWb || fromMainForBs || fromMainForSk || isGkFrame) && coop.active && coop.meta && duel.iframeEl && coopInitReady){
         try{ coop.sentGameStart = false; }catch(_){ }
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
@@ -1306,7 +1314,7 @@ function updatePreview(modeId){
 
     // SuhakTokki iframe -> server relay (generic packet)
     if (d.type === "sk_msg"){
-      if (!fromMain) return;
+      if (!fromMainForSk) return;
       try{ room.send("sk_msg", { msg: d.msg || {} }); }catch(_){ }
       return;
     }
@@ -1512,7 +1520,10 @@ function updatePreview(modeId){
 
     // Bloomshot: dedicated, mode-isolated relay, authenticated by the Worker.
     if (String(d.type || '').startsWith('bs_')) {
-      if (!fromMain || d.gameId !== 'bloomshot' || coop?.meta?.id !== 'bloomshot') return;
+      // BloomShot must use the same validated sender fallback as bridge_ready.
+      // Some browsers/WebViews report a transient/null postMessage e.source for the
+      // active iframe. Accept only the already mode/origin/gameId-gated fallback.
+      if (!fromMainForBs || d.gameId !== 'bloomshot' || coop?.meta?.id !== 'bloomshot') return;
       if (d.type === 'bs_quit') { try { room.send('bs_quit', {}); } catch (_) {} leaveToLobby(); return; }
       if (!['bs_input','bs_state','bs_sync','bs_over'].includes(d.type)) return;
       if ((d.type === 'bs_state' || d.type === 'bs_over') && !getMyIsHost()) return;

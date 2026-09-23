@@ -31,7 +31,7 @@
   const QS = new URLSearchParams(location.search);
   const EMBED = QS.get("embed") === "1";
   function bridgeSend(type, payload){
-    try{ window.parent && window.parent.postMessage({ type, ...(payload||{}) }, "*"); }catch(_){ }
+    try{ window.parent && window.parent.postMessage({ type, gameId:'suhaktokki', ...(payload||{}) }, "*"); }catch(_){ }
   }
   // In embed mode, request an authoritative snapshot from the host.
   // This prevents "stuck loading" / missing avatars when early broadcasts are lost during iframe boot.
@@ -2159,7 +2159,7 @@
 	  // Stable per-iframe id for robust routing even if `from` is rewritten.
 	  msg.cid = this.clientId;
 	      if (this.sessionId) msg.sessionId = this.sessionId;
-      try{ window.parent && window.parent.postMessage({ type:"sk_msg", msg }, "*"); }catch(_){ }
+      try{ window.parent && window.parent.postMessage({ type:"sk_msg", gameId:'suhaktokki', msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
       // In embed mode, do NOT auto-elect host on clients.
@@ -9693,8 +9693,35 @@ try{
       if (!G.host._clientToPlayer) G.host._clientToPlayer = new Map();
 	    if (!G.host._sidToPlayer) G.host._sidToPlayer = new Map();
 
-      // Dedupe joins using a per-join token (NOT clientId), because embed sessionId can be shared
-      // across iframes. Clients retry join until joinAck arrives, reusing the same joinToken.
+      // In embedded multiroom, sessionId is the stable identity of the room participant.
+      // An iframe reload/re-init creates a new clientId/joinToken, so token-only dedupe used to
+      // create a second rabbit for the same user. Rebind that session to the existing player first.
+      if (sid && G.host._sidToPlayer && G.host._sidToPlayer.has(sid)) {
+        const pid = Number(G.host._sidToPlayer.get(sid) || 0);
+        const p = st.players[pid];
+        if (p) {
+          const jt2 = (m && m.joinToken != null) ? String(m.joinToken) : '';
+          p.nick = (m.nick || p.nick || '토끼').trim().slice(0, 10);
+          p.clientId = rawClientId || from || p.clientId || null;
+          p.sessionId = sid;
+          p.joinToken = jt2 || p.joinToken || null;
+          p.isBot = false;
+          p.alive = true;
+          p.lastSeen = now();
+          if (!G.host._joinTokenToPlayer) G.host._joinTokenToPlayer = new Map();
+          if (jt2) G.host._joinTokenToPlayer.set(jt2, pid);
+          if (from) G.host._clientToPlayer.set(from, pid);
+          if (rawClientId) G.host._clientToPlayer.set(rawClientId, pid);
+          net.post({ t: 'joinAck', toCid: from || null, toClient: from || null, playerId: pid, isHost: false, joinToken: jt2 });
+          broadcastState(true);
+          try{ broadcastRoster(true); }catch(_){ }
+          return;
+        }
+        // stale mapping: remove it and continue with a normal join.
+        try{ G.host._sidToPlayer.delete(sid); }catch(_){ }
+      }
+
+      // Dedupe retries from the same live iframe by joinToken.
       if (!G.host._joinTokenToPlayer) G.host._joinTokenToPlayer = new Map();
       const jt = (m && m.joinToken != null) ? String(m.joinToken) : '';
       if (jt && G.host._joinTokenToPlayer.has(jt)) {
@@ -10767,6 +10794,14 @@ net.on('uiMeetingOpen', (m) => {
       // 호스트 자신도 플레이어로 추가
       const pid = hostAddPlayer(nick, false, net.clientId);
       net.myPlayerId = pid;
+      // Bind the embedded room session to exactly one in-game player.
+      // This survives iframe reload/re-init without creating a duplicate rabbit.
+      try{
+        const hp = G.state.players && G.state.players[pid];
+        if (hp && net.sessionId) hp.sessionId = String(net.sessionId);
+        if (!G.host._sidToPlayer) G.host._sidToPlayer = new Map();
+        if (net.sessionId) G.host._sidToPlayer.set(String(net.sessionId), pid);
+      }catch(_){ }
       G.phase = 'lobby';
       setRolePill();
       setHUD();
@@ -10978,23 +11013,18 @@ window.__EMBED_IS_HOST__ = !!__electedHost;
       }catch(_){ }
     }, 2200);
 
-    // Safety net: on some hosts/relays the "isHost" flag can be missing or delayed.
-    // If a solo player gets stuck forever at the title/loading screen waiting for the host,
-    // force-start a local practice session after a short delay.
+    // Never self-promote a guest to host. That old fallback created split-host state:
+    // one browser simulated a private local match while the real room host kept running,
+    // which produced duplicate-looking rabbits and dead controls when snapshots later mixed.
+    // If startup is late, ask the real host/parent relay to resync instead.
     setTimeout(() => {
       try{
-        if (!EMBED) return;
-        if (!G.net || G.host.started) return;
-        // Only intervene when there is effectively a single human in the room.
-        const humans = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
-        if (humans > 1) return;
-        // If still not started, promote to host locally and begin practice.
-        try{ G.net.isHost = true; }catch(_){ }
-        try{ window.__EMBED_IS_HOST__ = true; }catch(_){ }
-        if (G.phase === 'lobby') G.phase = 'play';
-        try{ hostStartGame(true); }catch(_){ }
-        try{ broadcastState(true); }catch(_){ }
-        try{ broadcastRoster(true); }catch(_){ }
+        if (!EMBED || !G.net || G.host.started || G.state?.started) return;
+        if (!G.net.isHost) {
+          G.net.post({ t: 'embedStart' });
+          requestHostSync('lateStart');
+          bridgeSend('bridge_ready', {});
+        }
       }catch(_){ }
     }, 3500);
 
@@ -11074,31 +11104,16 @@ window.__EMBED_IS_HOST__ = !!__electedHost;
       }
     });
 
-    // Fallback: if the parent never delivers bridge_init (schema mismatch / race / caching),
-    // start a local practice session so the game doesn't get stuck on the title screen.
-    // This is only used when no init arrives for a while.
+    // If bridge_init is delayed, keep advertising readiness instead of fabricating a
+    // private local room. The parent can safely resend the authoritative init packet.
     try{
-      setTimeout(()=>{
+      const readyRetry = setInterval(()=>{
         try{
-          if (!EMBED) return;
-          if (window.__EMBED_INITED__) return;
-          window.__EMBED_INITED__ = true;
-          startEmbedded({
-            type: 'bridge_init',
-            gameId: 'suhaktokki',
-            sessionId: 'local',
-            nick: 'Player',
-            seat: 0,
-            isHost: true,
-            solo: true,
-            expectedHumans: 1,
-            humanCount: 1,
-            roomCode: 'local',
-            level: 1,
-            practice: true
-          }).catch(()=>{});
+          if (!EMBED || window.__EMBED_INITED__) { clearInterval(readyRetry); return; }
+          bridgeSend('bridge_ready', {});
         }catch(_){ }
-      }, 2500);
+      }, 450);
+      setTimeout(()=>{ try{ clearInterval(readyRetry); }catch(_){ } }, 12000);
     }catch(_){ }
   }
 
