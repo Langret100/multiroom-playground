@@ -2638,7 +2638,7 @@ function sendCoopBridgeInit(){
     // Soccer/StarPaint bridge_init은 room.state.players가 늦어도 반드시 내 항목을 포함한다.
     // StarPaint는 이후 bridge_roster가 실시간 참가자 명단을 보완한다.
     try{
-      if ((coop?.meta?.id === 'soccer' || coop?.meta?.id === 'starpaint' || coop?.meta?.id === 'waterblast') && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
+      if ((coop?.meta?.id === 'soccer' || coop?.meta?.id === 'starpaint' || coop?.meta?.id === 'waterblast' || coop?.meta?.id === 'bloomshot') && !arr.some(x=>String(x.sessionId)===String(mySessionId))){
         arr.push({
           sessionId:String(mySessionId),
           nick:myNick || 'Player',
