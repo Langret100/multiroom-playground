@@ -1190,6 +1190,15 @@ function updatePreview(modeId){
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
         sendCoopBridgeInit();
+        // BloomShot: some desktop popup/browser combinations can drop the first
+        // parent->iframe postMessage during the iframe/window hand-off. Re-send
+        // the same idempotent bridge_init briefly after a validated bridge_ready.
+        // This is client-only and does not touch or change the Worker protocol.
+        if (fromMainForBs){
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot') sendCoopBridgeInit(); }catch(_){ } }, 120); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot') sendCoopBridgeInit(); }catch(_){ } }, 420); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot') sendCoopBridgeInit(); }catch(_){ } }, 1100); }catch(_){ }
+        }
         if (fromMainForBr){
           try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
         } else {
