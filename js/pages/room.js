@@ -1190,17 +1190,6 @@ function updatePreview(modeId){
         if (fromMainForMx) { try{ coop._mxGameStartAck = false; }catch(_){ } }
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
         sendCoopBridgeInit();
-        // BloomShot: some desktop popup/browser combinations can drop the first
-        // parent->iframe postMessage during the iframe/window hand-off. Re-send
-        // the same idempotent bridge_init briefly after a validated bridge_ready.
-        // This is client-only and does not touch or change the Worker protocol.
-        if (fromMainForBs){
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 120); }catch(_){ }
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 420); }catch(_){ }
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 1100); }catch(_){ }
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 2200); }catch(_){ }
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 4200); }catch(_){ }
-        }
         if (fromMainForBr){
           try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
         } else {
@@ -1529,27 +1518,34 @@ function updatePreview(modeId){
       return;
     }
 
-    // Bloomshot: dedicated, mode-isolated relay, authenticated by the Worker.
+    // BloomShot: use only the generic relay supported by the deployed legacy Worker.
+    // No bs_* Worker protocol is required. BloomShot packets are wrapped with a private marker
+    // and carried through duel_event / duel_state, then unwrapped below on receive.
     if (String(d.type || '').startsWith('bs_')) {
-      // BloomShot must use the same validated sender fallback as bridge_ready.
-      // Some browsers/WebViews report a transient/null postMessage e.source for the
-      // active iframe. Accept only the already mode/origin/gameId-gated fallback.
       if (!fromMainForBs || d.gameId !== 'bloomshot' || coop?.meta?.id !== 'bloomshot') return;
       if (d.type === 'bs_bridge_ack') {
         try{ coop._bsBridgeAck = true; coop.iframeReady = true; duel.iframeReady = true; }catch(_){ }
         return;
       }
-      if (d.type === 'bs_quit') { try { room.send('bs_quit', {}); } catch (_) {} leaveToLobby(); return; }
-      if (!['bs_input','bs_state','bs_sync','bs_over'].includes(d.type)) return;
-      if ((d.type === 'bs_state' || d.type === 'bs_over') && !getMyIsHost()) return;
+      if (d.type === 'bs_quit') { leaveToLobby(); return; }
       if (d.type === 'bs_over') {
-        // Current deployed room Worker has no native bloomshot end handler.
-        // Reuse its generic tg_over end/reset path so phase returns to lobby and
-        // every player's READY state is authoritatively cleared.
+        if (!getMyIsHost()) return;
         try { room.send('tg_over', { success:true, reason:'bloomshot' }); } catch (_) {}
         return;
       }
-      try { room.send(d.type, { input:d.input, state:d.state, winnerSeat:d.winnerSeat }); } catch (_) {}
+      if (d.type === 'bs_state') {
+        if (!getMyIsHost() || !d.state) return;
+        try { room.send('duel_state', { state:{ __bloomshot:1, payload:d.state, hostTime:Date.now() } }); } catch (_) {}
+        return;
+      }
+      if (d.type === 'bs_input') {
+        try { room.send('duel_event', { event:{ __bloomshot:1, kind:'input', input:d.input || {} } }); } catch (_) {}
+        return;
+      }
+      if (d.type === 'bs_sync') {
+        try { room.send('duel_event', { event:{ __bloomshot:1, kind:'sync' } }); } catch (_) {}
+        return;
+      }
       return;
     }
     // StarPaint (coop competitive) iframe -> server relay
@@ -2430,18 +2426,8 @@ function postToMathExplorer(msg){
 }
 function postToBloomshot(msg){
   try{
-    const sent = new Set();
-    const sendWin = (w)=>{
-      try{
-        if (!w || typeof w.postMessage !== "function" || sent.has(w)) return;
-        sent.add(w);
-        w.postMessage(msg, "*");
-      }catch(_){ }
-    };
-    // The sender of bridge_ready is the most reliable WindowProxy on browsers
-    // that recreate/swap iframe windows during popup/fullscreen hand-off.
-    sendWin(coop && coop.bsFrameWin);
-    sendWin(duel?.iframeEl?.contentWindow);
+    const w = (coop && coop.bsFrameWin) || duel?.iframeEl?.contentWindow;
+    if (w && typeof w.postMessage === 'function') w.postMessage(msg, location.origin);
   }catch(_){ }
 }
 function postToCpu(msg){ postTo(cpuFrame.iframeEl, msg); }
@@ -2961,6 +2947,8 @@ function handleDuelMatch(m){
 }
 
 function startCoopEmbed(meta){
+  // Clear any previous direct BloomShot init packet before a new embed starts.
+  // This is a same-origin fallback only; the normal postMessage bridge remains primary.
   if (meta && meta.id === "starpaint") warmStarpaintAssets();
   if (coop.active && coop.meta && meta && coop.meta.id === meta.id && duel.iframeEl && duel.iframeEl.src && duel.iframeEl.src.includes(`embedGame=${encodeURIComponent(meta.id)}`)) {
     try{ sendCoopBridgeInit(); }catch(_){ }
@@ -3355,6 +3343,10 @@ try{
       });
 
       room.onMessage("duel_state", (msg)=>{
+        if (msg?.state?.__bloomshot === 1 && String(coop?.meta?.id || room?.state?.mode || '') === 'bloomshot') {
+          postToBloomshot({ type:'bs_state', gameId:'bloomshot', state:msg.state.payload || null, hostTime:Number(msg.state.hostTime)||Date.now() });
+          return;
+        }
         // Relay to embedded iframes (player + optional CPU)
         postToAllIframes({ type:"duel_state", sid: msg.sid, state: msg.state });
 
@@ -3387,6 +3379,11 @@ try{
       });
 
       room.onMessage("duel_event", (msg)=>{
+        if (msg?.event?.__bloomshot === 1 && String(coop?.meta?.id || room?.state?.mode || '') === 'bloomshot') {
+          if (msg.event.kind === 'input') postToBloomshot({ type:'bs_input', gameId:'bloomshot', from:String(msg.sid||''), input:msg.event.input || {} });
+          else if (msg.event.kind === 'sync') postToBloomshot({ type:'bs_sync', gameId:'bloomshot', from:String(msg.sid||'') });
+          return;
+        }
         if (msg?.event?.__waterblastFast === 1){
           if (String(coop?.meta?.id || room?.state?.mode || "") === "waterblast") postToMain({type:"wb_action",gameId:"waterblast",sid:msg.sid,input:msg.event.input});
           return;
@@ -3556,12 +3553,6 @@ try{
         postToMain({ type:"tg_floor_quota", used: msg.used, limit: msg.limit });
       });
 
-      for (const kind of ['bs_input','bs_state','bs_over','bs_sync']) {
-        room.onMessage(kind, (msg)=>{
-          if (String(coop?.meta?.id || room?.state?.mode || '') !== 'bloomshot') return;
-          postToMain({ ...msg, type:kind, gameId:'bloomshot' });
-        });
-      }
       // StarPaint relay: server -> iframe. Keep pb_* packets isolated to StarPaint
       // so a late packet can never leak into another game's iframe after a mode switch.
       room.onMessage("pb_input", (msg)=>{

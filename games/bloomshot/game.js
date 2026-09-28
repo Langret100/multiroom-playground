@@ -151,6 +151,12 @@ function adopt(incoming,hostTime){
  if(keepFlightVisual)visualSeq=incoming.seq;else{visualState=null;visualSeq=-1;visualClockAt=0;}
  const p=mine();sequence=Math.max(sequence,p?.lastSeq||0);if(pending&&(p?.lastSeq>=pending.command.seq||pending.command.match!==state.id))pending=null;
 }
+function applyBridgeInit(d){
+ if(!embedded||!d||d.type!=='bridge_init'||d.gameId!=='bloomshot')return false;
+ bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];
+ try{send('bs_bridge_ack');send('bs_sync');}catch(_){}
+ return true;
+}
 window.addEventListener('message',e=>{
  const d=e.data||{};
  const sameOrigin=!e.origin||e.origin===location.origin;
@@ -160,9 +166,7 @@ window.addEventListener('message',e=>{
  // + embedded + explicit gameId is sufficient and avoids a permanent connect wait.
  const bloomInitOk=embedded&&sameOrigin&&d.type==='bridge_init'&&d.gameId==='bloomshot';
  if(!sameOrigin||(!sourceOk&&!bloomInitOk))return;
- if(d.type==='bridge_init'&&d.gameId==='bloomshot'){
-  bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];send('bs_bridge_ack');send('bs_sync');return;
- }
+ if(d.type==='bridge_init'&&d.gameId==='bloomshot'){applyBridgeInit(d);return;}
  if(!bridge.ready)return;
  if(d.type==='bridge_roster'&&d.gameId==='bloomshot'){roster=d.players||[];if(bridge.isHost&&state&&E.roster(state,roster,Date.now()))publish();}
  if(d.type==='bridge_host'){
@@ -539,7 +543,7 @@ function hostTick(){
  }
  /* FINAL9: non-host never advances authoritative turns locally */
  if(embedded&&bridge.ready&&(!state||(!bridge.isHost&&now-received>3500))&&now-lastSync>2000){lastSync=now;send('bs_sync');}
- if(embedded&&!bridge.ready&&now-lastSync>1000){lastSync=now;send('bridge_ready');}
+ if(embedded&&!bridge.ready&&now-lastSync>500){lastSync=now;send('bridge_ready');}
  if(embedded&&!state&&now-bootAt>8000)$('setupHint').textContent='연결 대기 중 · 방 연결을 확인하고 다시 입장하세요.';
  if(pending&&now-pending.sent>350){if(now-pending.created<5000){pending.sent=now;send('bs_input',{input:pending.command});}else{pending=null;toast('연결을 확인한 뒤 다시 시도하세요.');}}
 }
@@ -576,7 +580,7 @@ let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frame
  }else draw(now+offset);
  requestAnimationFrame(loop);
 }
-if(!embedded){state=E.create([{sessionId:'local',nick:'나',seat:0}],Date.now()>>>0);roster=[{sessionId:'local',nick:'나',seat:0}];renderUI();}else send('bridge_ready');
+if(!embedded){state=E.create([{sessionId:'local',nick:'나',seat:0}],Date.now()>>>0);roster=[{sessionId:'local',nick:'나',seat:0}];renderUI();}else{send('bridge_ready');}
 setInterval(hostTick,16);requestAnimationFrame(loop);
 })();
 
