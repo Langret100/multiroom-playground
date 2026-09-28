@@ -1195,9 +1195,11 @@ function updatePreview(modeId){
         // the same idempotent bridge_init briefly after a validated bridge_ready.
         // This is client-only and does not touch or change the Worker protocol.
         if (fromMainForBs){
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot') sendCoopBridgeInit(); }catch(_){ } }, 120); }catch(_){ }
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot') sendCoopBridgeInit(); }catch(_){ } }, 420); }catch(_){ }
-          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot') sendCoopBridgeInit(); }catch(_){ } }, 1100); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 120); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 420); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 1100); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 2200); }catch(_){ }
+          try{ setTimeout(()=>{ try{ if(coop.active&&coop.meta?.id==='bloomshot'&&!coop._bsBridgeAck) sendCoopBridgeInit(); }catch(_){ } }, 4200); }catch(_){ }
         }
         if (fromMainForBr){
           try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
@@ -1533,6 +1535,10 @@ function updatePreview(modeId){
       // Some browsers/WebViews report a transient/null postMessage e.source for the
       // active iframe. Accept only the already mode/origin/gameId-gated fallback.
       if (!fromMainForBs || d.gameId !== 'bloomshot' || coop?.meta?.id !== 'bloomshot') return;
+      if (d.type === 'bs_bridge_ack') {
+        try{ coop._bsBridgeAck = true; coop.iframeReady = true; duel.iframeReady = true; }catch(_){ }
+        return;
+      }
       if (d.type === 'bs_quit') { try { room.send('bs_quit', {}); } catch (_) {} leaveToLobby(); return; }
       if (!['bs_input','bs_state','bs_sync','bs_over'].includes(d.type)) return;
       if ((d.type === 'bs_state' || d.type === 'bs_over') && !getMyIsHost()) return;
@@ -2422,6 +2428,22 @@ function postToMathExplorer(msg){
     sendWin(duel?.iframeEl?.contentWindow);
   }catch(_){ }
 }
+function postToBloomshot(msg){
+  try{
+    const sent = new Set();
+    const sendWin = (w)=>{
+      try{
+        if (!w || typeof w.postMessage !== "function" || sent.has(w)) return;
+        sent.add(w);
+        w.postMessage(msg, "*");
+      }catch(_){ }
+    };
+    // The sender of bridge_ready is the most reliable WindowProxy on browsers
+    // that recreate/swap iframe windows during popup/fullscreen hand-off.
+    sendWin(coop && coop.bsFrameWin);
+    sendWin(duel?.iframeEl?.contentWindow);
+  }catch(_){ }
+}
 function postToCpu(msg){ postTo(cpuFrame.iframeEl, msg); }
 function postToAllIframes(msg){
   postToMain(msg);
@@ -2549,6 +2571,7 @@ function sendCoopBridgeInit(){
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
     const isSoccer = (coop && coop.meta && coop.meta.id === "soccer");
     const isStarpaint = (coop && coop.meta && coop.meta.id === "starpaint");
+    const isBloomshot = (coop && coop.meta && coop.meta.id === "bloomshot");
     // 금칙어 게임: 자체 WS 연결 유지 → room.state.order 없이도 바로 전송
     const isGeumchikeo = (coop && coop.meta && coop.meta.id === "geumchikeo");
 
@@ -2560,7 +2583,7 @@ function sendCoopBridgeInit(){
     // Soccer는 서버 sc_roster/sc_sync가 권위 로스터를 바로 보완하므로
     // room.state 스냅샷이 늦더라도 bridge_init을 막지 않는다. 이 대기가 걸리면
     // 경기장만 보이고 입력·수학 퀴즈가 모두 비활성인 상태가 된다.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint)){
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint && !isBloomshot)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.
@@ -2706,7 +2729,12 @@ function sendCoopBridgeInit(){
       return false;
     })()
   };
-  (isMathExplorerCoopMode() ? postToMathExplorer : postToMain)(coopInitPacket);
+  if (coop?.meta?.id === 'bloomshot') {
+    try{ coop._bsBridgeAck = false; }catch(_){ }
+    postToBloomshot(coopInitPacket);
+  } else {
+    (isMathExplorerCoopMode() ? postToMathExplorer : postToMain)(coopInitPacket);
+  }
   if (coop?.meta?.id === "soccer") syncSoccerAuthoritativeState();
 
   // If the room has already provided an authoritative start payload,

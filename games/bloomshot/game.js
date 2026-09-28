@@ -161,7 +161,7 @@ window.addEventListener('message',e=>{
  const bloomInitOk=embedded&&sameOrigin&&d.type==='bridge_init'&&d.gameId==='bloomshot';
  if(!sameOrigin||(!sourceOk&&!bloomInitOk))return;
  if(d.type==='bridge_init'&&d.gameId==='bloomshot'){
-  bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];send('bs_sync');return;
+  bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];send('bs_bridge_ack');send('bs_sync');return;
  }
  if(!bridge.ready)return;
  if(d.type==='bridge_roster'&&d.gameId==='bloomshot'){roster=d.players||[];if(bridge.isHost&&state&&E.roster(state,roster,Date.now()))publish();}
