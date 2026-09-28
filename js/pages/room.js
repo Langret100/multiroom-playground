@@ -1093,17 +1093,13 @@ function updatePreview(modeId){
     const fromStoredWbWin = !!(coop && coop.wbFrameWin && srcWin === coop.wbFrameWin);
     const fromWbCoopFallback = !!(isWbPacket && wbModeLikely && coopOriginOk && !fromCpu);
     const fromMainForWb = fromMain || fromStoredWbWin || fromWbCoopFallback;
-    const fromStoredBsWin = !!(coop && coop.bsFrameWin && srcWin === coop.bsFrameWin);
     const fromBsCoopFallback = !!(isBsPacket && bsModeLikely && coopOriginOk && !fromCpu);
-    const fromMainForBs = fromMain || fromStoredBsWin || fromBsCoopFallback;
+    const fromMainForBs = fromMain || fromBsCoopFallback;
     const fromStoredSkWin = !!(coop && coop.skFrameWin && srcWin === coop.skFrameWin);
     const fromSkCoopFallback = !!(isSkPacket && skModeLikely && coopOriginOk && !fromCpu);
     const fromMainForSk = fromMain || fromStoredSkWin || fromSkCoopFallback;
     if (fromWbCoopFallback && srcWin){
       try{ coop.wbFrameWin = srcWin; }catch(_){ }
-    }
-    if (fromBsCoopFallback && srcWin){
-      try{ coop.bsFrameWin = srcWin; }catch(_){ }
     }
     if (fromSkCoopFallback && srcWin){
       try{ coop.skFrameWin = srcWin; }catch(_){ }
@@ -2426,7 +2422,9 @@ function postToMathExplorer(msg){
 }
 function postToBloomshot(msg){
   try{
-    const w = (coop && coop.bsFrameWin) || duel?.iframeEl?.contentWindow;
+    // The currently mounted BloomShot iframe is the single authoritative target.
+    // Do not cache a WindowProxy across iframe reloads/navigation.
+    const w = duel?.iframeEl?.contentWindow;
     if (w && typeof w.postMessage === 'function') w.postMessage(msg, location.origin);
   }catch(_){ }
 }
@@ -2550,14 +2548,18 @@ function sendCoopBridgeInit(){
   try{
     const hasMePlayer = !!getPlayer(mySessionId);
     const hasMeOrder = (()=>{
-      try{ return !!room?.state?.order?.has?.(mySessionId); }catch(_){ return false; }
+      try{
+        const ord = room?.state?.order;
+        if (!ord) return false;
+        if (typeof ord.has === 'function') return !!ord.has(mySessionId);
+        return typeof ord === 'object' && Object.prototype.hasOwnProperty.call(ord, mySessionId);
+      }catch(_){ return false; }
     })();
     const hasMe = hasMePlayer || hasMeOrder;
 
     const isSuhak = (coop && coop.meta && coop.meta.id === "suhaktokki");
     const isSoccer = (coop && coop.meta && coop.meta.id === "soccer");
     const isStarpaint = (coop && coop.meta && coop.meta.id === "starpaint");
-    const isBloomshot = (coop && coop.meta && coop.meta.id === "bloomshot");
     // 금칙어 게임: 자체 WS 연결 유지 → room.state.order 없이도 바로 전송
     const isGeumchikeo = (coop && coop.meta && coop.meta.id === "geumchikeo");
 
@@ -2569,7 +2571,7 @@ function sendCoopBridgeInit(){
     // Soccer는 서버 sc_roster/sc_sync가 권위 로스터를 바로 보완하므로
     // room.state 스냅샷이 늦더라도 bridge_init을 막지 않는다. 이 대기가 걸리면
     // 경기장만 보이고 입력·수학 퀴즈가 모두 비활성인 상태가 된다.
-    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint && !isBloomshot)){
+    if ((!hasMe && (!isSuhak || (!hasMeOrder && !hasMePlayer)) && !isGeumchikeo && !isSoccer && !isStarpaint)){
       coop._bridgeInitRetry = (coop._bridgeInitRetry || 0) + 1;
 
       // Small backoff to avoid spamming the event loop while waiting for the snapshot.

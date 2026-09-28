@@ -17,10 +17,10 @@ const WEAPONS={
  normal:{count:1,damage:1,blast:1,crater:1,size:8,spread:[0],desc:'단발 · 피해 100% · 파괴 반경 100% · 안정적인 즉시 피해'},
  burst:{count:3,damage:.38,blast:.64,crater:.44,size:5,spread:[-6,0,6],desc:'3발 · 발당 피해 38% / 파괴 반경 44% · 분산 포격, 모두 맞으면 합계 114%'},
  petal:{count:2,damage:.58,blast:.7,crater:.58,size:6,spread:[-2.5,2.5],desc:'2발 · 발당 피해 58% / 파괴 반경 58% · 집중 연사, 모두 맞으면 합계 116%'},
- poison:{count:1,damage:.48,blast:.85,crater:.3,size:7,spread:[0],desc:'직격 피해 48% / 파괴 반경 30% · 독안개 지대: 3턴 유지 · 범위 안에서는 턴당 6 피해, 벗어난 뒤에도 2턴간 6 피해 지속'},
+ poison:{count:1,damage:.48,blast:.85,crater:.3,size:7,spread:[0],desc:'직격 피해 48% / 파괴 반경 30% · 독안개 지대: 3턴 유지 · 범위 안에서는 턴당 10 피해, 벗어난 뒤에도 2턴간 10 피해 지속'},
  pierce:{count:1,damage:1.2,blast:.4,crater:.2,size:4,spread:[0],pierce:200,armorPierce:.65,desc:'피해 120% / 파괴 반경 20% · 작은 탄, 지형 약 200 관통 · 방어력 65% 무시'},
  crater:{count:1,damage:.65,blast:.8,crater:1.3005,size:10,spread:[0],desc:'피해 65% / 파괴 반경 130% · 체력보다 발판 파괴·낙사 유도'},
- fire:{count:1,damage:.44,blast:.9,crater:.45,size:8,spread:[0],desc:'직격 피해 44% / 파괴 반경 45% · 불길 지대: 3턴 유지 · 범위 안 대상에게 2초마다 3 피해'},
+ fire:{count:1,damage:.44,blast:.9,crater:.45,size:8,spread:[0],desc:'직격 피해 44% / 파괴 반경 45% · 불길 지대: 3턴 유지 · 범위 안 대상에게 2초마다 5 피해'},
  ice:{count:1,damage:.65,blast:.9,crater:.4,size:7,spread:[0],desc:'피해 65% / 파괴 반경 40% · 적중한 상대는 다음 자기 턴 2회 동안 이동·점프 불가'},
  star:{count:3,damage:.546,blast:.6,crater:.245,size:5,spread:[-4,0,4],homing:true,homingRadius:280,homingTurn:2.8,desc:'3발 · 발당 피해는 기존 길잡이 별보다 30% 감소 · 파괴 반경도 30% 감소 · 280 이내 적을 락온하면 완만하게 추적'}
 };
@@ -44,9 +44,9 @@ function terrainDestroyScale(p,weapon,baseRadius){
  if(!isSuper&&!isCraterShell&&baseRadius*scale<100)scale*=1.10;
  return scale;
 }
-function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 턴당 6 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 6 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 2초마다 3 피해를 줍니다.',ice:'서리 단발. 적중한 상대는 다음 자기 턴부터 2턴 동안 이동과 점프를 할 수 없습니다.',star:'길잡이 별 3발. 비행 중 280 이내 적이 잡히면 조준 표시 후 완만하게 추적합니다. 유도 회전 성능을 낮춰 급격하게 꺾이지 않으며, 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
+function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 턴당 10 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 10 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 2초마다 5 피해를 줍니다.',ice:'서리 단발. 적중한 상대는 다음 자기 턴부터 2턴 동안 이동과 점프를 할 수 없습니다.',star:'길잡이 별 3발. 비행 중 280 이내 적이 잡히면 조준 표시 후 완만하게 추적합니다. 유도 회전 성능을 낮춰 급격하게 꺾이지 않으며, 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
 
-const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 50% 증가',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 50% 증가'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 6 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대는 다음 자기 턴부터 2턴 동안 이동·점프 불가'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
+const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 50% 증가',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 50% 증가'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 10 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대는 다음 자기 턴부터 2턴 동안 이동·점프 불가'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
 function random(s){s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;return s.seed/4294967296;}
 const MAPS=[{name:'거목의 다리',hint:'얇은 나무 다리 · 끊어지는 연결부 · 잎바람',sky:['#abc982','#e6d7a0'],rock:'#756047',edge:'#b0ce70',particle:'leaf'}, {name:'안개 공중정원',hint:'겹친 부유섬 · 아래 발판으로 추락 · 꽃잎',sky:['#173957','#73949f'],rock:'#495d68',edge:'#84b696',particle:'petal'}, {name:'서리 균열',hint:'갈라진 얼음판 · 깊은 낭떠러지 · 눈송이',sky:['#34465f','#99b5c0'],rock:'#648999',edge:'#e3f8ff',particle:'snow'}, {name:'황혼 철골',hint:'좁은 철골 · 높은 턱 · 떠다니는 종잇조각',sky:['#706987','#dcb1a0'],rock:'#635765',edge:'#dba58d',particle:'paper'}, {name:'별빛 유적',hint:'계단과 탑 · 낮은 통로 · 빛나는 모래',sky:['#302c51','#c39377'],rock:'#766153',edge:'#eac788',particle:'ember'}];
 function column(s,x){return x<0||x>W?[]:s.solids[clamp(Math.round(x/STEP),0,s.solids.length-1)]||[];}
@@ -61,7 +61,7 @@ function muzzlePosition(s,p){const tilt=(p.falling||s.jump?.sid===p.sid)?0:surfa
 function aimAngle(s,p,localAngle){const tilt=(p.falling||s.jump?.sid===p.sid)?0:surfaceAngle(s,p.x,p.y)*180/Math.PI;return localAngle-p.face*tilt;}
 const ZONE_CELL_STEP=34;
 function zoneAnchor(s,x,preferY){const xx=clamp(x,18,W-18),gy=ground(s,xx,(preferY??H)-26);if(gy>H+70)return null;return{x:xx,y:gy-8};}
-function makeZone(s,type,x,y,owner){const anchor=zoneAnchor(s,x,y);if(!anchor)return null;const z={id:++s.zoneSeq,type,owner,cells:[anchor],spreads:0,turnsLeft:3,damage:type==='fire'?3:6,cellRadius:type==='fire'?28:30,height:type==='fire'?74:82,nextFireAt:type==='fire'?s.simAt+2000:0};s.zones.push(z);return z;}
+function makeZone(s,type,x,y,owner){const anchor=zoneAnchor(s,x,y);if(!anchor)return null;const z={id:++s.zoneSeq,type,owner,cells:[anchor],spreads:0,turnsLeft:3,damage:type==='fire'?5:8,cellRadius:type==='fire'?28:30,height:type==='fire'?74:82,nextFireAt:type==='fire'?s.simAt+2000:0};s.zones.push(z);return z;}
 function spreadZoneCell(s,cell,dir){const targetX=cell.x+dir*ZONE_CELL_STEP;for(const offset of [0,dir*8,dir*16,-dir*8]){const next=zoneAnchor(s,targetX+offset,cell.y);if(!next)continue;if(Math.abs(next.y-cell.y)>88)continue;return next;}return null;}
 function advanceZones(s){for(const z of s.zones){if(z.spreads>=2)continue;const left=z.cells.reduce((a,b)=>b.x<a.x?b:a,z.cells[0]),right=z.cells.reduce((a,b)=>b.x>a.x?b:a,z.cells[0]);const add=[];for(const next of [spreadZoneCell(s,left,-1),spreadZoneCell(s,right,1)])if(next&&!z.cells.some(c=>Math.abs(c.x-next.x)<10&&Math.abs(c.y-next.y)<10)&&!add.some(c=>Math.abs(c.x-next.x)<10&&Math.abs(c.y-next.y)<10))add.push(next);if(add.length)z.cells.push(...add);z.spreads++;}}
 function zoneHitsPlayer(z,p){return z.cells.some(c=>Math.abs(p.x-c.x)<=z.cellRadius&&Math.abs((p.y-8)-c.y)<=z.height);}
@@ -154,8 +154,8 @@ function zoneTurnDamage(s){
  for(const p of s.players){
   if(p.hp<=0)continue;
   const inPoison=zones.some(z=>z.type==='poison'&&zoneHitsPlayer(z,p));
-  if(inPoison){hurt(s,p,6,'poison');p.zonePoison={damage:6,turns:2};}
-  else if(p.zonePoison?.turns>0){hurt(s,p,p.zonePoison.damage||6,'poison');p.zonePoison.turns--;if(!p.zonePoison.turns)p.zonePoison=null;}
+  if(inPoison){hurt(s,p,10,'poison');p.zonePoison={damage:10,turns:2};}
+  else if(p.zonePoison?.turns>0){hurt(s,p,p.zonePoison.damage||10,'poison');p.zonePoison.turns--;if(!p.zonePoison.turns)p.zonePoison=null;}
  }
 }
 function tickFireZones(s,t){
@@ -164,7 +164,7 @@ function tickFireZones(s,t){
   if(z.type!=='fire')continue;
   if(!Number.isFinite(z.nextFireAt)||z.nextFireAt<=0)z.nextFireAt=t+2000;
   while(t>=z.nextFireAt){
-   for(const p of s.players)if(p.hp>0&&zoneHitsPlayer(z,p)){hurt(s,p,3,'fire');p.fireTintUntil=Math.max(p.fireTintUntil||0,z.nextFireAt+2100);}
+   for(const p of s.players)if(p.hp>0&&zoneHitsPlayer(z,p)){hurt(s,p,5,'fire');p.fireTintUntil=Math.max(p.fireTintUntil||0,z.nextFireAt+2100);}
    z.nextFireAt+=2000;
   }
  }
@@ -179,7 +179,7 @@ function impact(s,pr){
  for(const p of s.players){if(p.hp<=0)continue;const dist=Math.hypot(p.x-x,p.y-25-y),direct=p.sid===pr.hitSid;if(direct||dist<radius+20){
   hurt(s,p,damage*(direct?1:Math.max(0,1-dist/(radius+20))),'hit',pr.armorPierce);
   if(effect==='ice'||pr.statusEffect==='freeze')p.frozen=2;
-  if(pr.statusEffect==='poison')p.poison={damage:6,turns:3};
+  if(pr.statusEffect==='poison')p.poison={damage:10,turns:3};
  }}
  destroy(s,x,y,pr.craterRadius,pr.rough,pr.craterDepth);
  if(effect==='fire')makeZone(s,'fire',x,y,pr.owner);
