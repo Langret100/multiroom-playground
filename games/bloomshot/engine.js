@@ -109,7 +109,7 @@ function spawnEnv(s,at){
  const type=random(s)<.55?'wind':'fire';
  // Keep columns away from the mostly-useless far edges, but otherwise let them appear freely.
  const minX=W*.20,maxX=W*.80,x=minX+random(s)*(maxX-minX),floor=ground(s,x);
- const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*2.34,radius=(type==='wind'?46:40)*2.34;
+ const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*1.872,radius=(type==='wind'?46:40)*1.872;
  const windRoll=type==='wind'?random(s):0,windMode=type==='wind'?(windRoll<.4?'up':windRoll<.8?'down':'reverse'):'',flow=windMode==='up'?-1:windMode==='down'?1:0;
  const env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:30+random(s)*12,dir:random(s)<.5?-1:1,flow,windMode,boost:1.5,born:at,ends:at+14000+random(s)*7000};
  s.envs.push(env);
@@ -173,7 +173,7 @@ function pickup(s,p){for(const d of s.drops)if(d.status==='ground'&&Math.abs(d.x
 function hurt(s,p,amount,kind,armorPierce=0){let damage=Math.max(1,Math.round(amount*(['fall','poison','fire'].includes(kind)?1:1-spec(p).armor*(1-armorPierce))));const absorb=Math.min(p.shield,damage);p.shield-=absorb;damage-=absorb;const before=p.hp;p.hp=Math.max(0,p.hp-damage);if(before>0&&p.hp<=0)p.deathType=kind==='fall'?'fall':'ground';if(damage)event(s,'damage',{sid:p.sid,x:p.x,y:p.y-80,damage,kind});}
 function settle(s){for(const p of s.players){if(p.hp<=0||s.jump?.sid===p.sid)continue;const y=ground(s,p.x,p.y-2);if(y>p.y+2){if(!p.falling){p.falling=true;p.fallFrom=p.y;p.fallVy=0;}}else{p.y=y;pickup(s,p);}}}
 function eliminateByFall(s,p){if(p.hp<=0)return false;p.hp=0;p.deathType='fall';p.falling=false;p.fallVy=0;event(s,'fall',{sid:p.sid,x:p.x,y:p.y});return true;}
-function advanceFalls(s){for(const p of s.players){if(p.hp<=0)continue;if(p.y>H+50){eliminateByFall(s,p);continue;}if(!p.falling)continue;const floor=ground(s,p.x,p.y-2);p.fallVy+=760*DT;p.y+=p.fallVy*DT;if(p.y>H+50){eliminateByFall(s,p);}else if(p.y>=floor){p.y=floor;p.falling=false;if(p.y-p.fallFrom>90)hurt(s,p,(p.y-p.fallFrom-90)*.22,'fall');pickup(s,p);event(s,'land',{sid:p.sid,x:p.x,y:p.y});}}}
+function advanceFalls(s){for(const p of s.players){if(p.hp<=0)continue;if(p.y>H+50){eliminateByFall(s,p);continue;}if(!p.falling)continue;const floor=ground(s,p.x,p.y-2);p.fallVy+=760*DT;p.y+=p.fallVy*DT;if(p.y>H+50){eliminateByFall(s,p);}else if(p.y>=floor){p.y=floor;p.falling=false;if(p.y-p.fallFrom>90)hurt(s,p,(p.y-p.fallFrom-90)*.154,'fall');pickup(s,p);event(s,'land',{sid:p.sid,x:p.x,y:p.y});}}}
 function impact(s,pr){
  const {x,y,radius,damage,effect}=pr;event(s,'blast',{x,y,radius:Math.max(radius,pr.craterRadius),color:pr.color,character:pr.character,weapon:pr.weapon,effect:pr.effect,envType:pr.envType||'',envWind:!!pr.envWind,envFire:!!pr.envFire,boostVisual:pr.boostVisual||'',statusEffect:pr.statusEffect||'',direct:!!pr.hitSid,hitSid:pr.hitSid||''});
  for(const p of s.players){if(p.hp<=0)continue;const dist=Math.hypot(p.x-x,p.y-25-y),direct=p.sid===pr.hitSid;if(direct||dist<radius+20){

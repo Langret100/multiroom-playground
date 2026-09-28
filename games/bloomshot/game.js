@@ -448,7 +448,7 @@ function drawEnvColumns(now){
  for(const env of state.envs||[]){
   const life=Math.min(1,Math.max(0,(env.ends-now)/1200)),grow=Math.min(1,Math.max(0,(now-env.born)/420)),alpha=Math.min(life,grow);if(alpha<=0)continue;
   const isFire=env.type==='fire';
-  const top=Math.max(-120,(env.top??0)-(isFire?749:655)),bottom=Math.min(E.H+120,(env.y??E.H)+(isFire?655:562)),h=Math.max(isFire?2012:1872,bottom-top),w=Math.max(isFire?352:308,env.radius*(isFire?4.9:4.2)),frame=Math.floor(now/120+env.id)%4;
+  const top=Math.max(-120,(env.top??0)-(isFire?599:524)),bottom=Math.min(E.H+120,(env.y??E.H)+(isFire?524:450)),h=Math.max(isFire?1610:1498,bottom-top),w=Math.max(isFire?282:246,env.radius*(isFire?4.9:4.2)),frame=Math.floor(now/120+env.id)%4;
   if(env.type==='wind'){
    drawFxFrame('windColumns',state.map,frame,env.x-w/2,top,w,h,alpha*.98,env.dir<0);
    const mode=env.windMode||(env.flow<0?'up':env.flow>0?'down':'reverse'),flow=mode==='up'?-1:mode==='down'?1:0,dir=flow<0?-1:flow>0?1:0;
