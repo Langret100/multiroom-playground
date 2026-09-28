@@ -106,17 +106,32 @@ function buildMap(s){
 function setWind(s){s.wind=Math.round((random(s)-.5)*76);}
 function spawnDrop(s,at){const keys=Object.keys(ITEMS),d={id:++s.dropSeq,item:keys[Math.floor(random(s)*keys.length)],x:100+random(s)*(W-200),y:-60,born:at,status:'chute',vy:0,cutAt:0};s.drops.push(d);event(s,'supply',{dropId:d.id,x:d.x,item:d.item});return d;}
 function spawnEnv(s,at){
- let env=null;
- for(let tries=0;tries<18&&!env;tries++){
-  const type=random(s)<.55?'wind':'fire',x=180+random(s)*(W-360),floor=ground(s,x);
-  if(floor<180||floor>930)continue;
-  if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<140))continue;
-  const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*1.5,radius=(type==='wind'?46:40)*1.5;
-  const windRoll=type==='wind'?random(s):0,windMode=type==='wind'?(windRoll<.4?'up':windRoll<.8?'down':'reverse'):'',flow=windMode==='up'?-1:windMode==='down'?1:0;
-  env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:30+random(s)*12,dir:random(s)<.5?-1:1,flow,windMode,boost:1.18+random(s)*.09,born:at,ends:at+14000+random(s)*7000};
+ const type=random(s)<.55?'wind':'fire',minX=Math.round(W*.12),maxX=Math.round(W*.88),step=Math.max(STEP*3,54),candidates=[];
+ for(let x=minX;x<=maxX;x+=step){
+  const floor=ground(s,x);if(floor<180||floor>930)continue;
+  const left=ground(s,x-36),right=ground(s,x+36);if(Math.abs(left-right)>34)continue;
+  if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<125))continue;
+  if((s.envs||[]).some(e=>e.ends>at&&Math.abs(e.x-x)<260))continue;
+  if(Number.isFinite(s.lastEnvX)&&Math.abs(s.lastEnvX-x)<Math.min(520,W*.16))continue;
+  candidates.push({x,floor});
  }
- if(!env)return null;
- s.envs.push(env);
+ // If the previous-column exclusion leaves no valid point, relax only that exclusion while
+ // still keeping the column inside the useful central map area and away from live players/columns.
+ if(!candidates.length){
+  for(let x=minX;x<=maxX;x+=step){
+   const floor=ground(s,x);if(floor<180||floor>930)continue;
+   if(Math.abs(ground(s,x-36)-ground(s,x+36))>34)continue;
+   if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<125))continue;
+   if((s.envs||[]).some(e=>e.ends>at&&Math.abs(e.x-x)<240))continue;
+   candidates.push({x,floor});
+  }
+ }
+ if(!candidates.length)return null;
+ const pick=candidates[Math.floor(random(s)*candidates.length)],x=pick.x,floor=pick.floor;
+ const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*1.5,radius=(type==='wind'?46:40)*1.5;
+ const windRoll=type==='wind'?random(s):0,windMode=type==='wind'?(windRoll<.4?'up':windRoll<.8?'down':'reverse'):'',flow=windMode==='up'?-1:windMode==='down'?1:0;
+ const env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:30+random(s)*12,dir:random(s)<.5?-1:1,flow,windMode,boost:1.18+random(s)*.09,born:at,ends:at+14000+random(s)*7000};
+ s.lastEnvX=x;s.envs.push(env);
  event(s,'env_spawn',{envType:env.type,x:env.x,y:env.y,top:env.top,dir:env.dir,flow:env.flow||0,radius:env.radius});
  return env;
 }
