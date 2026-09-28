@@ -154,27 +154,24 @@ function adopt(incoming,hostTime){
 function applyBridgeInit(d){
  if(!embedded||!d||d.type!=='bridge_init'||d.gameId!=='bloomshot')return false;
  bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];
- try{send('bs_bridge_ack');send('bs_sync');}catch(_){}
+ send('bs_sync');
  return true;
 }
 window.addEventListener('message',e=>{
  const d=e.data||{};
- const sameOrigin=!e.origin||e.origin===location.origin;
- const sourceOk=(e.source===parent)||(!e.source&&embedded);
- // Some desktop popup/browser combinations expose a transient WindowProxy for the
- // parent iframe source. For the one idempotent BloomShot init packet, same-origin
- // + embedded + explicit gameId is sufficient and avoids a permanent connect wait.
- const bloomInitOk=embedded&&sameOrigin&&d.type==='bridge_init'&&d.gameId==='bloomshot';
- if(!sameOrigin||(!sourceOk&&!bloomInitOk))return;
+ // BloomShot is embedded from the same site as room.html. Do not depend on
+ // WindowProxy identity: desktop popup/iframe implementations can replace it
+ // while loading. Origin + known bridge packet types are the stable boundary.
+ if(!embedded||(e.origin&&e.origin!==location.origin)||!d||typeof d!=='object')return;
  if(d.type==='bridge_init'&&d.gameId==='bloomshot'){applyBridgeInit(d);return;}
  if(!bridge.ready)return;
- if(d.type==='bridge_roster'&&d.gameId==='bloomshot'){roster=d.players||[];if(bridge.isHost&&state&&E.roster(state,roster,Date.now()))publish();}
+ if(d.type==='bridge_roster'&&d.gameId==='bloomshot'){roster=d.players||[];if(bridge.isHost&&state&&E.roster(state,roster,Date.now()))publish();return;}
  if(d.type==='bridge_host'){
   const before=bridge.isHost;bridge.hostSid=String(d.hostSessionId||'');bridge.isHost=!!d.isHost;
-  if(!before&&bridge.isHost&&state){E.shiftClock(state,-offset);offset=0;E.roster(state,roster,Date.now());sequence=Math.max(sequence,mine()?.lastSeq||0);publish();}send('bs_sync');
+  if(!before&&bridge.isHost&&state){E.shiftClock(state,-offset);offset=0;E.roster(state,roster,Date.now());sequence=Math.max(sequence,mine()?.lastSeq||0);publish();}send('bs_sync');return;
  }
  if(d.type==='bs_sync'&&bridge.isHost){if(!state){state=E.create(roster.length?roster:[{sessionId:bridge.sid,nick:'정령',seat:0}],Date.now()>>>0,Date.now());sequence=0;pending=null;offset=0;lastEvent=0;publishedEvent=-1;publishedPhase=null;}publish();return;}
- if(d.type==='bs_input'&&bridge.isHost&&state){E.tick(state,Date.now());E.command(state,String(d.from),d.input,Date.now(),bridge.hostSid);publish();}
+ if(d.type==='bs_input'&&bridge.isHost&&state){E.tick(state,Date.now());E.command(state,String(d.from),d.input,Date.now(),bridge.hostSid);publish();return;}
  if(d.type==='bs_state'){
   if(bridge.isHost){if(!state){state=E.create(roster.length?roster:[{sessionId:bridge.sid,nick:'정령',seat:0}],Date.now()>>>0,Date.now());sequence=0;pending=null;offset=0;lastEvent=0;publishedEvent=-1;publishedPhase=null;publish();}return;}
   if(d.state)adopt(d.state,d.hostTime);renderUI();
