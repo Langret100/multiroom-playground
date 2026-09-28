@@ -152,9 +152,14 @@ function adopt(incoming,hostTime){
  const p=mine();sequence=Math.max(sequence,p?.lastSeq||0);if(pending&&(p?.lastSeq>=pending.command.seq||pending.command.match!==state.id))pending=null;
 }
 window.addEventListener('message',e=>{
+ const d=e.data||{};
  const sameOrigin=!e.origin||e.origin===location.origin;
  const sourceOk=(e.source===parent)||(!e.source&&embedded);
- if(!sameOrigin||!sourceOk)return;const d=e.data||{};
+ // Some desktop popup/browser combinations expose a transient WindowProxy for the
+ // parent iframe source. For the one idempotent BloomShot init packet, same-origin
+ // + embedded + explicit gameId is sufficient and avoids a permanent connect wait.
+ const bloomInitOk=embedded&&sameOrigin&&d.type==='bridge_init'&&d.gameId==='bloomshot';
+ if(!sameOrigin||(!sourceOk&&!bloomInitOk))return;
  if(d.type==='bridge_init'&&d.gameId==='bloomshot'){
   bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];send('bs_sync');return;
  }

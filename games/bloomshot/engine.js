@@ -22,7 +22,7 @@ const WEAPONS={
  crater:{count:1,damage:.65,blast:.8,crater:1.3005,size:10,spread:[0],desc:'피해 65% / 파괴 반경 130% · 체력보다 발판 파괴·낙사 유도'},
  fire:{count:1,damage:.44,blast:.9,crater:.45,size:8,spread:[0],desc:'직격 피해 44% / 파괴 반경 45% · 불길 지대: 3턴 유지 · 범위 안 대상에게 2초마다 3 피해'},
  ice:{count:1,damage:.65,blast:.9,crater:.4,size:7,spread:[0],desc:'피해 65% / 파괴 반경 40% · 적중한 상대는 다음 자기 턴 2회 동안 이동·점프 불가'},
- star:{count:3,damage:.546,blast:.6,crater:.245,size:5,spread:[-4,0,4],homing:true,homingRadius:360,homingTurn:4.8,desc:'3발 · 발당 피해는 기존 길잡이 별보다 30% 감소 · 파괴 반경도 30% 감소 · 비행 중 가까운 적을 락온하면 궤도를 크게 꺾어 확정 직격'}
+ star:{count:3,damage:.546,blast:.6,crater:.245,size:5,spread:[-4,0,4],homing:true,homingRadius:280,homingTurn:2.8,desc:'3발 · 발당 피해는 기존 길잡이 별보다 30% 감소 · 파괴 반경도 30% 감소 · 280 이내 적을 락온하면 완만하게 추적'}
 };
 const NORMALS=[
  {...WEAPONS.normal,desc:'균형형 단발. 즉시 피해와 지형 파괴가 고르게 나옵니다.'},
@@ -32,7 +32,7 @@ const NORMALS=[
  {...WEAPONS.normal,damage:.78,blast:.9,crater:1.05,rough:true,size:9,desc:'거친 수정탄 단발. 피해를 줄이는 대신 크레이터에 높낮이가 큰 잔턱을 남겨 이동을 방해합니다.'},
  {...WEAPONS.normal,damage:.9,blast:1.25,crater:.7,size:7,desc:'확산 불씨 단발. 직접 피해는 약간 낮지만 피해 범위가 넓고 땅은 덜 파냅니다. 일반탄은 불길을 남기지 않습니다.'},
  {...WEAPONS.normal,damage:.9,blast:.9,crater:1.15,depth:.55,size:8,desc:'압설 눈뭉치 단발. 피해는 약간 낮고 지형을 넓고 얕게 깎습니다. 일반탄은 이동력을 줄이지 않습니다.'},
- {...WEAPONS.normal,count:9,damage:.54,blast:.55,crater:.315,speed:1.2,size:4,spread:[-6,-4.5,-3,-1.5,0,1.5,3,4.5,6],desc:'별 조각 9발. 3발 부채꼴을 세 번 연속 발사하며, 기본탄 공격력은 직전값보다 40% 감소했습니다. 각 탄의 지형 파괴 반경은 기존보다 30% 줄었습니다.'}
+ {...WEAPONS.normal,count:9,damage:.378,blast:.55,crater:.315,speed:1.2,size:4,spread:[-6,-4.5,-3,-1.5,0,1.5,3,4.5,6],desc:'별 조각 9발. 3발 부채꼴을 세 번 연속 발사하며, 기본탄 공격력은 직전값에서 추가로 30% 감소했습니다. 각 탄의 지형 파괴 반경은 기존보다 30% 줄었습니다.'}
 ];
 function weaponSpec(p,weapon){return weapon==='special'?WEAPONS[spec(p).special]:NORMALS[p.character]||NORMALS[0];}
 function characterDamageScale(p){return p.character===CHARACTERS.length-1?.5985:.765;} // 현재 전체 캐릭터 공격 피해를 직전값에서 추가 10% 감소
@@ -44,7 +44,7 @@ function terrainDestroyScale(p,weapon,baseRadius){
  if(!isSuper&&!isCraterShell&&baseRadius*scale<100)scale*=1.10;
  return scale;
 }
-function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 턴당 6 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 6 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 2초마다 3 피해를 줍니다.',ice:'서리 단발. 적중한 상대는 다음 자기 턴부터 2턴 동안 이동과 점프를 할 수 없습니다.',star:'길잡이 별 3발. 비행 중 360 이내 적이 잡히면 조준 표시 후 궤도를 크게 꺾어 해당 적에게 확정 직격합니다. 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
+function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 턴당 6 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 6 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 2초마다 3 피해를 줍니다.',ice:'서리 단발. 적중한 상대는 다음 자기 턴부터 2턴 동안 이동과 점프를 할 수 없습니다.',star:'길잡이 별 3발. 비행 중 280 이내 적이 잡히면 조준 표시 후 완만하게 추적합니다. 유도 회전 성능을 낮춰 급격하게 꺾이지 않으며, 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
 
 const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 50% 증가',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 50% 증가'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 6 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대는 다음 자기 턴부터 2턴 동안 이동·점프 불가'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
 function random(s){s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;return s.seed/4294967296;}
