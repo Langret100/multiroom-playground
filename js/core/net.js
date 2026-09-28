@@ -102,7 +102,13 @@
     send(type, payload){
       if(this.kind==='room'&&this.state.mode==='bloomshot'&&type.startsWith('bs_')){
         if(type==='bs_quit'){this.leave();return;}
-        const host=this.state.players.get(this.sessionId)?.isHost;
+        // BloomShot host authority must match the room/server rule.  Some clients
+        // receive the seat map before the players[].isHost flag; seat 0 is still
+        // authoritative in that window.  Requiring only isHost silently dropped
+        // the first host snapshot on mixed devices and left peers on 'connecting'.
+        const me=this.state.players.get(this.sessionId);
+        const mySeat=Number(this.state.order.get(this.sessionId));
+        const host=!!me?.isHost || (Number.isFinite(mySeat)&&mySeat===0);
         if((type==='bs_state'||type==='bs_over')&&!host)return;
         if(type==='bs_over'){this.ws.send(JSON.stringify({t:'sk_over',d:{}}));return;}
         if(type==='bs_sync'&&host){queueMicrotask(()=>this._emit('bs_state',{state:this._bloomSnapshot||null,hostTime:Date.now()}));return;}
@@ -185,8 +191,16 @@ if (isDuel && humans.length === 1){
       }
 
       if(this.kind==='room'&&this.state.mode==='bloomshot'&&msg.t==='duel_event'){
-        const e=msg.d?.event,sid=String(msg.d?.sid||'');if(e?.ns!=='bloomshot-v3'||this.state.phase!=='playing')return;
-        if(e.type==='bs_state'){if(!this.state.players.get(sid)?.isHost)return;this._bloomSnapshot=e.state;this._emit('bs_state',{state:e.state,hostTime:e.state?.hostTime});}
+        const e=msg.d?.event,sid=String(msg.d?.sid||'');if(e?.ns!=='bloomshot-v3')return;
+        // Do not throw away the first BloomShot sync solely because a room_state
+        // phase/host flag arrived a few milliseconds later on another device.
+        // Sender authority follows the same server rule: explicit host OR seat 0.
+        if(e.type==='bs_state'){
+          const sender=this.state.players.get(sid),senderSeat=Number(this.state.order.get(sid));
+          const senderIsHost=!!sender?.isHost || (Number.isFinite(senderSeat)&&senderSeat===0);
+          if(!senderIsHost)return;
+          this._bloomSnapshot=e.state;this._emit('bs_state',{state:e.state,hostTime:e.state?.hostTime});
+        }
         if(e.type==='bs_input')this._emit('bs_input',{from:sid,input:e.input});
         if(e.type==='bs_sync')this._emit('bs_sync',{from:sid});
         return;
