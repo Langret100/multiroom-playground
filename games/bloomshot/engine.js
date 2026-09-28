@@ -46,7 +46,7 @@ function terrainDestroyScale(p,weapon,baseRadius){
 }
 function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 턴당 6 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 6 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 2초마다 3 피해를 줍니다.',ice:'서리 단발. 적중한 상대는 다음 자기 턴부터 2턴 동안 이동과 점프를 할 수 없습니다.',star:'길잡이 별 3발. 비행 중 360 이내 적이 잡히면 조준 표시 후 궤도를 크게 꺾어 해당 적에게 확정 직격합니다. 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
 
-const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 ×2',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 2배'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 6 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대는 다음 자기 턴부터 2턴 동안 이동·점프 불가'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
+const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 50% 증가',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 50% 증가'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 6 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대는 다음 자기 턴부터 2턴 동안 이동·점프 불가'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
 function random(s){s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;return s.seed/4294967296;}
 const MAPS=[{name:'거목의 다리',hint:'얇은 나무 다리 · 끊어지는 연결부 · 잎바람',sky:['#abc982','#e6d7a0'],rock:'#756047',edge:'#b0ce70',particle:'leaf'}, {name:'안개 공중정원',hint:'겹친 부유섬 · 아래 발판으로 추락 · 꽃잎',sky:['#173957','#73949f'],rock:'#495d68',edge:'#84b696',particle:'petal'}, {name:'서리 균열',hint:'갈라진 얼음판 · 깊은 낭떠러지 · 눈송이',sky:['#34465f','#99b5c0'],rock:'#648999',edge:'#e3f8ff',particle:'snow'}, {name:'황혼 철골',hint:'좁은 철골 · 높은 턱 · 떠다니는 종잇조각',sky:['#706987','#dcb1a0'],rock:'#635765',edge:'#dba58d',particle:'paper'}, {name:'별빛 유적',hint:'계단과 탑 · 낮은 통로 · 빛나는 모래',sky:['#302c51','#c39377'],rock:'#766153',edge:'#eac788',particle:'ember'}];
 function column(s,x){return x<0||x>W?[]:s.solids[clamp(Math.round(x/STEP),0,s.solids.length-1)]||[];}
@@ -106,32 +106,13 @@ function buildMap(s){
 function setWind(s){s.wind=Math.round((random(s)-.5)*76);}
 function spawnDrop(s,at){const keys=Object.keys(ITEMS),d={id:++s.dropSeq,item:keys[Math.floor(random(s)*keys.length)],x:100+random(s)*(W-200),y:-60,born:at,status:'chute',vy:0,cutAt:0};s.drops.push(d);event(s,'supply',{dropId:d.id,x:d.x,item:d.item});return d;}
 function spawnEnv(s,at){
- const type=random(s)<.55?'wind':'fire',minX=Math.round(W*.12),maxX=Math.round(W*.88),step=Math.max(STEP*3,54),candidates=[];
- for(let x=minX;x<=maxX;x+=step){
-  const floor=ground(s,x);if(floor<180||floor>930)continue;
-  const left=ground(s,x-36),right=ground(s,x+36);if(Math.abs(left-right)>34)continue;
-  if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<125))continue;
-  if((s.envs||[]).some(e=>e.ends>at&&Math.abs(e.x-x)<260))continue;
-  if(Number.isFinite(s.lastEnvX)&&Math.abs(s.lastEnvX-x)<Math.min(520,W*.16))continue;
-  candidates.push({x,floor});
- }
- // If the previous-column exclusion leaves no valid point, relax only that exclusion while
- // still keeping the column inside the useful central map area and away from live players/columns.
- if(!candidates.length){
-  for(let x=minX;x<=maxX;x+=step){
-   const floor=ground(s,x);if(floor<180||floor>930)continue;
-   if(Math.abs(ground(s,x-36)-ground(s,x+36))>34)continue;
-   if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<125))continue;
-   if((s.envs||[]).some(e=>e.ends>at&&Math.abs(e.x-x)<240))continue;
-   candidates.push({x,floor});
-  }
- }
- if(!candidates.length)return null;
- const pick=candidates[Math.floor(random(s)*candidates.length)],x=pick.x,floor=pick.floor;
- const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*1.5,radius=(type==='wind'?46:40)*1.5;
+ const type=random(s)<.55?'wind':'fire';
+ // Keep columns away from the mostly-useless far edges, but otherwise let them appear freely.
+ const minX=W*.20,maxX=W*.80,x=minX+random(s)*(maxX-minX),floor=ground(s,x);
+ const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*2.34,radius=(type==='wind'?46:40)*2.34;
  const windRoll=type==='wind'?random(s):0,windMode=type==='wind'?(windRoll<.4?'up':windRoll<.8?'down':'reverse'):'',flow=windMode==='up'?-1:windMode==='down'?1:0;
- const env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:30+random(s)*12,dir:random(s)<.5?-1:1,flow,windMode,boost:1.18+random(s)*.09,born:at,ends:at+14000+random(s)*7000};
- s.lastEnvX=x;s.envs.push(env);
+ const env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:30+random(s)*12,dir:random(s)<.5?-1:1,flow,windMode,boost:1.5,born:at,ends:at+14000+random(s)*7000};
+ s.envs.push(env);
  event(s,'env_spawn',{envType:env.type,x:env.x,y:env.y,top:env.top,dir:env.dir,flow:env.flow||0,radius:env.radius});
  return env;
 }
@@ -215,7 +196,7 @@ function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
  const baseCraterRadius=Math.max(c.radius*w.crater*craterScale,smallShot?54:0);
  const craterRadius=baseCraterRadius*terrainDestroyScale(p,weapon,baseCraterRadius);
  const drawRadius=Math.max(w.size*drawScale,smallShot?8.6:0);
- return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?2:1)*1.98*characterDamageScale(p),radius:blastRadius,craterRadius,drawRadius,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,homingRadius:w.homingRadius||300,homingTurn:w.homingTurn||.5,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
+ return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?1.5:1)*1.98*characterDamageScale(p),radius:blastRadius,craterRadius,drawRadius,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,homingRadius:w.homingRadius||300,homingTurn:w.homingTurn||.5,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
 }
 function launch(s,q){const p=s.players.find(p=>p.sid===q.sid);if(!p||p.hp<=0)return;const w=weaponSpec(p,q.weapon);if(p.character===7&&q.weapon==='normal'&&!q.volleyExpanded){const groups=[[-5,0,5],[-5,0,5],[-5,0,5]];groups.forEach((spread,i)=>s.queue.push({...q,volleyExpanded:true,spreadOverride:spread,shotIndexBase:i*3,at:s.simAt+i*180}));s.queue.sort((a,b)=>a.at-b.at);return;}const m=muzzlePosition(s,p),spread=q.spreadOverride||w.spread;let shotIndex=q.shotIndexBase||0;for(const a of spread){const pr=projectile(s,p,q.angle,q.power,q.weapon,q.boost,s.simAt,a);pr.shotIndex=shotIndex++;pr.damage*=1+Math.max(0,s.round-10)*.08;s.projectiles.push(pr);}event(s,'launch',{sid:p.sid,x:m.x,y:m.y,character:p.character,weapon:q.weapon,effect:q.weapon==='special'?spec(p).special:'',boostVisual:q.boost||'',statusEffect:q.boost==='poison'?'poison':q.boost==='freeze'?'freeze':''});}
 function command(s,sid,c,now,hostSid){
