@@ -412,12 +412,12 @@ function drawEnvColumns(now){
  for(const env of state.envs||[]){
   const life=Math.min(1,Math.max(0,(env.ends-now)/1200)),grow=Math.min(1,Math.max(0,(now-env.born)/420)),alpha=Math.min(life,grow);if(alpha<=0)continue;
   const isFire=env.type==='fire';
-  const top=Math.max(-40,(env.top??0)-(isFire?320:280)),bottom=Math.min(E.H+40,(env.y??E.H)+(isFire?280:240)),h=Math.max(isFire?860:800,bottom-top),w=Math.max(isFire?150:132,env.radius*(isFire?4.9:4.2)),frame=Math.floor(now/120+env.id)%4;
+  const top=Math.max(-80,(env.top??0)-(isFire?480:420)),bottom=Math.min(E.H+80,(env.y??E.H)+(isFire?420:360)),h=Math.max(isFire?1290:1200,bottom-top),w=Math.max(isFire?225:198,env.radius*(isFire?4.9:4.2)),frame=Math.floor(now/120+env.id)%4;
   if(env.type==='wind'){
    drawFxFrame('windColumns',state.map,frame,env.x-w/2,top,w,h,alpha*.98,env.dir<0);
-   const flow=env.flow||-1,dir=flow<0?-1:1;
+   const mode=env.windMode||(env.flow<0?'up':env.flow>0?'down':'reverse'),flow=mode==='up'?-1:mode==='down'?1:0,dir=flow<0?-1:flow>0?1:0;
    ctx.save();ctx.globalCompositeOperation='lighter';ctx.globalAlpha=.58*alpha;
-   for(let y=top+56;y<bottom-24;y+=72){const bob=Math.sin(now/210+y*.03+env.id)*5;ctx.strokeStyle='rgba(236,252,255,.72)';ctx.lineWidth=3.2;ctx.beginPath();ctx.moveTo(env.x-14,y+bob);ctx.lineTo(env.x+14,y+bob+dir*10);ctx.stroke();ctx.fillStyle='rgba(248,255,255,.84)';ctx.beginPath();ctx.moveTo(env.x,y+bob-12*dir);ctx.lineTo(env.x-8,y+bob+2*dir);ctx.lineTo(env.x+8,y+bob+2*dir);ctx.closePath();ctx.fill();}
+   for(let y=top+56;y<bottom-24;y+=72){const bob=Math.sin(now/210+y*.03+env.id)*5;ctx.strokeStyle='rgba(236,252,255,.72)';ctx.lineWidth=3.2;ctx.beginPath();ctx.moveTo(env.x-14,y+bob);ctx.lineTo(env.x+14,y+bob+(dir||((y/72|0)%2?1:-1))*10);ctx.stroke();ctx.fillStyle='rgba(248,255,255,.84)';ctx.beginPath();if(mode==='reverse'){const side=((y/72|0)%2?1:-1);ctx.moveTo(env.x+12*side,y+bob);ctx.lineTo(env.x-3*side,y+bob-8);ctx.lineTo(env.x-3*side,y+bob+8);}else{ctx.moveTo(env.x,y+bob-12*dir);ctx.lineTo(env.x-8,y+bob+2*dir);ctx.lineTo(env.x+8,y+bob+2*dir);}ctx.closePath();ctx.fill();}
    ctx.restore();
   }else{
    drawFxFrame('boostColumns',state.map,frame,env.x-w/2,top,w,h,Math.min(1,alpha*1.06),false);

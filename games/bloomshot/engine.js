@@ -17,10 +17,10 @@ const WEAPONS={
  normal:{count:1,damage:1,blast:1,crater:1,size:8,spread:[0],desc:'단발 · 피해 100% · 파괴 반경 100% · 안정적인 즉시 피해'},
  burst:{count:3,damage:.38,blast:.64,crater:.44,size:5,spread:[-6,0,6],desc:'3발 · 발당 피해 38% / 파괴 반경 44% · 분산 포격, 모두 맞으면 합계 114%'},
  petal:{count:2,damage:.58,blast:.7,crater:.58,size:6,spread:[-2.5,2.5],desc:'2발 · 발당 피해 58% / 파괴 반경 58% · 집중 연사, 모두 맞으면 합계 116%'},
- poison:{count:1,damage:.6,blast:.85,crater:.3,size:7,spread:[0],desc:'직격 피해 60% / 파괴 반경 30% · 독안개 지대: 바닥에 퍼지며 총 3턴 동안 피해'},
- pierce:{count:1,damage:1.2,blast:.4,crater:.2,size:4,spread:[0],pierce:100,armorPierce:.65,desc:'피해 120% / 파괴 반경 20% · 작은 탄, 지형 약 100 관통 · 방어력 65% 무시'},
+ poison:{count:1,damage:.48,blast:.85,crater:.3,size:7,spread:[0],desc:'직격 피해 48% / 파괴 반경 30% · 독안개 지대: 3턴 유지 · 범위 안에서는 턴당 6 피해, 벗어난 뒤에도 2턴간 6 피해 지속'},
+ pierce:{count:1,damage:1.2,blast:.4,crater:.2,size:4,spread:[0],pierce:200,armorPierce:.65,desc:'피해 120% / 파괴 반경 20% · 작은 탄, 지형 약 200 관통 · 방어력 65% 무시'},
  crater:{count:1,damage:.65,blast:.8,crater:1.3005,size:10,spread:[0],desc:'피해 65% / 파괴 반경 130% · 체력보다 발판 파괴·낙사 유도'},
- fire:{count:1,damage:.55,blast:.9,crater:.45,size:8,spread:[0],desc:'피해 55% / 파괴 반경 45% · 불길 지대: 바닥을 따라 번지며 총 3턴 동안 피해'},
+ fire:{count:1,damage:.44,blast:.9,crater:.45,size:8,spread:[0],desc:'직격 피해 44% / 파괴 반경 45% · 불길 지대: 3턴 유지 · 범위 안 대상에게 2초마다 3 피해'},
  ice:{count:1,damage:.65,blast:.9,crater:.4,size:7,spread:[0],desc:'피해 65% / 파괴 반경 40% · 상대 다음 턴 이동력 절반'},
  star:{count:3,damage:.546,blast:.6,crater:.245,size:5,spread:[-4,0,4],homing:true,homingRadius:360,homingTurn:4.8,desc:'3발 · 발당 피해는 기존 길잡이 별보다 30% 감소 · 파괴 반경도 30% 감소 · 비행 중 가까운 적을 락온하면 궤도를 크게 꺾어 확정 직격'}
 };
@@ -28,7 +28,7 @@ const NORMALS=[
  {...WEAPONS.normal,desc:'균형형 단발. 즉시 피해와 지형 파괴가 고르게 나옵니다.'},
  {...WEAPONS.normal,count:2,damage:.46,blast:.8,crater:.48,size:5,spread:[-.7,.7],desc:'쌍꽃봉오리 2발. 발당 피해와 파임은 작고 두 발 합계도 기준 단발보다 약하지만, 좁게 모여 날아갑니다.'},
  {...WEAPONS.normal,damage:.82,blast:.9,crater:1.15,depth:1.15,size:8,desc:'굴착 포자 단발. 피해는 낮고 땅을 더 깊게 파냅니다. 일반탄에는 독이 없습니다.'},
- {...WEAPONS.normal,damage:1.05,blast:.6,crater:.55,size:4,speed:1.12,desc:'고속 도토리 단발. 작은 탄으로 집중 피해를 주며 주변 지형은 적게 깎습니다. 일반탄은 관통하지 않습니다.'},
+ {...WEAPONS.normal,damage:1.2075,blast:.6,crater:.495,size:4,speed:1.12,desc:'고속 도토리 단발. 기존보다 기본탄 피해가 15% 증가하고 맵 파괴 반경은 10% 감소했습니다. 일반탄은 관통하지 않습니다.'},
  {...WEAPONS.normal,damage:.78,blast:.9,crater:1.05,rough:true,size:9,desc:'거친 수정탄 단발. 피해를 줄이는 대신 크레이터에 높낮이가 큰 잔턱을 남겨 이동을 방해합니다.'},
  {...WEAPONS.normal,damage:.9,blast:1.25,crater:.7,size:7,desc:'확산 불씨 단발. 직접 피해는 약간 낮지만 피해 범위가 넓고 땅은 덜 파냅니다. 일반탄은 불길을 남기지 않습니다.'},
  {...WEAPONS.normal,damage:.9,blast:.9,crater:1.15,depth:.55,size:8,desc:'압설 눈뭉치 단발. 피해는 약간 낮고 지형을 넓고 얕게 깎습니다. 일반탄은 이동력을 줄이지 않습니다.'},
@@ -44,7 +44,7 @@ function terrainDestroyScale(p,weapon,baseRadius){
  if(!isSuper&&!isCraterShell&&baseRadius*scale<100)scale*=1.10;
  return scale;
 }
-function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 착탄 지점 바닥에 퍼져 1·2턴에는 양옆으로 번지고 3턴에는 유지된 뒤 사라지며 매 턴 피해를 줍니다.',pierce:'작은 관통탄. 지형 약 100 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 착탄 지점 바닥에 붙어 1·2턴에는 양옆으로 번지고 3턴에는 유지된 뒤 사라지며 매 턴 피해를 줍니다.',ice:'서리 단발. 상대 다음 자기 턴 이동력을 절반으로 줄입니다.',star:'길잡이 별 3발. 비행 중 360 이내 적이 잡히면 조준 표시 후 궤도를 크게 꺾어 해당 적에게 확정 직격합니다. 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
+function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),normal=weaponSpec(p,'normal');const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'일반 쌍탄보다 넓게 퍼지는 2발. 모두 맞히면 더 강하지만 집중시키기 어렵습니다.',poison:'독안개 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 턴당 6 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 6 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해는 기존보다 20% 감소합니다. 장판은 1·2턴에 양옆으로 퍼지고 3턴째까지 유지되며 범위 안 대상에게 2초마다 3 피해를 줍니다.',ice:'서리 단발. 상대 다음 자기 턴 이동력을 절반으로 줄입니다.',star:'길잡이 별 3발. 비행 중 360 이내 적이 잡히면 조준 표시 후 궤도를 크게 꺾어 해당 적에게 확정 직격합니다. 팀전에서는 아군을 락온하지 않습니다. 발당 피해는 기존 대비 30% 감소합니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 발당 기준 피해 '+(c.damage*w.damage*characterDamageScale(p)).toFixed(1)+' · 피해 반경 '+Math.round(c.radius*w.blast)+' · 파괴 반경 '+Math.round(c.radius*w.crater),compare:weapon==='special'?'일반탄 대비 발당 피해 '+Math.round(w.damage/normal.damage*100)+'% / 파괴 반경 '+Math.round(w.crater/normal.crater*100)+'%':'방어력·착탄 거리·강화 아이템 적용 전 수치'};}
 
 const ITEMS={double:{name:'2연발',label:'DOUBLE',color:'#ffe28b',desc:'첫 탄 명중·소실 후 같은 각도·파워로 두 번째 발사'},power:{name:'파워 ×2',label:'POWER',color:'#ff9f8d',desc:'이번 발사의 피해량 2배'},heal:{name:'회복 50%',label:'HEAL',color:'#9ceab7',desc:'최대 체력의 50% 회복'},move:{name:'이동 충전',label:'MOVE',color:'#a5dffc',desc:'이동 포인트 전체 충전'},shield:{name:'보호막',label:'GUARD',color:'#b9b1ff',desc:'다음 피해 35 흡수'},poison:{name:'독안개',label:'SPORE',color:'#bedf80',desc:'피격자 중독: 자기 턴 시작에 6 피해씩 3회 · 중첩 없이 갱신'},freeze:{name:'서리 탄',label:'FROST',color:'#92e4f0',desc:'맞은 상대의 다음 이동력 절반'},wind:{name:'바람 반전',label:'WIND',color:'#e6d4ff',desc:'현재 바람의 방향을 반대로'}};
 function random(s){s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;return s.seed/4294967296;}
@@ -61,7 +61,7 @@ function muzzlePosition(s,p){const tilt=(p.falling||s.jump?.sid===p.sid)?0:surfa
 function aimAngle(s,p,localAngle){const tilt=(p.falling||s.jump?.sid===p.sid)?0:surfaceAngle(s,p.x,p.y)*180/Math.PI;return localAngle-p.face*tilt;}
 const ZONE_CELL_STEP=34;
 function zoneAnchor(s,x,preferY){const xx=clamp(x,18,W-18),gy=ground(s,xx,(preferY??H)-26);if(gy>H+70)return null;return{x:xx,y:gy-8};}
-function makeZone(s,type,x,y,owner){const anchor=zoneAnchor(s,x,y);if(!anchor)return null;const z={id:++s.zoneSeq,type,owner,cells:[anchor],spreads:0,turnsLeft:3,damage:type==='fire'?8:6,cellRadius:type==='fire'?28:30,height:type==='fire'?74:82};s.zones.push(z);return z;}
+function makeZone(s,type,x,y,owner){const anchor=zoneAnchor(s,x,y);if(!anchor)return null;const z={id:++s.zoneSeq,type,owner,cells:[anchor],spreads:0,turnsLeft:3,damage:type==='fire'?3:6,cellRadius:type==='fire'?28:30,height:type==='fire'?74:82,nextFireAt:type==='fire'?s.simAt+2000:0};s.zones.push(z);return z;}
 function spreadZoneCell(s,cell,dir){const targetX=cell.x+dir*ZONE_CELL_STEP;for(const offset of [0,dir*8,dir*16,-dir*8]){const next=zoneAnchor(s,targetX+offset,cell.y);if(!next)continue;if(Math.abs(next.y-cell.y)>88)continue;return next;}return null;}
 function advanceZones(s){for(const z of s.zones){if(z.spreads>=2)continue;const left=z.cells.reduce((a,b)=>b.x<a.x?b:a,z.cells[0]),right=z.cells.reduce((a,b)=>b.x>a.x?b:a,z.cells[0]);const add=[];for(const next of [spreadZoneCell(s,left,-1),spreadZoneCell(s,right,1)])if(next&&!z.cells.some(c=>Math.abs(c.x-next.x)<10&&Math.abs(c.y-next.y)<10)&&!add.some(c=>Math.abs(c.x-next.x)<10&&Math.abs(c.y-next.y)<10))add.push(next);if(add.length)z.cells.push(...add);z.spreads++;}}
 function zoneHitsPlayer(z,p){return z.cells.some(c=>Math.abs(p.x-c.x)<=z.cellRadius&&Math.abs((p.y-8)-c.y)<=z.height);}
@@ -80,7 +80,7 @@ function shuffledIndices(s,indices){const out=indices.slice();for(let i=out.leng
 function prepareTurnOrder(s){const alive=s.players.map((p,i)=>p.hp>0?i:-1).filter(i=>i>=0);s.turnOrder=shuffledIndices(s,alive);s.turnCursor=0;s.teamTurnOrder=[shuffledIndices(s,alive.filter(i=>s.players[i].team===0)),shuffledIndices(s,alive.filter(i=>s.players[i].team===1))];s.teamCursor=[0,0];s.startTeam=random(s)<.5?0:1;}
 function shuffleStartingPositions(s){const slots=s.players.map(p=>({x:p.x,y:p.y})),order=shuffledIndices(s,s.players.map((_,i)=>i));s.players.forEach((p,i)=>{const slot=slots[order[i]]||slots[i];p.x=slot.x;p.y=slot.y;p.face=p.x<W/2?1:-1;p.falling=false;p.fallVy=0;});s.spawnOrder=order;}
 function resetStartingInventory(p){const superTank=p.character===CHARACTERS.length-1;p.items={double:superTank?0:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0};p.slots=superTank?['power','heal',null,null]:['double','power','heal',null];}
-function configure(p){const c=spec(p);p.maxHp=c.hp;p.hp=c.hp;p.maxFuel=c.move;p.fuel=c.move;p.shield=0;p.frozen=0;p.poison=null;p.boost=null;p.deathType='';}
+function configure(p){const c=spec(p);p.maxHp=c.hp;p.hp=c.hp;p.maxFuel=c.move;p.fuel=c.move;p.shield=0;p.frozen=0;p.poison=null;p.zonePoison=null;p.boost=null;p.deathType='';}
 function create(roster,seed=1234,now=Date.now()){
  const s={version:12,seed:seed>>>0,id:String(seed)+'-'+now,seq:0,phase:'setup',mode:'solo',map:0,turn:0,turnSerial:0,round:1,wind:0,deadline:0,simAt:now,nextDropAt:0,nextEnvAt:0,dropSeq:0,envSeq:0,zoneSeq:0,eventSeq:0,events:[],drops:[],zones:[],envs:[],projectiles:[],queue:[],repeatShot:null,jump:null,solids:[],terrain:[],players:[],shot:null,winner:null,winnerTeam:null,teamLastTurn:[-1,-1],turnOrder:[],turnCursor:0,teamTurnOrder:[[],[]],teamCursor:[0,0],startTeam:0,spawnOrder:[]};
  s.players=roster.slice(0,8).map((r,i)=>({sid:String(r.sessionId),nick:String(r.nick||'정령').slice(0,24),seat:Number(r.seat)||0,team:0,character:i%7,characterReady:!!r.cpu,randomSelected:false,x:0,y:0,face:1,items:{double:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0},slots:['double','power','heal',null],lastSeq:0,cpu:!!r.cpu,lastAngle:45,lastPower:60,deathType:''}));
@@ -110,8 +110,9 @@ function spawnEnv(s,at){
   const type=random(s)<.55?'wind':'fire',x=180+random(s)*(W-360),floor=ground(s,x);
   if(floor<180||floor>930)continue;
   if(s.players.some(p=>p.hp>0&&Math.abs(p.x-x)<140))continue;
-  const height=(type==='wind'?300:250)+random(s)*(type==='wind'?120:95),radius=type==='wind'?46:40;
-  env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:22+random(s)*10,dir:random(s)<.5?-1:1,flow:type==='wind'?(random(s)<.5?-1:1):0,boost:1.18+random(s)*.09,born:at,ends:at+9000+random(s)*5000};
+  const height=((type==='wind'?300:250)+random(s)*(type==='wind'?120:95))*1.5,radius=(type==='wind'?46:40)*1.5;
+  const windRoll=type==='wind'?random(s):0,windMode=type==='wind'?(windRoll<.4?'up':windRoll<.8?'down':'reverse'):'',flow=windMode==='up'?-1:windMode==='down'?1:0;
+  env={id:++s.envSeq,type,x,y:floor-6,top:Math.max(48,floor-height),radius,strength:30+random(s)*12,dir:random(s)<.5?-1:1,flow,windMode,boost:1.18+random(s)*.09,born:at,ends:at+14000+random(s)*7000};
  }
  if(!env)return null;
  s.envs.push(env);
@@ -120,7 +121,17 @@ function spawnEnv(s,at){
 }
 function advanceEnvs(s,t){while(s.nextEnvAt&&t>=s.nextEnvAt){if(s.envs.length<2)spawnEnv(s,s.nextEnvAt);s.nextEnvAt+=18000+Math.round(random(s)*16000);}s.envs=s.envs.filter(e=>e.ends>t);}
 function windColumnContains(pr,env){const halfWidth=Math.max((env.radius||46)*2.1,66)+(pr.drawRadius||0),top=Math.max(-40,(env.top??0)-280),bottom=(env.y??H)+10;return Math.abs(pr.x-env.x)<=halfWidth&&pr.y>=top&&pr.y<=bottom;}
-function applyWindColumn(pr,env,dt,firstTouch=false){const flow=env.flow||-1,strength=env.strength||26;if(firstTouch){pr.vx+=env.dir*strength*3.6;pr.vy+=flow*strength*5.4;}pr.vx+=env.dir*strength*dt*8.2;pr.vy+=flow*strength*dt*14.2;}
+function applyWindColumn(pr,env,dt,firstTouch=false){
+ const mode=env.windMode||(env.flow<0?'up':env.flow>0?'down':'reverse'),strength=env.strength||36;
+ if(firstTouch){
+  const speed=Math.max(420,Math.hypot(pr.vx,pr.vy));
+  if(mode==='reverse'){pr.vx=-pr.vx*.9-env.dir*strength*2.2;pr.vy+=env.dir*strength*1.4;}
+  else if(mode==='up'){pr.vy=-Math.max(Math.abs(pr.vy)*.75,speed*.72)-strength*3.2;pr.vx+=env.dir*strength*2.5;}
+  else {pr.vy=Math.max(Math.abs(pr.vy)*.72,speed*.68)+strength*3.0;pr.vx+=env.dir*strength*2.5;}
+ }
+ if(mode==='reverse')pr.vx+=(-Math.sign(pr.vx||env.dir))*strength*dt*18;
+ else{pr.vx+=env.dir*strength*dt*12;pr.vy+=(mode==='up'?-1:1)*strength*dt*24;}
+}
 function start(s,now){if(s.phase!=='setup')return false;if(s.players.some(p=>!p.cpu&&!p.characterReady))return false;const humans=s.players.filter(p=>!p.cpu).length;if(s.mode==='team'&&(humans<2||humans%2!==0))return false;for(const p of s.players){if(p.randomSelected){p.character=Math.floor(random(s)*CHARACTERS.length);p.randomSelected=false;configure(p);resetStartingInventory(p);}}s.winner=null;s.winnerTeam=null;s.simAt=now;s.phase='aim';shuffleStartingPositions(s);prepareTurnOrder(s);if(s.mode==='team'){let team=s.startTeam;if(!s.teamTurnOrder[team].length)team=team?0:1;s.startTeam=team;s.turn=s.teamTurnOrder[team][0]??0;s.teamCursor[team]=s.teamTurnOrder[team].length?1%s.teamTurnOrder[team].length:0;}else{s.turn=s.turnOrder[0]??0;s.turnCursor=s.turnOrder.length?1%s.turnOrder.length:0;}s.teamLastTurn=[-1,-1];if(s.mode==='team'&&s.players[s.turn])s.teamLastTurn[s.players[s.turn].team]=s.turn;s.turnSerial++;s.deadline=now+15000;s.nextDropAt=now+DROP_MS;s.nextEnvAt=now+12000+Math.round(random(s)*8000);setWind(s);spawnDrop(s,now);event(s,'turn',{sid:s.players[s.turn].sid});checkWinner(s,now);return true;}
 function checkWinner(s,now){const alive=s.players.filter(p=>p.hp>0);if(s.mode==='team'){const teams=[...new Set(alive.map(p=>p.team))];if(teams.length>1)return false;if(alive.length&&alive.every(p=>p.falling))return false;s.phase='over';s.winnerTeam=teams.length===1?teams[0]:null;s.winner=alive.find(p=>p.team===s.winnerTeam)?.sid||null;s.deadline=now+7000;return true;}if(alive.length>1)return false;if(alive.length===1&&alive[0].falling)return false;s.phase='over';s.winnerTeam=null;s.winner=alive[0]?.sid||null;s.deadline=now+7000;return true;}
 function nextTeamTurn(s){
@@ -141,12 +152,23 @@ function turnEffects(s,p){
  if(p.poison?.turns>0){hurt(s,p,p.poison.damage,'poison');p.poison.turns--;if(!p.poison.turns)p.poison=null;}
 }
 function zoneTurnDamage(s){
- const zones=Array.isArray(s.zones)?s.zones:[];if(!zones.length)return;
+ const zones=Array.isArray(s.zones)?s.zones:[];
  for(const p of s.players){
   if(p.hp<=0)continue;
-  let zoneDamage=0,zoneKind='fire';
-  for(const z of zones)if(zoneHitsPlayer(z,p)&&z.damage>=zoneDamage){zoneDamage=z.damage;zoneKind=z.type;}
-  if(zoneDamage)hurt(s,p,zoneDamage,zoneKind==='poison'?'poison':'fire');
+  const inPoison=zones.some(z=>z.type==='poison'&&zoneHitsPlayer(z,p));
+  if(inPoison){hurt(s,p,6,'poison');p.zonePoison={damage:6,turns:2};}
+  else if(p.zonePoison?.turns>0){hurt(s,p,p.zonePoison.damage||6,'poison');p.zonePoison.turns--;if(!p.zonePoison.turns)p.zonePoison=null;}
+ }
+}
+function tickFireZones(s,t){
+ const zones=Array.isArray(s.zones)?s.zones:[];
+ for(const z of zones){
+  if(z.type!=='fire')continue;
+  if(!Number.isFinite(z.nextFireAt)||z.nextFireAt<=0)z.nextFireAt=t+2000;
+  while(t>=z.nextFireAt){
+   for(const p of s.players)if(p.hp>0&&zoneHitsPlayer(z,p))hurt(s,p,3,'fire');
+   z.nextFireAt+=2000;
+  }
  }
 }
 function pickup(s,p){for(const d of s.drops)if(d.status==='ground'&&Math.abs(d.x-p.x)<38&&Math.abs(d.y-(p.y-14))<40){if(slotCount(p)>=4)continue;if(!addSlot(p,d.item))continue;p.items[d.item]=(p.items[d.item]||0)+1;d.status='taken';event(s,'pickup',{sid:p.sid,item:d.item,x:d.x,y:d.y});}}
@@ -244,7 +266,7 @@ function updateProjectiles(s,t){
 function tick(s,now){
  if(s.phase==='setup'||s.phase==='over')return false;let changed=false;const limit=Math.min(now,s.simAt+120000);
  while(s.simAt+20<=limit&&s.phase!=='over'){
-  s.simAt+=20;const t=s.simAt;changed=true;advanceDrops(s,t);advanceEnvs(s,t);
+  s.simAt+=20;const t=s.simAt;changed=true;advanceDrops(s,t);advanceEnvs(s,t);tickFireZones(s,t);
   if(s.phase==='jump'&&s.jump){const j=s.jump,p=s.players.find(p=>p.sid===j.sid);if(p){const f=clamp((t-j.at)/j.duration,0,1),x=clamp(j.fromX+j.distance*f,25,W-25),y=j.fromY-140*Math.sin(Math.PI*f),blockedByPlayer=s.players.some(q=>q!==p&&q.hp>0&&Math.abs(q.x-x)<36&&Math.abs(q.y-y)<48),blocked=bodyBlocked(s,x,y)||blockedByPlayer,floor=ground(s,x,y-2),descending=f>.5;if(!blocked){p.x=x;p.y=y;j.lastClearX=x;j.lastClearY=y;}else if(!descending){p.x=j.lastClearX;p.y=Math.max(j.lastClearY,y+10);}if((descending&&p.y>=floor)||f>=1||(descending&&blocked)){p.x=clamp(p.x,25,W-25);s.jump=null;s.phase='aim';settle(s);} }
   }
   advanceFalls(s);
@@ -255,6 +277,6 @@ function tick(s,now){
 function roster(s,players,now){const ids=new Set(players.map(p=>String(p.sessionId)));let changed=false;for(const p of s.players)if(!p.cpu&&!ids.has(p.sid)&&p.hp>0){p.hp=0;changed=true;}if(changed&&s.phase==='aim'){if(!checkWinner(s,now)&&s.players[s.turn].hp<=0)next(s,now);}return changed;}
 function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]],windTouched=new Set();let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT*.72;pr.vy+=330*DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;for(const env of s.envs||[]){if(env.type!=='wind'||!windColumnContains(pr,env))continue;const firstTouch=!windTouched.has(env.id);if(firstTouch)windTouched.add(env.id);applyWindColumn(pr,env,DT,firstTouch);}if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const victim=s.players.find(q=>q.hp>0&&(q!==p||i>14)&&projectileHitsPlayer(pr,q));if(victim||(pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y))){hit={x:pr.x,y:pr.y,miss:false};break;}}return {path,hit};}
 function cpuAim(s,precise=false){const p=s.players[s.turn],target=s.players.filter(q=>q!==p&&q.hp>0&&!(s.mode==='team'&&q.team===p.team)).sort((a,b)=>Math.abs(a.x-p.x)-Math.abs(b.x-p.x))[0];if(!target)return{angle:45,power:65};p.face=target.x>p.x?1:-1;let best={angle:45,power:75},score=Infinity;for(let a=Math.max(25,spec(p).angle[0]);a<=spec(p).angle[1];a+=4)for(let v=25;v<=100;v+=3){const t=trace(s,p,a,v),d=Math.hypot(t.hit.x-target.x,t.hit.y-target.y)+(t.hit.miss?1000:0);if(d<score){score=d;best={angle:a,power:v};}}if(!precise){const mild=random(s)<.22,angleError=(random(s)*2-1)*(mild?2:9),powerError=(random(s)*2-1)*(mild?3:13);best.angle=clamp(best.angle+angleError,...spec(p).angle);best.power=clamp(best.power+powerError,18,100);}return best;}
-function shiftClock(s,delta){s.simAt+=delta;s.deadline+=delta;if(s.nextDropAt)s.nextDropAt+=delta;if(s.nextEnvAt)s.nextEnvAt+=delta;if(s.shot)s.shot.at+=delta;if(s.jump)s.jump.at+=delta;if(s.flightEnd)s.flightEnd+=delta;for(const d of s.drops){d.born+=delta;if(d.cutAt)d.cutAt+=delta;if(d.landedAt)d.landedAt+=delta;}for(const env of s.envs){env.born+=delta;env.ends+=delta;}for(const q of s.queue)q.at+=delta;for(const p of s.projectiles)p.born+=delta;for(const e of s.events)e.at+=delta;}
+function shiftClock(s,delta){s.simAt+=delta;s.deadline+=delta;if(s.nextDropAt)s.nextDropAt+=delta;if(s.nextEnvAt)s.nextEnvAt+=delta;if(s.shot)s.shot.at+=delta;if(s.jump)s.jump.at+=delta;if(s.flightEnd)s.flightEnd+=delta;for(const d of s.drops){d.born+=delta;if(d.cutAt)d.cutAt+=delta;if(d.landedAt)d.landedAt+=delta;}for(const env of s.envs){env.born+=delta;env.ends+=delta;}for(const z of s.zones||[])if(z.nextFireAt)z.nextFireAt+=delta;for(const q of s.queue)q.at+=delta;for(const p of s.projectiles)p.born+=delta;for(const e of s.events)e.at+=delta;}
 root.BloomEngine={W,H,STEP,DROP_MS,WEAPONS,NORMALS,weaponSpec,weaponDescription,MAPS,solidAt,surfaceAngle,muzzlePosition,aimAngle,destroy,settle,CHARACTERS,ITEMS,create,ground,buildMap,start,command,tick,roster,trace,cpuAim,shiftClock,spawnDrop,spec};
 })(typeof globalThis!=='undefined'?globalThis:this);
