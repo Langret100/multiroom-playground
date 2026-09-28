@@ -78,7 +78,8 @@ function event(s,type,data={}){s.eventSeq++;s.events.push({id:s.eventSeq,type,at
 function assignTeams(s){const ordered=s.players.filter(p=>!p.cpu);const half=Math.floor(ordered.length/2);ordered.forEach((p,i)=>p.team=i<half?0:1);const cpus=s.players.filter(p=>p.cpu);cpus.forEach((p,i)=>p.team=i%2);}
 function shuffledIndices(s,indices){const out=indices.slice();for(let i=out.length-1;i>0;i--){const j=Math.floor(random(s)*(i+1));[out[i],out[j]]=[out[j],out[i]];}return out;}
 function prepareTurnOrder(s){const alive=s.players.map((p,i)=>p.hp>0?i:-1).filter(i=>i>=0);s.turnOrder=shuffledIndices(s,alive);s.turnCursor=0;s.teamTurnOrder=[shuffledIndices(s,alive.filter(i=>s.players[i].team===0)),shuffledIndices(s,alive.filter(i=>s.players[i].team===1))];s.teamCursor=[0,0];s.startTeam=random(s)<.5?0:1;}
-function shuffleStartingPositions(s){const slots=s.players.map(p=>({x:p.x,y:p.y})),order=shuffledIndices(s,s.players.map((_,i)=>i));s.players.forEach((p,i)=>{const slot=slots[order[i]]||slots[i];p.x=slot.x;p.y=slot.y;p.face=p.x<W/2?1:-1;p.falling=false;p.fallVy=0;});s.spawnOrder=order;}
+function findStartSlot(s,target,used=[]){let best=null;for(let distance=0;distance<=620;distance+=STEP){const candidates=distance?[target+distance,target-distance]:[target];for(const xx of candidates){if(xx<=50||xx>=W-50)continue;const gy=ground(s,xx);if(gy<=70||gy>=850)continue;if(Math.abs(ground(s,xx-26)-ground(s,xx+26))>=18)continue;if(used.some(u=>Math.abs(u-xx)<90))continue;best={x:xx,y:gy};break;}if(best)break;}return best||{x:Math.max(60,Math.min(W-60,target)),y:ground(s,Math.max(60,Math.min(W-60,target)))};}
+function shuffleStartingPositions(s){const maxSlots=8,pool=shuffledIndices(s,Array.from({length:maxSlots},(_,i)=>i)),picked=pool.slice(0,s.players.length),used=[];s.players.forEach((p,i)=>{const slotIndex=picked[i]??i,target=260+slotIndex*((W-520)/(maxSlots-1)),slot=findStartSlot(s,target,used);used.push(slot.x);p.x=slot.x;p.y=slot.y;p.face=p.x<W/2?1:-1;p.falling=false;p.fallVy=0;});s.spawnOrder=picked;}
 function resetStartingInventory(p){const superTank=p.character===CHARACTERS.length-1;p.items={double:superTank?0:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0};p.slots=superTank?['power','heal',null,null]:['double','power','heal',null];}
 function configure(p){const c=spec(p);p.maxHp=c.hp;p.hp=c.hp;p.maxFuel=c.move;p.fuel=c.move;p.shield=0;p.frozen=0;p.poison=null;p.zonePoison=null;p.boost=null;p.deathType='';}
 function create(roster,seed=1234,now=Date.now()){
@@ -215,7 +216,7 @@ function command(s,sid,c,now,hostSid){
  if(s.phase!=='aim'||s.players[s.turn]!==p||p.hp<=0||p.falling||now>=s.deadline)return false;
  if(c.kind==='move'){
   if(c.value!==-1&&c.value!==1)return false;p.face=c.value;if(p.fuel<3)return false;const x=clamp(p.x+c.value*spec(p).step,25,W-25);
-  if(ground(s,x,p.y-24)<p.y-24||bodyBlocked(s,x,p.y)||s.players.some(q=>q!==p&&q.hp>0&&Math.abs(q.x-x)<42))return false;p.x=x;const floor=ground(s,x,p.y-24);if(floor<=p.y+24)p.y=floor;p.fuel=Math.max(0,p.fuel-3);settle(s);if(p.hp<=0)next(s,now);return true;
+  if(ground(s,x,p.y-24)<p.y-24||bodyBlocked(s,x,p.y)||s.players.some(q=>q!==p&&q.hp>0&&Math.abs(q.x-x)<42))return false;p.x=x;const floor=ground(s,x,p.y-24);if(floor<=p.y+24)p.y=floor;p.fuel=Math.max(0,p.fuel-3);if(!p.moveSfxAt||now-p.moveSfxAt>=210){p.moveSfxAt=now;event(s,'move',{sid});}settle(s);if(p.hp<=0)next(s,now);return true;
  }
  if(c.kind==='jump'){const cost=p.maxFuel*.3;if(p.fuel+1e-6<cost)return false;p.fuel-=cost;s.jump={sid,fromX:p.x,fromY:p.y,at:now,duration:1050,distance:175*p.face,lastClearX:p.x,lastClearY:p.y};s.phase='jump';event(s,'jump',{sid});return true;}
  if(c.kind==='pass'){next(s,now);return true;}
@@ -267,7 +268,7 @@ function tick(s,now){
  if(s.phase==='setup'||s.phase==='over')return false;let changed=false;const limit=Math.min(now,s.simAt+120000);
  while(s.simAt+20<=limit&&s.phase!=='over'){
   s.simAt+=20;const t=s.simAt;changed=true;advanceDrops(s,t);advanceEnvs(s,t);tickFireZones(s,t);
-  if(s.phase==='jump'&&s.jump){const j=s.jump,p=s.players.find(p=>p.sid===j.sid);if(p){const f=clamp((t-j.at)/j.duration,0,1),x=clamp(j.fromX+j.distance*f,25,W-25),y=j.fromY-140*Math.sin(Math.PI*f),blockedByPlayer=s.players.some(q=>q!==p&&q.hp>0&&Math.abs(q.x-x)<36&&Math.abs(q.y-y)<48),blocked=bodyBlocked(s,x,y)||blockedByPlayer,floor=ground(s,x,y-2),descending=f>.5;if(!blocked){p.x=x;p.y=y;j.lastClearX=x;j.lastClearY=y;}else if(!descending){p.x=j.lastClearX;p.y=Math.max(j.lastClearY,y+10);}if((descending&&p.y>=floor)||f>=1||(descending&&blocked)){p.x=clamp(p.x,25,W-25);s.jump=null;s.phase='aim';settle(s);} }
+  if(s.phase==='jump'&&s.jump){const j=s.jump,p=s.players.find(p=>p.sid===j.sid);if(p){const f=clamp((t-j.at)/j.duration,0,1),x=clamp(j.fromX+j.distance*f,25,W-25),y=j.fromY-140*Math.sin(Math.PI*f),blockedByPlayer=s.players.some(q=>q!==p&&q.hp>0&&Math.abs(q.x-x)<36&&Math.abs(q.y-y)<48),blocked=bodyBlocked(s,x,y)||blockedByPlayer,floor=ground(s,x,y-2),descending=f>.5;if(!blocked){p.x=x;p.y=y;j.lastClearX=x;j.lastClearY=y;}else if(!descending){p.x=j.lastClearX;p.y=Math.max(j.lastClearY,y+10);}if((descending&&p.y>=floor)||f>=1||(descending&&blocked)){p.x=clamp(p.x,25,W-25);s.jump=null;s.phase='aim';settle(s);event(s,'jump_land',{sid:p.sid,x:p.x,y:p.y});} }
   }
   advanceFalls(s);
   if(s.phase==='flight')updateProjectiles(s,t);

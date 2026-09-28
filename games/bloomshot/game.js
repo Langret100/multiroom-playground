@@ -101,6 +101,30 @@ async function ensureAudio(){
 function playSfx(name,volume=.55,rate=1){if(!sound)return;ensureAudio().then(ok=>{if(!ok||!audioCues?.[name])return;const cue=audioCues[name],src=audio.createBufferSource(),gain=audio.createGain();src.buffer=audioBuffer;src.playbackRate.value=rate;gain.gain.value=volume;src.connect(gain).connect(audio.destination);src.start(0,cue.start,cue.duration);});}
 function playHomingCue(){if(!sound)return;const stamp=performance.now();if(stamp-lastHomingCueAt<110)return;lastHomingCueAt=stamp;try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume().then(()=>{const t=audio.currentTime;const beep=(when,freq,dur,type='square',vol=.055,endFreq=null)=>{const o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.setValueAtTime(freq,when);if(endFreq)o.frequency.exponentialRampToValueAtTime(endFreq,when+dur);g.gain.setValueAtTime(.0001,when);g.gain.exponentialRampToValueAtTime(vol,when+.008);g.gain.exponentialRampToValueAtTime(.0001,when+dur);o.connect(g).connect(audio.destination);o.start(when);o.stop(when+dur+.02);};beep(t,720,.045,'square',.045);beep(t+.065,920,.05,'square',.05);beep(t+.135,520,.22,'sawtooth',.045,1480);beep(t+.18,1120,.14,'sine',.035,1680);}).catch(()=>{});}catch(_){}}
 function playFallOutCue(){if(!sound)return;try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume().then(()=>{const t=audio.currentTime;const tone=(when,f0,f1,dur,type,vol)=>{const o=audio.createOscillator(),g=audio.createGain();o.type=type;o.frequency.setValueAtTime(f0,when);o.frequency.exponentialRampToValueAtTime(Math.max(28,f1),when+dur);g.gain.setValueAtTime(.0001,when);g.gain.exponentialRampToValueAtTime(vol,when+.012);g.gain.exponentialRampToValueAtTime(.0001,when+dur);o.connect(g).connect(audio.destination);o.start(when);o.stop(when+dur+.03);};tone(t,420,90,.34,'sawtooth',.075);tone(t+.07,250,55,.42,'triangle',.065);tone(t+.31,120,48,.22,'square',.035);}).catch(()=>{});}catch(_){}}
+// Lightweight procedural movement SFX. Each character keeps a slightly different material/energy feel
+// without adding another audio asset bundle. Movement is intentionally quiet and throttled server-side.
+function playMotionSfx(kind,character=0){
+ if(!sound)return;
+ const profiles=[
+  {move:[205,'triangle',.030],jump:[330,610,'sine',.050],land:[150,'triangle',.050]}, // 모리: soft seed/wood
+  {move:[285,'sine',.026],jump:[430,760,'sine',.045],land:[190,'sine',.038]},       // 피피: light petals
+  {move:[175,'triangle',.028],jump:[260,500,'triangle',.050],land:[125,'triangle',.046]}, // 루미: spore puff
+  {move:[320,'square',.020],jump:[390,720,'triangle',.046],land:[210,'triangle',.042]}, // 치치: crisp acorn taps
+  {move:[115,'triangle',.040],jump:[190,390,'triangle',.055],land:[82,'triangle',.070]}, // 바위콩: heavy stone
+  {move:[245,'sawtooth',.020],jump:[350,690,'sawtooth',.042],land:[145,'sawtooth',.048]}, // 홍시: ember flick
+  {move:[360,'sine',.024],jump:[480,820,'sine',.043],land:[230,'sine',.040]},       // 눈송: icy chime
+  {move:[410,'square',.020],jump:[520,980,'sine',.050],land:[250,'triangle',.048]}  // 번개비: bright spark
+ ];
+ const p=profiles[character]||profiles[0];
+ try{audio??=new (window.AudioContext||window.webkitAudioContext)();audio.resume().then(()=>{
+  const t=audio.currentTime;
+  const oscTone=(when,f0,f1,dur,type,vol)=>{const o=audio.createOscillator(),gain=audio.createGain();o.type=type;o.frequency.setValueAtTime(Math.max(35,f0),when);if(f1)o.frequency.exponentialRampToValueAtTime(Math.max(35,f1),when+dur);gain.gain.setValueAtTime(.0001,when);gain.gain.exponentialRampToValueAtTime(vol,when+.008);gain.gain.exponentialRampToValueAtTime(.0001,when+dur);o.connect(gain).connect(audio.destination);o.start(when);o.stop(when+dur+.025);};
+  if(kind==='move'){const [f,type,vol]=p.move;oscTone(t,f,f*.82,.055,type,vol);oscTone(t+.028,f*.66,null,.038,'sine',vol*.55);}
+  else if(kind==='jump'){const [f0,f1,type,vol]=p.jump;oscTone(t,f0,f1,.16,type,vol);oscTone(t+.055,f0*1.25,f1*1.12,.10,'sine',vol*.42);}
+  else if(kind==='land'){const [f,type,vol]=p.land;oscTone(t,f,f*.58,.10,type,vol);oscTone(t+.018,f*.52,null,.075,'sine',vol*.7);}
+ }).catch(()=>{});}catch(_){}
+}
+
 
 function mine(){return state?.players.find(p=>p.sid===bridge.sid);}
 function canAct(){return state?.phase==='aim'&&state.players[state.turn]?.sid===bridge.sid&&!state.players[state.turn]?.falling&&(!embedded||bridge.isHost||Date.now()-received<4000);}
@@ -242,7 +266,7 @@ function text(t,x,y,size=14,color='#fff',align='center'){ctx.font=`900 ${size}px
 function seeded01(seed){const x=Math.sin(seed*12.9898+seed*78.233)*43758.5453;return x-Math.floor(x);}
 const WIND_PARTICLE_ROWS={leaf:0,petal:1,snow:2,paper:3,ember:4};
 function resetWindParticle(p,now,recycle=false){
- const windStrength=Math.min(1,Math.abs(state?.wind||0)/38),windDir=(state?.wind||0)<0?-1:1;
+ const windStrength=Math.min(1,Math.abs(state?.wind||0)/38);
  p.map=state?.map||0;
  p.kind=E.MAPS[p.map]?.particle||'leaf';
  p.row=WIND_PARTICLE_ROWS[p.kind]??0;
@@ -250,9 +274,9 @@ function resetWindParticle(p,now,recycle=false){
  p.depth=.82+seeded01(p.seed*2.1)*.75;
  p.swing=8+seeded01(p.seed*2.9)*16;
  p.spin=-.9+seeded01(p.seed*4.2)*1.8;
- p.fall=48+seeded01(p.seed*5.6)*34+windStrength*10;
- p.drift=(14+seeded01(p.seed*6.3)*24)*(windDir||1);
- p.alpha=.58+seeded01(p.seed*7.1)*.28+.10*windStrength;
+ p.fall=48+seeded01(p.seed*5.6)*34;
+ p.drift=18+seeded01(p.seed*6.3)*30;
+ p.alpha=.56+seeded01(p.seed*7.1)*.28+.12*windStrength;
  p.phase=seeded01(p.seed*8.2)*Math.PI*2;
  p.frameSeed=seeded01(p.seed*9.4)*10;
  p.life=8.5+seeded01(p.seed*10.1)*3.5;
@@ -261,9 +285,9 @@ function resetWindParticle(p,now,recycle=false){
  p.x=-spread+seeded01(p.seed*11.6)*(camera.w+spread*2);
  p.y=recycle?(-60-seeded01(p.seed*12.2)*220):(-40+seeded01(p.seed*13.3)*(camera.h+80));
 }
-function ensureWindParticles(now){const windStrength=Math.min(1,Math.abs(state?.wind||0)/38),target=10+Math.round(windStrength*5);while(windParticles.length<target){const p={seed:Math.random()*99999,last:now};resetWindParticle(p,now,false);windParticles.push(p);}if(windParticles.length>target)windParticles.length=target;}
+function ensureWindParticles(now){const windStrength=Math.min(1,Math.abs(state?.wind||0)/38),target=9+Math.round(windStrength*9);while(windParticles.length<target){const p={seed:Math.random()*99999,last:now};resetWindParticle(p,now,false);windParticles.push(p);}if(windParticles.length>target)windParticles.length=target;}
 function drawAmbientWindParticle(p,now){const sec=fxSection('windParticles');if(sec&&art.fxAtlas?.complete&&art.fxAtlas.naturalWidth){const frames=Math.max(1,sec.frames||4),frame=Math.floor((now*.014+p.frameSeed)%frames),sx=sec.x+frame*sec.w,sy=sec.y+(p.row||0)*sec.h,dw=p.size,dh=p.size;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.sin(p.phase*.85)*.22+p.spin*.18);ctx.globalAlpha=Math.min(.96,Math.max(.2,p.alpha));ctx.imageSmoothingEnabled=false;if((state?.wind||0)>0){ctx.scale(-1,1);}ctx.drawImage(art.fxAtlas,sx,sy,sec.w,sec.h,-dw/2,-dh/2,dw,dh);ctx.restore();return;}ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.sin(p.phase*.85)*.45+p.phase*.12);ctx.globalAlpha=Math.min(.95,Math.max(.18,p.alpha));ctx.fillStyle='#dff4ff';ctx.beginPath();ctx.arc(0,0,p.size*.15,0,7);ctx.fill();ctx.restore();}
-function drawAmbientWindParticles(now){if(!state)return;ensureWindParticles(now);const windStrength=Math.min(1,Math.abs(state.wind||0)/38),windDir=(state.wind||0)<0?-1:1;for(const p of windParticles){if(p.map!==state.map)resetWindParticle(p,now,false);const dt=Math.min(.05,Math.max(.001,(now-(p.last||now))/1000));p.last=now;p.phase+=dt*(1.2+Math.abs(p.spin));p.x+=(windDir*18+p.drift*(.38+windStrength*.92)+Math.sin(p.phase*1.25)*p.swing)*dt*p.depth;p.y+=(p.fall+windStrength*10+Math.cos(p.phase*.8)*3.5)*dt*p.depth;if(p.y>camera.h+110||p.x<-260||p.x>camera.w+260)resetWindParticle(p,now,true);drawAmbientWindParticle(p,now);}}
+function drawAmbientWindParticles(now){if(!state)return;ensureWindParticles(now);const windStrength=Math.min(1,Math.abs(state.wind||0)/38),windDir=(state.wind||0)<0?-1:1;for(const p of windParticles){if(p.map!==state.map)resetWindParticle(p,now,false);const dt=Math.min(.05,Math.max(.001,(now-(p.last||now))/1000));p.last=now;const gust=.22+windStrength*2.35,spinBoost=.85+windStrength*2.1;p.phase+=dt*(1.05+Math.abs(p.spin)*spinBoost);const horizontal=windDir*(10+p.drift*gust),flutter=Math.sin(p.phase*1.25)*p.swing*(.72+windStrength*.9);p.x+=(horizontal+flutter)*dt*p.depth;p.y+=(p.fall+windStrength*14+Math.cos(p.phase*.8)*3.5*(1+windStrength))*dt*p.depth;p.alpha=Math.min(.96,Math.max(.42,p.alpha));if(p.y>camera.h+110||p.x<-260||p.x>camera.w+260)resetWindParticle(p,now,true);drawAmbientWindParticle(p,now);}}
 function backdrop(now){
  const m=E.MAPS[state.map],sky=ctx.createLinearGradient(0,0,0,camera.h);sky.addColorStop(0,m.sky[0]);sky.addColorStop(1,m.sky[1]);ctx.fillStyle=sky;ctx.fillRect(0,0,camera.w,camera.h);
  const bg=art.mapBackdrops[state.map];if(bg?.complete&&bg.naturalWidth){ctx.save();drawCover(ctx,bg,camera.w,camera.h,.94);ctx.restore();}
@@ -502,6 +526,9 @@ let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frame
   if(ev.type==='pickup'){toast(`${state.players.find(p=>p.sid===ev.sid)?.nick} · 보급 획득!`);playSfx('pickup',.38);}
   if(ev.type==='cut'){toast('낙하산 명중! 보급품 급강하');playSfx('cut',.4);}
   if(ev.type==='item')playSfx('item',.34);
+  if(ev.type==='move'){const p=state.players.find(q=>q.sid===ev.sid);if(p)playMotionSfx('move',p.character||0);}
+  if(ev.type==='jump'){const p=state.players.find(q=>q.sid===ev.sid);if(p)playMotionSfx('jump',p.character||0);}
+  if(ev.type==='jump_land'){const p=state.players.find(q=>q.sid===ev.sid);if(p)playMotionSfx('land',p.character||0);}
   if(ev.type==='launch'){const rate=1+((ev.character||0)-3.5)*.018+(ev.weapon==='special'?.045:0);playSfx(`launch_${ev.character||0}_${ev.weapon==='special'?'special':'normal'}`,ev.weapon==='special'?.96:.86,rate);}
   if(ev.type==='lock_on')playHomingCue();
   if(ev.type==='blast'){const rate=1+((ev.character||0)-3.5)*.012+(ev.weapon==='special'?.03:0),baseVol=ev.weapon==='special'?.98:.92;playSfx(`impact_${ev.character||0}_${ev.weapon==='special'?'special':'normal'}`,Math.min(1,baseVol+(ev.direct?.06:0)),rate);if(ev.direct)playSfx('direct_hit',.7);else playSfx('terrain_crack',.48);}
