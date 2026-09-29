@@ -32,7 +32,7 @@ const NORMALS=[
  {...WEAPONS.normal,damage:.78,blast:.9,crater:1.05,rough:true,size:9,desc:'거친 수정탄 단발. 피해를 줄이는 대신 크레이터에 높낮이가 큰 잔턱을 남겨 이동을 방해합니다.'},
  {...WEAPONS.normal,damage:.9,blast:1.25,crater:.7,size:7,desc:'확산 불씨 단발. 직접 피해는 약간 낮지만 피해 범위가 넓고 땅은 덜 파냅니다. 일반탄은 불길을 남기지 않습니다.'},
  {...WEAPONS.normal,damage:.9,blast:.9,crater:1.15,depth:.55,size:8,desc:'압설 눈뭉치 단발. 피해는 약간 낮고 지형을 넓고 얕게 깎습니다. 일반탄은 이동력을 줄이지 않습니다.'},
- {...WEAPONS.normal,count:9,damage:.378,blast:.55,crater:.315,speed:1.2,size:4,spread:[-6,-4.5,-3,-1.5,0,1.5,3,4.5,6],desc:'별 조각 9발. 3발 부채꼴을 세 번 연속 발사하며, 기본탄 공격력은 직전값에서 추가로 30% 감소했습니다. 각 탄의 지형 파괴 반경은 기존보다 30% 줄었습니다.'}
+ {...WEAPONS.normal,count:9,damage:.189,blast:.55,crater:.315,speed:1.2,size:4,spread:[-6,-4.5,-3,-1.5,0,1.5,3,4.5,6],desc:'별 조각 9발. 3발 부채꼴을 세 번 연속 발사하며, 기본탄 공격력은 직전값의 50%입니다. 각 탄의 지형 파괴 반경은 기존보다 30% 줄었습니다.'}
 ];
 function weaponSpec(p,weapon){return weapon==='special'?WEAPONS[spec(p).special]:NORMALS[p.character]||NORMALS[0];}
 function characterDamageScale(p){return p.character===CHARACTERS.length-1?.5985:.765;} // 현재 전체 캐릭터 공격 피해를 직전값에서 추가 10% 감소

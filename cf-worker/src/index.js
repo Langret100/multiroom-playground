@@ -1342,7 +1342,24 @@ export class RoomDO{
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
         let kind = String(inner.kind || inner.t || "");
         // 포획은 아래 최신 위치 기반 서버 판정만 허용한다.
-        if (kind === "caught") return;
+        if (kind === "caught" || kind === "caught_reset" || kind === "key_transfer") return;
+        if (kind === "key_transfer_request") {
+          const target=String(inner.target||'');
+          const states=this.br?.latestStates||{};
+          const giver=states[String(uid)],receiver=states[target];
+          const roles=this.br?.startPayload?.roles||{};
+          const stamp=now();
+          if(target===String(uid)||!this.users.has(target)||!giver||!receiver) return;
+          if(roles[String(uid)]?.role!=='rabbit'||roles[target]?.role!=='rabbit') return;
+          if(!giver.hasKey||receiver.hasKey||giver.ghost||giver.trapped||receiver.ghost||receiver.trapped) return;
+          if(stamp-Number(giver._serverAt||0)>1500||stamp-Number(receiver._serverAt||0)>1500) return;
+          if(Math.hypot(giver.x-receiver.x,giver.z-receiver.z)>3.2) return;
+          if(stamp-Number(this.br.keyTransferAt||0)<1200) return;
+          this.br.keyTransferAt=stamp;
+          giver.hasKey=false;receiver.hasKey=true;
+          this._broadcast('br_msg',{msg:{kind:'key_transfer',giver:String(uid),target,from:'server'}});
+          return;
+        }
 
         if (kind === "state" || kind === "world") {
           const lim = this._relayLimiter.get(uid) || { duelTs:0, tgTs:0, stTs:0, skTs:0, mxTs:0, mxWorldTs:0, brTs:0, brWorldTs:0 };
@@ -1379,8 +1396,18 @@ export class RoomDO{
           if (kind === "leave") {
             if (this.br.latestStates) delete this.br.latestStates[String(uid)];
           } else if (kind === "state") {
-            this.br.latestStates[String(uid)] = Object.assign({}, cleanInner, { from:String(uid), _serverAt:n });
+            const count=this.br.caughtCounts?.[String(uid)];
+            if(count!==undefined){
+              if(cleanInner.caught!==count){
+                cleanInner.trapped=!!this.br.latestStates[String(uid)]?.trapped;
+                cleanInner.hasKey=!!this.br.latestStates[String(uid)]?.hasKey;
+              }
+              cleanInner.caught=count;cleanInner.ghost=count>=2;
+            }
+            this.br.latestStates[String(uid)] = Object.assign({}, cleanInner, { from:String(uid), _serverAt:now() });
             this._checkBackroomsCatches();
+            const accepted=this.br.latestStates[String(uid)];
+            for(const field of ['caught','trapped','ghost','hasKey'])cleanInner[field]=accepted[field];
           } else if (kind === "world") {
             this.br.latestWorld = Object.assign({}, inner, { from:String(uid) });
           } else if (kind === "chat") {
@@ -2494,6 +2521,14 @@ export class RoomDO{
       const roles=start.roles||{};
       if(!this.br.catchCooldown)this.br.catchCooldown={};
       if(!this.br.caughtCounts)this.br.caughtCounts={};
+      if(!this.br.catchDeadlines)this.br.catchDeadlines={};
+      for(const [target,deadline] of Object.entries(this.br.catchDeadlines)){
+        if(this.br.caughtCounts[target]===1 && now()>=deadline){
+          this.br.caughtCounts[target]=0;delete this.br.catchDeadlines[target];
+          if(states[target]) states[target].caught=0;
+          this._broadcast('br_msg',{msg:{kind:'caught_reset',target,from:'server'}});
+        }
+      }
       const roleOf=(sid)=>String(roles[String(sid)]?.role||
         (String(start.monsterSid||'')===String(sid)?'monster':'rabbit'));
       const hunters=Object.entries(states).filter(([sid,st])=>roleOf(sid)==='monster'&&!st?.ghost);
@@ -2508,9 +2543,10 @@ export class RoomDO{
           const dx=Number(rabbit?.x||0)-Number(hunter?.x||0);
           const dz=Number(rabbit?.z||0)-Number(hunter?.z||0);
           if(dx*dx+dz*dz>catchRadius*catchRadius)continue;
-          const count=Math.min(2,Math.max(Number(this.br.caughtCounts[target]||0),Number(rabbit?.caught||0))+1);
+          const count=Math.min(2,Number(this.br.caughtCounts[target]||0)+1);
           this.br.catchCooldown[target]=stamp;
           this.br.caughtCounts[target]=count;
+          if(count===1)this.br.catchDeadlines[target]=stamp+90000;
           this.br.latestStates[target]=Object.assign({},rabbit,{caught:count,trapped:count<2,ghost:count>=2,hasKey:false});
           this._broadcast("br_msg",{msg:{kind:"caught",target:String(target),caught:count,from:"server",nick:"SYSTEM"}});
           return;

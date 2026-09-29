@@ -76,6 +76,7 @@
         color:#e9eefc;font-weight:900;overflow:hidden;}
 
   #btnE{width:56px;height:56px;bottom:calc(var(--chatH) + 16px + var(--safeB));}
+  #btnGive{display:none;right:12px;bottom:calc(var(--chatH) + 80px + var(--safeB));padding:10px;font-size:12px;cursor:pointer}
 
   #joyBase{position:fixed;left:0;top:0;width:104px;height:104px;border-radius:999px;display:none;pointer-events:auto;
            background:rgba(20,24,32,.45);border:1px solid rgba(255,255,255,.10)}
@@ -184,7 +185,7 @@
   <div id="tip">
     W/S 전진·후진 · A/D 회전(시야 포함) · E 상호작용 · 가까운 책장 E로 쓰러뜨리기 · 카트/큰 공은 밀어서 이동<br/>
     열쇠 사용 시 새 열쇠 1개 재생성 · 중앙 철창 · 철창 수학 7문제 탈출 가능 · 문 잠금 3회 해제 후 탈출<br/>
-    당근은 맵에 최대 5개 유지 · 괴물은 문 1회 10초 봉인 가능 · 2번 잡히면 유령화(이동/채팅만 가능) · 모바일: 왼쪽 조이스틱, 오른쪽 E 버튼
+    당근은 맵에 최대 5개 유지 · 첫 포획 후 90초 내 다시 잡히면 유령화(이동/채팅만 가능) · 90초가 지나면 포획 횟수 초기화 · 모바일: 왼쪽 조이스틱, 오른쪽 E 버튼
   </div>
 
   <div id="chatWrap">
@@ -235,7 +236,7 @@ with(window){
     // 항상 seeded LCG 사용 → 모든 클라이언트가 동일한 맵 생성
     {
       let s = mapSeedVal >>> 0;
-      Math.random = function(){ s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
+      window.__BR_RANDOM__ = function(){ s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; };
     }
   }catch(_){ }
 })();
@@ -244,6 +245,8 @@ with(window){
 <script>
 
 const $ = (id)=>document.getElementById(id);
+// Keep map randomness independent of Three.js UUIDs and browser rendering details.
+const brRandom = window.__BR_RANDOM__;
 const loading = $("loading");
 const loadingSub = $("loadingSub");
 const fallback = $("fallback");
@@ -263,7 +266,7 @@ function renderHelp(){
   const uiRabbitGhost = !!ui.rabbitGhost;
   const common = `
     <div><b>조작</b> W/S 이동 · A/D 회전 · E 상호작용/질주</div>
-    <div style="opacity:.82;margin-top:4px;">모바일: 왼쪽 조이스틱 · 오른쪽 E</div>
+    <div style="opacity:.82;margin-top:4px;">모바일: 왼쪽 조이스틱 · 오른쪽 E · 열쇠 전달 버튼</div>
     <div style="margin-top:10px"><b>공통</b> 🥕 당근은 최대 5개 유지, 먹으면 5초 버프</div>
   `;
   if(uiPlayerRole==='monster'){
@@ -285,9 +288,10 @@ function renderHelp(){
     ` : `
       <div style="margin-top:10px"><b>목표</b> 열쇠를 문에 3번 써서 탈출</div>
       <div style="margin-top:6px"><b>열쇠</b> 사용하면 새 열쇠 1개가 랜덤 위치에 다시 생성</div>
+      <div style="margin-top:6px"><b>전달</b> 열쇠를 들고 가까운 토끼에게 F키 또는 ‘열쇠 전달’ 버튼</div>
       <div style="margin-top:6px"><b>잡힘</b> 열쇠를 든 채 잡히면 열쇠는 랜덤 위치로 이동</div>
       <div style="margin-top:6px"><b>철창</b> 다른 토끼가 열쇠로 열어주거나, 안에서 사칙연산 7문제 풀면 탈출</div>
-      <div style="margin-top:6px"><b>주의</b> 2번 잡히면 유령이 되어 상호작용 불가</div>
+      <div style="margin-top:6px"><b>주의</b> 첫 포획 후 90초 내 다시 잡히면 유령이 되어 상호작용 불가. 90초를 버티면 포획 횟수 초기화</div>
       <div style="margin-top:6px"><b>책장</b> E로 쓰러뜨려 괴물을 기절시킬 수 있음</div>
     `);
   }
@@ -368,9 +372,7 @@ function sendChat(){
 }
 
 function clearControlState(){
-  try{ keysDown.w=0; keysDown.a=0; keysDown.s=0; keysDown.d=0; }catch(e){}
-  try{ shiftHeld = false; }catch(e){}
-  try{ setSprintHold(false); }catch(e){}
+  window.__BR_CLEAR_CONTROLS__?.();
 }
 
 function enterChat(){
@@ -523,7 +525,7 @@ function hidePrompt(){ promptEl.style.display="none"; }
   // - Browsers require a user gesture before audio starts (first click/key).
   // - This is intentionally subtle so it doesn't overpower SFX.
   // ------------------------------------------------------------
-  let panicOsc1=null, panicOsc2=null, panicGain=null, panicOn=false;
+  let panicOsc1=null, panicOsc2=null, panicGain=null, panicNoise=null, panicOn=false;
   function ensurePanicMusic(){
     // Lazily create nodes once. We keep them running and only fade gain in/out for smoothness.
     ensureAudio();
@@ -540,6 +542,17 @@ function hidePrompt(){ promptEl.style.display="none"; }
     panicOsc2.frequency.value = 165;
     panicOsc1.connect(panicGain);
     panicOsc2.connect(panicGain);
+    // One reusable, band-limited static loop; no per-frame audio allocations.
+    const noiseBuffer=audioCtx.createBuffer(1,audioCtx.sampleRate,audioCtx.sampleRate);
+    const samples=noiseBuffer.getChannelData(0);
+    let noiseSeed=0x13579b;
+    for(let i=0;i<samples.length;i++){
+      noiseSeed=(Math.imul(noiseSeed,1664525)+1013904223)>>>0;
+      samples[i]=(noiseSeed/4294967296*2-1)*0.7;
+    }
+    panicNoise=audioCtx.createBufferSource();panicNoise.buffer=noiseBuffer;panicNoise.loop=true;
+    const filter=audioCtx.createBiquadFilter();filter.type='bandpass';filter.frequency.value=1700;filter.Q.value=0.7;
+    panicNoise.connect(filter);filter.connect(panicGain);panicNoise.start();
     const t = audioCtx.currentTime;
     panicOsc1.start(t); panicOsc2.start(t);
   }
@@ -551,7 +564,7 @@ function hidePrompt(){ promptEl.style.display="none"; }
       // Convert distance -> intensity.
       // a = 0 when far away, a = 1 when very close.
       const a = Math.max(0, Math.min(1, (12.0 - dist) / 8.0));
-      const target = 0.0001 + a * 0.08;
+      const target = a * 0.08;
       panicGain.gain.setTargetAtTime(target, t, 0.08);
       // slightly raise pitch as it gets closer
       const f1 = 110 + a*60;
@@ -613,9 +626,9 @@ function run3D(){
     }
     g.globalAlpha=0.16;
     for(let i=0;i<220;i++){
-      const x=Math.random()*256, y=Math.random()*256;
-      g.fillStyle = Math.random()<0.5? "#8a7f50":"#d2c685";
-      g.fillRect(x,y,2+Math.random()*5,1+Math.random()*3);
+      const x=brRandom()*256, y=brRandom()*256;
+      g.fillStyle = brRandom()<0.5? "#8a7f50":"#d2c685";
+      g.fillRect(x,y,2+brRandom()*5,1+brRandom()*3);
     }
     g.globalAlpha=1;
     const tex = new THREE.CanvasTexture(c);
@@ -631,15 +644,15 @@ function run3D(){
     g.fillStyle="#404040"; g.fillRect(0,0,256,256);
     g.globalAlpha=0.25;
     for(let i=0;i<1800;i++){
-      const x=Math.random()*256, y=Math.random()*256;
-      const v=80+Math.random()*60;
+      const x=brRandom()*256, y=brRandom()*256;
+      const v=80+brRandom()*60;
       g.fillStyle=`rgb(${v},${v},${v})`;
       g.fillRect(x,y,1,1);
     }
     g.globalAlpha=0.12;
     for(let i=0;i<80;i++){
       g.fillStyle="#2f2f2f";
-      g.fillRect(Math.random()*256, Math.random()*256, 10+Math.random()*22, 2+Math.random()*6);
+      g.fillRect(brRandom()*256, brRandom()*256, 10+brRandom()*22, 2+brRandom()*6);
     }
     g.globalAlpha=1;
     const tex=new THREE.CanvasTexture(c);
@@ -671,10 +684,10 @@ function run3D(){
   const rooms=[];
   const mainCount=10;
   for(let k=0;k<mainCount;k++){
-    const rw = (k<3) ? (18+Math.floor(Math.random()*14)) : (10+Math.floor(Math.random()*10));
-    const rh = (k<3) ? (18+Math.floor(Math.random()*14)) : (10+Math.floor(Math.random()*10));
-    const rx = 3+Math.floor(Math.random()*(GW-rw-6));
-    const ry = 3+Math.floor(Math.random()*(GH-rh-6));
+    const rw = (k<3) ? (18+Math.floor(brRandom()*14)) : (10+Math.floor(brRandom()*10));
+    const rh = (k<3) ? (18+Math.floor(brRandom()*14)) : (10+Math.floor(brRandom()*10));
+    const rx = 3+Math.floor(brRandom()*(GW-rw-6));
+    const ry = 3+Math.floor(brRandom()*(GH-rh-6));
     carveRect(rx,ry,rw,rh);
     rooms.push({cx:rx+rw/2, cy:ry+rh/2, rx,ry,rw,rh, theme:"plain"});
   }
@@ -719,16 +732,16 @@ carveHall(mDoorX, mDoorY + 1, GW/2, GH/2);
   }
   for(let i=0;i<rooms.length-1;i++) carveHall(rooms[i].cx, rooms[i].cy, rooms[i+1].cx, rooms[i+1].cy);
   for(let i=0;i<6;i++){
-    const a = rooms[Math.floor(Math.random()*rooms.length)];
-    const b = rooms[Math.floor(Math.random()*rooms.length)];
+    const a = rooms[Math.floor(brRandom()*rooms.length)];
+    const b = rooms[Math.floor(brRandom()*rooms.length)];
     carveHall(a.cx,a.cy,b.cx,b.cy);
   }
   for(let y=2;y<GH-2;y+=6){
     for(let x=2;x<GW-2;x++){
-      if(Math.random()<0.35) grid[y][x]=1;
+      if(brRandom()<0.35) grid[y][x]=1;
     }
     for(let d=0; d<3; d++){
-      const gx = 6+Math.floor(Math.random()*(GW-12));
+      const gx = 6+Math.floor(brRandom()*(GW-12));
       grid[y][gx]=0;
     }
   }
@@ -850,23 +863,23 @@ function collidesWalls(nx,nz,rad){
       p.position.set(x, CEIL_Y-1.0, z);
       scene.add(p);
     }
-    tubes.push({mesh:t, light:p, flicker:Math.random()*10});
+    tubes.push({mesh:t, light:p, flicker:brRandom()*10});
   }
   function cellToWorld(gx,gy){ return {x:(gx-GW/2)*CELL, z:(gy-GH/2)*CELL}; }
   for(const r of rooms){
     const c = cellToWorld(Math.floor(r.cx), Math.floor(r.cy));
-    addTube(c.x, c.z, (Math.random()<0.5?0:Math.PI/2));
+    addTube(c.x, c.z, (brRandom()<0.5?0:Math.PI/2));
     if(r.rw>16 && r.rh>16){
       addTube(c.x+CELL*4, c.z, 0);
       addTube(c.x-CELL*4, c.z, 0);
     }
   }
   for(let i=0;i<5;i++){
-    let gx=6+Math.floor(Math.random()*(GW-12));
-    let gy=6+Math.floor(Math.random()*(GH-12));
+    let gx=6+Math.floor(brRandom()*(GW-12));
+    let gy=6+Math.floor(brRandom()*(GH-12));
     if(grid[gy][gx]!==0) continue;
     const w=cellToWorld(gx,gy);
-    addTube(w.x, w.z, (Math.random()<0.5?0:Math.PI/2));
+    addTube(w.x, w.z, (brRandom()<0.5?0:Math.PI/2));
   }
 
   
@@ -999,24 +1012,24 @@ function collidesWalls(nx,nz,rad){
   }
   function genMathQ(){
     const ops = ["+","-","*","/"];
-    const op = ops[Math.floor(Math.random()*ops.length)];
+    const op = ops[Math.floor(brRandom()*ops.length)];
     let a,b,q,ans;
     if(op==="+"){
-      a = 2+Math.floor(Math.random()*49);
-      b = 2+Math.floor(Math.random()*49);
+      a = 2+Math.floor(brRandom()*49);
+      b = 2+Math.floor(brRandom()*49);
       ans = a+b; q = `${a} + ${b} = ?`;
     }else if(op==="-"){
-      a = 10+Math.floor(Math.random()*60);
-      b = 2+Math.floor(Math.random()*50);
+      a = 10+Math.floor(brRandom()*60);
+      b = 2+Math.floor(brRandom()*50);
       if(b>a) [a,b]=[b,a];
       ans = a-b; q = `${a} - ${b} = ?`;
     }else if(op==="*"){
-      a = 2+Math.floor(Math.random()*9);
-      b = 2+Math.floor(Math.random()*9);
+      a = 2+Math.floor(brRandom()*9);
+      b = 2+Math.floor(brRandom()*9);
       ans = a*b; q = `${a} × ${b} = ?`;
     }else{
-      b = 2+Math.floor(Math.random()*9);
-      ans = 2+Math.floor(Math.random()*9);
+      b = 2+Math.floor(brRandom()*9);
+      ans = 2+Math.floor(brRandom()*9);
       a = b*ans;
       q = `${a} ÷ ${b} = ?`;
     }
@@ -1051,18 +1064,9 @@ function collidesWalls(nx,nz,rad){
       beep(880,0.06,'sine',0.24);
       if(cageEscapeSolved>=cageEscapeNeed){
         cageEscapeSolved = 0;
-        cage.userData.locked = false;
-        cage.userData.doorOpen = 1;
-        cage.userData.autoCloseT = 5.0;
-        setCageCountdown(cage.userData.autoCloseT);
-        cageCdSprite.visible = true;
-        const lock = cage.getObjectByName("cageLock");
-        if(lock) lock.visible = false;
         addChat("["+playerName+"]이 탈출했다!");
-        player.userData.trapped = false;
-        const slot = getCageSlot(6);
-        player.position.set(slot.x, 0.05, slot.z + cage.userData.D*0.22);
         hideMathModal();
+        openSharedCage();
       }else{
         addChat("정답! ("+cageEscapeSolved+"/"+cageEscapeNeed+")");
         showMathModal();
@@ -1087,7 +1091,29 @@ function collidesWalls(nx,nz,rad){
   });
   mathModal.addEventListener("pointerdown", (e)=>{ if(e.target===mathModal) e.preventDefault(); });
   function startCageEscapeMath(){
+    if(playerRole!=='rabbit' || rabbitGhost || !player.userData.trapped) return;
+    clearControlState();
     showMathModal();
+  }
+  function cageDoorDistance(){
+    return Math.hypot(player.position.x-cage.position.x,player.position.z-(cage.position.z-cage.userData.D/2));
+  }
+  function releaseLocalRabbit(){
+    if(!player.userData.trapped || rabbitGhost) return;
+    player.userData.trapped=false;
+    hideMathModal();
+    player.position.set(cage.position.x,0.05,cage.position.z-cage.userData.D/2-1.1);
+    clearControlState();sendState(true);
+  }
+  function openSharedCage(){
+    cage.userData.locked=false;cage.userData.doorOpen=1;cage.userData.autoCloseT=5;
+    const lock=cage.getObjectByName('cageLock');if(lock) lock.visible=false;
+    setCageCountdown(5);cageCdSprite.visible=true;
+    releaseLocalRabbit();
+    if(bridge.active){
+      if(bridge.isHost) maybeSendWorld(true);
+      else relay('world_patch',{cageLocked:false,cageDoorOpen:true,cageAutoCloseT:5});
+    }
   }
 
 
@@ -1207,6 +1233,8 @@ function makeRabbit(){
   function setAvatarGhostVisual(root, ghostOn, alpha=0.38){
     if(!root) return;
     root.visible = true;
+    if(root.userData.ghostVisual===!!ghostOn) return;
+    root.userData.ghostVisual=!!ghostOn;
     root.traverse?.((obj)=>{
       const mat = obj && obj.material;
       if(!mat) return;
@@ -1226,16 +1254,12 @@ function makeRabbit(){
     });
   }
   function makeRabbitGhost(){
+    hideMathModal();
     rabbitGhost = true;
     player.userData.trapped = false;
     updateCaughtCloud();
     syncUiState();
     try{ monster.userData.warnBeepAt = 0; updatePanicMusic(999); }catch(e){}
-    cage.userData.locked = true;
-    cage.userData.doorOpen = 0;
-    cage.userData.autoCloseT = 0;
-    cageCdSprite.visible = false;
-    const lock = cage.getObjectByName("cageLock"); if(lock) lock.visible = true;
     player.position.set(cage.position.x + cage.userData.W*0.85, 0.05, cage.position.z);
     setAvatarGhostVisual(player, true, 0.38);
     addChat('☁️ 2번 잡혀 유령 토끼가 되었습니다. 이제 채팅과 이동만 가능하고 게임에는 개입할 수 없습니다.');
@@ -1400,8 +1424,8 @@ g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
   const keys = [];
   function randFloorCell(){
     while(true){
-      const gx = 6+Math.floor(Math.random()*(GW-12));
-      const gy = 6+Math.floor(Math.random()*(GH-12));
+      const gx = 6+Math.floor(brRandom()*(GW-12));
+      const gy = 6+Math.floor(brRandom()*(GH-12));
       if(grid[gy][gx]===0) return {gx,gy};
     }
   }
@@ -1411,7 +1435,7 @@ g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
     const k = makeKey();
     k.position.set(wx, 1.25, wz);
     k.userData.baseY = 1.25;
-    k.userData.phase = Math.random()*Math.PI*2;
+    k.userData.phase = brRandom()*Math.PI*2;
     scene.add(k); keys.push(k);
   }
 
@@ -1438,7 +1462,7 @@ g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
     const leafM = new THREE.MeshStandardMaterial({color:0x22c55e, roughness:0.8});
     const root = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.10,0.55,10), bodyM);
     root.position.y = 0.25;
-    root.rotation.z = (Math.random()-0.5)*0.35;
+    root.rotation.z = (brRandom()-0.5)*0.35;
     g.add(root);
 
     const tip = new THREE.Mesh(new THREE.ConeGeometry(0.08,0.18,10), bodyM);
@@ -1484,7 +1508,7 @@ g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
     const c = makeCarrot();
     c.position.set(wx, 0, wz);
     // "stuck in ground" effect
-    c.rotation.y = Math.random()*Math.PI*2;
+    c.rotation.y = brRandom()*Math.PI*2;
     scene.add(c);
     carrots.push(c);
   }
@@ -1495,6 +1519,22 @@ g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
   ensureCarrots();
 
   function tryPickupCarrots(){
+    if(bridge.active){
+      if(!bridge.isHost || gameOver) return;
+      const players = [{sid:bridge.sid, x:player.position.x, z:player.position.z, ghost:rabbitGhost, trapped:player.userData.trapped}];
+      for(const [sid,r] of bridge.remotes) if(r.state) players.push({sid,...r.state});
+      for(const p of players){
+        if(p.ghost || p.trapped) continue;
+        const i=carrots.findIndex(c=>Math.hypot(c.position.x-p.x,c.position.z-p.z)<1.35);
+        if(i<0) continue;
+        const c=carrots.splice(i,1)[0]; scene.remove(c);
+        if(p.sid===bridge.sid) applyCarrotBuff();
+        else relay('carrot_buff',{target:p.sid});
+        ensureCarrots(); maybeSendWorld(true);
+      }
+      return;
+    }
+    if(rabbitGhost || gameOver) return;
     for(let i=carrots.length-1;i>=0;i--){
       const c = carrots[i];
       const dx = c.position.x - player.position.x;
@@ -1511,6 +1551,13 @@ g.traverse(o=>{ if(o.isMesh) o.castShadow=true; });
         ensureCarrots();
       }
     }
+  }
+
+  function applyCarrotBuff(){
+    const until=performance.now()+5000;
+    if(playerRole==='monster') monsterSpeedBuffUntil=until;
+    else { rabbitNoDrainUntil=until; rabbitFreeSprintUntil=until; sprint.charge=1; }
+    addChat('🥕 5초간 '+(playerRole==='monster'?'이동속도 증가!':'자유 질주!'));
   }
 
   function pickWallAttach(){
@@ -1850,8 +1897,8 @@ function spawnShelfPillar(wx,wz, idx=0){
     return g;
   }
   function spawnCartInRoom(r){
-    const gx = Math.floor(r.rx + 3 + Math.random()*(r.rw-6));
-    const gy = Math.floor(r.ry + 3 + Math.random()*(r.rh-6));
+    const gx = Math.floor(r.rx + 3 + brRandom()*(r.rw-6));
+    const gy = Math.floor(r.ry + 3 + brRandom()*(r.rh-6));
     if(grid[gy][gx]!==0) return;
     const c = makeCart();
     c.position.set((gx-GW/2)*CELL, 0.35, (gy-GH/2)*CELL);
@@ -1860,7 +1907,7 @@ function spawnShelfPillar(wx,wz, idx=0){
     addAABB(c, c.userData.halfX*CART_SCALE, c.userData.halfZ*CART_SCALE, "cart");
   }
   for(let i=0;i<3;i++){
-    const r = rooms[1+Math.floor(Math.random()*(rooms.length-1))];
+    const r = rooms[1+Math.floor(brRandom()*(rooms.length-1))];
     spawnCartInRoom(r);
   }
 
@@ -1875,12 +1922,12 @@ function spawnShelfPillar(wx,wz, idx=0){
     if(r.theme==="pool"){
       const puddleMat = new THREE.MeshStandardMaterial({color:0x68d7ff, roughness:0.18, metalness:0.0, transparent:true, opacity:0.34});
       const puddleGeo = new THREE.CircleGeometry(1, 28);
-      const puddleCount = 3 + ((Math.random()*2)|0);
+      const puddleCount = 3 + ((brRandom()*2)|0);
       for(let i=0;i<puddleCount;i++){
-        const rx = Math.max(2.2, w * (0.10 + Math.random()*0.08));
-        const rz = Math.max(1.8, h * (0.08 + Math.random()*0.07));
-        const ox = cx + (Math.random()-0.5) * w * 0.34;
-        const oz = cz + (Math.random()-0.5) * h * 0.34;
+        const rx = Math.max(2.2, w * (0.10 + brRandom()*0.08));
+        const rz = Math.max(1.8, h * (0.08 + brRandom()*0.07));
+        const ox = cx + (brRandom()-0.5) * w * 0.34;
+        const oz = cz + (brRandom()-0.5) * h * 0.34;
         const puddle = new THREE.Mesh(puddleGeo, puddleMat.clone());
         puddle.rotation.x = -Math.PI/2;
         puddle.position.set(ox, 0.03 + i*0.002, oz);
@@ -1890,19 +1937,19 @@ function spawnShelfPillar(wx,wz, idx=0){
         poolZones.push({cx:ox, cz:oz, rx, rz});
       }
       for(let i=0;i<1;i++){
-        const ox = cx + (Math.random()<0.5?-1:1)*(w*0.24);
-        const oz = cz + (Math.random()<0.5?-1:1)*(h*0.24);
+        const ox = cx + (brRandom()<0.5?-1:1)*(w*0.24);
+        const oz = cz + (brRandom()<0.5?-1:1)*(h*0.24);
         spawnPillar(ox,oz,0.50,4.2);
       }
     }else if(r.theme==="play"){
       const colors=[0xffd93d,0x4ecdc4,0xff6b6b,0x6b5cff];
       for(let i=0;i<2;i++){
-        const sx = 0.9+Math.random()*1.2;
-        const sz = 0.9+Math.random()*1.2;
-        const hh = 0.6+Math.random()*1.4;
-        const bx = cx + (Math.random()-0.5)*w*0.55;
-        const bz = cz + (Math.random()-0.5)*h*0.55;
-        const m = new THREE.MeshStandardMaterial({color: colors[(Math.random()*colors.length)|0], roughness:0.8});
+        const sx = 0.9+brRandom()*1.2;
+        const sz = 0.9+brRandom()*1.2;
+        const hh = 0.6+brRandom()*1.4;
+        const bx = cx + (brRandom()-0.5)*w*0.55;
+        const bz = cz + (brRandom()-0.5)*h*0.55;
+        const m = new THREE.MeshStandardMaterial({color: colors[(brRandom()*colors.length)|0], roughness:0.8});
         const box = new THREE.Mesh(new THREE.BoxGeometry(sx,hh,sz), m);
         box.position.set(bx, hh/2, bz);
         box.castShadow=true; box.receiveShadow=true;
@@ -1911,33 +1958,33 @@ function spawnShelfPillar(wx,wz, idx=0){
       }
     }else if(r.theme==="ball"){
       for(let i=0;i<2;i++){
-        const bx = cx + (Math.random()-0.5)*w*0.55;
-        const bz = cz + (Math.random()-0.5)*h*0.55;
-        spawnBall(bx,bz,0.85+Math.random()*0.25);
+        const bx = cx + (brRandom()-0.5)*w*0.55;
+        const bz = cz + (brRandom()-0.5)*h*0.55;
+        spawnBall(bx,bz,0.85+brRandom()*0.25);
       }
       for(let i=0;i<2;i++){
-        const bx = cx + (Math.random()-0.5)*w*0.55;
-        const bz = cz + (Math.random()-0.5)*h*0.55;
+        const bx = cx + (brRandom()-0.5)*w*0.55;
+        const bz = cz + (brRandom()-0.5)*h*0.55;
         spawnCrate(bx,bz,1.2,1.2,1.25);
       }
     }else if(r.theme==="storage"){
       for(let i=0;i<2;i++){
-        const bx = cx + (Math.random()-0.5)*w*0.60;
-        const bz = cz + (Math.random()-0.5)*h*0.60;
-        spawnCrate(bx,bz,1.2,1.2,1.2+Math.random()*0.8);
+        const bx = cx + (brRandom()-0.5)*w*0.60;
+        const bz = cz + (brRandom()-0.5)*h*0.60;
+        spawnCrate(bx,bz,1.2,1.2,1.2+brRandom()*0.8);
       }
       spawnShelfInRoom(r, (r.rx + r.ry + 1)*11);
     }else{
-      if(Math.random()<0.5){
+      if(brRandom()<0.5){
         for(let i=0;i<1;i++){
-          const bx = cx + (Math.random()-0.5)*w*0.60;
-          const bz = cz + (Math.random()-0.5)*h*0.60;
+          const bx = cx + (brRandom()-0.5)*w*0.60;
+          const bz = cz + (brRandom()-0.5)*h*0.60;
           spawnCrate(bx,bz,1.1,1.1,1.2);
         }
       }else{
         for(let i=0;i<1;i++){
-          const bx = cx + (Math.random()-0.5)*w*0.55;
-          const bz = cz + (Math.random()-0.5)*h*0.55;
+          const bx = cx + (brRandom()-0.5)*w*0.55;
+          const bz = cz + (brRandom()-0.5)*h*0.55;
           spawnPillar(bx,bz,0.55,4.0);
         }
       }
@@ -1949,36 +1996,62 @@ function spawnShelfPillar(wx,wz, idx=0){
   let monsterAI = false; // 기본 OFF — 멀티플레이어 모드에서 불필요한 AI 연산 방지 (솔로 테스트: G키로 ON)
   function makeMonster(){
     const g = new THREE.Group();
-    const black = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.9});
+    const black = new THREE.MeshStandardMaterial({color:0x171b24, roughness:0.95});
     const glow = new THREE.MeshStandardMaterial({color:0xff3b3b, emissive:0xff2b2b, emissiveIntensity:1.15});
-    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.60,1.55,8,16), black);
-    body.position.y = 1.55; body.castShadow=true; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.50, 16, 16), black);
-    head.position.y = 2.70; head.castShadow=true; g.add(head);
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.70,0.22,0.50), black);
-    jaw.position.set(0,2.40,0.28); g.add(jaw);
-    const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 10), glow);
+    const bone = new THREE.MeshStandardMaterial({color:0xc5bca2,roughness:0.8});
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.48,1.05,3,8), black);
+    body.position.set(0,1.92,-0.05);body.scale.set(1.25,1,0.72);g.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.43, 8, 6), black);
+    head.scale.set(0.85,1.24,0.85);head.position.set(0,2.93,0.19);g.add(head);
+    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.48,0.29,0.34), black);
+    jaw.position.set(0,2.57,0.35);g.add(jaw);
+    const mouth = new THREE.Mesh(new THREE.BoxGeometry(0.36,0.18,0.05),new THREE.MeshBasicMaterial({color:0x120307}));
+    mouth.position.set(0,2.64,0.54);g.add(mouth);
+    for(let i=0;i<5;i++){
+      const tooth=new THREE.Mesh(new THREE.ConeGeometry(0.032,0.13+(i%2)*0.035,4),bone);
+      tooth.rotation.z=Math.PI;tooth.position.set((i-2)*0.075,2.68,0.58);g.add(tooth);
+    }
+    const eyeL = new THREE.Mesh(new THREE.BoxGeometry(0.12,0.045,0.055), glow);
     const eyeR = eyeL.clone();
-    eyeL.position.set(-0.16,2.72,0.42); eyeR.position.set(0.16,2.72,0.42);
+    eyeL.position.set(-0.14,2.99,0.53); eyeR.position.set(0.14,2.99,0.53);
+    eyeL.rotation.z=-0.18;eyeR.rotation.z=0.18;
     g.add(eyeL,eyeR);
-    const armGeo = new THREE.CapsuleGeometry(0.17,0.85,6,12);
+    const armGeo = new THREE.CapsuleGeometry(0.12,1.30,3,6);
     const armL = new THREE.Mesh(armGeo, black);
     const armR = armL.clone();
-    armL.position.set(-0.82,1.70,0.05); armL.rotation.z = 0.35;
-    armR.position.set(0.82,1.70,0.05); armR.rotation.z = -0.35;
+    armL.position.set(-0.76,1.48,0.12); armL.rotation.z = -0.12;
+    armR.position.set(0.76,1.48,0.12); armR.rotation.z = 0.12;
     armL.castShadow=true; armR.castShadow=true;
     g.add(armL,armR);
+    for(const side of [-1,1]){
+      const leg=new THREE.Mesh(new THREE.CapsuleGeometry(0.13,0.85,3,6),black);
+      leg.position.set(side*0.25,0.62,0);leg.rotation.z=side*0.08;g.add(leg);
+      const horn=new THREE.Mesh(new THREE.ConeGeometry(0.10,0.62,5),black);
+      horn.position.set(side*0.28,3.46,0.04);horn.rotation.z=-side*0.37;g.add(horn);
+      for(let j=0;j<3;j++){
+        const claw=new THREE.Mesh(new THREE.ConeGeometry(0.045,0.34,4),bone);
+        claw.rotation.z=Math.PI;claw.position.set((j-1)*0.095,-0.88,0.07+j*0.015);
+        (side<0?armL:armR).add(claw);
+      }
+      const shoulder=new THREE.Mesh(new THREE.ConeGeometry(0.17,0.48,5),black);
+      shoulder.position.set(side*0.62,2.46,-0.08);shoulder.rotation.z=-side*0.65;g.add(shoulder);
+    }
 
     // Stun "bangle" effect (brief rings above head)
     const ringM = new THREE.MeshStandardMaterial({color:0xfff4a3, emissive:0xfff0a0, emissiveIntensity:1.2, roughness:0.35});
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.08, 10, 20), ringM);
-    ring.position.set(0, 3.35, 0);
+    ring.position.set(0, 3.9, 0);
     ring.rotation.x = Math.PI/2;
     ring.visible = false;
     g.add(ring);
 
     g.userData = { armL, armR, t:0, stunT:0, stunRing:ring, stunCd:0, patrolX:0, patrolZ:0, patrolT:0 };
     return g;
+  }
+  function animateMonsterAvatar(g,t){
+    if(!g?.userData?.armL) return;
+    g.userData.armL.rotation.x=Math.sin(t*4.4)*0.16;
+    g.userData.armR.rotation.x=-Math.sin(t*4.4)*0.16;
   }
   function ensureMonster(){
     if(monster) return;
@@ -1997,6 +2070,11 @@ function spawnShelfPillar(wx,wz, idx=0){
   ensureMonster();
 
   const keysDown={w:0,s:0,a:0,d:0};
+  window.__BR_CLEAR_CONTROLS__ = ()=>{
+    for(const k in keysDown) keysDown[k]=0;
+    shiftHeld=false; setSprintHold(false); joyEnd();
+  };
+  addEventListener('blur', clearControlState);
   // Sprint (E button on empty ground / Shift key). Charge drains while sprinting and regenerates.
   const sprint = { charge: 1, active: false, hold: false, drain: 1/3, regen: 1/20, mult: 1.4 }; // 3s full, 20s regen
   // 괴물 스프린트: 3초 지속, 7초 쿨타임, 토끼 위치 1.5초 표시
@@ -2025,6 +2103,25 @@ function spawnShelfPillar(wx,wz, idx=0){
 
   // Mobile/PC E button behavior: if prompt is visible (interactable), E triggers interact; otherwise it acts as sprint while held.
   const btnE = $("btnE");
+  const btnGive=document.createElement('button');btnGive.id='btnGive';btnGive.className='rbtn';btnGive.textContent='🔑 열쇠 전달';
+  $('mobile').appendChild(btnGive);
+  let keyTransferPendingUntil=0;
+  btnGive.addEventListener('pointerdown',e=>{e.preventDefault();requestKeyTransfer();});
+  function nearestKeyRecipient(){
+    if(!bridge.active || playerRole!=='rabbit' || rabbitGhost || player.userData.trapped || keyCount<1) return null;
+    let best=null,distance=2.8;
+    for(const [sid,r] of bridge.remotes){
+      const st=r.state;if(r.role!=='rabbit'||!st||st.ghost||st.trapped||st.hasKey) continue;
+      const d=Math.hypot(player.position.x-Number(st.x),player.position.z-Number(st.z));
+      if(d<distance){best=sid;distance=d;}
+    }
+    return best;
+  }
+  function requestKeyTransfer(){
+    const target=nearestKeyRecipient();if(!target || performance.now()<keyTransferPendingUntil) return;
+    keyTransferPendingUntil=performance.now()+1200;
+    relay('key_transfer_request',{target});
+  }
   const btnELabel = $("btnELabel");
   const sprintMeter = $("sprintMeter");
   const sprintMeterEdge = $("sprintMeterEdge");
@@ -2055,6 +2152,7 @@ function spawnShelfPillar(wx,wz, idx=0){
       if(e.key.toLowerCase()!=="escape") return;
     }
     const k=e.key.toLowerCase();
+    if(k==='f' && !e.repeat){e.preventDefault();requestKeyTransfer();return;}
     if(keysDown[k]!=null) keysDown[k]=1;
     if(k==="e") doInteract();
     const multiplayerActive = !!(bridge?.start && Number(bridge.start.playerCount||0)>=2);
@@ -2102,23 +2200,6 @@ function spawnShelfPillar(wx,wz, idx=0){
       const dx=o.position.x-player.position.x;
       const dz=o.position.z-player.position.z;
       const d=Math.hypot(dx,dz);
-    const nowMs = performance.now();
-
-    // Monster can also pick up carrots: 5s movement speed buff
-    for(let i=carrots.length-1;i>=0;i--){
-      const c = carrots[i];
-      const mdx = c.position.x - monster.position.x;
-      const mdz = c.position.z - monster.position.z;
-      if(mdx*mdx + mdz*mdz < 1.35*1.35){
-        scene.remove(c);
-        carrots.splice(i,1);
-        monsterSpeedBuffUntil = performance.now() + 5000;
-        addChat("🥕 [괴물] 5초간 이동속도 1.5배!");
-        ensureCarrots();
-        break;
-      }
-    }
-
       if(d<bd){ bd=d; best=o; }
     }
     return best;
@@ -2143,13 +2224,14 @@ function spawnShelfPillar(wx,wz, idx=0){
   function doInteract(){
     if(gameOver) return;
     if(chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show")) return;
+    if(playerRole==='monster') return;
     if(rabbitGhost){
       addChat('유령 상태에서는 상호작용할 수 없습니다.');
       return;
     }
     // If trapped inside a locked cage, pressing E gives math problems to escape.
     try{
-      if(playerInsideCage() && cage.userData.locked && !cage.userData.doorOpen){
+      if(player.userData.trapped && cage.userData.locked && !cage.userData.doorOpen){
         startCageEscapeMath();
         return;
       }
@@ -2165,16 +2247,15 @@ function spawnShelfPillar(wx,wz, idx=0){
     }
     
     // Cage lock / door interaction
-    const cDist=Math.hypot(cage.position.x-player.position.x, cage.position.z-player.position.z);
-    if(cDist<3.0){
+    const cDist=cageDoorDistance();
+    if(cDist<2.6){
       const lock = cage.getObjectByName("cageLock");
       const hinge = cage.getObjectByName("cageHinge");
       if(cage.userData.locked){
         if(keyCount>=1){
           keyCount=Math.max(0,keyCount-1); $("pKey").textContent="🔑 "+keyCount; updateKeyIndicator();
           try{ placeKey(); }catch(e){}
-          cage.userData.locked=false;
-          if(playerInsideCage()) player.userData.trapped = false;
+          openSharedCage();
           // simple lock "open" animation (hide)
           if(lock) lock.visible=false;
           addChat("철창 자물쇠가 열렸다!");
@@ -2233,6 +2314,10 @@ function spawnShelfPillar(wx,wz, idx=0){
     toppleNearestShelf();
   }
   function updatePrompt(){
+    btnGive.style.display=nearestKeyRecipient()?'flex':'none';
+    if(playerRole==='monster'){hidePrompt();updateBtnELabel();return;}
+    if(rabbitGhost){hidePrompt();return;}
+    if(player.userData.trapped){showPrompt('E: 수학 7문제 풀고 탈출');return;}
     const k=nearestObj(keys, 2.1);
     if(k){ showPrompt("E: 열쇠 줍기"); return; }
     const dDist=Math.hypot(doorG.position.x-player.position.x, doorG.position.z-player.position.z);
@@ -2244,8 +2329,8 @@ function spawnShelfPillar(wx,wz, idx=0){
       else showPrompt("E: 탈출(테스트)");
       return;
     }
-    const cDist=Math.hypot(cage.position.x-player.position.x, cage.position.z-player.position.z);
-    if(cDist<2.7){
+    const cDist=cageDoorDistance();
+    if(cDist<2.6){
       if(cage.userData && cage.userData.locked) showPrompt("E: 자물쇠 열기 (열쇠 1개)");
       else showPrompt("E: 철창 문 열기/닫기");
       return;
@@ -2492,27 +2577,27 @@ function pushOutWalls(px,pz,rad){
       b.position.z = nz;
     }
   }
-  function handlePush(dt){
+  function handlePush(dt, actor=player.position){
     for(const c of carts){
-      const dx=c.position.x-player.position.x;
-      const dz=c.position.z-player.position.z;
+      const dx=c.position.x-actor.x;
+      const dz=c.position.z-actor.z;
       const d=Math.hypot(dx,dz);
     const nowMs = performance.now();
       if(d<1.35){
         const px=dx/(d||1), pz=dz/(d||1);
-        c.userData.vx += px*16;
-        c.userData.vz += pz*16;
+        c.userData.vx += px*16*dt*60;
+        c.userData.vz += pz*16*dt*60;
       }
     }
     for(const b of balls){
-      const dx=b.position.x-player.position.x;
-      const dz=b.position.z-player.position.z;
+      const dx=b.position.x-actor.x;
+      const dz=b.position.z-actor.z;
       const d=Math.hypot(dx,dz);
     const nowMs = performance.now();
       if(d < (b.userData.r + 0.85)){
         const px=dx/(d||1), pz=dz/(d||1);
-        b.userData.vx += px*18;
-        b.userData.vz += pz*18;
+        b.userData.vx += px*18*dt*60;
+        b.userData.vz += pz*18*dt*60;
       }
     }
   }
@@ -2558,6 +2643,21 @@ function pushOutWalls(px,pz,rad){
 
   function updateMonster(dt){
     if(!monster) return;
+    if(bridge.active){
+      // Multiplayer uses the visible remote hunter, never the hidden solo AI.
+      let distance=Infinity;
+      if(playerRole==='rabbit' && !rabbitGhost && !player.userData.trapped && !gameOver && monsterReleaseLeft<=0){
+        for(const r of bridge.remotes.values()){
+          if(r.role==='monster' && r.state && r.obj.visible) distance=Math.min(distance,Math.hypot(player.position.x-r.obj.position.x,player.position.z-r.obj.position.z));
+        }
+      }
+      const strength=Math.max(0,Math.min(1,(12-distance)/8));
+      vignette+=(strength-vignette)*(1-Math.exp(-dt*7));
+      vign.style.opacity=String(vignette*0.58);
+      updatePanicMusic(distance);
+      animateMonsterAvatar(monster,performance.now()/1000);
+      return;
+    }
     if(monster.userData.locked) { return; }
     // If rabbit is already trapped in the locked cage, monster should not re-catch; it will patrol instead.
     let rabbitInCage=false, rabbitTrapped=false;
@@ -2609,9 +2709,9 @@ function pushOutWalls(px,pz,rad){
       const worldHalfX = (GW*CELL)*0.5 - 2.0;
       const worldHalfZ = (GH*CELL)*0.5 - 2.0;
       function pickPatrol(){
-        monster.userData.patrolX = (Math.random()*2-1)*worldHalfX;
-        monster.userData.patrolZ = (Math.random()*2-1)*worldHalfZ;
-        monster.userData.patrolT = 3.0 + Math.random()*4.0;
+        monster.userData.patrolX = (brRandom()*2-1)*worldHalfX;
+        monster.userData.patrolZ = (brRandom()*2-1)*worldHalfZ;
+        monster.userData.patrolT = 3.0 + brRandom()*4.0;
       }
       function doPatrol(){
         if(monster.userData.patrolT<=0) pickPatrol();
@@ -2673,8 +2773,8 @@ function pushOutWalls(px,pz,rad){
         // simple unstuck: if blocked, try a few sidesteps
         if(pos.x===oldX && pos.z===oldZ){
           for(let s=0;s<4;s++){
-            const ox = (Math.random()*2-1)*0.55;
-            const oz = (Math.random()*2-1)*0.55;
+            const ox = (brRandom()*2-1)*0.55;
+            const oz = (brRandom()*2-1)*0.55;
             const tx = oldX + ox;
             const tz = oldZ + oz;
             const p2 = resolveMoveAt(oldX, oldZ, tx, tz, 0.60);
@@ -2721,7 +2821,7 @@ const v=Math.max(0, Math.min(1,(12-d)/10));
         monster.userData.warnBeepAt = monster.userData.warnBeepAt || 0;
         if(nowMs - monster.userData.warnBeepAt >= 420){
           monster.userData.warnBeepAt = nowMs;
-          beep(180+Math.random()*30,0.03,"sine",0.045);
+          beep(180+brRandom()*30,0.03,"sine",0.045);
         }
       }
       // Bookshelf stun + clear
@@ -3009,7 +3109,7 @@ if(monsterReleaseLeft>0){
 
     for(const k of keys){
       // Key visibility rule: if in seeker-view and no rabbit is holding a key, hide ground keys
-      k.visible = !(seekerView && keyCount<=0);
+      k.visible = playerRole!=='monster' && !(seekerView && keyCount<=0);
       k.rotation.y += dt*1.8;
       k.rotation.x = Math.sin(now/420 + k.userData.phase)*0.10;
       k.position.y = k.userData.baseY + Math.sin(now/450 + k.userData.phase)*0.22;
@@ -3019,7 +3119,7 @@ if(monsterReleaseLeft>0){
       tubeAnimAcc = 0;
       for(const t of tubes){
         t.flicker += dt * 1.2;
-        const f = 0.94 + 0.08*Math.sin(t.flicker*2.0) + (Math.random()<0.002 ? -0.18 : 0);
+        const f = 0.94 + 0.08*Math.sin(t.flicker*2.0) + (brRandom()<0.002 ? -0.18 : 0);
         t.mesh.material.emissiveIntensity = 1.22*Math.max(0.55, f);
         if(t.light) t.light.intensity = 0.42*Math.max(0.35, f);
       }
@@ -3056,7 +3156,7 @@ if(monsterReleaseLeft>0){
       mSprint.charge = mSprint.active ? 1 : (mSprint.cooldown <= 0 ? 1 : 1 - mSprint.cooldown / mSprint.COOLDOWN);
       monsterSprintSfx(mSprint.active);
       // 괴물 이동속도: mSprint 활성 시 mult 적용
-      const speedMul = (inWater?0.5:1) * (mSprint.active ? mSprint.mult : 1);
+      const speedMul = (inWater?0.5:1) * (mSprint.active ? mSprint.mult : 1) * (performance.now()<monsterSpeedBuffUntil?1.5:1);
       var rabbitSpeed = 7.9 * speedMul; // 괴물 기본속도 7.9 (var로 공통 이동코드에서 사용)
       sprint.active = false; // 토끼 sprint는 사용 안 함 (charge 낭비 방지)
       sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt); // UI 유지용
@@ -3106,13 +3206,18 @@ if(monsterReleaseLeft>0){
       if(stepAcc>0.38){
         stepAcc=0;
         const f = isInPool(player.position.x,player.position.z)? 220 : 320;
-        beep(f+Math.random()*30, 0.035, "square", 0.12);
+        beep(f+brRandom()*30, 0.035, "square", 0.12);
       }
     }else{
       stepAcc = Math.max(0, stepAcc - dt*2.0);
     }
-    handlePush(dt);
-    updatePushables(dt);
+    if(!bridge.active || bridge.isHost){
+      if(!rabbitGhost) handlePush(dt);
+      if(bridge.active) for(const r of bridge.remotes.values()){
+        if(r.state && !r.state.ghost && !r.state.trapped) handlePush(dt, r.state);
+      }
+      updatePushables(dt);
+    }
     updateShelves(dt);
 
     // Carrot pickups
@@ -3437,18 +3542,9 @@ if(monsterReleaseLeft>0){
     }
   }
   function makeRemoteAvatar(role){
-    const g = new THREE.Group();
+    const g = role==='monster' ? makeMonster() : new THREE.Group();
     if (role === 'monster'){
-      const mat = new THREE.MeshStandardMaterial({color:0x11131a, roughness:0.92});
-      const glow = new THREE.MeshStandardMaterial({color:0xff3b3b, emissive:0xff2b2b, emissiveIntensity:1.0});
-      const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.56,1.20,3,6), mat);
-      body.position.y = 1.45; g.add(body);
-      const head = new THREE.Mesh(new THREE.SphereGeometry(0.42, 6, 6), mat);
-      head.position.y = 2.45; g.add(head);
-      const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 6), glow);
-      const eyeR = eyeL.clone();
-      eyeL.position.set(-0.13,2.48,0.32); eyeR.position.set(0.13,2.48,0.32);
-      g.add(eyeL, eyeR);
+      // Local and remote hunters share the same silhouette and materials.
     } else {
       const mat = new THREE.MeshStandardMaterial({color:0xe9eefc, roughness:0.96});
       const pink = new THREE.MeshStandardMaterial({color:0xffc8d6, roughness:0.92});
@@ -3686,6 +3782,8 @@ if(monsterReleaseLeft>0){
   function snapshotWorld(){
     return {
       kind:'world',
+      carrots: carrots.map(c=>({x:c.position.x,z:c.position.z,ry:c.rotation.y})),
+      pushables: snapshotPushables(),
       keys: (keys||[]).map(k=>({x:+k.position.x.toFixed(3), z:+k.position.z.toFixed(3)})),
       shelves: snapshotShelves(),
       doorProg: Number(doorProg||0),
@@ -3726,12 +3824,16 @@ if(monsterReleaseLeft>0){
   function buildInteractionPatch(before, after){
     const patch = { kind:'world_patch', ts:Date.now() };
     let changed = false;
-    const fields = ['keys','shelves','doorProg','doorOpen','doorOpenT','cageLocked','cageDoorOpen','cageAutoCloseT','sealUsed','sealLeftMs','gameOver','gameOverMessage'];
+    const fields = ['keys','shelves','doorProg','doorOpen','cageLocked','cageDoorOpen','sealUsed','gameOver','gameOverMessage'];
     for(const key of fields){
-      if(JSON.stringify(before?.[key]) === JSON.stringify(after?.[key])) continue;
+      const value=s=>key==='shelves' ? s?.shelves?.map(x=>[x.netKey,x.fallen,x.halfX,x.halfZ]) : s?.[key];
+      if(JSON.stringify(value(before)) === JSON.stringify(value(after))) continue;
       patch[key] = after?.[key];
       changed = true;
     }
+    if(patch.doorOpen!==undefined) patch.doorOpenT=after.doorOpenT;
+    if(patch.cageDoorOpen!==undefined) patch.cageAutoCloseT=after.cageAutoCloseT;
+    if(patch.sealUsed!==undefined) patch.sealLeftMs=after.sealLeftMs;
     return changed ? patch : null;
   }
   let lastAppliedWorldTs = 0;
@@ -3739,8 +3841,35 @@ if(monsterReleaseLeft>0){
     if(!w || typeof w!=='object') return;
     try{
       if(Array.isArray(w.keys)){
-        while(keys.length){ const k=keys.pop(); scene.remove(k); }
-        w.keys.forEach(it=>spawnKeyAt(Number(it.x)||0, Number(it.z)||0));
+        while(keys.length>w.keys.length){ const k=keys.pop(); scene.remove(k); }
+        w.keys.forEach((it,i)=>{
+          if(!keys[i]) spawnKeyAt(Number(it.x)||0, Number(it.z)||0);
+          else { keys[i].position.x=Number(it.x)||0; keys[i].position.z=Number(it.z)||0; }
+        });
+      }
+      if(includeTimers && Array.isArray(w.carrots)){
+        while(carrots.length>w.carrots.length) scene.remove(carrots.pop());
+        w.carrots.forEach((it,i)=>{
+          if(!carrots[i]){ const c=makeCarrot(); carrots.push(c); scene.add(c); }
+          carrots[i].position.set(Number(it.x)||0,0,Number(it.z)||0);
+          carrots[i].rotation.y=Number(it.ry)||0;
+        });
+      }
+      if(includeTimers && Array.isArray(w.pushables)){
+        let ci=0,bi=0;
+        for(const it of w.pushables){
+          let o;
+          if(it.kind==='cart') o=carts[ci++];
+          else if(it.kind==='ball'){
+            if(!balls[bi]) spawnBall(Number(it.x)||0,Number(it.z)||0,Number(it.r)||0.85);
+            o=balls[bi++];
+          }
+          if(!o) continue;
+          o.position.set(Number(it.x)||0,Number(it.y)||0,Number(it.z)||0);
+          o.rotation.x=Number(it.rx)||0; o.rotation.z=Number(it.rz)||0;
+          o.userData.vx=0; o.userData.vz=0;
+          o.userData.netTarget=null;
+        }
       }
       if(Array.isArray(w.shelves)) applyShelfStates(w.shelves);
       if(w.doorProg !== undefined){
@@ -3759,6 +3888,7 @@ if(monsterReleaseLeft>0){
       if(w.cageLocked !== undefined) cage.userData.locked = !!w.cageLocked;
       if(w.cageDoorOpen !== undefined) cage.userData.doorOpen = !!w.cageDoorOpen;
       if(w.cageAutoCloseT !== undefined) cage.userData.autoCloseT = Math.max(0, Number(w.cageAutoCloseT||0));
+      if(!cage.userData.locked && cage.userData.doorOpen) releaseLocalRabbit();
       const lock = cage.getObjectByName('cageLock'); if(lock) lock.visible = !!cage.userData.locked;
       if(w.sealUsed !== undefined) doorState.sealUsed = !!w.sealUsed;
       if(w.sealLeftMs !== undefined || w.sealLeft !== undefined){
@@ -3822,23 +3952,61 @@ if(monsterReleaseLeft>0){
     // 프레임마다 전송하던 기존 코드는 불규칙한 드롭과 원격 캐릭터 끊김을 만들었다.
     const minGap = 45;
     const sinceLast = now - (bridgeStateCache.sentAt||0);
-    if(!force && sinceLast < minGap) return;
-    if(!force && !changed && sinceLast < (moving ? 140 : 450)) return;
+    if(force) bridge.forceStatePending=true;
+    if(bridge.stateConfirmAt && now>=bridge.stateConfirmAt){
+      bridge.forceStatePending=true;bridge.stateConfirmAt=0;
+    }
+    // Even important transitions respect the Worker's throttle. Keep the newest
+    // state pending instead of sending a packet the Worker would discard.
+    if(sinceLast < minGap) return;
+    if(!bridge.forceStatePending && !changed && sinceLast < (moving ? 140 : 900)) return;
+    bridge.forceStatePending=false;
+    const importantChange=(Math.hypot(bridgeStateCache.vx||0,bridgeStateCache.vz||0)>0.02 && !moving) ||
+      bridgeStateCache.caught!==snap.caught || bridgeStateCache.ghost!==snap.ghost ||
+      bridgeStateCache.trapped!==snap.trapped || bridgeStateCache.hasKey!==snap.hasKey;
+    // Network jitter can bunch packets inside the server throttle window.
+    // Confirm stops and gameplay transitions once, without an idle stream.
+    if(importantChange) bridge.stateConfirmAt=now+140;
     Object.assign(bridgeStateCache, snap, { sentAt: now });
     relay('state', { seq:(++bridge.stateSeq), role:playerRole, seat:Number(bridge.selfSeat ?? -1), sentAt: Date.now(), ...snap });
   }
 
+  function snapshotPushables(){
+    return [...carts,...balls].map((o,i)=>({i,kind:o.userData.kind,x:+o.position.x.toFixed(2),y:+o.position.y.toFixed(2),z:+o.position.z.toFixed(2),rx:+o.rotation.x.toFixed(2),rz:+o.rotation.z.toFixed(2),r:o.userData.r}));
+  }
+  let lastPushableStates=[];
+  function sendPushableChanges(now){
+    if(!bridge.isHost || now-(bridge.lastPropsAt||0)<100) return;
+    bridge.lastPropsAt=now;
+    const states=snapshotPushables();
+    const changed=states.filter((s,i)=>JSON.stringify(s)!==JSON.stringify(lastPushableStates[i]));
+    if(!changed.length) return;
+    lastPushableStates=states;
+    relay('props_state',{items:changed});
+  }
   function maybeSendWorld(force){
     if(!bridge.sid) return;
     const now=performance.now();
-    if(!force && now-bridge.lastWorldAt < 500) return;
+    if(!bridge.isHost){
+      if((force || !bridge.lastWorldReceivedAt) && now-bridge.lastWorldReqAt>1000){
+        bridge.lastWorldReqAt=now;relay('world_req',{});
+      }
+      return;
+    }
+    if(force) bridge.worldRequested=true;
+    if(bridge.worldAwaitingEcho && now-bridge.lastWorldAt>1000) bridge.worldRequested=true;
+    // A trailing poll preserves changes that arrive inside the Worker's 90ms
+    // relay window. Timer/door animation frames do not dirty shared state.
+    if(now-bridge.lastWorldAt<110) return;
+    const snap=snapshotWorld();
+    const signature=JSON.stringify([snap.keys,snap.carrots,snap.shelves.map(s=>[s.netKey,s.fallen,s.halfX,s.halfZ]),snap.doorProg,snap.doorOpen,snap.cageLocked,snap.cageDoorOpen,snap.sealUsed,doorState.sealedUntil,snap.gameOver]);
+    if(!bridge.worldRequested && signature===bridge.worldSignature) return;
+    bridge.worldRequested=false;bridge.worldSignature=signature;
     bridge.lastWorldAt = now;
-    const snap = snapshotWorld();
-    if(bridge.isHost) relay('world', snap);
-    else relay('world_req', {});
+    bridge.worldAwaitingEcho=snap.ts;
+    lastPushableStates=snap.pushables;
+    relay('world',snap);
   }
-  const _updatePanicMusic = (typeof window.updatePanicMusic === 'function' ? window.updatePanicMusic : (typeof updatePanicMusic === 'function' ? updatePanicMusic : null));
-  if(_updatePanicMusic){ window.updatePanicMusic = function(dist){ if(playerRole==='monster') return; return _updatePanicMusic(dist); }; try{ updatePanicMusic = window.updatePanicMusic; }catch(_){ } }
   const _doInteract = (typeof window.doInteract === 'function' ? window.doInteract : (typeof doInteract === 'function' ? doInteract : null));
   if(_doInteract){
     window.doInteract = function(){
@@ -3870,7 +4038,8 @@ if(monsterReleaseLeft>0){
       });
       if (d.startPayload) applyBridgeStartPayload(d.startPayload);
       else if (pendingStartPayload) applyBridgeStartPayload(pendingStartPayload);
-      post({ type:'bridge_ready', gameId:'backrooms3d' });
+      // bridge_ready is emitted once after boot. Echoing it here makes the
+      // room send bridge_init/game_start forever and repeatedly steals focus.
       if (bridge.start) { maybeSendWorld(true); sendState(true); }
       return;
     }
@@ -3933,7 +4102,12 @@ if(monsterReleaseLeft>0){
         if(seq && seq <= Number(r.lastSeq || -1)) return;
         r.lastSeq = seq || (Number(r.lastSeq || 0) + 1);
         r.obj.visible = true;
+        const oldState=r.state;
         r.state = Object.assign({}, m, { role });
+        // A state queued before the server catch can arrive after it.
+        if(Number(oldState?.caught||0)>Number(m.caught||0)){
+          Object.assign(r.state,{caught:oldState.caught,trapped:oldState.trapped,ghost:oldState.ghost,hasKey:false});
+        }
         r.targetX = Number(m.x)||0;
         r.targetY = Number(m.y)||0;
         r.targetZ = Number(m.z)||0;
@@ -3946,7 +4120,12 @@ if(monsterReleaseLeft>0){
         if(r.samples.length>12) r.samples.splice(0,r.samples.length-12);
         return;
       }
-      if(kind==='world'){ if(!bridge.isHost && sid!==bridge.sid) applyWorld(m); return; }
+      if(kind==='world'){
+        if(bridge.isHost && sid===bridge.sid){
+          if(Number(m.ts)>=Number(bridge.worldAwaitingEcho||0)) bridge.worldAwaitingEcho=0;
+        }else if(!bridge.isHost && sid===bridge.hostSid) applyWorld(m);
+        return;
+      }
       if(kind==='world_patch'){
         if(bridge.isHost && sid && sid!==bridge.sid){
           applySharedWorld(m, false);
@@ -3954,7 +4133,16 @@ if(monsterReleaseLeft>0){
         }
         return;
       }
-      if(kind==='world_req'){ if(bridge.isHost && sid!==bridge.sid){ relay('world', snapshotWorld()); } return; }
+      if(kind==='world_req'){ if(bridge.isHost && sid!==bridge.sid) maybeSendWorld(true); return; }
+      if(kind==='props_state'){
+        if(bridge.isHost || sid!==bridge.hostSid || !Array.isArray(m.items)) return;
+        const objects=[...carts,...balls];
+        for(const it of m.items){
+          const o=objects[Number(it.i)];if(!o || o.userData.kind!==it.kind) continue;
+          o.userData.netTarget={x:Number(it.x)||0,y:Number(it.y)||0,z:Number(it.z)||0,rx:Number(it.rx)||0,rz:Number(it.rz)||0};
+        }
+        return;
+      }
       if(kind==='helper_state'){ if(!bridge.isHost && sid!==bridge.sid) applyHelperState(m); return; }
       if(kind==='leave' || kind==='peer_left'){
         const leavingSid = String(m.sid || (kind==='leave' ? sid : '') || '');
@@ -3966,32 +4154,56 @@ if(monsterReleaseLeft>0){
         if(!gameOver) endGame(String(m.message || m.gameOverMessage || '게임 종료'));
         return;
       }
-      if(kind==='caught'){
-        // 일부 서버 버전은 발신자에게도 메시지를 되돌려준다. 호스트는 이미
-        // 로컬 판정을 반영했으므로 자기 에코를 다시 계산하면 안 된다.
-        if(sid && sid===bridge.sid) return;
-        const catchTarget = String(m.target||'');
-        if(catchTarget===bridge.sid){
-          // 내가 타겟: 포획 처리
-          if(performance.now() < Number(bridge.ignoreCaughtUntil||0)) return;
-          if(playerRole==='monster') return;
-          bridge.ignoreCaughtUntil = performance.now() + 3000;
-          rabbitCaughtCount = Number(rabbitCaughtCount||0) + 1;
-          updateCaughtCloud(); syncUiState();
-          // 원격 플레이어가 들고 있던 열쇠의 재배치는 호스트 월드가 담당한다.
-          // 여기서 각 클라이언트가 따로 랜덤 배치하면 서로 다른 위치에 열쇠가 생긴다.
-          if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); }
-          if(rabbitCaughtCount>=2){ makeRabbitGhost(); } else { trapRabbitInCage(6); }
-          maybeSendWorld(true); sendState(true);
-        } else {
-          // 제3자: 해당 플레이어 remote state 반영 (화면에서 cage 표시 등)
-          const rr = bridge.remotes.get(catchTarget);
-          if(rr && rr.state){
-            rr.state.caught = (Number(rr.state.caught||0)+1);
-            rr.state.trapped = rr.state.caught < 2;
-            rr.state.ghost = rr.state.caught >= 2;
-          }
+      if(kind==='carrot_buff'){
+        if(sid===bridge.hostSid && String(m.target||'')===bridge.sid) applyCarrotBuff();
+        return;
+      }
+      if(kind==='key_transfer'){
+        if(sid!=='server') return;
+        const giver=String(m.giver||''),target=String(m.target||'');
+        if(bridge.sid===giver || bridge.sid===target){
+          keyCount=bridge.sid===target?1:0;updateKeyIndicator();q('pKey').textContent='🔑 '+keyCount;
+          keyTransferPendingUntil=0;sendState(true);
+          addChat(bridge.sid===target?'🔑 열쇠를 받았습니다.':'🔑 열쇠를 전달했습니다.');
         }
+        for(const [id,hasKey] of [[giver,false],[target,true]]){
+          const r=bridge.remotes.get(id);if(r?.state) r.state.hasKey=hasKey;
+        }
+        return;
+      }
+      if(kind==='caught_reset'){
+        if(sid!=='server')return;
+        const target=String(m.target||'');
+        if(target===bridge.sid && !rabbitGhost){
+          rabbitCaughtCount=0;updateCaughtCloud();sendState(true);
+          addChat('90초 동안 다시 잡히지 않아 포획 횟수가 초기화되었습니다.');
+        }
+        const remote=bridge.remotes.get(target);if(remote?.state && !remote.state.ghost)remote.state.caught=0;
+        return;
+      }
+      if(kind==='caught'){
+        // The existing Worker owns catches. Absolute counts make duplicate
+        // delivery harmless and avoid double-counting host predictions.
+        if(sid!=='server') return;
+        const target=String(m.target||'');
+        const count=Math.max(1,Math.min(2,Number(m.caught)||1));
+        const local=target===bridge.sid;
+        const remote=bridge.remotes.get(target);
+        const previous=local ? rabbitCaughtCount : Number(remote?.state?.caught||0);
+        if(count<=previous || (local && playerRole==='monster')) return;
+        const droppedKey=local ? keyCount>0 : !!remote?.state?.hasKey;
+        if(count===1){cage.userData.locked=true;cage.userData.doorOpen=0;cage.userData.autoCloseT=0;}
+        if(local){
+          rabbitCaughtCount=count;
+          keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator();
+          updateCaughtCloud(); syncUiState();
+          addChat('⚠️ 괴물에게 잡힘! ('+count+'/2)');
+          if(count>=2) makeRabbitGhost(); else trapRabbitInCage(6);
+          sendState(true);
+        }else if(remote){
+          remote.state=Object.assign({},remote.state,{caught:count,trapped:count<2,ghost:count>=2,hasKey:false});
+        }
+        if(bridge.isHost){if(droppedKey) placeKey();maybeSendWorld(true);}
         return;
       }
     }
@@ -4027,7 +4239,7 @@ if(monsterReleaseLeft>0){
         r.obj.visible=true;
         setAvatarGhostVisual(r.obj, !!st.ghost, 0.38);
         // 스냅샷 버퍼를 약간 늦춰 재생해 네트워크 지터를 흡수한다.
-        const renderAt=performance.now()-48;
+        const renderAt=performance.now()-32;
         const samples=Array.isArray(r.samples)?r.samples:[];
         while(samples.length>2 && samples[1].t<=renderAt) samples.shift();
         let predX=Number(r.targetX ?? st.x)||0, predY=Number(r.targetY ?? st.y)||0, predZ=Number(r.targetZ ?? st.z)||0;
@@ -4043,7 +4255,7 @@ if(monsterReleaseLeft>0){
         }
         const snapDist = Math.hypot(predX - r.obj.position.x, predZ - r.obj.position.z);
         if(snapDist>8){ r.obj.position.set(predX,predY,predZ); }
-        const lerpSpeed = snapDist > 3.0 ? 30.0 : (snapDist > 1.2 ? 23.0 : 17.0);
+        const lerpSpeed = snapDist > 3.0 ? 40.0 : (snapDist > 1.2 ? 34.0 : 28.0);
         const lerpA = 1 - Math.exp(-bridgeDt * lerpSpeed);
         r.obj.position.x += (predX - r.obj.position.x) * lerpA;
         r.obj.position.y += (predY - r.obj.position.y) * lerpA;
@@ -4052,88 +4264,29 @@ if(monsterReleaseLeft>0){
         while(yawDiff > Math.PI) yawDiff -= Math.PI*2;
         while(yawDiff < -Math.PI) yawDiff += Math.PI*2;
         r.obj.rotation.y += yawDiff * Math.min(1, lerpA * 1.4);
+        if(r.role==='monster') animateMonsterAvatar(r.obj,bridgeNow/1000);
         if(r.role!=='monster'){ const ki=r.obj.getObjectByName('remoteKey'); if(ki) ki.visible=(!st.ghost && !!st.hasKey); const cc=r.obj.getObjectByName('remoteCaught'); if(cc) cc.visible = (!st.ghost && Number(st.caught||0)===1); }
       }
       const nowp=performance.now();
       if(nowp - bridge.lastStateAt > 12){ bridge.lastStateAt = nowp; sendState(false); }
-      // [FIX] 호스트: 500ms마다 world 상태 전송, 비호스트: 2초마다 world 요청
       if(bridge.isHost){
-        if(nowp - (bridge.lastWorldAt||0) > 500){ maybeSendWorld(true); }
+        if(nowp-(bridge.lastWorldCheckAt||0)>100){
+          bridge.lastWorldCheckAt=nowp;maybeSendWorld(false);
+        }
+        sendPushableChanges(nowp);
         if(nowp - (bridge.lastEndCheckAt||0) > 250){
           bridge.lastEndCheckAt = nowp;
           maybeFinishMultiplayerRound();
         }
       } else {
-        // 호스트가 500ms마다 보내는 동안에는 요청 패킷을 만들지 않는다.
-        // 실제로 월드 수신이 끊긴 경우에만 복구 요청한다.
-        const worldStale = nowp - Number(bridge.lastWorldReceivedAt||0) > 4500;
-        if(worldStale && nowp - (bridge.lastWorldReqAt||0) > 4500){ bridge.lastWorldReqAt = nowp; relay('world_req', {}); }
-      }
-      // catch loop: 호스트만 판정 + relay. 서버가 발신자에게도 되돌려줄 수
-      // 있으므로 위 메시지 처리기에서 자기 에코는 무시한다.
-      // 호스트 자신이 타겟이면 relay 대신 직접 처리
-      if(bridge.isHost && nowp - bridge.lastCatchAt > 120){
-        bridge.lastCatchAt = nowp;
-        if(Number(monsterReleaseLeft||0) <= 0.01){
-          // 괴물 위치 수집
-          const hunters = [];
-          if(playerRole==='monster') hunters.push({ sid:bridge.sid, x:player.position.x, z:player.position.z });
-          for(const [sid,r] of bridge.remotes.entries()){
-            if(r.role==='monster' && r.state) hunters.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0 });
-          }
-          if(!hunters.length) return _animate(now);
-          // 토끼 위치 수집
-          const rabbits=[];
-          if(playerRole!=='monster' && !rabbitGhost && !player.userData.trapped)
-            rabbits.push({ sid:bridge.sid, x:player.position.x, z:player.position.z });
-          for(const [sid,r] of bridge.remotes.entries()){
-            if(r.role!=='monster' && r.state && !r.state.ghost && !r.state.trapped)
-              rabbits.push({ sid, x:Number(r.state.x)||0, z:Number(r.state.z)||0 });
-          }
-          let caught = false;
-          outer: for(const hunter of hunters){
-            for(const rb of rabbits){
-              if(rb.sid===hunter.sid) continue;
-              const dx=rb.x-hunter.x, dz=rb.z-hunter.z;
-              if(dx*dx+dz*dz < MULTI_CATCH_RADIUS*MULTI_CATCH_RADIUS){
-                caught = true;
-                const target = rb.sid;
-                if(target===bridge.sid){
-                  // 호스트 자신이 잡힘: 직접 처리 (relay는 자신에게 안 돌아오므로)
-                  if(performance.now() >= Number(bridge.ignoreCaughtUntil||0)){
-                    bridge.ignoreCaughtUntil = performance.now() + 3000;
-                    rabbitCaughtCount = Number(rabbitCaughtCount||0) + 1;
-                    updateCaughtCloud(); syncUiState();
-                    if(keyCount>0){ keyCount=0; q('pKey').textContent='🔑 0'; updateKeyIndicator(); placeKey(); }
-                    if(rabbitCaughtCount>=2){ makeRabbitGhost(); } else { trapRabbitInCage(6); }
-                    maybeSendWorld(true); sendState(true);
-                  }
-                } else {
-                  // 다른 플레이어가 타겟: relay로 해당 클라이언트에게 전달
-                  // 쿨다운: 동일 타겟 연속 포획 방지
-                  const ck = '_caughtAt_'+target;
-                  if(!bridge[ck] || nowp - bridge[ck] > 3000){
-                    bridge[ck] = nowp;
-                    relay('caught', { target });
-                    // 호스트 화면에서도 원격 플레이어 state 즉시 반영
-                    const rr = bridge.remotes.get(target);
-                    if(rr && rr.state){
-                      const droppedKey = !!rr.state.hasKey;
-                      rr.state.caught = (Number(rr.state.caught||0)+1);
-                      rr.state.trapped = rr.state.caught < 2;
-                      rr.state.ghost = rr.state.caught >= 2;
-                      rr.state.hasKey = false;
-                      if(droppedKey){
-                        placeKey();
-                        maybeSendWorld(true);
-                      }
-                    }
-                  }
-                }
-                break outer;
-              }
-            }
-          }
+        // Quiet scenery needs no heartbeat. Retry only until the first snapshot;
+        // bridge_init and host migration explicitly request a fresh full world.
+        if(!bridge.lastWorldReceivedAt && nowp-bridge.lastWorldReqAt>1500) maybeSendWorld(false);
+        for(const o of [...carts,...balls]){
+          const t=o.userData.netTarget;if(!t) continue;
+          const a=Math.hypot(o.position.x-t.x,o.position.z-t.z)>6 ? 1 : 1-Math.exp(-bridgeDt*24);
+          o.position.x+=(t.x-o.position.x)*a;o.position.y+=(t.y-o.position.y)*a;o.position.z+=(t.z-o.position.z)*a;
+          o.rotation.x+=(t.rx-o.rotation.x)*a;o.rotation.z+=(t.rz-o.rotation.z)*a;
         }
       }
     }

@@ -139,8 +139,11 @@ function act(kind,extra={}){
 }
 function adopt(incoming,hostTime){
  if(incoming?.version!==12)return;
- const incomingBorn=Number(String(incoming.id||'').split('-').at(-1)||0);
- if(!state&&incomingBorn&&incomingBorn<bootAt-12000)return;
+ // Match IDs contain the host's wall clock, not this device's clock. Comparing
+ // them rejected every snapshot on clock-skewed PCs and late-loading clients.
+ // The room transport authenticates the host; membership and match/sequence
+ // identity below reject unrelated or out-of-order snapshots without clocks.
+ if(!incoming.players?.some(p=>String(p.sid)===bridge.sid))return;
  if(state&&incoming.id!==state.id)return;
  if(state&&incoming.id===state.id&&incoming.seq<state.seq)return;
  // During one projectile flight, the guest keeps its already-running visual simulation.
