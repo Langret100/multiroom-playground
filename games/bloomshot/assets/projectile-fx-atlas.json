@@ -1,1 +1,1 @@
-{"cellW":64,"cellH":64,"rows":8,"groups":{"normal":{"col":0,"frames":4},"special":{"col":4,"frames":4},"impact":{"col":8,"frames":4},"blast":{"col":12,"frames":4}}}
+{"cellW":64,"cellH":64,"rows":8,"characterRows":[0,1,2,3,3,5,4,6],"groups":{"normal":{"col":0,"frames":4},"special":{"col":4,"frames":3},"impact":{"col":7,"frames":4},"blast":{"col":11,"frames":4}}}

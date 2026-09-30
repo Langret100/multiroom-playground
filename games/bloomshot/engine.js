@@ -236,23 +236,36 @@ function advanceDrops(s,t){
  }
  for(const p of s.players)if(p.hp>0)pickup(s,p);s.drops=s.drops.filter(d=>d.status!=='taken');
 }
-function projectileHitsPlayer(pr,p){const rx=24+(pr.drawRadius||0),ry=38+(pr.drawRadius||0),dx=(p.x-pr.x)/rx,dy=((p.y-30)-pr.y)/ry;return dx*dx+dy*dy<=1;}
+// Body dimensions follow the trimmed 164 x 128 character sprites (super tank: 1.2x).
+const HIT_BODIES=[[51,50],[56,52],[55,54],[52,50],[52,53],[53,48],[55,53],[66,63]];
+function playerHitTime(pr,p,x0=pr.x,y0=pr.y,s=null){
+ const [bw,bh]=HIT_BODIES[p.character]||HIT_BODIES[0],r=(pr.drawRadius||0)*1.8;
+ const tilt=s&&!p.falling&&s.jump?.sid!==p.sid?surfaceAngle(s,p.x,p.y):0,cs=Math.cos(tilt),sn=Math.sin(tilt);
+ const local=(x,y)=>({x:((x-p.x)*cs+(y-p.y)*sn)/(bw+r),y:(-(x-p.x)*sn+(y-p.y)*cs+bh-2)/(bh+r)});
+ const a=local(x0,y0),b=local(pr.x,pr.y),dx=b.x-a.x,dy=b.y-a.y,A=dx*dx+dy*dy,B=2*(a.x*dx+a.y*dy),C=a.x*a.x+a.y*a.y-1;
+ if(C<=0)return 0;if(A<1e-12)return Infinity;const d=B*B-4*A*C;if(d<0)return Infinity;
+ const t=(-B-Math.sqrt(d))/(2*A);return t>=0&&t<=1?t:Infinity;
+}
+function projectileHitsPlayer(pr,p){return playerHitTime(pr,p)!==Infinity;}
+function firstPlayerHit(s,pr,x0,y0){let hit=null,time=Infinity;for(const p of s.players){if(p.hp<=0||(p.sid===pr.owner&&pr.age<=.25))continue;const t=playerHitTime(pr,p,x0,y0,s);if(t<time){time=t;hit=p;}}return {hit,time};}
+function terrainHitTime(s,pr,x0,y0){const steps=Math.max(1,Math.ceil(Math.hypot(pr.x-x0,pr.y-y0)/2));for(let i=0;i<=steps;i++){const t=i/steps,x=x0+(pr.x-x0)*t,y=y0+(pr.y-y0)*t;if(x>=0&&x<=W&&solidAt(s,x,y))return t;}return Infinity;}
 function updateProjectiles(s,t){
  while(s.queue.length&&s.queue[0].at<=t)launch(s,s.queue.shift());
  for(const pr of s.projectiles){pr.age+=DT;const dt=DT/4;
   for(let k=0;k<4&&!pr.dead;k++){
    pr.vx+=s.wind*dt*.72;pr.vy+=330*dt;
    if(pr.homing){let target=pr.lockSid?s.players.find(p=>p.sid===pr.lockSid&&p.hp>0):null;if(!target){const owner=s.players.find(p=>p.sid===pr.owner),used=new Set(s.projectiles.filter(q=>q!==pr&&q.owner===pr.owner&&q.homing&&q.lockSid).map(q=>q.lockSid));const candidates=s.players.filter(p=>p.hp>0&&p.sid!==pr.owner&&!(s.mode==='team'&&owner&&p.team===owner.team)&&Math.hypot(p.x-pr.x,p.y-28-pr.y)<(pr.homingRadius||360)).sort((a,b)=>{const au=used.has(a.sid)?1:0,bu=used.has(b.sid)?1:0;if(au!==bu)return au-bu;return Math.hypot(a.x-pr.x,a.y-28-pr.y)-Math.hypot(b.x-pr.x,b.y-28-pr.y);});target=candidates[0]||null;if(target){pr.lockSid=target.sid;event(s,'lock_on',{owner:pr.owner,targetSid:target.sid,x:target.x,y:target.y-28,shotIndex:pr.shotIndex||0});}}
-    if(target){const tx=target.x,ty=target.y-28,dx=tx-pr.x,dy=ty-pr.y,dist=Math.hypot(dx,dy);if(projectileHitsPlayer(pr,target)){pr.hitSid=target.sid;pr.x=tx;pr.y=ty;impact(s,pr);pr.dead=true;break;}const speed=Math.max(360,Math.hypot(pr.vx,pr.vy)),heading=Math.atan2(pr.vy,pr.vx),desired=Math.atan2(dy,dx),diff=Math.atan2(Math.sin(desired-heading),Math.cos(desired-heading)),maxTurn=(pr.homingTurn||4.8)*dt,direction=heading+clamp(diff,-maxTurn,maxTurn);pr.vx=Math.cos(direction)*speed;pr.vy=Math.sin(direction)*speed;pr.locked=true;}}
-   pr.x+=pr.vx*dt;pr.y+=pr.vy*dt;if(pr.pierceActive)pr.pierceLeft=Math.max(0,pr.pierceLeft-Math.hypot(pr.vx,pr.vy)*dt);
+    if(target){const tx=target.x,ty=target.y-28,dx=tx-pr.x,dy=ty-pr.y,dist=Math.hypot(dx,dy);const speed=Math.max(360,Math.hypot(pr.vx,pr.vy)),heading=Math.atan2(pr.vy,pr.vx),desired=Math.atan2(dy,dx),diff=Math.atan2(Math.sin(desired-heading),Math.cos(desired-heading)),maxTurn=(pr.homingTurn||4.8)*dt,direction=heading+clamp(diff,-maxTurn,maxTurn);pr.vx=Math.cos(direction)*speed;pr.vy=Math.sin(direction)*speed;pr.locked=true;}}
+   const x0=pr.x,y0=pr.y;pr.x+=pr.vx*dt;pr.y+=pr.vy*dt;if(pr.pierceActive)pr.pierceLeft=Math.max(0,pr.pierceLeft-Math.hypot(pr.vx,pr.vy)*dt);
    for(const env of s.envs){const withinColumn=env.type==='wind'?windColumnContains(pr,env):(Math.abs(pr.x-env.x)<=env.radius+pr.drawRadius+18&&pr.y>=env.top-18&&pr.y<=env.y+10);if(withinColumn){if(env.type==='wind'){const firstTouch=!pr.windTouched?.includes(env.id);if(firstTouch){pr.windTouched=(pr.windTouched||[]);pr.windTouched.push(env.id);pr.envWind=true;pr.envWindDir=env.flow||-1;event(s,'env_touch',{envType:'wind',x:pr.x,y:pr.y,flow:env.flow||-1});}applyWindColumn(pr,env,dt,firstTouch);pr.envType='wind';}
      else{if(!pr.fireBoosted?.includes(env.id)){pr.damage*=env.boost;pr.radius*=1.12;pr.craterRadius*=1.1;pr.vx*=1.08;pr.vy*=1.08;pr.fireBoosted=(pr.fireBoosted||[]);pr.fireBoosted.push(env.id);pr.envFire=true;event(s,'env_touch',{envType:'fire',x:pr.x,y:pr.y,boost:env.boost});}pr.vy-=34*dt;pr.envType='fire';}}}
    for(const d of s.drops)if(d.status==='chute'&&(Math.hypot(pr.x-d.x,pr.y-d.y)<25||Math.hypot(pr.x-d.x,pr.y-(d.y-52))<35)){d.status='fall';d.vy=800;d.cutAt=t;event(s,'cut',{x:d.x,y:d.y});}
    // Above-camera shots remain alive. Only bounded side/bottom misses disappear.
    if(pr.x < -480||pr.x>W+480||pr.y>H+80||pr.age>15){pr.dead=true;event(s,'miss',{x:pr.x,y:pr.y});break;}
-   const hit=pr.lockSid?s.players.find(p=>p.hp>0&&p.sid===pr.lockSid&&projectileHitsPlayer(pr,p)):s.players.find(p=>p.hp>0&&(p.sid!==pr.owner||pr.age>.25)&&projectileHitsPlayer(pr,p));
-   if(hit){pr.hitSid=hit.sid;impact(s,pr);pr.dead=true;}
-   else if(!pr.lockSid&&pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y)){
+   const {hit,time}=firstPlayerHit(s,pr,x0,y0),terrainTime=terrainHitTime(s,pr,x0,y0);
+   const contact=Math.min(time,terrainTime);if(contact!==Infinity){pr.x=x0+(pr.x-x0)*contact;pr.y=y0+(pr.y-y0)*contact;}
+   if(hit&&time<=terrainTime){pr.hitSid=hit.sid;impact(s,pr);pr.dead=true;}
+   else if(terrainTime!==Infinity){
     if(pr.pierceLeft>0){pr.pierceActive=true;destroy(s,pr.x,pr.y,pr.craterRadius);settle(s);if(pr.pierceLeft<=0){impact(s,pr);pr.dead=true;}}
     else{impact(s,pr);pr.dead=true;}
    }
@@ -273,7 +286,7 @@ function tick(s,now){
  }return changed;
 }
 function roster(s,players,now){const ids=new Set(players.map(p=>String(p.sessionId)));let changed=false;for(const p of s.players)if(!p.cpu&&!ids.has(p.sid)&&p.hp>0){p.hp=0;changed=true;}if(changed&&s.phase==='aim'){if(!checkWinner(s,now)&&s.players[s.turn].hp<=0)next(s,now);}return changed;}
-function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]],windTouched=new Set();let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT*.72;pr.vy+=330*DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;for(const env of s.envs||[]){if(env.type!=='wind'||!windColumnContains(pr,env))continue;const firstTouch=!windTouched.has(env.id);if(firstTouch)windTouched.add(env.id);applyWindColumn(pr,env,DT,firstTouch);}if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const victim=s.players.find(q=>q.hp>0&&(q!==p||i>14)&&projectileHitsPlayer(pr,q));if(victim||(pr.x>=0&&pr.x<=W&&solidAt(s,pr.x,pr.y))){hit={x:pr.x,y:pr.y,miss:false};break;}}return {path,hit};}
+function trace(s,p,angle,power){const pr=projectile(s,p,angle,power,'normal',null,0),path=[[pr.x,pr.y]],windTouched=new Set();let hit={x:pr.x,y:pr.y,miss:true};for(let i=0;i<900;i++){pr.vx+=s.wind*DT*.72;pr.vy+=330*DT;const x0=pr.x,y0=pr.y;pr.age+=DT;pr.x+=pr.vx*DT;pr.y+=pr.vy*DT;for(const env of s.envs||[]){if(env.type!=='wind'||!windColumnContains(pr,env))continue;const firstTouch=!windTouched.has(env.id);if(firstTouch)windTouched.add(env.id);applyWindColumn(pr,env,DT,firstTouch);}if(i%2===0)path.push([pr.x,pr.y]);if(pr.x < -480||pr.x>W+480||pr.y>H+80){hit={x:pr.x,y:pr.y,miss:true};break;}const contact=Math.min(firstPlayerHit(s,pr,x0,y0).time,terrainHitTime(s,pr,x0,y0));if(contact!==Infinity){hit={x:x0+(pr.x-x0)*contact,y:y0+(pr.y-y0)*contact,miss:false};path.push([hit.x,hit.y]);break;}}return {path,hit};}
 function cpuAim(s,precise=false){const p=s.players[s.turn],target=s.players.filter(q=>q!==p&&q.hp>0&&!(s.mode==='team'&&q.team===p.team)).sort((a,b)=>Math.abs(a.x-p.x)-Math.abs(b.x-p.x))[0];if(!target)return{angle:45,power:65};p.face=target.x>p.x?1:-1;let best={angle:45,power:75},score=Infinity;for(let a=Math.max(25,spec(p).angle[0]);a<=spec(p).angle[1];a+=4)for(let v=25;v<=100;v+=3){const t=trace(s,p,a,v),d=Math.hypot(t.hit.x-target.x,t.hit.y-target.y)+(t.hit.miss?1000:0);if(d<score){score=d;best={angle:a,power:v};}}if(!precise){const mild=random(s)<.22,angleError=(random(s)*2-1)*(mild?2:9),powerError=(random(s)*2-1)*(mild?3:13);best.angle=clamp(best.angle+angleError,...spec(p).angle);best.power=clamp(best.power+powerError,18,100);}return best;}
 function shiftClock(s,delta){s.simAt+=delta;s.deadline+=delta;if(s.nextDropAt)s.nextDropAt+=delta;if(s.nextEnvAt)s.nextEnvAt+=delta;if(s.shot)s.shot.at+=delta;if(s.jump)s.jump.at+=delta;if(s.flightEnd)s.flightEnd+=delta;for(const d of s.drops){d.born+=delta;if(d.cutAt)d.cutAt+=delta;if(d.landedAt)d.landedAt+=delta;}for(const env of s.envs){env.born+=delta;env.ends+=delta;}for(const z of s.zones||[])if(z.nextFireAt)z.nextFireAt+=delta;for(const q of s.queue)q.at+=delta;for(const p of s.projectiles)p.born+=delta;for(const e of s.events)e.at+=delta;}
 root.BloomEngine={W,H,STEP,DROP_MS,WEAPONS,NORMALS,weaponSpec,weaponDescription,MAPS,solidAt,surfaceAngle,muzzlePosition,aimAngle,destroy,settle,CHARACTERS,ITEMS,create,ground,buildMap,start,command,tick,roster,trace,cpuAim,shiftClock,spawnDrop,spec};
