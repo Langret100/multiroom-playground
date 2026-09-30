@@ -271,7 +271,7 @@
     if(phase===PHASES.CHAR_SELECT){ pauseGame(true); setSelecting(true,'캐릭터'); ticker('캐릭터 선택', ()=>{ if(!state.localCharChosen){ const t=randomCharType(); if(t&&G()?.selectChar) G().selectChar(t); else document.querySelector('#charSelectGrid .character')?.click(); } if(iAmHost()) finalizeCharSelect(true); }); }
     else if(phase===PHASES.LEVEL_CHOICE){ if(!Array.isArray(state.phaseParticipants)||!state.phaseParticipants.length) state.phaseParticipants=getExpectedChoiceParticipants(); if(!sameChoicePhase){ resetChoiceDone(); state.__mxChoiceUiOpened=false; } setSelecting(true,'레벨업'); forceOpenChoiceUiForPhase(); ticker('레벨업 선택', ()=>{ if(isChoiceVisible()) autoPickCard('#upgrades .upgradeCard'); markChoiceDoneLocal(true); }); pauseGame(true); }
     else if(phase===PHASES.CHEST_CHOICE){ if(!Array.isArray(state.phaseParticipants)||!state.phaseParticipants.length) state.phaseParticipants=getExpectedChoiceParticipants(); if(!sameChoicePhase){ resetChoiceDone(); state.__mxChoiceUiOpened=false; state.__mxChestMathSolved=false; state.__mxChestAbortedLocal=false; resetMathUiForSharedPhase(); } setSelecting(true,'보물'); forceOpenChoiceUiForPhase(); ticker('보물 선택', ()=>{ const vis=isChoiceVisible(); if(vis==='itemScreen' && state.__mxChestMathSolved){ autoPickCard('#items .upgradeCard'); markChoiceDoneLocal(true); } else { markChoiceDoneLocal(false); try{ document.getElementById('mathScreen')?.classList.add('hidden'); document.getElementById('itemScreen')?.classList.add('hidden'); }catch(_){} } }); pauseGame(true); }
-    else if(phase===PHASES.PLAYING){ state.phaseParticipants=[]; setSelecting(false,''); setOverlay(''); pauseGame(false); hideChoiceScreens(); }
+    else if(phase===PHASES.PLAYING){ resetChoiceDone(); state.phaseParticipants=[]; setSelecting(false,''); setOverlay(''); pauseGame(false); hideChoiceScreens(); }
     else { pauseGame(true); }
   }
   function hideChoiceScreens(){ try{ ['levelUpScreen','itemScreen','mathScreen'].forEach(id=>document.getElementById(id)?.classList.add('hidden')); }catch(_){ } }
@@ -290,7 +290,7 @@
   }
   function autoPickCard(sel){ try{ document.querySelector(sel)?.click(); }catch(_){ } }
   function currentPhaseKey(){ return `${state.phase}:${safeNum(state.phaseDeadline,0)}`; }
-  function resetChoiceDone(){ state.choiceDoneBySid={}; state.choiceAckKey=''; }
+  function resetChoiceDone(){ state.choiceDoneBySid={}; state.choiceAckKey=''; state.__mxPendingChoiceCommit=''; for(const id of ['levelUpScreen','itemScreen']){const root=document.getElementById(id);if(root)delete root.dataset.mxSelectedLocked;} }
   function getExpectedChoiceParticipants(){ const arr=(Array.isArray(state.phaseParticipants)?state.phaseParticipants:[]).filter(Boolean); if(arr.length) return Array.from(new Set(arr)); const all=new Set(); for(const sid of (Array.isArray(state.rosterSids)?state.rosterSids:[])){ if(sid) all.add(String(sid)); } for(const sid of Array.from(state.peers||[])){ if(sid) all.add(String(sid)); } for(const sid of Object.keys(state.selectedBySid||{})){ if(sid) all.add(String(sid)); } const me=mySid()||'self'; if(me) all.add(me); return Array.from(all); }
   function inChoicePhase(){ return state.phase===PHASES.LEVEL_CHOICE || state.phase===PHASES.CHEST_CHOICE; }
   function localChoiceFinished(){ const sid=mySid()||''; return !!(sid && state.choiceDoneBySid && Object.prototype.hasOwnProperty.call(state.choiceDoneBySid,sid)); }
@@ -305,8 +305,8 @@
     const prevVal = Object.prototype.hasOwnProperty.call(state.choiceDoneBySid||{}, sid) ? !!state.choiceDoneBySid[sid] : null;
     const tooSoon = samePhase && (nowTs - safeNum(state.lastChoiceAckSentAt,0) < 250) && prevVal===!!ok;
     if(tooSoon) return;
-    state.choiceAckKey=key; state.choiceDoneBySid[sid]=!!ok; state.lastChoiceAckSentAt = nowTs;
-    try{ state.__mxChoicePulse = (safeNum(state.__mxChoicePulse,0)+1)|0; state.__mxChoicePhase = String(state.phase||''); state.__mxChoicePulseAt = nowTs; }catch(_){ }
+    state.__mxPendingChoiceCommit=''; state.choiceAckKey=key; state.choiceDoneBySid[sid]=!!ok; state.lastChoiceAckSentAt = nowTs;
+    try{ state.__mxChoicePulse = (safeNum(state.__mxChoicePulse,0)+1)|0; state.__mxChoicePhase = String(state.phase||''); state.__mxChoiceToken=currentPhaseKey(); state.__mxChoicePulseAt = nowTs; }catch(_){ }
     // Legacy Worker compatibility: completion is carried by the existing mx_state relay.
     // Do not require a newer Worker guest-event allowlist for choice_done.
     if(iAmHost()) maybeFinishSharedChoice();
@@ -336,22 +336,10 @@
     if(!targetList.length) targetList = Array.from(live);
     if(!targetList.length) targetList = participants;
     const doneMap = state.choiceDoneBySid||{};
-    const doneKeys = Object.keys(doneMap||{}).filter(k=>Object.prototype.hasOwnProperty.call(doneMap,k));
-    const done = targetList.every(sid => Object.prototype.hasOwnProperty.call(doneMap, sid));
-    if(done){ endChoicePhase(); return; }
-    const doneCount = targetList.filter(sid => Object.prototype.hasOwnProperty.call(doneMap, sid)).length;
-    if(doneKeys.length && doneKeys.length >= Math.max(1, live.size)){ endChoicePhase(); return; }
-    const uniqueDoneKnown = Array.from(new Set(doneKeys)).filter(sid => live.has(String(sid||'')) || participants.includes(String(sid||'')));
-    const expectedNow = Math.max(1, Math.min(activeCount(), Math.max(live.size, participants.length||0)));
-    if(uniqueDoneKnown.length >= expectedNow){ endChoicePhase(); return; }
-    const liveHumans = Math.max(1, (me?1:0) + Object.values(state.remoteStates||{}).filter(rs=>rs && (nowTs-safeNum(rs.ts,0))<=2500 && safeNum(rs.hp,1)>0).length);
-    if(doneCount >= Math.min(liveHumans, targetList.length||liveHumans)){ endChoicePhase(); return; }
-    // root-cause guard: same choice phase re-sync can re-open timer even after local/remote pick.
-    // If all currently alive humans have sent choice_done at least once in this phase, end immediately.
-    if(Object.keys(doneMap).length >= liveHumans && liveHumans>=1){ endChoicePhase(); return; }
-    try{ const cands=targetList.filter(Boolean); let inferred=0; for(const sid of cands){ if(Object.prototype.hasOwnProperty.call(doneMap,sid)) { inferred++; continue; } const rs=state.remoteStates&&state.remoteStates[sid]; if(rs && String(rs.choicePhase||'')===String(state.phase||'') && safeNum(rs.choicePulse,0)>0){ inferred++; } } if(cands.length && inferred>=cands.length){ endChoicePhase(); return; } }catch(_){}
+    if(targetList.every(sid=>Object.prototype.hasOwnProperty.call(doneMap,sid)))endChoicePhase();
   }
-  function forceOpenChoiceUiForPhase(){ try{ const g=G(); if(!g) return; const before=isChoiceVisible(); state.__mxForceChoiceUi=true; try{ if(state.phase===PHASES.LEVEL_CHOICE && !before && typeof g.showLevelUp==='function') g.showLevelUp(); if(state.phase===PHASES.CHEST_CHOICE && !before){ if(state.__mxChestAbortedLocal) return; if(state.__mxChestMathSolved && typeof g.showItemScreen==='function') g.showItemScreen(); else if(typeof g.showMathScreen==='function') g.showMathScreen(g?.player?.x||0,g?.player?.y||0); else if(typeof g.showItemScreen==='function') g.showItemScreen(); } } finally { state.__mxForceChoiceUi=false; } if(isChoiceVisible()) state.__mxChoiceUiOpened=true; }catch(_){ state.__mxForceChoiceUi=false; } }
+
+  function forceOpenChoiceUiForPhase(){ try{ if(localChoiceFinished())return; const g=G(); if(!g) return; const before=isChoiceVisible(); state.__mxForceChoiceUi=true; try{ if(state.phase===PHASES.LEVEL_CHOICE && !before && typeof g.showLevelUp==='function') g.showLevelUp(); if(state.phase===PHASES.CHEST_CHOICE && !before){ if(state.__mxChestAbortedLocal) return; if(state.__mxChestMathSolved && typeof g.showItemScreen==='function') g.showItemScreen(); else if(typeof g.showMathScreen==='function') g.showMathScreen(g?.player?.x||0,g?.player?.y||0); else if(typeof g.showItemScreen==='function') g.showItemScreen(); } } finally { state.__mxForceChoiceUi=false; } if(isChoiceVisible()) state.__mxChoiceUiOpened=true; }catch(_){ state.__mxForceChoiceUi=false; } }
   function broadcastPhaseSync(phase, deadline, extra){ if(!iAmHost()) return; const participants = (phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE) ? getExpectedChoiceParticipants() : []; sendPhase(phase,Object.assign({ deadline: deadline||0, expectedHumans: activeCount(), selectedBySid: state.selectedBySid||{}, phaseParticipants: participants }, extra||{})); }
   function beginCharSelect(){ if(!openCharSelect()){ setTimeout(beginCharSelect,120); return; } applyDifficulty(state.startPayload?.difficulty || state.init?.level || 1); state.selectedBySid={}; state.localCharChosen=false; state.localCharType=''; refreshCharSelectLocks(); const deadline=now()+10000; setPhase(PHASES.CHAR_SELECT,{ deadline }); if(iAmHost()) broadcastPhaseSync(PHASES.CHAR_SELECT, deadline); }
   function maybeStartSequence(){ if(!embed || !state.init) return; ensureUi(); forceEmbedScreens(); if(!state.startPayload){ setOverlay('게임 시작 동기화 대기…'); pauseGame(true); return; } if(state.phase===PHASES.LOBBY) beginCharSelect(); }
@@ -367,6 +355,16 @@
       if(!target || target.dataset.mxTaunt==='1') return;
       target.dataset.mxTaunt='1';
       target.dataset.mxTauntApplied='0';
+      target.dataset.itemId='taunt_shield';
+      target.onclick=()=>{
+        if(target.dataset.mxPicked==='1')return;
+        target.dataset.mxPicked='1';
+        const g=G();if(!g?.player)return;
+        applyItemChoiceLocal(g.player,'taunt_shield');
+        markChoiceUiPicked(root,target);
+        window.__mxOnItemPick?.('taunt_shield');
+        g.paused=inChoicePhase();
+      };
       const titleEl = target.querySelector('h3,.title,.itemName,.upgradeTitle') || target;
       const descEl = target.querySelector('p,.desc,.description,.itemDesc') || null;
       if(titleEl){ try{ titleEl.textContent='도발의 방패'; }catch(_){} }
@@ -388,6 +386,7 @@
   function detectLevelChoiceKey(card){
     const ds = card && card.dataset && card.dataset.upgradeId ? normalizeChoiceText(card.dataset.upgradeId) : '';
     if(ds){
+      if(['hp_up','damage_up','atk_speed_up','speed_up','pierce','pierce_up','regen','regen_up','shield','shield_up'].includes(ds))return ds;
       const direct = {
         '체력 증가':'hp_up', '공격력 증가':'damage_up', '공격속도 증가':'atk_speed_up',
         '이동속도 증가':'speed_up', '관통':'pierce', '체력 회복':'regen', '보호막':'shield'
@@ -478,7 +477,7 @@
     if(!p) return false;
     p.itemLevels = Object.assign({}, p.itemLevels||{});
     mxGuestChoiceStats.itemLevels = Object.assign({}, mxGuestChoiceStats.itemLevels||{});
-    const g = G();
+    const g = p === G()?.player ? G() : null;
     switch(String(key||'')){
       case 'poison':
         p.itemLevels.poison = (p.itemLevels.poison||0)+1;
@@ -690,7 +689,7 @@ function hostApplyRemotePersistentItems(g){
   const hit=(enemy,damage,sid)=>{ if(!enemy||safeNum(enemy.hp,0)<=0)return; enemy.hp-=Math.max(0,damage); enemy.__mxLastHitSid=sid; enemy.__mxLastHitAt=t; };
   const nearest=(x,y,range)=>{ let best=null,dist=range; for(const e of g.enemies){ if(!e||e.__mxGhost||safeNum(e.hp,0)<=0)continue; const d=Math.hypot(safeNum(e.x)-x,safeNum(e.y)-y); if(d<dist){dist=d;best=e;} } return best; };
   for(const [sid,rs] of Object.entries(state.remoteStates||{})){
-    if(!rs||(t-safeNum(rs.ts,0))>2200) continue;
+    if(!rs||safeNum(rs.hp,0)<=0||(t-safeNum(rs.ts,0))>2200) continue;
     const il=rs.itemLevels||{}, timers=state.remoteItemTimers[sid]||(state.remoteItemTimers[sid]={});
     const x=safeNum(rs.x),y=safeNum(rs.y),damage=Math.max(1,safeNum(rs.damage,10));
     const spinLv=Math.max(0,Math.round(safeNum(il.spin,0)));
@@ -736,6 +735,7 @@ function buildRemoteAttackOwner(rs, meta, sx, sy){
     lastLightningTime: 0,
     lastMeteorTime: 0,
     gainExp(){},
+    dealDamage(enemy,damage){ const C=getGlobalCtor('Player'); if(C?.prototype?.dealDamage){enemy.__mxLastHitSid=String(rs?.sid||meta?.sid||'');return C.prototype.dealDamage.call(this,enemy,damage);} },
     spinBladeLastHit: {},
   };
 }
@@ -806,7 +806,12 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     const targets = collectRemoteTargets(g, sx, sy, tx, ty, maxRange, width, targetCount);
     if(!targets.length){ try{ if(Number.isFinite(tx)||Number.isFinite(ty)) pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', sx, sy, Number.isFinite(tx)?tx:sx, Number.isFinite(ty)?ty:sy); }catch(_){} return; }
 
-    const owner = buildRemoteAttackOwner(rs, meta, sx, sy);
+    state.remoteAttackOwners=state.remoteAttackOwners||{};
+    const previous=state.remoteAttackOwners[sid];
+    const fresh=buildRemoteAttackOwner(rs,meta,sx,sy);
+    if(previous)for(const key of ['lastLightningTime','lastMeteorTime','lastChestSpawnTime','spinBladeLastHit'])if(previous[key]!==undefined)fresh[key]=previous[key];
+    const owner=previous?Object.assign(previous,fresh):fresh;
+    state.remoteAttackOwners[sid]=owner;
     const fxTarget = targets[0];
     try{ pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', sx, sy, safeNum(fxTarget.x), safeNum(fxTarget.y)); }catch(_){}
     for(const enemy of targets){
@@ -1024,9 +1029,9 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       // ★ FIX: s.player는 호스트 자신의 스탯 스냅샷.
       // 게스트의 개인 전투 스탯(damage/speed/아이템 효과)을 덮어쓰면
       // 레벨업·아이템 보상 선택 결과가 매 50ms마다 리셋된다.
-      // skillLevels/itemLevels는 merge만 (호스트 기본값 + 게스트 선택값 보존)
-      lp.skillLevels = Object.assign({}, hp.skillLevels||{}, lp.skillLevels||{});
-      lp.itemLevels  = Object.assign({}, hp.itemLevels||{},  lp.itemLevels||{});
+      // Team XP is shared; rewards belong only to the player who selected them.
+      lp.skillLevels = Object.assign({}, lp.skillLevels||{});
+      lp.itemLevels  = Object.assign({}, lp.itemLevels||{});
       // [BUG FIX] itemLevels merge 후 파생 스탯 재계산: 아이템 효과가 스냅샷으로 리셋되지 않도록
       try{
         const il = lp.itemLevels;
@@ -1257,7 +1262,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     }catch(_){}
   }
   function handlePhaseSync(m){ if(typeof m.expectedHumans==='number') state.expectedHumans=Math.max(1,Number(m.expectedHumans||1)); if(m.selectedBySid&&typeof m.selectedBySid==='object') state.selectedBySid=Object.assign({}, m.selectedBySid); refreshCharSelectLocks(); const phase=String(m.phase||''); if(Object.values(PHASES).includes(phase)){ if(phase===PHASES.CHAR_SELECT && !openCharSelect()){ setTimeout(()=>handlePhaseSync(m),120); return; } const incomingDeadline=(Number(m.deadline||0)||0); const isChoice=(phase===PHASES.LEVEL_CHOICE||phase===PHASES.CHEST_CHOICE); const alreadyPicked=(isChoice && (localChoiceFinished() || localPickedCardInVisibleChoice())); const sameChoiceResync=(isChoice && phase===state.phase && (alreadyPicked || !!state.selecting)); if(sameChoiceResync){ if(Array.isArray(m.phaseParticipants)&&m.phaseParticipants.length){ state.phaseParticipants = m.phaseParticipants.map(v=>String(v||'')).filter(Boolean); } if(alreadyPicked){ setOverlay('다른 플레이어 선택 대기'); try{ pauseGame(true); }catch(_){} return; } } setPhase(phase,{ deadline:(sameChoiceResync && alreadyPicked ? safeNum(state.phaseDeadline,incomingDeadline) : incomingDeadline), participants:Array.isArray(m.phaseParticipants)?m.phaseParticipants:undefined }); if(phase===PHASES.LEVEL_CHOICE || phase===PHASES.CHEST_CHOICE) forceOpenChoiceUiForPhase(); } }
-  function handleMxEvent(m){ const id=String(m.id||''); if(id&&id===state.lastEventId) return; if(id) state.lastEventId=id; const evt=String(m.evt||''); if(evt==='boss_spawn' && !iAmHost()){ try{ if (G() && G().boss == null && typeof G().spawnBoss==='function') G().spawnBoss(); }catch(_){ } } if(evt==='char_conflict'){ const to=String(m.to||''); if(to && to!==(mySid()||'')) return; const c=String(m.character||''); if(state.localCharType && state.localCharType===c){ state.localCharChosen=false; state.localCharType=''; const me=mySid()||'self'; delete state.selectedBySid[me]; refreshCharSelectLocks(); setOverlay('같은 캐릭터 선택됨 · 다른 캐릭터를 골라주세요'); } return; } if(evt==='chest_touch'){ if(iAmHost()){ try{ if(inChoicePhase()) return; const g=G(); if(!g) return; const tx=safeNum(m.x, NaN), ty=safeNum(m.y, NaN); let hit=null, idx=-1; const items=Array.isArray(g.items)?g.items:[]; for(let i=0;i<items.length;i++){ const it=items[i]; if(!it||it.type!=='chest') continue; const dx=safeNum(it.x)-tx, dy=safeNum(it.y)-ty; if(!Number.isFinite(tx)||!Number.isFinite(ty) || (dx*dx+dy*dy)<=900){ hit=it; idx=i; break; } } if(hit && idx>=0){ try{ g.items.splice(idx,1); }catch(_){} } /* [BUG FIX] 호스트는 상자 제거 + CHEST_CHOICE 페이즈 시작만. showMathScreen 호출하면 호스트 화면에도 수학 문제가 떠버림 */ const deadline=now()+20000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.CHEST_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.CHEST_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); }catch(_){} } return; } if(evt==='choice_request'){ if(iAmHost()){ const phaseReq=String(m.phase||''); const uiNow = isChoiceVisible(); /* guest 요청으로도 페이즈를 시작할 수 있어야 함 (host UI 표시 여부와 무관) */ if(inChoicePhase() && state.phase===phaseReq){ return; } const deadline = now() + (phaseReq===PHASES.CHEST_CHOICE ? 20000 : 12000); state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(phaseReq, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(phaseReq,{deadline, participants: state.phaseParticipants.slice()}); } return; } if(evt==='remote_attack'){ const sid=String(m.from||m.sid||''); if(iAmHost()){ if(sid && sid===String(mySid()||'')) return; try{ const ctype=String(m.charType||'').toLowerCase(); pushRemoteFx(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee'), safeNum(m.x,NaN), safeNum(m.y,NaN), safeNum(m.tx,safeNum(m.x,0)), safeNum(m.ty,safeNum(m.y,0))); }catch(_){} const rs=(state.remoteStates&&state.remoteStates[sid])||Object.assign({sid}, m||{}); simulateRemoteAttackOnHost(rs,{ sid, x:m.x, y:m.y, tx:m.tx, ty:m.ty, damage:m.damage, range:m.range, atkSpeed:m.atkSpeed, crit:m.crit, charType:m.charType, pulse:m.pulse, multishot:m.multishot, pierce:m.pierce, poison:m.poison, poisonDmg:m.poisonDmg, freeze:m.freeze, explode:m.explode, lightning:m.lightning, meteorChance:m.meteorChance, meteorDmg:m.meteorDmg, spinBlade:m.spinBlade, spinDmgMultiplier:m.spinDmgMultiplier, shield:m.shield, shieldHp:m.shieldHp, itemLevels:m.itemLevels }); return; } try{ if(sid && sid===String(mySid()||'')) return; const g=G(); if(!g) return; const x=safeNum(m.x, NaN), y=safeNum(m.y, NaN), tx=safeNum(m.tx, x), ty=safeNum(m.ty, y); if(!Number.isFinite(x)||!Number.isFinite(y)) return; const ctype=String(m.charType||'').toLowerCase(); const isRanged=/ranger|archer|mage|wizard/.test(ctype); const ang=Math.atan2((Number.isFinite(ty)?ty:y)-y,(Number.isFinite(tx)?tx:x)-x); try{ pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', x, y, tx, ty); }catch(_){} if(isRanged){ const archer=/ranger|archer/.test(ctype), mage=/mage|wizard/.test(ctype); const dx=(Number.isFinite(tx)?tx:x)-x, dy=(Number.isFinite(ty)?ty:y)-y; const mx=x + dx*0.55, my=y + dy*0.55; try{ if(typeof g.textParticle==='function'){ g.textParticle(x, y-10, archer?'↗':'✦', archer?'#ffd27a':'#9fd8ff', 0.45); g.textParticle(mx, my, archer?'➶':'✦', archer?'#ffcf66':'#8ed0ff', 0.45); if(mage) g.textParticle(x+dx*0.78, y+dy*0.78, '✦', '#b8e6ff', 0.45); } }catch(_){} } else if(Array.isArray(g.slashes)){ g.slashes.push({ x, y, angle:ang, opacity:0.95, life:6, color:'#ffffff' }); if(g.slashes.length>140) g.slashes.splice(0,g.slashes.length-140); } }catch(_){} return; } if(evt==='choice_done'){ const sid=String(m.from||m.sid||''); const ph=String(m.phase||''); if(!sid) return; if(ph && ph!==state.phase && !(state.phase===PHASES.PLAYING && (ph===PHASES.LEVEL_CHOICE||ph===PHASES.CHEST_CHOICE))) return; state.choiceDoneBySid = state.choiceDoneBySid||{}; state.choiceDoneBySid[sid]=!!m.ok; maybeFinishSharedChoice(); return; } if(evt==='choice_apply'){ const sid=String(m.sid||m.from||''); const kind=String(m.kind||''); const key=String(m.key||''); if(sid && kind && key){ const rs=(state.remoteStates&&state.remoteStates[sid]) || (state.remoteStates[sid]={sid}); applyChoiceToRemoteState(rs, kind, key); /* 게스트: 자신의 choice_apply는 이미 원본 onclick에서 적용됐으므로 skip *//* 호스트: 게스트의 choice_apply 수신 시 해당 remoteState에만 적용 (이미 위에서 처리됨) */ } return; } if(evt==='taunt_shield_pick'){ const sid=String(m.sid||m.from||''); if(sid){ state.tauntSid=sid; state.tauntChosen=true; } return; } if(evt==='game_over_all'){ try{ showGameOverThenQuit('game_over_all'); }catch(_){ try{ const g=G(); if(g){ g.paused=true; g.gameOver=true; } }catch(_){} setOverlay('팀 전멸 · 게임 오버'); } return; }
+  function handleMxEvent(m){ const id=String(m.id||''); if(id&&id===state.lastEventId) return; if(id) state.lastEventId=id; const evt=String(m.evt||''); if(evt==='boss_spawn' && !iAmHost()){ try{ if (G() && G().boss == null && typeof G().spawnBoss==='function') G().spawnBoss(); }catch(_){ } } if(evt==='char_conflict'){ const to=String(m.to||''); if(to && to!==(mySid()||'')) return; const c=String(m.character||''); if(state.localCharType && state.localCharType===c){ state.localCharChosen=false; state.localCharType=''; const me=mySid()||'self'; delete state.selectedBySid[me]; refreshCharSelectLocks(); setOverlay('같은 캐릭터 선택됨 · 다른 캐릭터를 골라주세요'); } return; } if(evt==='chest_touch'){ if(iAmHost()){ try{ if(inChoicePhase()) return; const g=G(); if(!g) return; const tx=safeNum(m.x, NaN), ty=safeNum(m.y, NaN); let hit=null, idx=-1; const items=Array.isArray(g.items)?g.items:[]; for(let i=0;i<items.length;i++){ const it=items[i]; if(!it||it.type!=='chest') continue; const dx=safeNum(it.x)-tx, dy=safeNum(it.y)-ty; if(!Number.isFinite(tx)||!Number.isFinite(ty) || (dx*dx+dy*dy)<=900){ hit=it; idx=i; break; } } if(hit && idx>=0){ try{ g.items.splice(idx,1); }catch(_){} } /* [BUG FIX] 호스트는 상자 제거 + CHEST_CHOICE 페이즈 시작만. showMathScreen 호출하면 호스트 화면에도 수학 문제가 떠버림 */ const deadline=now()+20000; state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(PHASES.CHEST_CHOICE, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(PHASES.CHEST_CHOICE,{deadline, participants: state.phaseParticipants.slice()}); }catch(_){} } return; } if(evt==='choice_request'){ if(iAmHost()){ const phaseReq=String(m.phase||''); const uiNow = isChoiceVisible(); /* guest 요청으로도 페이즈를 시작할 수 있어야 함 (host UI 표시 여부와 무관) */ if(inChoicePhase() && state.phase===phaseReq){ return; } const deadline = now() + (phaseReq===PHASES.CHEST_CHOICE ? 20000 : 12000); state.phaseParticipants=getExpectedChoiceParticipants(); broadcastPhaseSync(phaseReq, deadline,{ phaseParticipants: state.phaseParticipants.slice() }); setPhase(phaseReq,{deadline, participants: state.phaseParticipants.slice()}); } return; } if(evt==='remote_attack'){ const sid=String(m.from||m.sid||''); if(iAmHost()){ if(sid && sid===String(mySid()||'')) return; try{ const ctype=String(m.charType||'').toLowerCase(); pushRemoteFx(/ranger|archer/.test(ctype)?'archer':(/mage|wizard/.test(ctype)?'mage':'melee'), safeNum(m.x,NaN), safeNum(m.y,NaN), safeNum(m.tx,safeNum(m.x,0)), safeNum(m.ty,safeNum(m.y,0))); }catch(_){} const rs=(state.remoteStates&&state.remoteStates[sid])||Object.assign({sid}, m||{}); simulateRemoteAttackOnHost(rs,{ sid, x:m.x, y:m.y, tx:m.tx, ty:m.ty, damage:m.damage, range:m.range, atkSpeed:m.atkSpeed, crit:m.crit, charType:m.charType, pulse:m.pulse, multishot:m.multishot, pierce:m.pierce, poison:m.poison, poisonDmg:m.poisonDmg, freeze:m.freeze, explode:m.explode, lightning:m.lightning, meteorChance:m.meteorChance, meteorDmg:m.meteorDmg, spinBlade:m.spinBlade, spinDmgMultiplier:m.spinDmgMultiplier, shield:m.shield, shieldHp:m.shieldHp, itemLevels:m.itemLevels }); return; } try{ if(sid && sid===String(mySid()||'')) return; const g=G(); if(!g) return; const x=safeNum(m.x, NaN), y=safeNum(m.y, NaN), tx=safeNum(m.tx, x), ty=safeNum(m.ty, y); if(!Number.isFinite(x)||!Number.isFinite(y)) return; const ctype=String(m.charType||'').toLowerCase(); const isRanged=/ranger|archer|mage|wizard/.test(ctype); const ang=Math.atan2((Number.isFinite(ty)?ty:y)-y,(Number.isFinite(tx)?tx:x)-x); try{ pushRemoteFx(isRanged?(/ranger|archer/.test(ctype)?'archer':'mage'):'melee', x, y, tx, ty); }catch(_){} if(isRanged){ const archer=/ranger|archer/.test(ctype), mage=/mage|wizard/.test(ctype); const dx=(Number.isFinite(tx)?tx:x)-x, dy=(Number.isFinite(ty)?ty:y)-y; const mx=x + dx*0.55, my=y + dy*0.55; try{ if(typeof g.textParticle==='function'){ g.textParticle(x, y-10, archer?'↗':'✦', archer?'#ffd27a':'#9fd8ff', 0.45); g.textParticle(mx, my, archer?'➶':'✦', archer?'#ffcf66':'#8ed0ff', 0.45); if(mage) g.textParticle(x+dx*0.78, y+dy*0.78, '✦', '#b8e6ff', 0.45); } }catch(_){} } else if(Array.isArray(g.slashes)){ g.slashes.push({ x, y, angle:ang, opacity:0.95, life:6, color:'#ffffff' }); if(g.slashes.length>140) g.slashes.splice(0,g.slashes.length-140); } }catch(_){} return; } if(evt==='choice_done'){ const sid=String(m.from||m.sid||''); const ph=String(m.phase||''); if(!sid) return; if(ph && ph!==state.phase && !(state.phase===PHASES.PLAYING && (ph===PHASES.LEVEL_CHOICE||ph===PHASES.CHEST_CHOICE))) return; state.choiceDoneBySid = state.choiceDoneBySid||{}; state.choiceDoneBySid[sid]=!!m.ok; maybeFinishSharedChoice(); return; } if(evt==='choice_apply'){ return; } if(evt==='taunt_shield_pick'){ const sid=String(m.sid||m.from||''); if(sid){ state.tauntSid=sid; state.tauntChosen=true; } return; } if(evt==='game_over_all'){ try{ showGameOverThenQuit('game_over_all'); }catch(_){ try{ const g=G(); if(g){ g.paused=true; g.gameOver=true; } }catch(_){} setOverlay('팀 전멸 · 게임 오버'); } return; }
   }
   function handleMxMsg(msg){
     const m=(msg&&typeof msg==='object')?msg:{};
@@ -1269,6 +1274,8 @@ function simulateRemoteAttackOnHost(rs, meta={}){
     if(k==='mx_phase'||k==='phase'){ k='phase_sync'; }
     if(k==='mx_state'){ k='state'; }
     if(k==='mx_world'){ k='world'; }
+    // A delayed echo of our own phase must not undo a newer local transition.
+    if(iAmHost() && from===mySid() && (k==='phase_sync'||k==='world'))return;
     if(k==='hello'){ send('hello_ack',{}); return; }
     if(k==='hello_ack'){ if(from) markPeer(from); return; }
     if(k==='peer_left'){
@@ -1386,7 +1393,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         if(iAmHost()){
           const reqPulse=safeNum(m.choiceRequestPulse,0), prevReqPulse=safeNum(prev.choiceRequestPulse,0);
           const reqPhase=String(m.choiceRequestPhase||'');
-          if(reqPulse && reqPulse!==prevReqPulse && (reqPhase===PHASES.LEVEL_CHOICE || reqPhase===PHASES.CHEST_CHOICE) && !inChoicePhase()){
+          if(reqPulse && reqPulse!==prevReqPulse && (reqPhase===PHASES.LEVEL_CHOICE || reqPhase===PHASES.CHEST_CHOICE) && !inChoicePhase() && reqPhase===PHASES.CHEST_CHOICE && (G()?.items||[]).some(it=>it.type==='chest'&&Math.hypot(it.x-nx,it.y-ny)<=48)){
             const deadline=now() + (reqPhase===PHASES.CHEST_CHOICE ? 20000 : 12000);
             state.phaseParticipants=getExpectedChoiceParticipants();
             broadcastPhaseSync(reqPhase, deadline,{ phaseParticipants: state.phaseParticipants.slice() });
@@ -1404,7 +1411,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
         if(iAmHost() && inChoicePhase()){
           const cPulseNow=safeNum(m.choicePulse,0), cPulsePrev=safeNum(prev.choicePulse,0);
           const cPhase=String(m.choicePhase||'');
-          if(cPulseNow && cPulseNow!==cPulsePrev && cPhase===String(state.phase||'')){
+          if(cPulseNow && cPulseNow!==cPulsePrev && cPhase===String(state.phase||'') && String(m.choiceToken||'')===currentPhaseKey()){
             state.choiceDoneBySid = state.choiceDoneBySid||{};
             state.choiceDoneBySid[from]=true;
             maybeFinishSharedChoice();
@@ -1509,23 +1516,35 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       g.textParticle=function(x,y,textValue,color,scale){ const r=originalTextParticle(x,y,textValue,color,scale); if(iAmHost()&&String(textValue||'')==='치명타!') sendEvent('combat_fx',{effect:{type:'critical',x:safeNum(x,0),y:safeNum(y,0)}}); return r; };
       g.__mxCriticalTextWrapped=true;
     }
-    if(Array.isArray(g.effects) && !g.effects.__mxNetPushWrapped){
-      const effects=g.effects, originalPush=effects.push.bind(effects);
-      effects.push=function(...entries){
-        const result=originalPush(...entries);
-        if(iAmHost()){
-          const allowed=new Set(['poisoncloud','lightning','meteor','meteorExplosion','icespike','beam','explosion']);
-          const keys=['type','x','y','startX','startY','endX','endY','targetX','targetY','angle','length','life','width','radius','maxRadius','damage','size','level','height','maxHeight','progress'];
-          for(const src of entries){
-            if(!src||src.__mxSynced||!allowed.has(String(src.type||''))) continue;
-            const effect={}; for(const key of keys){ if(typeof src[key]==='number'||typeof src[key]==='string') effect[key]=src[key]; }
-            if(Array.isArray(src.segments)) effect.segments=src.segments.slice(0,32).map(s=>({x1:safeNum(s.x1),y1:safeNum(s.y1),x2:safeNum(s.x2),y2:safeNum(s.y2)}));
-            sendEvent('combat_fx',{effect});
-          }
+    // The game replaces effects with filter() every frame. Wrap each replacement,
+    // otherwise only effects from the very first array reach other participants.
+    if(!g.__mxEffectsPropertyWrapped){
+      let currentEffects;
+      const attach=entries=>{
+        const effects=Array.isArray(entries)?entries:[];
+        if(!effects.__mxNetPushWrapped){
+          const originalPush=effects.push.bind(effects);
+          effects.push=function(...entries){
+            const result=originalPush(...entries);
+            if(iAmHost()){
+              const allowed=new Set(['poisoncloud','lightning','meteor','meteorExplosion','icespike','beam','explosion']);
+              const keys=['type','x','y','startX','startY','endX','endY','targetX','targetY','angle','length','life','width','radius','maxRadius','damage','size','level','height','maxHeight','progress'];
+              for(const src of entries){
+                if(!src||src.__mxSynced||!allowed.has(String(src.type||'')))continue;
+                const effect={};for(const key of keys)if(typeof src[key]==='number'||typeof src[key]==='string')effect[key]=src[key];
+                if(Array.isArray(src.segments))effect.segments=src.segments.slice(0,32).map(s=>({x1:safeNum(s.x1),y1:safeNum(s.y1),x2:safeNum(s.x2),y2:safeNum(s.y2)}));
+                sendEvent('combat_fx',{effect});
+              }
+            }
+            return result;
+          };
+          Object.defineProperty(effects,'__mxNetPushWrapped',{value:true});
         }
-        return result;
+        return effects;
       };
-      effects.__mxNetPushWrapped=true;
+      currentEffects=attach(g.effects);
+      Object.defineProperty(g,'effects',{configurable:true,enumerable:true,get:()=>currentEffects,set:value=>{currentEffects=attach(value);}});
+      g.__mxEffectsPropertyWrapped=true;
     }
     const origShowCharSelect=g.showCharSelect?.bind(g); if(origShowCharSelect && !g.__mxShowCharSelectWrapped){ g.__mxShowCharSelectWrapped=true; g.showCharSelect=function(){ const r=origShowCharSelect(); try{ const grid=document.getElementById('charSelectGrid'); const arr=Array.isArray(window.CHAR_DESIGNS)?window.CHAR_DESIGNS:[]; Array.from(grid?.children||[]).forEach((el,idx)=>{ if(el&&el.dataset) el.dataset.charType=String(arr[idx]?.type||''); }); refreshCharSelectLocks(); }catch(_){ } return r; }; }
     if(origSelect){ g.selectChar=function(type){ const t=String(type||''); if(isCharTakenByOther(t)){ setOverlay('이미 다른 플레이어가 선택한 캐릭터입니다'); refreshCharSelectLocks(); return; } const sid=mySid()||'self'; state.localCharChosen=true; state.localCharType=t; state.selectedBySid[sid]=state.localCharType; refreshCharSelectLocks(); /* [FIX] 캐릭터 선택 시 스탯 초기화 제거 - 레벨업/아이템 선택 결과는 게임 종료까지 누적 유지 */ const r=origSelect(type); pauseGame(true); send('char_selected',{ character: state.localCharType }); if(iAmHost()) finalizeCharSelect(false); else setOverlay(`다른 플레이어 캐릭터 선택 대기 · ${Math.max(0,activeCount()-selectedCount())}명`); return r; }; }
@@ -1712,7 +1731,7 @@ function simulateRemoteAttackOnHost(rs, meta={}){
       multishot: safeNum(p.multishot,0), pierce: safeNum(p.pierce,0), poison: !!p.poison, poisonDmg: safeNum(p.poisonDmg,0), freeze: !!p.freeze, explode: !!p.explode, lightning: safeNum(p.lightning,0), meteorChance: safeNum(p.meteorChance,0), meteorDmg: safeNum(p.meteorDmg,0), spinBlade: !!p.spinBlade, spinDmgMultiplier: safeNum(p.spinDmgMultiplier,1), shield: !!p.shield, shieldHp: safeNum(p.shieldHp,0), itemLevels: Object.assign({}, p.itemLevels||{}), skillLevels: Object.assign({}, p.skillLevels||{}),
       attacking: !!p.isAttacking, attackPulse: getLocalAttackPulse(p),
       attackAimX: Math.round(safeNum(state.__mxLastAttackAim&&state.__mxLastAttackAim.x, p.x)), attackAimY: Math.round(safeNum(state.__mxLastAttackAim&&state.__mxLastAttackAim.y, p.y)),
-      choicePhase: String(state.__mxChoicePhase||''), choicePulse: safeNum(state.__mxChoicePulse,0),
+      choiceToken:String(state.__mxChoiceToken||''), choicePhase: String(state.__mxChoicePhase||''), choicePulse: safeNum(state.__mxChoicePulse,0),
       choiceRequestPhase: String(state.__mxChoiceRequestPhase||''), choiceRequestPulse: safeNum(state.__mxChoiceRequestPulse,0),
       rewardPulse: safeNum(state.__mxRewardPulse,0), rewardKind: String(state.__mxRewardKind||''), rewardKey: String(state.__mxRewardKey||'')
     });

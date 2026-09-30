@@ -750,9 +750,9 @@
         const RESPAWN_COOLDOWN_MS = 30000; // 30초
         const PUSH_IMPULSE_X = 16;
         const PUSH_IMPULSE_Y = -14;
-        const PUSH_HITBOX_OFFSET_PX = 10; // player front edge +10px
-        const PUSH_HITBOX_WIDTH = 140; // big hitbox (wide)
-        const PUSH_HITBOX_HEIGHT = 44;
+        const PUSH_HITBOX_OFFSET_PX = 16; // Reach starts at the body center.
+        const PUSH_HITBOX_WIDTH = 56; // 40px reach beyond the front body edge.
+        const PUSH_HITBOX_HEIGHT = 28;
         const PUSH_HITBOX_Y_OFFSET = 6; // lower band (avoid hitting above)
         const FLOOR_COOLDOWN_MS = 220;
         const PUSH_ANIM_MS = 180; // push animation duration
@@ -2390,10 +2390,11 @@ cameraX = 0;
 
         function nearestPickup(){
             // 캐릭터 폭과 모바일 입력 오차를 고려한 넉넉한 줍기 범위
-            let best = null, bestD = 86;
+            if(localPlayer.isDead)return null;
+            let best = null, bestD = 52;
             for (const it of worldItems){
                 const d = Math.hypot((it.x+12)-(localPlayer.x+20), (it.y+12)-(localPlayer.y+20));
-                if (d < bestD){ bestD=d; best=it; }
+                if (d < bestD && clearAttackPath(localPlayer.x+20,localPlayer.y+20,it.x+12,it.y+12)){ bestD=d; best=it; }
             }
             return best;
         }
@@ -2416,6 +2417,8 @@ cameraX = 0;
         }
 
         function handlePrimaryAction(){
+            if(localPlayer.isDead)return;
+            if(heldItem)return useHeldItem();
             const near = nearestPickup();
             if (near){
                 if (heldItem) dropHeldItem(false);
@@ -2446,15 +2449,38 @@ cameraX = 0;
             updateItemButton();
         }
 
-        function closestRemote(maxDist=260){
-            let best=null, bd=maxDist;
-            for (const [sid,p] of Object.entries(players || {})){
-                if (!p || p.isDead) continue;
-                const pos=getRemotePosForLogic(sid,p);
-                const d=Math.hypot((pos.x||0)-localPlayer.x,(pos.y||0)-localPlayer.y);
-                if(d<bd){bd=d;best={sid,x:pos.x||0,y:pos.y||0};}
+        const ITEM_REACH={lightsaber:72,pan:50,hammer:55,gun:560,ice:470,boomerang:380,missile:420};
+        const ITEM_BLAST={grenade:72,missile:80};
+        function clearAttackPath(ax,ay,bx,by){
+            // Segment/slab test: attacks cannot pass through solid walls or floors.
+            for(const p of solidPlatforms()){
+                let lo=0,hi=1;
+                for(const [a,b,min,max] of [[ax,bx,p.x,p.x+p.width],[ay,by,p.y,p.y+p.height]]){
+                    const d=b-a;
+                    if(Math.abs(d)<.0001){if(a<=min||a>=max){hi=-1;break;}}
+                    else{const u=(min-a)/d,v=(max-a)/d;lo=Math.max(lo,Math.min(u,v));hi=Math.min(hi,Math.max(u,v));}
+                }
+                if(lo<hi && hi>0 && lo<1)return false;
+            }
+            return true;
+        }
+        function closestRemote(type){
+            const range=ITEM_REACH[type]||0,dir=localPlayer.facing||1;
+            const sx=localPlayer.x+20,sy=localPlayer.y+18;
+            let best=null,bd=Infinity;
+            for(const [sid,p] of Object.entries(players||{})){
+                if(!p||p.isDead||String(sid)===String(mySessionId)|| (p.level!=null&&Number(p.level)!==Number(currentLevel)))continue;
+                const pos=getRemotePosForLogic(sid,p),cx=pos.x+20,cy=pos.y+20;
+                const ahead=dir*(cx-sx),vertical=Math.abs(cy-sy);
+                if(ahead<0 || ahead>range+PVP_W/2 || vertical>(type==='boomerang'?42:24))continue;
+                if(!clearAttackPath(sx,sy,cx,cy))continue;
+                if(ahead<bd){bd=ahead;best={sid,x:pos.x,y:pos.y};}
             }
             return best;
+        }
+        function blastHits(pos,ex,ey,radius){
+            const cx=pos.x+20,cy=pos.y+20;
+            return Math.hypot(cx-ex,cy-ey)<=radius && clearAttackPath(ex,ey,cx,cy);
         }
 
         function _itemTone(freq,dur=.12,type='square',vol=.12,endFreq=null,delay=0){
@@ -2535,8 +2561,8 @@ cameraX = 0;
             if (!heldItem || localPlayer.isDead) return;
             const now=performance.now(); if(now-lastItemUseAt<260)return; lastItemUseAt=now;
             const type=heldItem.type, dir=localPlayer.facing||1, sx=localPlayer.x+20, sy=localPlayer.y+18;
-            const target=closestRemote((type==='gun'||type==='missile')?620:(type==='ice'?500:(type==='boomerang'?440:180)));
-            let effect={kind:type,x:sx,y:sy,tx:sx+dir*150,ty:sy,color:ITEM_DEFS[type].color};
+            const target=closestRemote(type);
+            let effect={kind:type,x:sx,y:sy,tx:sx+dir*(ITEM_REACH[type]||72),ty:sy,color:ITEM_DEFS[type].color};
             const impacts=[];
             if(type==='jetpack'){
                 localPlayer.vy=Math.min(localPlayer.vy,-10.5); localPlayer.vx+=dir*1.5; localPlayer.onGround=false;
@@ -2544,10 +2570,11 @@ cameraX = 0;
             } else if(type==='grenade'){
                 const ex=sx+dir*115, ey=sy+20; effect={kind:'explosion',x:ex,y:ey,tx:ex,ty:ey,color:'#fdcb6e'};
                 for(const [sid,p] of Object.entries(players||{})){
-                    const pos=getRemotePosForLogic(sid,p||{}), dx=(pos.x||0)-ex, dy=(pos.y||0)-ey;
-                    if(Math.hypot(dx,dy)<190) bridgeSendPush(sid,Math.sign(dx||dir)*15,-13);
+                    if(!p||p.isDead)continue;
+                    const pos=getRemotePosForLogic(sid,p), dx=pos.x+20-ex;
+                    if(blastHits(pos,ex,ey,ITEM_BLAST.grenade)) bridgeSendPush(sid,Math.sign(dx||dir)*15,-13);
                 }
-                if(Math.hypot(localPlayer.x-ex,localPlayer.y-ey)<150){localPlayer.vx-=dir*5;localPlayer.vy=-7;}
+                if(blastHits(localPlayer,ex,ey,ITEM_BLAST.grenade)){localPlayer.vx-=dir*5;localPlayer.vy=-7;}
             } else if(type==='lightsaber'){
                 // Sword = exactly 1.5x the ordinary push impulse.
                 if(target && dir*((target.x||0)-localPlayer.x)>-25){
@@ -2569,8 +2596,9 @@ cameraX = 0;
                 const ex=target?(target.x+20):(sx+dir*420), ey=target?(target.y+20):sy;
                 effect={kind:'missile',x:sx,y:sy,tx:ex,ty:ey,color:ITEM_DEFS[type].color,explode:true};
                 for(const [sid,p] of Object.entries(players||{})){
-                    const pos=getRemotePosForLogic(sid,p||{}), dx=(pos.x+20)-ex, dy=(pos.y+20)-ey, dist=Math.hypot(dx,dy);
-                    if(dist<=210){
+                    if(!p||p.isDead)continue;
+                    const pos=getRemotePosForLogic(sid,p), dx=(pos.x+20)-ex, dy=(pos.y+20)-ey, dist=Math.hypot(dx,dy);
+                    if(blastHits(pos,ex,ey,ITEM_BLAST.missile)){
                         const nx=dist>1?dx/dist:dir, ny=dist>1?dy/dist:-.3;
                         const pvx=nx*(PUSH_IMPULSE_X*2), pvy=Math.min(-6,ny*(Math.abs(PUSH_IMPULSE_Y)*1.65)-5);
                         bridgeSendPush(sid,pvx,pvy,32);
@@ -2706,12 +2734,12 @@ cameraX = 0;
         }
 
         function getPushHitboxRect(dir){
-            // Requested: big hitbox located only in FRONT of me (never behind/above).
+            // Match the visible forward reach, including characters touching the body.
             const bodyL = localPlayer.x + PVP_PAD_X;
             const bodyR = bodyL + PVP_W;
             const x = (dir > 0)
-                ? (bodyR + PUSH_HITBOX_OFFSET_PX)
-                : (bodyL - PUSH_HITBOX_OFFSET_PX - PUSH_HITBOX_WIDTH);
+                ? (bodyR - PUSH_HITBOX_OFFSET_PX)
+                : (bodyL + PUSH_HITBOX_OFFSET_PX - PUSH_HITBOX_WIDTH);
             const y = localPlayer.y + PUSH_HITBOX_Y_OFFSET;
             return { x, y, width: PUSH_HITBOX_WIDTH, height: PUSH_HITBOX_HEIGHT };
         }
@@ -2758,7 +2786,7 @@ cameraX = 0;
 
                 const remoteRect = { x: px + PVP_PAD_X, y: py, width: PVP_W, height: PVP_H };
 
-                if (rectsOverlap(remoteRect, hitbox)) {
+                if (rectsOverlap(remoteRect, hitbox) && clearAttackPath(myCenterX,localPlayer.y+20,px+20,py+20)) {
                     // Local prediction: show the pushed player moving immediately
                     // (network interpolation makes the real response arrive ~tens of ms later)
                     try{
@@ -3855,11 +3883,11 @@ cameraX = 0;
                     for(let i=0;i<16;i++){const q=i*Math.PI/8,r=8+t*(42+(i%3)*14),sz=i%3===0?9:6;pixelBlock(x+Math.cos(q)*r-sz/2,y+Math.sin(q)*r-sz/2,sz,sz,colors[i%colors.length]);}
                     pixelBlock(x-12*(1-t),y-4,24*(1-t)+4,8,'#fff8c4');pixelBlock(x-4,y-12*(1-t),8,24*(1-t)+4,'#ffd32a');
                 }else if(e.kind==='lightsaber'){
-                    const q=-1+t*2,len=72;
-                    for(let k=0;k<4;k++){const qk=q-k*.13,ex=x+Math.cos(qk)*len,ey=y+Math.sin(qk)*len;ctx.globalAlpha=a*(1-k*.18);ctx.strokeStyle=k===0?'#fff':'#55efc4';ctx.lineWidth=k===0?5:9;ctx.lineCap='butt';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(Math.round(ex),Math.round(ey));ctx.stroke();}
+                    const dir=tx<x?-1:1,q=-1+t*2,len=ITEM_REACH.lightsaber;
+                    for(let k=0;k<4;k++){const qk=q-k*.13,ex=x+dir*Math.cos(qk)*len,ey=y+Math.sin(qk)*len;ctx.globalAlpha=a*(1-k*.18);ctx.strokeStyle=k===0?'#fff':'#55efc4';ctx.lineWidth=k===0?5:9;ctx.lineCap='butt';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(Math.round(ex),Math.round(ey));ctx.stroke();}
                     for(let i=0;i<5;i++)pixelBlock(tx+(i-2)*7,ty+(i%2)*8-6,4,4,i%2?'#fff':'#7dffd5');
                 }else if(e.kind==='pan'){
-                    const q=-1.1+t*2.2,px=x+Math.cos(q)*50,py=y+Math.sin(q)*42;ctx.globalAlpha=a*.55;ctx.strokeStyle='#dfe6e9';ctx.lineWidth=12;ctx.lineCap='butt';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(px,py);ctx.stroke();
+                    const q=-1.1+t*2.2,px=x+(tx<x?-1:1)*Math.cos(q)*ITEM_REACH.pan,py=y+Math.sin(q)*42;ctx.globalAlpha=a*.55;ctx.strokeStyle='#dfe6e9';ctx.lineWidth=12;ctx.lineCap='butt';ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(px,py);ctx.stroke();
                     drawPixelItemIcon('pan',px,py,1,Math.cos(q)<0?-1:1);const star=['#fff','#ffe66d','#ff9f43'];for(let i=0;i<8;i++){const q2=i*Math.PI/4;pixelBlock(tx+Math.cos(q2)*24*t-3,ty+Math.sin(q2)*24*t-3,6,6,star[i%3]);}
                 }else if(e.kind==='jetpack'){
                     for(let i=0;i<10;i++){const px=x-11+(i%2)*14+((i%3)-1)*3,py=y+12+t*(30+i*5);pixelBlock(px-4,py,8,10,i<4?'#fff3a3':(i<7?'#ff9f43':'#747d8c'));}
@@ -3867,9 +3895,9 @@ cameraX = 0;
                     const travel=Math.min(1,t*1.55),mx=x+(tx-x)*travel,my=y+(ty-y)*travel,dir=tx<x?-1:1;
                     for(let i=1;i<=6;i++){const trail=travel-i*.045;if(trail>0)pixelBlock(x+(tx-x)*trail-4,y+(ty-y)*trail-4,8,8,i<3?'#ff9f43':'#747d8c');}
                     drawPixelItemIcon('missile',mx,my,1,dir);
-                    if(travel>.82){const cols=['#fff3a3','#ffd32a','#ff9f1a','#e84118'];for(let i=0;i<16;i++){const q=i*Math.PI/8,r=(travel-.82)*180+(i%3)*5;pixelBlock(tx+Math.cos(q)*r-4,ty+Math.sin(q)*r-4,8,8,cols[i%cols.length]);}}
+                    if(travel>.82){const cols=['#fff3a3','#ffd32a','#ff9f1a','#e84118'];for(let i=0;i<16;i++){const q=i*Math.PI/8,r=Math.min(1,(travel-.82)/.18)*ITEM_BLAST.missile;pixelBlock(tx+Math.cos(q)*r-4,ty+Math.sin(q)*r-4,8,8,cols[i%cols.length]);}}
                 }else if(e.kind==='hammer'){
-                    const q=-1.2+t*2.45,px=x+Math.cos(q)*55,py=y+Math.sin(q)*46;drawPixelItemIcon('hammer',px,py,1,tx<x?-1:1);
+                    const q=-1.2+t*2.45,px=x+(tx<x?-1:1)*Math.cos(q)*ITEM_REACH.hammer,py=y+Math.sin(q)*46;drawPixelItemIcon('hammer',px,py,1,tx<x?-1:1);
                     for(let i=0;i<10;i++){const q2=i*Math.PI/5,r=8+t*34;pixelBlock(tx+Math.cos(q2)*r-4,ty+Math.sin(q2)*r-4,8,8,i%2?'#ff7675':'#ffeaa7');}
                 }else if(e.kind==='spring'){
                     for(let i=0;i<5;i++){const yy=y+8+i*8+t*18;pixelBlock(x-10+(i%2?5:0),yy,20-(i%2?10:0),4,i%2?'#55efc4':'#ffeaa7');}

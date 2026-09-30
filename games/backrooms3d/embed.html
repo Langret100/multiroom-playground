@@ -2069,7 +2069,17 @@ function spawnShelfPillar(wx,wz, idx=0){
   // Spawn monster immediately (locked for 10 seconds)
   ensureMonster();
 
+  // Physical key codes keep controls working with Korean IME enabled.
+  function controlKey(e){
+    const codes={KeyW:'w',KeyS:'s',KeyA:'a',KeyD:'d',KeyE:'e',KeyF:'f',KeyG:'g',KeyV:'v',ArrowUp:'w',ArrowDown:'s',ArrowLeft:'a',ArrowRight:'d'};
+    return codes[e.code] || String(e.key||'').toLowerCase();
+  }
+  function inputBlocked(){return chatMode || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||'') || $("mathModal").classList.contains("show") || $("helpModal").style.display==='flex';}
   const keysDown={w:0,s:0,a:0,d:0};
+  document.addEventListener('pointerdown',e=>{
+    if(e.target.closest?.('canvas')){ if(chatMode) exitChat(); e.target.tabIndex=0; e.target.focus({preventScroll:true}); }
+  });
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)clearControlState();});
   window.__BR_CLEAR_CONTROLS__ = ()=>{
     for(const k in keysDown) keysDown[k]=0;
     shiftHeld=false; setSprintHold(false); joyEnd();
@@ -2135,6 +2145,8 @@ function spawnShelfPillar(wx,wz, idx=0){
   }
   btnE.addEventListener("pointerdown",(e)=>{
     e.preventDefault();
+    if(inputBlocked()) return;
+    btnE.setPointerCapture(e.pointerId);
     if(promptVisible()){
       doInteract();
       return;
@@ -2143,27 +2155,29 @@ function spawnShelfPillar(wx,wz, idx=0){
   });
   btnE.addEventListener("pointerup",(e)=>{ e.preventDefault(); setSprintHold(false); });
   btnE.addEventListener("pointercancel",(e)=>{ e.preventDefault(); setSprintHold(false); });
+  btnE.addEventListener("lostpointercapture",()=>setSprintHold(false));
   btnE.addEventListener("contextmenu",(e)=>e.preventDefault());
 
   let stepAcc=0;
 
   addEventListener("keydown",(e)=>{
-    if(chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show")){
-      if(e.key.toLowerCase()!=="escape") return;
-    }
-    const k=e.key.toLowerCase();
+    if(inputBlocked()) return;
+    const k=controlKey(e);
+    if(keysDown[k]!=null){e.preventDefault();keysDown[k]=1;}
     if(k==='f' && !e.repeat){e.preventDefault();requestKeyTransfer();return;}
-    if(keysDown[k]!=null) keysDown[k]=1;
-    if(k==="e") doInteract();
+    if(k==='e'){
+      e.preventDefault();
+      if(!e.repeat){if(promptVisible()) doInteract();else setSprintHold(true);}
+    }
     const multiplayerActive = !!(bridge?.start && Number(bridge.start.playerCount||0)>=2);
-    if(!multiplayerActive && k==="g"){ monsterAI=!monsterAI; ensureMonster(); addChat("[연습] 괴물 AI: "+(monsterAI?"ON":"OFF")); }
-    if(!multiplayerActive && k==="v"){ seekerView=!seekerView; addChat("[연습] 술래 시점: "+(seekerView?"ON":"OFF")); }
+    if(!multiplayerActive && k==='g' && !e.repeat){monsterAI=!monsterAI;ensureMonster();}
+    if(!multiplayerActive && k==='v' && !e.repeat)seekerView=!seekerView;
   });
-  addEventListener("keyup",(e)=>{ const k=e.key.toLowerCase(); if(keysDown[k]!=null) keysDown[k]=0; });
+  addEventListener("keyup",(e)=>{const k=controlKey(e);if(keysDown[k]!=null)keysDown[k]=0;if(k==='e')setSprintHold(false);});
 
   // mobile joystick
   const joyBase=$("joyBase"), joyKnob=$("joyKnob");
-  let joyActive=false, joyCx=0, joyCy=0;
+  let joyActive=false, joyCx=0, joyCy=0, joyTouchId=null;
   let joyX=0, joyY=0;
   function setJoy(vx,vy){ joyX=vx; joyY=vy; }
   function joyStart(x,y){
@@ -2185,13 +2199,22 @@ function spawnShelfPillar(wx,wz, idx=0){
     setJoy(nx/max, ny/max);
   }
   function joyEnd(){
+    joyTouchId=null;
     if(!joyActive) return;
     joyActive=false; joyBase.style.display="none"; setJoy(0,0);
   }
-  addEventListener("touchstart",(e)=>{ if(e.touches.length===1){ const t=e.touches[0]; joyStart(t.clientX,t.clientY);} }, {passive:true});
-  addEventListener("touchmove",(e)=>{ if(joyActive && e.touches.length===1){ const t=e.touches[0]; joyMove(t.clientX,t.clientY); e.preventDefault();} }, {passive:false});
-  addEventListener("touchend", joyEnd, {passive:true});
-  addEventListener("touchcancel", joyEnd, {passive:true});
+  addEventListener("touchstart",e=>{
+    if(joyTouchId!==null || inputBlocked() || e.target.closest?.('button,input,textarea,select,a,#chatWrap,#helpModal'))return;
+    const t=Array.from(e.changedTouches).find(t=>t.clientX<=innerWidth*.55);
+    if(t){joyTouchId=t.identifier;joyStart(t.clientX,t.clientY);}
+  },{passive:true});
+  addEventListener("touchmove",e=>{
+    const t=Array.from(e.touches).find(t=>t.identifier===joyTouchId);
+    if(t&&joyActive){joyMove(t.clientX,t.clientY);e.preventDefault();}
+  },{passive:false});
+  const endJoyTouch=e=>{if(Array.from(e.changedTouches).some(t=>t.identifier===joyTouchId))joyEnd();};
+  addEventListener("touchend",endJoyTouch,{passive:true});
+  addEventListener("touchcancel",endJoyTouch,{passive:true});
 
     
   function nearestObj(arr, maxDist){

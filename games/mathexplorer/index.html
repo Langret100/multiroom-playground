@@ -6,7 +6,7 @@
 
 【이 파일의 역할】
   싱글플레이 완결형 게임 본체.
-  멀티플레이어 동기화는 math-explorer-bridge.js가 이 파일의
+  멀티플레이어 동기화는 math-explorer-bridge.js?v=coop-20260930-v1가 이 파일의
   G 객체 메서드를 래핑하는 방식으로 주입함.
   embed=1 파라미터로 iframe 실행 시 브릿지 파일이 활성화됨.
 
@@ -2129,7 +2129,7 @@ const G = {
     
     // ===== 번개 아이템 효과 생성 =====
     // 적 타격시 확률적으로 발동, 레벨에 따라 데미지와 범위 증가
-    createLightning(x, y, level = 1) {
+    createLightning(x, y, level = 1, owner = this.player) {
         // 게임이 일시정지 중이면 효과를 생성하지 않음
         if (this.paused) {
             return;
@@ -2153,7 +2153,7 @@ const G = {
             
             this.enemies.forEach(e => {
                 if (Math.hypot(e.x - x, e.y - y) < range) {
-                    this.player.dealDamage(e, this.player.damage * damageMultiplier);
+                    owner.dealDamage(e, owner.damage * damageMultiplier);
                 }
             });
         }, 100);
@@ -2180,7 +2180,7 @@ const G = {
     
     // ===== 운석 아이템 효과 생성 =====
     // 적 타격시 확률적으로 발동, 레벨에 따라 크기와 데미지 증가
-    createMeteor(x, y, level = 1) {
+    createMeteor(x, y, level = 1, owner = this.player) {
         // 게임이 일시정지 중이면 효과를 생성하지 않음
         if (this.paused) {
             return;
@@ -2228,7 +2228,7 @@ const G = {
             // 폭발 범위 내 적에게 데미지 및 화상 효과
             this.enemies.forEach(e => {
                 if (Math.hypot(e.x - x, e.y - y) < explosionRadius) {
-                    this.player.dealDamage(e, this.player.damage * damageMultiplier);
+                    owner.dealDamage(e, owner.damage * damageMultiplier);
                     e.burning = true;
                     e.burningTime = 40 + level * 15;
                 }
@@ -2238,7 +2238,7 @@ const G = {
     
     // ===== 얼음 스파이크 아이템 효과 생성 =====
     // 적 타격시 확률적으로 발동, 레벨에 따라 높이와 데미지 증가
-    createIceSpike(x, y, level = 1) {
+    createIceSpike(x, y, level = 1, owner = this.player) {
         // 게임이 일시정지 중이면 효과를 생성하지 않음
         if (this.paused) {
             return;
@@ -2264,7 +2264,7 @@ const G = {
             
             this.enemies.forEach(e => {
                 if (Math.hypot(e.x - x, e.y - y) < range) {
-                    this.player.dealDamage(e, this.player.damage * damageMultiplier);
+                    owner.dealDamage(e, owner.damage * damageMultiplier);
                     e.frozen = true;
                     e.frozenSpeed = e.speed;
                     e.speed *= 0.2;  // 이동속도 80% 감소
@@ -3994,6 +3994,7 @@ class Player {
     }
     
     dealDamage(enemy, dmg) {
+        if(!enemy || enemy.hp<=0)return;
         // 게임이 일시정지 중이면 데미지를 주지 않음 (보스 스폰 중 등)
         if (G.paused) {
             return;
@@ -4087,7 +4088,7 @@ class Player {
                         const ey = targetEnemy.y;
                         const lv = level;
                         G.queueRangedEffect(() => {
-                            G.createLightning(ex, ey, lv);
+                            G.createLightning(ex, ey, lv, this);
                         });
                     } else if (i === 0) {
                         // 첫 번째 벼락은 원래 적 위치 근처에
@@ -4096,7 +4097,7 @@ class Player {
                         const ey = enemy.y;
                         const lv = level;
                         G.queueRangedEffect(() => {
-                            G.createLightning(ex, ey, lv);
+                            G.createLightning(ex, ey, lv, this);
                         });
                     }
                 }
@@ -4111,7 +4112,7 @@ class Player {
             const ex = enemy.x;
             const ey = enemy.y;
             G.queueRangedEffect(() => {
-                G.createMeteor(ex, ey, level);
+                G.createMeteor(ex, ey, level, this);
             });
         }
         
@@ -4126,7 +4127,7 @@ class Player {
                 const ey = enemy.y;
                 const lv = level;
                 G.queueRangedEffect(() => {
-                    G.createIceSpike(ex, ey, lv);
+                    G.createIceSpike(ex, ey, lv, this);
                 });
             }
         }
@@ -4163,6 +4164,7 @@ class Player {
             if (this.explode) {
                 // 빔 발사 각도 (적 방향)
                 const beamAngle = Math.atan2(enemy.y - this.y, enemy.x - this.x);
+                const beamOriginX=this.x, beamOriginY=this.y;
                 const beamLength = 400;
                 const beamEndX = this.x + Math.cos(beamAngle) * beamLength;
                 const beamEndY = this.y + Math.sin(beamAngle) * beamLength;
@@ -4186,8 +4188,8 @@ class Player {
                     // 일시정지 중이면 데미지를 주지 않음
                     if (G.paused) return;
                     
-                    const playerX = G.player.x;
-                    const playerY = G.player.y;
+                    const playerX = beamOriginX;
+                    const playerY = beamOriginY;
                     
                     G.enemies.forEach(e => {
                         // 점과 선분 사이의 거리 계산
