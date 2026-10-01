@@ -258,122 +258,77 @@ body.team-battle #roster.team-mode .player{width:auto !important;max-width:150px
  body.team-battle #roster.team-mode .player span{font-size:6px !important;}
 }
 
-
-/* MOBILE-BATTLE-FINAL: phone/tablet battle layout only. Desktop/CrOS remain unchanged. */
-body.mobile-play{--mobile-safe-bottom:max(4px,env(safe-area-inset-bottom));}
-body.mobile-play header{height:34px!important;padding:0 max(8px,env(safe-area-inset-left)) 0 max(8px,env(safe-area-inset-right))!important;gap:5px!important}
+/* MOBILE LAYOUT — single source of truth. Applied only when game.js adds body.mobile-play. */
+body.mobile-play{
+  --mobile-ui-clearance:max(22px,env(safe-area-inset-bottom));
+  -webkit-text-size-adjust:100%!important;
+  text-size-adjust:100%!important;
+}
+body.mobile-play header{
+  height:34px!important;
+  padding:0 max(8px,env(safe-area-inset-left)) 0 max(8px,env(safe-area-inset-right))!important;
+  gap:5px!important;
+}
 body.mobile-play .brand{font-size:11px!important;letter-spacing:.5px!important}
-body.mobile-play #status{font-size:7px!important;max-width:32vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+body.mobile-play #status{font-size:8px!important;max-width:32vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 body.mobile-play header button{font-size:8px!important;padding:4px 6px!important}
 body.mobile-play main{height:calc(100dvh - 34px)!important}
 body.mobile-play .battlebar{top:5px!important;left:5px!important;right:5px!important;gap:3px!important;flex-wrap:nowrap!important}
 body.mobile-play .battlebar>*{min-height:28px!important;border-radius:8px!important;box-shadow:none!important}
 body.mobile-play #turnBadge{min-width:0!important;max-width:42%!important;font-size:9px!important;padding:6px 7px!important}
 body.mobile-play .windpanel{gap:3px!important;padding:3px 5px!important;margin-left:auto!important}
-body.mobile-play .windpanel span{display:none!important}
+body.mobile-play .windpanel span,body.mobile-play .windpanel i{display:none!important}
 body.mobile-play .windpanel b{font-size:10px!important;min-width:32px!important}
-body.mobile-play .windpanel i{display:none!important}
-body.mobile-play #supplyView,body.mobile-play #focus{font-size:7px!important;padding:4px 5px!important;white-space:nowrap!important}
+body.mobile-play #supplyView,body.mobile-play #focus{font-size:8px!important;padding:4px 5px!important;white-space:nowrap!important}
 body.mobile-play #minimap{top:39px!important;right:5px!important;width:104px!important;height:28px!important;border-radius:5px!important}
 body.mobile-play #roster:not(.team-mode){top:39px!important;left:5px!important;right:114px!important;max-height:31px!important;overflow:hidden!important}
-body.mobile-play #roster:not(.team-mode) .player{padding:3px 5px!important;font-size:7px!important;max-width:88px!important}
+body.mobile-play #roster:not(.team-mode) .player{padding:3px 5px!important;font-size:8px!important;max-width:88px!important}
 body.mobile-play #roster:not(.team-mode) .player span{display:none!important}
 body.mobile-play .camera-hint,body.mobile-play #cameraMode{display:none!important}
 body.mobile-play #notice{top:15%!important;font-size:12px!important;width:82%!important;white-space:normal!important;text-align:center!important}
-body.mobile-play .dashboard{z-index:5!important;left:max(4px,env(safe-area-inset-left))!important;right:max(4px,env(safe-area-inset-right))!important;bottom:var(--mobile-safe-bottom)!important;margin:0!important;max-width:none!important;min-height:0!important;border-radius:10px!important;padding:5px!important;gap:5px!important;box-shadow:0 4px 12px #0005!important;backdrop-filter:none!important;overflow:visible!important}
-body.mobile-play .dashboard section{padding:4px!important;border-radius:8px!important;min-width:0!important}
-body.mobile-play .pilot-head{height:25px!important;gap:4px!important}
-body.mobile-play .pilot-head img{width:25px!important;height:25px!important;border-width:1px!important;padding:1px!important}
-body.mobile-play .pilot-head b{font-size:8px!important;max-width:64px!important}
-body.mobile-play .pilot-head span{font-size:7px!important}
-body.mobile-play .meter{height:5px!important;margin:3px 0!important}
-body.mobile-play .move-label{font-size:7px!important;margin-top:3px!important}
-body.mobile-play .move-buttons{gap:3px!important;margin-top:3px!important}
-body.mobile-play .move-buttons button{min-height:30px!important;padding:3px 1px!important;font-size:8px!important;box-shadow:none!important}
-body.mobile-play .move-buttons small{display:none!important}
-body.mobile-play .aim-top{gap:4px!important}
-body.mobile-play .aim-sliders{gap:3px!important}
-body.mobile-play .aim-sliders label{font-size:7px!important}
-body.mobile-play .aim-sliders label:first-child::after{font-size:6px!important;margin-top:1px!important}
-body.mobile-play .aim input{height:7px!important;margin:4px 0 0!important}
-body.mobile-play .weapon-row{gap:3px!important;margin-top:3px!important}
-body.mobile-play .weapon-row button{min-height:31px!important;padding:3px 2px!important;font-size:8px!important;box-shadow:none!important}
-body.mobile-play .weapon-row .fire{font-size:10px!important}
-body.mobile-play .inventory{min-width:0!important}
-body.mobile-play .inventory-title{font-size:8px!important;margin-bottom:3px!important;line-height:1.1!important}
-body.mobile-play .inventory-title span{font-size:6.5px!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:66%}
-body.mobile-play #items{gap:3px!important;min-width:0!important}
-body.mobile-play .item{min-width:0!important;min-height:34px!important;padding:3px 1px 2px!important;border-radius:7px!important;box-shadow:none!important;overflow:hidden!important}
-body.mobile-play .item .icon{font-size:14px!important;line-height:15px!important}
-body.mobile-play .item .item-name{font-size:6px!important;line-height:1!important;letter-spacing:-.55px!important;margin-top:2px!important;overflow:hidden!important;text-overflow:ellipsis!important}
-body.mobile-play .item .count{font-size:6px!important;right:2px!important;top:1px!important}
-body.mobile-play .inventory-bottom{margin-top:3px!important;min-height:18px!important;gap:4px!important}
-body.mobile-play .inventory-bottom span{font-size:6.5px!important;line-height:1.15!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-body.mobile-play #pass{font-size:7px!important;padding:3px 5px!important}
-body.mobile-play .selection{inset:34px 0 0!important;padding-top:10px!important;padding-bottom:max(10px,env(safe-area-inset-bottom))!important}
 
-/* Portrait phone/tablet: reserve real space for controls. This shortens the canvas,
-   which intentionally widens the world view and makes characters less oversized. */
-body.mobile-play.mobile-portrait .dashboard{grid-template-columns:92px minmax(0,1fr)!important;max-height:none!important}
-body.mobile-play.mobile-portrait .inventory{grid-column:1/-1!important;padding-top:4px!important}
-body.mobile-play.mobile-portrait .aim-top{grid-template-columns:96px minmax(58px,1fr)!important;height:68px!important}
-body.mobile-play.mobile-portrait #dial{width:96px!important;height:68px!important}
-body.mobile-play.mobile-portrait #items{grid-template-columns:repeat(4,minmax(0,1fr))!important}
-body.mobile-play.mobile-portrait .arena{bottom:calc(var(--dash-h,190px) + 7px)!important}
-body.mobile-play.mobile-portrait #notice{top:18%!important}
-body.mobile-play.mobile-portrait.team-battle .arena{bottom:calc(var(--dash-h,190px) + 48px)!important}
-body.mobile-play.mobile-portrait.team-battle #roster.team-mode{top:auto!important;bottom:calc(var(--dash-h,190px) + 8px)!important;left:5px!important;right:5px!important;height:34px!important;max-height:34px!important;gap:4px!important}
-body.mobile-play.mobile-portrait.team-battle #roster.team-mode .team-roster>strong{font-size:6px!important;padding:2px 3px!important}
-body.mobile-play.mobile-portrait.team-battle #roster.team-mode .player{max-width:74px!important;padding:2px 3px!important;font-size:6.5px!important}
-body.mobile-play.mobile-portrait.team-battle #roster.team-mode .player span{display:none!important}
-
-/* Landscape mobile: do not fall back to desktop HUD just because width exceeds 720px.
-   Keep one compact three-column control strip over the bottom edge. */
-body.mobile-play.mobile-landscape header{height:30px!important}
-body.mobile-play.mobile-landscape main{height:calc(100dvh - 30px)!important}
-body.mobile-play.mobile-landscape .dashboard{grid-template-columns:112px 238px minmax(0,1fr)!important;gap:4px!important;padding:4px!important;max-height:104px!important}
-body.mobile-play.mobile-landscape .dashboard section{padding:3px!important}
-body.mobile-play.mobile-landscape .pilot-head{height:22px!important}
-body.mobile-play.mobile-landscape .pilot-head img{width:22px!important;height:22px!important}
-body.mobile-play.mobile-landscape .move-buttons button{min-height:26px!important}
-body.mobile-play.mobile-landscape .aim-top{grid-template-columns:82px minmax(64px,1fr)!important;height:57px!important;gap:3px!important}
-body.mobile-play.mobile-landscape #dial{width:82px!important;height:57px!important}
-body.mobile-play.mobile-landscape .weapon-row button{min-height:27px!important;padding:2px!important}
-body.mobile-play.mobile-landscape .inventory{grid-column:auto!important;border-top:0!important;padding-top:3px!important}
-body.mobile-play.mobile-landscape #items{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:2px!important}
-body.mobile-play.mobile-landscape .item{min-height:29px!important;padding:2px 1px!important}
-body.mobile-play.mobile-landscape .item .icon{font-size:12px!important;line-height:12px!important}
-body.mobile-play.mobile-landscape .item .item-name{font-size:5.5px!important;margin-top:1px!important}
-body.mobile-play.mobile-landscape .inventory-bottom{margin-top:2px!important;min-height:14px!important}
-body.mobile-play.mobile-landscape .inventory-bottom span{display:none!important}
-body.mobile-play.mobile-landscape .arena{bottom:0!important}
-body.mobile-play.mobile-landscape #minimap{top:36px!important;width:92px!important;height:24px!important}
-body.mobile-play.mobile-landscape #roster:not(.team-mode){top:36px!important;right:102px!important}
-body.mobile-play.mobile-landscape.team-battle .arena{bottom:0!important}
-body.mobile-play.mobile-landscape.team-battle #roster.team-mode{top:36px!important;bottom:auto!important;left:5px!important;right:102px!important;height:29px!important;max-height:29px!important;gap:4px!important}
-body.mobile-play.mobile-landscape.team-battle #roster.team-mode .team-roster>strong{font-size:5.5px!important;padding:2px 3px!important}
-body.mobile-play.mobile-landscape.team-battle #roster.team-mode .player{max-width:70px!important;padding:2px 3px!important;font-size:6px!important}
-body.mobile-play.mobile-landscape.team-battle #roster.team-mode .player span{display:none!important}
-
-@media(max-width:390px){
- body.mobile-play.mobile-portrait .dashboard{grid-template-columns:84px minmax(0,1fr)!important;padding:4px!important;gap:4px!important}
- body.mobile-play.mobile-portrait .aim-top{grid-template-columns:88px minmax(52px,1fr)!important;height:64px!important}
- body.mobile-play.mobile-portrait #dial{width:88px!important;height:64px!important}
- body.mobile-play.mobile-portrait .item .item-name{font-size:5.6px!important}
-}
-
-/* MOBILE-TOUCH-UI-FIX: phone/tablet only. Desktop/CrOS layout intentionally unchanged. */
-body.mobile-play{
-  --mobile-ui-clearance:max(22px,env(safe-area-inset-bottom));
-}
+/* Mobile HUD chrome: no inherited dark inner panels or double outlines. */
 body.mobile-play .dashboard{
+  z-index:5!important;
+  left:max(4px,env(safe-area-inset-left))!important;
+  right:max(4px,env(safe-area-inset-right))!important;
   bottom:var(--mobile-ui-clearance)!important;
+  margin:0!important;
+  max-width:none!important;
+  min-height:0!important;
+  padding:5px!important;
+  gap:5px!important;
   border:2px solid #9cdceb!important;
+  border-radius:10px!important;
   outline:0!important;
   box-shadow:none!important;
-  background:linear-gradient(180deg,#fffffffa 0%,#f4fdfffa 100%)!important;
+  background:#f7fdfffa!important;
+  backdrop-filter:none!important;
+  overflow:hidden!important;
 }
-body.mobile-play .dashboard section{outline:0!important;box-shadow:none!important}
+body.mobile-play .dashboard section,
+body.mobile-play .pilot,
+body.mobile-play .aim,
+body.mobile-play .inventory{
+  min-width:0!important;
+  padding:4px!important;
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+  background:transparent!important;
+}
+
+/* Mobile typography: one set of sizes, no legacy text shadow/negative tracking. */
+body.mobile-play button,
+body.mobile-play input,
+body.mobile-play label,
+body.mobile-play span,
+body.mobile-play b,
+body.mobile-play small{
+  -webkit-text-size-adjust:100%!important;
+  text-size-adjust:100%!important;
+}
+body.mobile-play button,
 body.mobile-play .pilot-head b,
 body.mobile-play .pilot-head span,
 body.mobile-play .move-label,
@@ -386,105 +341,88 @@ body.mobile-play .inventory-bottom span,
 body.mobile-play #pass{
   letter-spacing:0!important;
   text-shadow:none!important;
-  -webkit-font-smoothing:antialiased;
+  -webkit-font-smoothing:antialiased!important;
+  text-rendering:optimizeLegibility!important;
 }
-body.mobile-play .pilot-head b{font-size:9px!important;line-height:1.15!important}
-body.mobile-play .pilot-head span{font-size:7.5px!important;line-height:1.15!important}
-body.mobile-play .move-label{font-size:7.5px!important;line-height:1.15!important}
-body.mobile-play .aim label{font-size:8px!important;line-height:1.15!important}
-body.mobile-play .aim-sliders label:first-child::after{font-size:7px!important;line-height:1.15!important;letter-spacing:0!important}
-body.mobile-play .inventory-title{font-size:9px!important;line-height:1.15!important}
-body.mobile-play .inventory-title span{font-size:7.5px!important;line-height:1.15!important}
-body.mobile-play .item .item-name{font-size:7.5px!important;line-height:1.18!important;letter-spacing:0!important;min-height:9px!important}
-body.mobile-play .item .item-effect{font-size:7px!important;line-height:1.18!important;letter-spacing:0!important;min-height:18px!important;padding:2px 3px!important}
-body.mobile-play .inventory-bottom span{font-size:7.5px!important;line-height:1.2!important}
-body.mobile-play #pass{font-size:7.5px!important;line-height:1.15!important}
+body.mobile-play .pilot-head{height:25px!important;gap:4px!important}
+body.mobile-play .pilot-head img{width:25px!important;height:25px!important;border-width:1px!important;padding:1px!important}
+body.mobile-play .pilot-head b{font-size:9px!important;line-height:1.25!important;max-width:70px!important}
+body.mobile-play .pilot-head span{font-size:8px!important;line-height:1.25!important}
+body.mobile-play .meter{height:5px!important;margin:3px 0!important}
+body.mobile-play .move-label{font-size:8px!important;line-height:1.25!important;margin-top:3px!important}
+body.mobile-play .move-buttons{display:grid!important;gap:4px!important;margin-top:3px!important;width:100%!important}
+body.mobile-play .move-buttons button{width:100%!important;min-width:0!important;min-height:30px!important;padding:3px!important;font-size:9px!important;line-height:1.2!important;box-shadow:none!important}
+body.mobile-play .move-buttons small{display:none!important}
+body.mobile-play #jump{flex:none!important}
+body.mobile-play .aim-top{gap:4px!important}
+body.mobile-play .aim-sliders{gap:3px!important}
+body.mobile-play .aim label{font-size:8px!important;line-height:1.2!important}
+body.mobile-play .aim-sliders label:first-child::after{font-size:7px!important;line-height:1.2!important;letter-spacing:0!important;margin-top:1px!important}
+body.mobile-play .aim input{height:7px!important;margin:4px 0 0!important}
+body.mobile-play .weapon-row{gap:3px!important;margin-top:3px!important}
+body.mobile-play .weapon-row button{min-height:31px!important;padding:3px 2px!important;font-size:9px!important;font-weight:700!important;line-height:1.2!important;white-space:nowrap!important;box-shadow:none!important}
+body.mobile-play .weapon-row .fire{font-size:10px!important;letter-spacing:.2px!important}
+body.mobile-play .inventory{min-width:0!important}
+body.mobile-play .inventory-title{font-size:9px!important;line-height:1.25!important;margin-bottom:3px!important}
+body.mobile-play .inventory-title span{font-size:8px!important;line-height:1.25!important;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:66%}
+body.mobile-play #items{gap:3px!important;min-width:0!important}
+body.mobile-play .item{min-width:0!important;min-height:34px!important;padding:3px 1px 2px!important;border-radius:7px!important;box-shadow:none!important;overflow:hidden!important}
+body.mobile-play .item .icon{font-size:14px!important;line-height:15px!important}
+body.mobile-play .item .item-name{font-size:8px!important;line-height:1.25!important;letter-spacing:0!important;margin-top:2px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+body.mobile-play .item .item-effect{font-size:7.5px!important;line-height:1.22!important;letter-spacing:0!important;min-height:18px!important;padding:2px 3px!important}
+body.mobile-play .item .count{font-size:7px!important;right:2px!important;top:1px!important}
+body.mobile-play .inventory-bottom{margin-top:3px!important;min-height:18px!important;gap:4px!important}
+body.mobile-play .inventory-bottom span{font-size:7.5px!important;line-height:1.2!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.mobile-play #pass{font-size:7.5px!important;line-height:1.2!important;padding:3px 5px!important}
+body.mobile-play .selection{inset:34px 0 0!important;padding-top:10px!important;padding-bottom:max(10px,env(safe-area-inset-bottom))!important}
 
-/* Give left/right touch targets more horizontal room without shrinking the angle dial. */
-body.mobile-play.mobile-portrait .dashboard{grid-template-columns:116px minmax(0,1fr)!important}
-body.mobile-play.mobile-portrait .move-buttons{display:grid!important;grid-template-columns:1fr 1.18fr 1fr!important;gap:4px!important;width:100%!important}
-body.mobile-play.mobile-portrait .move-buttons button{width:100%!important;min-width:0!important;padding-left:3px!important;padding-right:3px!important}
-body.mobile-play.mobile-portrait #jump{flex:none!important}
-body.mobile-play.mobile-portrait .aim-top{grid-template-columns:96px minmax(46px,1fr)!important}
+/* Portrait mobile: reserve HUD height so the world view stays wide and controls remain above OS/browser bars. */
+body.mobile-play.mobile-portrait .dashboard{grid-template-columns:116px minmax(0,1fr)!important;max-height:none!important}
+body.mobile-play.mobile-portrait .move-buttons{grid-template-columns:1fr 1.12fr 1fr!important}
+body.mobile-play.mobile-portrait .inventory{grid-column:1/-1!important;padding-top:4px!important}
+body.mobile-play.mobile-portrait .aim-top{grid-template-columns:96px minmax(46px,1fr)!important;height:68px!important}
 body.mobile-play.mobile-portrait #dial{width:96px!important;height:68px!important}
+body.mobile-play.mobile-portrait #items{grid-template-columns:repeat(4,minmax(0,1fr))!important}
 body.mobile-play.mobile-portrait .arena{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 7px)!important}
+body.mobile-play.mobile-portrait #notice{top:18%!important}
 body.mobile-play.mobile-portrait.team-battle .arena{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 48px)!important}
-body.mobile-play.mobile-portrait.team-battle #roster.team-mode{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 8px)!important}
+body.mobile-play.mobile-portrait.team-battle #roster.team-mode{top:auto!important;bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 8px)!important;left:5px!important;right:5px!important;height:34px!important;max-height:34px!important;gap:4px!important}
+body.mobile-play.mobile-portrait.team-battle #roster.team-mode .team-roster>strong{font-size:7px!important;padding:2px 3px!important}
+body.mobile-play.mobile-portrait.team-battle #roster.team-mode .player{max-width:78px!important;padding:2px 3px!important;font-size:7px!important}
+body.mobile-play.mobile-portrait.team-battle #roster.team-mode .player span{display:none!important}
 
-/* Landscape mobile also stays above browser/navigation bars. Keep the dial width. */
-body.mobile-play.mobile-landscape .dashboard{bottom:var(--mobile-ui-clearance)!important}
-body.mobile-play.mobile-landscape .aim-top{grid-template-columns:82px minmax(46px,1fr)!important}
+/* Landscape mobile: compact 3-column HUD; never fall back to desktop just because width is large. */
+body.mobile-play.mobile-landscape header{height:30px!important}
+body.mobile-play.mobile-landscape main{height:calc(100dvh - 30px)!important}
+body.mobile-play.mobile-landscape .dashboard{grid-template-columns:124px 238px minmax(0,1fr)!important;gap:4px!important;padding:4px!important;max-height:108px!important}
+body.mobile-play.mobile-landscape .dashboard section{padding:3px!important}
+body.mobile-play.mobile-landscape .pilot-head{height:22px!important}
+body.mobile-play.mobile-landscape .pilot-head img{width:22px!important;height:22px!important}
+body.mobile-play.mobile-landscape .move-buttons{grid-template-columns:1fr 1.08fr 1fr!important;gap:3px!important}
+body.mobile-play.mobile-landscape .move-buttons button{min-height:26px!important}
+body.mobile-play.mobile-landscape .aim-top{grid-template-columns:82px minmax(46px,1fr)!important;height:57px!important;gap:3px!important}
 body.mobile-play.mobile-landscape #dial{width:82px!important;height:57px!important}
-body.mobile-play.mobile-landscape .move-buttons{display:grid!important;grid-template-columns:1fr 1.12fr 1fr!important;gap:3px!important;width:100%!important}
-body.mobile-play.mobile-landscape #jump{flex:none!important}
-body.mobile-play.mobile-landscape .arena{bottom:calc(var(--dash-h,104px) + var(--mobile-ui-clearance) + 3px)!important}
+body.mobile-play.mobile-landscape .weapon-row button{min-height:27px!important;padding:2px!important}
+body.mobile-play.mobile-landscape .inventory{grid-column:auto!important;padding-top:3px!important}
+body.mobile-play.mobile-landscape #items{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:2px!important}
+body.mobile-play.mobile-landscape .item{min-height:29px!important;padding:2px 1px!important}
+body.mobile-play.mobile-landscape .item .icon{font-size:12px!important;line-height:12px!important}
+body.mobile-play.mobile-landscape .item .item-name{font-size:7.5px!important;margin-top:1px!important}
+body.mobile-play.mobile-landscape .inventory-bottom{margin-top:2px!important;min-height:14px!important}
+body.mobile-play.mobile-landscape .inventory-bottom span{display:none!important}
+body.mobile-play.mobile-landscape .arena{bottom:calc(var(--dash-h,108px) + var(--mobile-ui-clearance) + 3px)!important}
+body.mobile-play.mobile-landscape #minimap{top:36px!important;width:92px!important;height:24px!important}
+body.mobile-play.mobile-landscape #roster:not(.team-mode){top:36px!important;right:102px!important}
+body.mobile-play.mobile-landscape.team-battle #roster.team-mode{top:36px!important;bottom:auto!important;left:5px!important;right:102px!important;height:29px!important;max-height:29px!important;gap:4px!important}
+body.mobile-play.mobile-landscape.team-battle #roster.team-mode .team-roster>strong{font-size:7px!important;padding:2px 3px!important}
+body.mobile-play.mobile-landscape.team-battle #roster.team-mode .player{max-width:74px!important;padding:2px 3px!important;font-size:7px!important}
+body.mobile-play.mobile-landscape.team-battle #roster.team-mode .player span{display:none!important}
 
 @media(max-width:380px){
   body.mobile-play.mobile-portrait .dashboard{grid-template-columns:108px minmax(0,1fr)!important}
   body.mobile-play.mobile-portrait .aim-top{grid-template-columns:92px minmax(42px,1fr)!important}
   body.mobile-play.mobile-portrait #dial{width:92px!important}
-}
-
-/* MOBILE-RENDER-CLEANUP: phone/tablet only. Desktop and CrOS are intentionally untouched. */
-body.mobile-play,
-body.mobile-play button,
-body.mobile-play input,
-body.mobile-play label,
-body.mobile-play span,
-body.mobile-play b,
-body.mobile-play small{
-  -webkit-text-size-adjust:100%!important;
-  text-size-adjust:100%!important;
-}
-body.mobile-play button{
-  text-shadow:none!important;
-  letter-spacing:0!important;
-  -webkit-font-smoothing:antialiased!important;
-  text-rendering:optimizeLegibility!important;
-}
-body.mobile-play .move-buttons button,
-body.mobile-play .weapon-row button,
-body.mobile-play #pass{
-  text-shadow:none!important;
-  line-height:1.2!important;
-}
-/* Old dark/pixel theme section chrome was still leaking through on mobile. */
-body.mobile-play .dashboard section{
-  background:transparent!important;
-  border:0!important;
-  outline:0!important;
-  box-shadow:none!important;
-}
-body.mobile-play .pilot,
-body.mobile-play .aim,
-body.mobile-play .inventory{
-  background:transparent!important;
-  border:0!important;
-  outline:0!important;
-  box-shadow:none!important;
-}
-/* Keep the outer HUD clean and light; avoid a dark hairline during mobile scaling. */
-body.mobile-play .dashboard{
-  border:2px solid #9cdceb!important;
-  outline:none!important;
-  box-shadow:none!important;
-  background:#f7fdfffa!important;
-  overflow:hidden!important;
-}
-body.mobile-play .weapon-row button{
-  font-size:9px!important;
-  font-weight:700!important;
-  white-space:nowrap!important;
-}
-body.mobile-play .weapon-row .fire{font-size:10px!important;letter-spacing:.2px!important}
-body.mobile-play .pilot-head b{font-size:9px!important;line-height:1.25!important}
-body.mobile-play .pilot-head span{font-size:8px!important;line-height:1.25!important}
-body.mobile-play .move-label{font-size:8px!important;line-height:1.25!important}
-body.mobile-play .inventory-title{font-size:9px!important;line-height:1.25!important}
-body.mobile-play .inventory-title span{font-size:8px!important;line-height:1.25!important}
-body.mobile-play .item .item-name{font-size:8px!important;line-height:1.25!important}
-body.mobile-play .item .item-effect{font-size:7.5px!important;line-height:1.22!important}
-@media (max-width:380px){
   body.mobile-play .weapon-row button{font-size:8.5px!important}
   body.mobile-play .item .item-name{font-size:7.5px!important}
 }
+
