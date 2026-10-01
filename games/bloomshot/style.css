@@ -424,3 +424,67 @@ body.mobile-play.mobile-landscape .arena{bottom:calc(var(--dash-h,104px) + var(-
   body.mobile-play.mobile-portrait .aim-top{grid-template-columns:92px minmax(42px,1fr)!important}
   body.mobile-play.mobile-portrait #dial{width:92px!important}
 }
+
+/* MOBILE-RENDER-CLEANUP: phone/tablet only. Desktop and CrOS are intentionally untouched. */
+body.mobile-play,
+body.mobile-play button,
+body.mobile-play input,
+body.mobile-play label,
+body.mobile-play span,
+body.mobile-play b,
+body.mobile-play small{
+  -webkit-text-size-adjust:100%!important;
+  text-size-adjust:100%!important;
+}
+body.mobile-play button{
+  text-shadow:none!important;
+  letter-spacing:0!important;
+  -webkit-font-smoothing:antialiased!important;
+  text-rendering:optimizeLegibility!important;
+}
+body.mobile-play .move-buttons button,
+body.mobile-play .weapon-row button,
+body.mobile-play #pass{
+  text-shadow:none!important;
+  line-height:1.2!important;
+}
+/* Old dark/pixel theme section chrome was still leaking through on mobile. */
+body.mobile-play .dashboard section{
+  background:transparent!important;
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+body.mobile-play .pilot,
+body.mobile-play .aim,
+body.mobile-play .inventory{
+  background:transparent!important;
+  border:0!important;
+  outline:0!important;
+  box-shadow:none!important;
+}
+/* Keep the outer HUD clean and light; avoid a dark hairline during mobile scaling. */
+body.mobile-play .dashboard{
+  border:2px solid #9cdceb!important;
+  outline:none!important;
+  box-shadow:none!important;
+  background:#f7fdfffa!important;
+  overflow:hidden!important;
+}
+body.mobile-play .weapon-row button{
+  font-size:9px!important;
+  font-weight:700!important;
+  white-space:nowrap!important;
+}
+body.mobile-play .weapon-row .fire{font-size:10px!important;letter-spacing:.2px!important}
+body.mobile-play .pilot-head b{font-size:9px!important;line-height:1.25!important}
+body.mobile-play .pilot-head span{font-size:8px!important;line-height:1.25!important}
+body.mobile-play .move-label{font-size:8px!important;line-height:1.25!important}
+body.mobile-play .inventory-title{font-size:9px!important;line-height:1.25!important}
+body.mobile-play .inventory-title span{font-size:8px!important;line-height:1.25!important}
+body.mobile-play .item .item-name{font-size:8px!important;line-height:1.25!important}
+body.mobile-play .item .item-effect{font-size:7.5px!important;line-height:1.22!important}
+@media (max-width:380px){
+  body.mobile-play .weapon-row button{font-size:8.5px!important}
+  body.mobile-play .item .item-name{font-size:7.5px!important}
+}
