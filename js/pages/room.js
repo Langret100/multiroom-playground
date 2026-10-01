@@ -1966,13 +1966,24 @@ function updatePreview(modeId){
         postToMain({type:'tg_key',gameId:'togester',code,down:!!down,repeat:!!e.repeat});
       }catch(_){ }
     };
+    const forwardBackroomsPhysicalKey=(e,down)=>{
+      try{
+        if(!coop?.active||String(coop?.meta?.id||'')!=='backrooms3d')return;
+        const code=String(e.code||'');
+        if(!['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight','KeyE','KeyF'].includes(code))return;
+        const fr=duel?.iframeEl;
+        if(!fr?.contentWindow)return;
+        fr.contentWindow.postMessage({type:'br_physical_key',gameId:'backrooms3d',code,down:!!down,repeat:!!e.repeat},'*');
+        if(['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyE','KeyF'].includes(code))e.preventDefault?.();
+      }catch(_){ }
+    };
     window.addEventListener("keydown", (e)=>{
       if (shouldIgnoreKeyEvent(e)) return;
-      setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true);
+      setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true); forwardBackroomsPhysicalKey(e,true);
     }, { passive:false, capture:true });
     window.addEventListener("keyup", (e)=>{
       if (shouldIgnoreKeyEvent(e)) return;
-      setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false);
+      setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false); forwardBackroomsPhysicalKey(e,false);
     }, { passive:false, capture:true });
 
     // Mobile overlay buttons

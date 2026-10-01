@@ -2182,6 +2182,25 @@ function spawnShelfPillar(wx,wz, idx=0){
   });
   addEventListener("keyup",(e)=>{const k=controlKey(e);if(keysDown[k]!=null)keysDown[k]=0;if(k==='e')setSprintHold(false);});
 
+  // When the room page retains keyboard focus, it forwards only Backrooms3D keys here.
+  // This keeps movement responsive without leaking controls into other embedded games.
+  addEventListener('message',(e)=>{
+    const d=e?.data;
+    if(!d||d.type!=='br_physical_key'||d.gameId!=='backrooms3d')return;
+    if(inputBlocked())return;
+    const fake={code:String(d.code||''),key:'',repeat:!!d.repeat};
+    const k=controlKey(fake);
+    const down=!!d.down;
+    if(keysDown[k]!=null)keysDown[k]=down?1:0;
+    if(fake.code==='ShiftLeft'||fake.code==='ShiftRight')shiftHeld=down;
+    if(k==='e'){
+      if(down){
+        if(!d.repeat){if(playerRole!=='monster'&&promptVisible())doInteract();else setSprintHold(true);}
+      }else setSprintHold(false);
+    }
+    if(k==='f'&&down&&!d.repeat)requestKeyTransfer();
+  });
+
   // mobile joystick
   const joyBase=$("joyBase"), joyKnob=$("joyKnob");
   let joyActive=false, joyCx=0, joyCy=0, joyTouchId=null;
