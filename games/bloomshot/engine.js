@@ -44,7 +44,7 @@ function terrainDestroyScale(p,weapon,baseRadius){
  if(!isSuper&&!isCraterShell&&baseRadius*scale<100)scale*=1.10;
  // 캐릭터/탄종별 밸런스는 여기서만 분리 적용해 다른 탄에 번지지 않게 한다.
  if(p.character===2&&weapon==='normal')scale*=0.80;  // 루미 기본탄 지형파괴 -20%
- if(p.character===4&&weapon==='special')scale*=1.15; // 바위콩 지반 파괴탄 +15%
+ if(p.character===4&&weapon==='special')scale*=1.035; // 바위콩 지반 파괴탄: 직전 최종 범위에서 -10% (1.15 × 0.90)
  if(p.character===3&&weapon==='special')scale*=0.80; // 치치 송곳 도토리탄 -20%
  if(p.character===6&&weapon==='special')scale*=1.15; // 눈송 서리 구슬 +15%
  return scale;
@@ -248,8 +248,8 @@ function advanceDrops(s,t){
 }
 // Body dimensions follow the trimmed 164 x 128 character sprites (super tank: 1.2x).
 const HIT_BODIES=[[51,50],[56,52],[55,54],[52,50],[52,53],[53,48],[55,53],[66,63]];
-function playerHitTime(pr,p,x0=pr.x,y0=pr.y,s=null){
- const [bw,bh]=HIT_BODIES[p.character]||HIT_BODIES[0],r=(pr.drawRadius||0)*1.8;
+function playerHitTime(pr,p,x0=pr.x,y0=pr.y,s=null,paddingScale=1.8){
+ const [bw,bh]=HIT_BODIES[p.character]||HIT_BODIES[0],r=(pr.drawRadius||0)*paddingScale;
  const tilt=s&&!p.falling&&s.jump?.sid!==p.sid?surfaceAngle(s,p.x,p.y):0,cs=Math.cos(tilt),sn=Math.sin(tilt);
  const local=(x,y)=>({x:((x-p.x)*cs+(y-p.y)*sn)/(bw+r),y:(-(x-p.x)*sn+(y-p.y)*cs+bh-2)/(bh+r)});
  const a=local(x0,y0),b=local(pr.x,pr.y),dx=b.x-a.x,dy=b.y-a.y,A=dx*dx+dy*dy,B=2*(a.x*dx+a.y*dy),C=a.x*a.x+a.y*a.y-1;
@@ -273,7 +273,12 @@ function updateProjectiles(s,t){
    // Above-camera shots remain alive. Only bounded side/bottom misses disappear.
    if(pr.x < -480||pr.x>W+480||pr.y>H+80||pr.age>15){pr.dead=true;event(s,'miss',{x:pr.x,y:pr.y});break;}
    const {hit,time}=firstPlayerHit(s,pr,x0,y0),terrainTime=terrainHitTime(s,pr,x0,y0);
-   const contact=Math.min(time,terrainTime);if(contact!==Infinity){pr.x=x0+(pr.x-x0)*contact;pr.y=y0+(pr.y-y0)*contact;}
+   // Direct-hit acquisition stays forgiving (1.8x projectile padding), but the explosion/terrain
+   // destruction center must be the visible projectile contact point, not the invisible outer shell.
+   // This prevents direct hits from exploding artificially high and making the terrain cut look smaller.
+   let contact=Math.min(time,terrainTime);
+   if(hit&&time<=terrainTime){const visibleHitTime=playerHitTime(pr,hit,x0,y0,s,1);if(visibleHitTime!==Infinity&&visibleHitTime<=terrainTime)contact=visibleHitTime;}
+   if(contact!==Infinity){pr.x=x0+(pr.x-x0)*contact;pr.y=y0+(pr.y-y0)*contact;}
    if(hit&&time<=terrainTime){pr.hitSid=hit.sid;impact(s,pr);pr.dead=true;}
    else if(terrainTime!==Infinity){
     if(pr.pierceLeft>0){pr.pierceActive=true;destroy(s,pr.x,pr.y,pr.craterRadius);settle(s);if(pr.pierceLeft<=0){impact(s,pr);pr.dead=true;}}
