@@ -198,12 +198,14 @@ function projectile(s,p,angle,power,weapon,boost,at,extraAngle=0){
  const blastScale=smallShot?1.94:1.83;
  const craterScale=smallShot?2.35:1.96;
  const drawScale=smallShot?2.05:1.68;
- const blastRadius=Math.max(c.radius*w.blast*blastScale,smallShot?48:0);
+ let blastRadius=Math.max(c.radius*w.blast*blastScale,smallShot?48:0);
  const baseCraterRadius=Math.max(c.radius*w.crater*craterScale,smallShot?54:0);
  const craterRadius=baseCraterRadius*terrainDestroyScale(p,weapon,baseCraterRadius);
+ // 눈송 서리 구슬: 실제 피해 판정 반경을 최종 지형 파괴 반경과 동일하게 맞춘다.
+ if(p.character===6&&weapon==='special')blastRadius=craterRadius;
  let drawRadius=Math.max(w.size*drawScale,smallShot?8.6:0);
  if(p.character===4&&weapon==='special')drawRadius*=0.80; // 바위콩 지반 파괴탄 탄 크기 -20%
- const freezeRadius=(p.character===6&&weapon==='special')?blastRadius*1.15:blastRadius; // 눈송 서리 구슬 빙결 판정 +15%
+ const freezeRadius=(p.character===6&&weapon==='special')?blastRadius*1.15:blastRadius; // 눈송 서리 구슬 빙결 판정은 피해/파괴 반경보다 +15%
  return {owner:p.sid,character:p.character,weapon,x:m.x,y:m.y,vx:Math.cos(rad)*speed*p.face,vy:-Math.sin(rad)*speed,age:0,born:at,damage:c.damage*w.damage*(boost==='power'?1.5:1)*1.98*characterDamageScale(p),radius:blastRadius,craterRadius,drawRadius,freezeRadius,rough:!!w.rough,craterDepth:w.depth||1,pierceLeft:w.pierce||0,armorPierce:w.armorPierce||0,homing:!!w.homing,homingRadius:w.homingRadius||300,homingTurn:w.homingTurn||.5,effect:weapon==='special'?c.special:'',boostVisual:boost||'',statusEffect:boost==='poison'?'poison':boost==='freeze'?'freeze':'',color:c.color,trail:[]};
 }
 function launch(s,q){const p=s.players.find(p=>p.sid===q.sid);if(!p||p.hp<=0)return;const w=weaponSpec(p,q.weapon);if(p.character===7&&q.weapon==='normal'&&!q.volleyExpanded){const groups=[[-5,0,5],[-5,0,5],[-5,0,5]];groups.forEach((spread,i)=>s.queue.push({...q,volleyExpanded:true,spreadOverride:spread,shotIndexBase:i*3,at:s.simAt+i*180}));s.queue.sort((a,b)=>a.at-b.at);return;}const m=muzzlePosition(s,p),spread=q.spreadOverride||w.spread;let shotIndex=q.shotIndexBase||0;for(const a of spread){const pr=projectile(s,p,q.angle,q.power,q.weapon,q.boost,s.simAt,a);pr.shotIndex=shotIndex++;pr.damage*=1+Math.max(0,s.round-10)*.08;s.projectiles.push(pr);}event(s,'launch',{sid:p.sid,x:m.x,y:m.y,character:p.character,weapon:q.weapon,effect:q.weapon==='special'?spec(p).special:'',boostVisual:q.boost||'',statusEffect:q.boost==='poison'?'poison':q.boost==='freeze'?'freeze':''});}
