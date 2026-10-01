@@ -6,7 +6,7 @@
 
 【이 파일의 역할】
   싱글플레이 완결형 게임 본체.
-  멀티플레이어 동기화는 math-explorer-bridge.js?v=coop-20260930-v1가 이 파일의
+  멀티플레이어 동기화는 math-explorer-bridge.js?v=coop-20261001-final 이 파일의
   G 객체 메서드를 래핑하는 방식으로 주입함.
   embed=1 파라미터로 iframe 실행 시 브릿지 파일이 활성화됨.
 
@@ -2383,7 +2383,8 @@ const G = {
             const sp = new URLSearchParams(location.search);
             if (sp.get('embed') === '1'){
                 // In room/embedded mode, return to the room instead of reloading the iframe.
-                setTimeout(()=>{ try{ parent.postMessage({ type:'mx_quit', gameId:'mathexplorer', reason:'game_over' }, '*'); }catch(_){ } }, 120);
+                if(typeof window.__mxEndGame==='function'){window.__mxEndGame('game_over');return;}
+                setTimeout(()=>{ try{ parent.postMessage({ type:'mx_quit', gameId:'mathexplorer', reason:'game_over' }, '*'); }catch(_){ } }, 2000);
             }
         }catch(_){ }
         document.getElementById('finalStats').innerHTML = `
@@ -3187,66 +3188,7 @@ const G = {
             this.slashes.forEach(s => {
                 if (!this.isInView(s.x, s.y, 100)) return;
                 
-                ctx.save();
-                ctx.globalAlpha = s.opacity;
-                ctx.translate(s.x, s.y);
-                ctx.rotate(s.angle);
-                
-                if (s.isHammer) {
-                    // 망치 타격 효과
-                    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 70);
-                    gradient.addColorStop(0, 'rgba(255,215,0,0.8)');
-                    gradient.addColorStop(0.5, 'rgba(255,165,0,0.4)');
-                    gradient.addColorStop(1, 'transparent');
-                    
-                    ctx.fillStyle = gradient;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 70, 0, Math.PI * 2);
-                    ctx.fill();
-                    
-                    // 충격파 링
-                    ctx.strokeStyle = 'rgba(255,215,0,0.9)';
-                    ctx.lineWidth = 6;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 50 * (1 - s.life / 20), 0, Math.PI * 2);
-                    ctx.stroke();
-                    
-                    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, 40 * (1 - s.life / 20), 0, Math.PI * 2);
-                    ctx.stroke();
-                } else {
-                    // 전사/발키리 베기 효과 — 대각선 직선 베기
-                    const len = 55;
-                    const fade = s.opacity;
-                    // 메인 베기선
-                    const g1 = ctx.createLinearGradient(-len, -len*0.3, len, len*0.3);
-                    g1.addColorStop(0, 'transparent');
-                    g1.addColorStop(0.3, s.color);
-                    g1.addColorStop(0.7, s.color);
-                    g1.addColorStop(1, 'transparent');
-                    ctx.strokeStyle = g1;
-                    ctx.lineWidth = 7;
-                    ctx.lineCap = 'round';
-                    ctx.beginPath();
-                    ctx.moveTo(-len, -len*0.3);
-                    ctx.lineTo(len, len*0.3);
-                    ctx.stroke();
-                    // 빛 하이라이트
-                    const g2 = ctx.createLinearGradient(-len*0.6, -len*0.2, len*0.6, len*0.2);
-                    g2.addColorStop(0, 'transparent');
-                    g2.addColorStop(0.5, 'rgba(255,255,255,0.85)');
-                    g2.addColorStop(1, 'transparent');
-                    ctx.strokeStyle = g2;
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.moveTo(-len*0.6, -len*0.2);
-                    ctx.lineTo(len*0.6, len*0.2);
-                    ctx.stroke();
-                }
-                
-                ctx.restore();
+                window.__mxDrawSlash(ctx,s);
             });
             
             this.enemies.forEach(e => {
@@ -5631,55 +5573,13 @@ class Boss extends Enemy {
     }
 }
 
-class Projectile {
-    constructor(x, y, angle, owner, isArrow = false) {
-        this.x = x;
-        this.y = y;
-        this.angle = angle;
-        this.vx = Math.cos(angle) * 10;
-        this.vy = Math.sin(angle) * 10;
-        this.owner = owner;
-        this.damage = owner.damage;
-        this.pierce = owner.pierce;
-        this.hit = new Set();
-        this.isArrow = isArrow;
-    }
-    
-    update() {
-        this.x += this.vx * gameSpeedMultiplier;
-        this.y += this.vy * gameSpeedMultiplier;
-        
-        if (Math.abs(this.x - this.owner.x) > 400 || Math.abs(this.y - this.owner.y) > 400) {
-            return false;
-        }
-        
-        // 장애물 충돌 검사
-        for (let obs of G.obstacles) {
-            const obstDist = Math.hypot(this.x - obs.x, this.y - obs.y);
-            if (obstDist < obs.size) {
-                return false; // 투사체 소멸
-            }
-        }
-        
-        for (let e of G.enemies) {
-            if (!this.hit.has(e) && Math.hypot(e.x - this.x, e.y - this.y) < e.size + 8) {
-                this.owner.dealDamage(e, this.damage);
-                this.hit.add(e);
-                if (this.pierce <= 0) return false;
-                this.pierce--;
-            }
-        }
-        
-        return true;
-    }
-    
-    draw() {
+window.__mxDrawProjectile=function(ctx,p){
         ctx.save();
         
-        if (this.isArrow) {
+        if (p.isArrow) {
             // 궁수(ranger) 화살 — 날렵한 화살 모양
-            ctx.translate(this.x, this.y);
-            ctx.rotate(this.angle);
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.angle);
             
             // 화살 몸통 (나무)
             ctx.fillStyle = '#8B4513';  // 원본 색상
@@ -5725,11 +5625,11 @@ class Projectile {
             ctx.globalAlpha = 0.2;
             ctx.fillStyle = '#0ff';
             ctx.beginPath();
-            ctx.arc(this.x - Math.cos(this.angle) * 10, this.y - Math.sin(this.angle) * 10, 4, 0, Math.PI * 2);
+            ctx.arc(p.x - Math.cos(p.angle) * 10, p.y - Math.sin(p.angle) * 10, 4, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalAlpha = 0.1;
             ctx.beginPath();
-            ctx.arc(this.x - Math.cos(this.angle) * 18, this.y - Math.sin(this.angle) * 18, 2.5, 0, Math.PI * 2);
+            ctx.arc(p.x - Math.cos(p.angle) * 18, p.y - Math.sin(p.angle) * 18, 2.5, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalAlpha = 1;
             // 메인 구슬
@@ -5737,17 +5637,123 @@ class Projectile {
             ctx.shadowColor = '#0ff';
             ctx.fillStyle = '#0ff';
             ctx.beginPath();
-            ctx.arc(this.x, this.y, 7, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
             ctx.fill();
             // 하이라이트
             ctx.shadowBlur = 0;
             ctx.fillStyle = '#fff';
             ctx.beginPath();
-            ctx.arc(this.x - 2, this.y - 2, 3, 0, Math.PI * 2);
+            ctx.arc(p.x - 2, p.y - 2, 3, 0, Math.PI * 2);
             ctx.fill();
         }
         
         ctx.restore();
+};
+window.__mxDrawSlash=function(ctx,s){
+                ctx.save();
+                ctx.globalAlpha = s.opacity;
+                ctx.translate(s.x, s.y);
+                ctx.rotate(s.angle);
+                
+                if (s.isHammer) {
+                    // 망치 타격 효과
+                    const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 70);
+                    gradient.addColorStop(0, 'rgba(255,215,0,0.8)');
+                    gradient.addColorStop(0.5, 'rgba(255,165,0,0.4)');
+                    gradient.addColorStop(1, 'transparent');
+                    
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 70, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // 충격파 링
+                    ctx.strokeStyle = 'rgba(255,215,0,0.9)';
+                    ctx.lineWidth = 6;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 50 * (1 - s.life / 20), 0, Math.PI * 2);
+                    ctx.stroke();
+                    
+                    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 40 * (1 - s.life / 20), 0, Math.PI * 2);
+                    ctx.stroke();
+                } else {
+                    // 전사/발키리 베기 효과 — 대각선 직선 베기
+                    const len = 55;
+                    const fade = s.opacity;
+                    // 메인 베기선
+                    const g1 = ctx.createLinearGradient(-len, -len*0.3, len, len*0.3);
+                    g1.addColorStop(0, 'transparent');
+                    g1.addColorStop(0.3, s.color);
+                    g1.addColorStop(0.7, s.color);
+                    g1.addColorStop(1, 'transparent');
+                    ctx.strokeStyle = g1;
+                    ctx.lineWidth = 7;
+                    ctx.lineCap = 'round';
+                    ctx.beginPath();
+                    ctx.moveTo(-len, -len*0.3);
+                    ctx.lineTo(len, len*0.3);
+                    ctx.stroke();
+                    // 빛 하이라이트
+                    const g2 = ctx.createLinearGradient(-len*0.6, -len*0.2, len*0.6, len*0.2);
+                    g2.addColorStop(0, 'transparent');
+                    g2.addColorStop(0.5, 'rgba(255,255,255,0.85)');
+                    g2.addColorStop(1, 'transparent');
+                    ctx.strokeStyle = g2;
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(-len*0.6, -len*0.2);
+                    ctx.lineTo(len*0.6, len*0.2);
+                    ctx.stroke();
+                }
+                
+                ctx.restore();
+};
+class Projectile {
+    constructor(x, y, angle, owner, isArrow = false) {
+        this.x = x;
+        this.y = y;
+        this.angle = angle;
+        this.vx = Math.cos(angle) * 10;
+        this.vy = Math.sin(angle) * 10;
+        this.owner = owner;
+        this.damage = owner.damage;
+        this.pierce = owner.pierce;
+        this.hit = new Set();
+        this.isArrow = isArrow;
+    }
+    
+    update() {
+        this.x += this.vx * gameSpeedMultiplier;
+        this.y += this.vy * gameSpeedMultiplier;
+        
+        if (Math.abs(this.x - this.owner.x) > 400 || Math.abs(this.y - this.owner.y) > 400) {
+            return false;
+        }
+        
+        // 장애물 충돌 검사
+        for (let obs of G.obstacles) {
+            const obstDist = Math.hypot(this.x - obs.x, this.y - obs.y);
+            if (obstDist < obs.size) {
+                return false; // 투사체 소멸
+            }
+        }
+        
+        for (let e of G.enemies) {
+            if (!this.hit.has(e) && Math.hypot(e.x - this.x, e.y - this.y) < e.size + 8) {
+                this.owner.dealDamage(e, this.damage);
+                this.hit.add(e);
+                if (this.pierce <= 0) return false;
+                this.pierce--;
+            }
+        }
+        
+        return true;
+    }
+    
+    draw() { window.__mxDrawProjectile(ctx,this);
     }
 }
 
@@ -5867,6 +5873,6 @@ try{
 }
 G.init();
 </script>
-  <script src="./math-explorer-bridge.js?v=20260831-legacy1"></script>
+  <script src="./math-explorer-bridge.js?v=coop-20261001-final"></script>
 </body>
 </html>
