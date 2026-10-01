@@ -16,6 +16,23 @@ const embedded=parent!==window,bridge={sid:'local',hostSid:'local',isHost:!embed
 let state=null,roster=[],sequence=0,pending=null,offset=0,received=0,lastSent=0,lastSync=0,reported=false,weapon='normal',sound=true,audio=null,audioBuffer=null,audioCues=null,audioLoad=null,bgmAudio=null,noticeUntil=0,lastEvent=0,setupCharacter=-1,lastTurn=-1,lastLocalTurn=-1,cpuTurn=-1,bootAt=Date.now(),itemIconUrls={};
 let publishedEvent=-1,publishedPhase=null,lastCountdownTurn=-1,lastCountdownValue=99,lastHomingCueAt=0,visualState=null,visualSeq=-1,visualClockAt=0;
 let charge=null,moveHeld=0,lastMove=0,panHeld=0,aimHeld=0,powerHeld=0,frameAt=0,windParticles=[];
+const MOBILE_BLOOMSHOT=(()=>{
+ const ua=String(navigator.userAgent||'');
+ const uaMobile=!!(navigator.userAgentData&&navigator.userAgentData.mobile);
+ const ipadLike=navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1;
+ return uaMobile||/Android|iPhone|iPod|iPad|Mobile|Windows Phone/i.test(ua)||ipadLike;
+})();
+function syncMobileBloomshotLayout(){
+ const mobile=MOBILE_BLOOMSHOT;
+ document.body.classList.toggle('mobile-play',mobile);
+ document.body.classList.toggle('mobile-portrait',mobile&&innerHeight>=innerWidth);
+ document.body.classList.toggle('mobile-landscape',mobile&&innerWidth>innerHeight);
+}
+syncMobileBloomshotLayout();
+window.addEventListener('resize',syncMobileBloomshotLayout,{passive:true});
+window.addEventListener('orientationchange',()=>{syncMobileBloomshotLayout();setTimeout(syncMobileBloomshotLayout,120);},{passive:true});
+if(window.visualViewport)visualViewport.addEventListener('resize',syncMobileBloomshotLayout,{passive:true});
+
 const camera={x:0,y:0,manual:false,w:1200,h:700,targetX:0,targetY:0},art={characters:[],portraitsSmall:[],portraitsLarge:[],portraitsPilot:[],mapBackdrops:Array(5).fill(null),mapForegrounds:Array(5).fill(null),mapPreviewImages:[],atlas:null,atlasMeta:null,fxAtlas:null,fxMeta:null,itemUI:null,projectileFx:null,projectileMeta:null,crateAtlas:null,crateMeta:null,hazardFire:null,hazardPoison:null,whiteFlag:null,smokePuffs:null,windParticleAtlas:null},visualPlayers=new Map(),mapPreviews=[];
 const MAP_ART=[
  {bg:'assets/maps/map-0-bg.webp',fg:'assets/maps/map-0-fg.webp',preview:'assets/maps/map-0-preview.webp'},

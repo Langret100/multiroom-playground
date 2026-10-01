@@ -1978,12 +1978,16 @@ function updatePreview(modeId){
       }catch(_){ }
     };
     window.addEventListener("keydown", (e)=>{
+      // Backrooms3D must receive physical movement keys even when the room page, not the iframe, owns focus.
+      // Do this before the generic input-ignore guard; the forwarder itself only accepts Backrooms3D control keys.
+      forwardBackroomsPhysicalKey(e,true);
       if (shouldIgnoreKeyEvent(e)) return;
-      setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true); forwardBackroomsPhysicalKey(e,true);
+      setInput(e.key, true); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,true);
     }, { passive:false, capture:true });
     window.addEventListener("keyup", (e)=>{
+      forwardBackroomsPhysicalKey(e,false);
       if (shouldIgnoreKeyEvent(e)) return;
-      setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false); forwardBackroomsPhysicalKey(e,false);
+      setInput(e.key, false); maybeSendInputDelta(); forwardTogesterPhysicalKey(e,false);
     }, { passive:false, capture:true });
 
     // Mobile overlay buttons
@@ -2726,8 +2730,17 @@ function sendCoopBridgeInit(){
       room?.send?.("st_sync", {});
     }
   }catch(_){ }
-// Give keyboard focus to the game iframe (otherwise arrow/WASD may be captured by parent)
-  try{ duel.iframeEl?.contentWindow?.focus?.(); }catch(_){ }
+// Give keyboard focus to the game iframe. Backrooms3D also clears any parent text-input focus,
+// because Chromium can keep the room chat input active even after the iframe is shown.
+  try{
+    if (coop?.meta?.id === 'backrooms3d'){
+      const ae=document.activeElement;
+      if(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(String(ae.tagName||''))) ae.blur?.();
+      duel.iframeEl?.setAttribute?.('tabindex','0');
+      duel.iframeEl?.focus?.({preventScroll:true});
+    }
+    duel.iframeEl?.contentWindow?.focus?.();
+  }catch(_){ }
 }
 
 function getMySeat(){
@@ -2994,6 +3007,17 @@ function startCoopEmbed(meta){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
       sendCoopBridgeInit();
+      if(meta?.id === 'backrooms3d'){
+        setTimeout(()=>{
+          try{
+            const ae=document.activeElement;
+            if(ae && /^(INPUT|TEXTAREA|SELECT)$/.test(String(ae.tagName||''))) ae.blur?.();
+            duel.iframeEl?.setAttribute?.('tabindex','0');
+            duel.iframeEl?.focus?.({preventScroll:true});
+            duel.iframeEl?.contentWindow?.focus?.();
+          }catch(_){ }
+        }, 80);
+      }
     };
     duel.iframeEl.src = src;
   }

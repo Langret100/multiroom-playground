@@ -2201,6 +2201,33 @@ function spawnShelfPillar(wx,wz, idx=0){
     if(k==='f'&&down&&!d.repeat)requestKeyTransfer();
   });
 
+  // Capture-level keyboard path for Chromium/WhaleBook/PC.
+  // This is intentionally independent of the bubbling handler above so a focused canvas or other game element
+  // cannot swallow WASD before the movement state is updated. Text entry/modals still block controls.
+  function brCapturePhysicalKey(e, down){
+    const code=String(e.code||'');
+    if(!['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight','KeyE','KeyF'].includes(code))return;
+    if(chatMode || document.activeElement===chatIn || document.activeElement===mathInput || $("mathModal").classList.contains("show") || $("helpModal").style.display==='flex') return;
+    const k=controlKey(e);
+    if(keysDown[k]!=null){ keysDown[k]=down?1:0; e.preventDefault(); }
+    if(code==='ShiftLeft'||code==='ShiftRight') shiftHeld=!!down;
+    if(k==='e'){
+      e.preventDefault();
+      if(down){ if(!e.repeat){ if(playerRole!=='monster'&&promptVisible()) doInteract(); else setSprintHold(true); } }
+      else setSprintHold(false);
+    }
+    if(k==='f'&&down&&!e.repeat){ e.preventDefault(); requestKeyTransfer(); }
+  }
+  document.addEventListener('keydown',e=>brCapturePhysicalKey(e,true),{capture:true,passive:false});
+  document.addEventListener('keyup',e=>brCapturePhysicalKey(e,false),{capture:true,passive:false});
+
+  // Clicking/tapping the game immediately exits chat focus and restores game keyboard focus.
+  document.addEventListener('pointerdown',e=>{
+    if(e.target===chatIn || e.target===mathInput || e.target.closest?.('#helpModal,#mathModal,#chatWrap,button,input,textarea,select,a')) return;
+    if(chatMode) exitChat();
+    try{ window.focus(); }catch(_){ }
+  },true);
+
   // mobile joystick
   const joyBase=$("joyBase"), joyKnob=$("joyKnob");
   let joyActive=false, joyCx=0, joyCy=0, joyTouchId=null;
