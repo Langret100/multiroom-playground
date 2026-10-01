@@ -100,7 +100,31 @@
     }
   }
 
-  function setTogesterDock(on){
+  
+function isActualMobileGameClient(){
+  try{
+    if (navigator.userAgentData && navigator.userAgentData.mobile === true) return true;
+    const ua=String(navigator.userAgent||'');
+    if (/CrOS|Windows NT|Macintosh/i.test(ua) && !/iPhone|iPad|iPod/i.test(ua)) return false;
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.maxTouchPoints>1 && Math.min(screen.width||9999,screen.height||9999)<900);
+  }catch(_){ return false; }
+}
+function installMobileGameTouchGuard(frame){
+  if(!isActualMobileGameClient()||!frame)return;
+  try{
+    const doc=frame.contentDocument||frame.contentWindow?.document;
+    if(!doc||!doc.head||doc.getElementById('mobile-no-copy-callout'))return;
+    const style=doc.createElement('style');
+    style.id='mobile-no-copy-callout';
+    style.textContent=`html,body{overscroll-behavior:none} body,body *{-webkit-touch-callout:none!important;-webkit-user-select:none!important;user-select:none!important} input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"]{-webkit-touch-callout:default!important;-webkit-user-select:text!important;user-select:text!important} img,canvas{-webkit-user-drag:none!important;user-drag:none!important}`;
+    doc.head.appendChild(style);
+    const allowTextTarget=(t)=>{ try{return !!t?.closest?.('input,textarea,[contenteditable="true"],[contenteditable="plaintext-only"]');}catch(_){return false;} };
+    doc.addEventListener('contextmenu',e=>{if(!allowTextTarget(e.target))e.preventDefault();},{capture:true});
+    doc.addEventListener('selectstart',e=>{if(!allowTextTarget(e.target))e.preventDefault();},{capture:true});
+  }catch(_){ }
+}
+
+function setTogesterDock(on){
     try{
       const dock = document.getElementById("tgDock");
       if (!dock) return;
@@ -2892,6 +2916,7 @@ function handleDuelMatch(m){
     if (duel.iframeEl){
       duel.iframeEl.onload = ()=>{
         duel.iframeLoaded = true;
+        installMobileGameTouchGuard(duel.iframeEl);
         // wait for bridge_ready or init anyway
         sendBridgeInit();
         focusGameIframeSoon();
@@ -3006,6 +3031,7 @@ function startCoopEmbed(meta){
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
+      installMobileGameTouchGuard(duel.iframeEl);
       sendCoopBridgeInit();
       if(meta?.id === 'backrooms3d'){
         setTimeout(()=>{
@@ -3051,6 +3077,7 @@ function startCoopPractice(meta){
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
+      installMobileGameTouchGuard(duel.iframeEl);
       sendCoopBridgeInit();
     };
     duel.iframeEl.src = src;

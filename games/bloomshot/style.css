@@ -361,3 +361,66 @@ body.mobile-play.mobile-landscape.team-battle #roster.team-mode .player span{dis
  body.mobile-play.mobile-portrait #dial{width:88px!important;height:64px!important}
  body.mobile-play.mobile-portrait .item .item-name{font-size:5.6px!important}
 }
+
+/* MOBILE-TOUCH-UI-FIX: phone/tablet only. Desktop/CrOS layout intentionally unchanged. */
+body.mobile-play{
+  --mobile-ui-clearance:max(22px,env(safe-area-inset-bottom));
+}
+body.mobile-play .dashboard{
+  bottom:var(--mobile-ui-clearance)!important;
+  border:2px solid #9cdceb!important;
+  outline:0!important;
+  box-shadow:none!important;
+  background:linear-gradient(180deg,#fffffffa 0%,#f4fdfffa 100%)!important;
+}
+body.mobile-play .dashboard section{outline:0!important;box-shadow:none!important}
+body.mobile-play .pilot-head b,
+body.mobile-play .pilot-head span,
+body.mobile-play .move-label,
+body.mobile-play .aim label,
+body.mobile-play .inventory-title,
+body.mobile-play .inventory-title span,
+body.mobile-play .item .item-name,
+body.mobile-play .item .item-effect,
+body.mobile-play .inventory-bottom span,
+body.mobile-play #pass{
+  letter-spacing:0!important;
+  text-shadow:none!important;
+  -webkit-font-smoothing:antialiased;
+}
+body.mobile-play .pilot-head b{font-size:9px!important;line-height:1.15!important}
+body.mobile-play .pilot-head span{font-size:7.5px!important;line-height:1.15!important}
+body.mobile-play .move-label{font-size:7.5px!important;line-height:1.15!important}
+body.mobile-play .aim label{font-size:8px!important;line-height:1.15!important}
+body.mobile-play .aim-sliders label:first-child::after{font-size:7px!important;line-height:1.15!important;letter-spacing:0!important}
+body.mobile-play .inventory-title{font-size:9px!important;line-height:1.15!important}
+body.mobile-play .inventory-title span{font-size:7.5px!important;line-height:1.15!important}
+body.mobile-play .item .item-name{font-size:7.5px!important;line-height:1.18!important;letter-spacing:0!important;min-height:9px!important}
+body.mobile-play .item .item-effect{font-size:7px!important;line-height:1.18!important;letter-spacing:0!important;min-height:18px!important;padding:2px 3px!important}
+body.mobile-play .inventory-bottom span{font-size:7.5px!important;line-height:1.2!important}
+body.mobile-play #pass{font-size:7.5px!important;line-height:1.15!important}
+
+/* Give left/right touch targets more horizontal room without shrinking the angle dial. */
+body.mobile-play.mobile-portrait .dashboard{grid-template-columns:116px minmax(0,1fr)!important}
+body.mobile-play.mobile-portrait .move-buttons{display:grid!important;grid-template-columns:1fr 1.18fr 1fr!important;gap:4px!important;width:100%!important}
+body.mobile-play.mobile-portrait .move-buttons button{width:100%!important;min-width:0!important;padding-left:3px!important;padding-right:3px!important}
+body.mobile-play.mobile-portrait #jump{flex:none!important}
+body.mobile-play.mobile-portrait .aim-top{grid-template-columns:96px minmax(46px,1fr)!important}
+body.mobile-play.mobile-portrait #dial{width:96px!important;height:68px!important}
+body.mobile-play.mobile-portrait .arena{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 7px)!important}
+body.mobile-play.mobile-portrait.team-battle .arena{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 48px)!important}
+body.mobile-play.mobile-portrait.team-battle #roster.team-mode{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 8px)!important}
+
+/* Landscape mobile also stays above browser/navigation bars. Keep the dial width. */
+body.mobile-play.mobile-landscape .dashboard{bottom:var(--mobile-ui-clearance)!important}
+body.mobile-play.mobile-landscape .aim-top{grid-template-columns:82px minmax(46px,1fr)!important}
+body.mobile-play.mobile-landscape #dial{width:82px!important;height:57px!important}
+body.mobile-play.mobile-landscape .move-buttons{display:grid!important;grid-template-columns:1fr 1.12fr 1fr!important;gap:3px!important;width:100%!important}
+body.mobile-play.mobile-landscape #jump{flex:none!important}
+body.mobile-play.mobile-landscape .arena{bottom:calc(var(--dash-h,104px) + var(--mobile-ui-clearance) + 3px)!important}
+
+@media(max-width:380px){
+  body.mobile-play.mobile-portrait .dashboard{grid-template-columns:108px minmax(0,1fr)!important}
+  body.mobile-play.mobile-portrait .aim-top{grid-template-columns:92px minmax(42px,1fr)!important}
+  body.mobile-play.mobile-portrait #dial{width:92px!important}
+}
