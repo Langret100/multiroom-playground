@@ -230,11 +230,17 @@ this.sc = {
       this.recomputeReady();
     });
 
+    this.onMessage('stack_mode',(client,msg={})=>{
+      if(this.state.players.get(client.sessionId)?.isHost&&this.state.phase==='lobby'&&this.state.mode==='stackga'){
+        this.stackMode=msg.stackMode==='normal'?'normal':'items';this.state.stackMode=this.stackMode;this.broadcast('stack_mode',{stackMode:this.stackMode});
+      }
+    });
     this.onMessage("start", (client, msg = {}) => {
       const p = this.state.players.get(client.sessionId);
       if (!p?.isHost) return;
       if (this.state.phase !== "lobby") return;
 
+      this.stackMode=msg.stackMode==='normal'?'normal':'items';
       // Host is considered "ready" implicitly.
       // Duel games allow 1 human + CPU (1:1) when alone.
       const humanSids = Array.from(this.state.players.keys()).filter(sid => sid !== CPU_SID);
@@ -346,6 +352,7 @@ this.sc = {
       this.setMetadata({ ...this.metadata, status: "playing" });
       this.broadcast("started", {
         mode: this.state.mode,
+        stackMode:this.stackMode||"items",
         tickRate: this.tickRate,
         playerCount: Number(this.state.playerCount || 0),
         maxClients: Number(this.maxClients || this.state.maxClients || 0),
@@ -440,6 +447,11 @@ this.sc = {
       if (kind === "chat") {
         msg.text = String(msg.text || "").replace(/[\r\n\t]/g, " ").slice(0,180);
       }
+      if(kind==='game_end'){
+        if(!pp?.isHost || this.br.ending)return;
+        this.br.ending=true;
+        this.clock.setTimeout(()=>{if(this.state.mode!=='backrooms3d')return;this.resetToLobby('match_end');this.recomputeReady();this.syncMetadata();this.broadcast('backToRoom',{mode:'backrooms3d',reason:'match_end'});},3000);
+      }
       const packet = { msg };
       if (kind === "state") {
         try{
@@ -474,6 +486,9 @@ this.sc = {
         for(const [,hunter] of hunters){
           if(stamp-Number(hunter?._serverAt||stamp)>1500) continue;
           for(const [target,rabbit] of rabbits){
+            const exitZone=this.br.latestWorld?.exitZone;
+            if(this.br.latestWorld?.escaped?.includes(target))continue;
+            if(exitZone?.open&&Math.hypot(Number(rabbit.x)-exitZone.x,Number(rabbit.z)-exitZone.z)<3.5)continue;
             if(stamp-Number(rabbit?._serverAt||stamp)>1500) continue;
             if(stamp-Number(this.br.catchCooldown[target]||0)<3000) continue;
             const dx=Number(rabbit?.x||0)-Number(hunter?.x||0);
@@ -1650,6 +1665,7 @@ try{
         this.br.latestWorld = null;
         this.br.latestChat = [];
         this.br.startPayload = null;
+        this.br.ending = false;
       }
     }catch(_){ }
 

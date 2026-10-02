@@ -297,6 +297,7 @@ function setupBgm(audioElId, btnId){
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
+  let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
   let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
   let mathDiffWrap = null;
@@ -334,6 +335,12 @@ function setupBgm(audioElId, btnId){
       // Place above the buttons
       controls.parentElement?.insertBefore(wrap, controls);
 
+      stackModeWrap=document.createElement('div');
+      stackModeWrap.style.cssText='display:none;align-items:center;gap:10px;margin:8px 0;padding:10px 14px;border:1px solid #52c8e366;border-radius:12px;background:#18334e';
+      stackModeWrap.innerHTML='<span>블록쌓기 경기 방식</span><select class="input" aria-label="블록쌓기 경기 방식"><option value="normal">일반전</option><option value="items" selected>아이템전</option></select><small>아이템전: 5줄마다 특수 블록</small>';
+      controls.parentElement?.insertBefore(stackModeWrap,controls);
+      stackModeSelect=stackModeWrap.querySelector('select');
+      stackModeSelect.addEventListener('change',()=>{stackMode=stackModeSelect.value;room?.send('stack_mode',{stackMode});});
       cpuDiffWrap = wrap;
       cpuDiffSelect = wrap.querySelector('#cpuDiffSel');
       if (cpuDiffSelect){
@@ -2206,6 +2213,7 @@ function updatePreview(modeId){
 // - 듀얼 게임은 1인 시작 허용(서버가 CPU를 붙여 1:1 구성)
 const CPU_SID = "__cpu__";
 const modeId = state.mode || "";
+if(state.stackMode)stackMode=state.stackMode;
 const gmeta = (window.gameById ? window.gameById(modeId) : null);
 	// Update capacity badge (matches server room maxClients when available)
 	try{
@@ -2301,6 +2309,7 @@ els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
 els.startBtn.title = canStart ? startText : reason;
 
+  if(stackModeWrap){stackModeWrap.style.display=modeId==='stackga'&&state.phase==='lobby'?'flex':'none';stackModeSelect.disabled=!isHost;stackModeSelect.value=stackMode;}
   // Show CPU difficulty only when host starts a solo duel in lobby.
   try{
     if (cpuDiffWrap){
@@ -2483,7 +2492,7 @@ function sendBridgeInit(){
     oppSid,
     oppNick,
     role,
-    matchId: duel.matchId
+    matchId: duel.matchId, stackMode
   });
 }
 
@@ -2498,7 +2507,7 @@ function sendCpuBridgeInit(){
     oppNick: myNick || "Player",
     role: "cpu",
     matchId: duel.matchId,
-    cpuDifficulty
+    cpuDifficulty, stackMode
   });
 }
 
@@ -2910,7 +2919,7 @@ function handleDuelMatch(m){
     if ((duel.meta?.id || m.gameId) === "stackga") setDuelFrameLoading(true, "stackga");
     // Load iframe fresh
     const duelEmbedSep = String(duel.meta.embedPath||'').includes('?') ? '&' : '?';
-    const src = `${duel.meta.embedPath}${duelEmbedSep}embed=1&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
+    const src = `${duel.meta.embedPath}${duelEmbedSep}embed=1&stackMode=${stackMode}&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
     duel.iframeLoaded = false;
     duel.iframeReady = false;
     if (duel.iframeEl){
@@ -3330,7 +3339,9 @@ try{
       }catch(_){ }
 
 
+      room.onMessage('stack_mode',(m)=>{stackMode=m?.stackMode==='normal'?'normal':'items';if(stackModeSelect)stackModeSelect.value=stackMode;});
       room.onMessage("started", (m)=> {
+        stackMode=m?.stackMode==='normal'?'normal':'items';
         try{ enterGameFullscreen(); }catch(_){ }
         try{ window.SFX?.start?.(); }catch(_){ }
         try{ shakeOnce(); }catch(_){ }
@@ -3761,7 +3772,7 @@ try{
           return;
         }
 
-        room.send("start", { cpuDifficulty, coopDifficulty: (["mathexplorer","math-explorer"].includes(room?.state?.mode) ? mathDifficulty : undefined) });
+        room.send("start", { stackMode, cpuDifficulty, coopDifficulty: (["mathexplorer","math-explorer"].includes(room?.state?.mode) ? mathDifficulty : undefined) });
       });
 
       // Leave

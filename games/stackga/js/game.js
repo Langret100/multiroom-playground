@@ -126,11 +126,31 @@ function clearLines(board){
   return { cleared:rows.length, rows };
 }
 
+export const SPECIAL_DEFS={
+ sweep:{icon:'−5',label:'바닥 5줄 청소',helpful:true},
+ pack:{icon:'←',label:'왼쪽으로 착!',helpful:true},
+ haste:{icon:'↓⚡',label:'낙하 가속',helpful:false},
+ fog:{icon:'☁',label:'먹구름 5초',helpful:false}
+};
+export function specialPieceCell(piece){
+ if(!piece?.special)return null;
+ const base=[];for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(SHAPES[piece.type][0][y][x])base.push([x,y]);
+ let cells=base.map(c=>c.slice());
+ if(piece.type!=='O')for(let r=0;r<piece.rot;r++)cells=cells.map(([x,y])=>[3-y,x]);
+ const target=[];for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(SHAPES[piece.type][piece.rot][y][x])target.push([x,y]);
+ const min=(arr,k)=>Math.min(...arr.map(c=>c[k])),dx=min(target,0)-min(cells,0),dy=min(target,1)-min(cells,1),c=cells[piece.special.slot%4];
+ return [piece.x+c[0]+dx,piece.y+c[1]+dy];
+}
+
 export class StackGame {
-  constructor(seed){
+  constructor(seed, options={}){
     this.seed = seed>>>0;
     this.getNextType = makeBagRng(this.seed);
     this.board = newBoard();
+    this.itemMode = options.itemMode === true;
+    this.specials = Array.from({length:ROWS},()=>new Array(COLS).fill(null));
+    this.specialEvents=[]; this.pendingSpecials=0;
+    this._specialRnd=mulberry32((this.seed^0x713a94c1)>>>0);
     this.score = 0;
     this.level = 1;
     this.lines = 0;
@@ -141,7 +161,7 @@ export class StackGame {
     this.effects = {
       invertUntil: 0,
       shrinkUntil: 0,
-      bigNextUntil: 0
+      bigNextUntil: 0, speedUntil:0, blindUntil:0
     };
 
     // RNG for garbage-hole positions
@@ -167,6 +187,40 @@ export class StackGame {
     this.spawn();
   }
 
+  drainSpecialEvents(){return this.specialEvents.splice(0);}
+  specialSnapshot(){
+    const marks=this.specials.map(row=>row.slice()),cell=specialPieceCell(this.current);
+    if(cell&&!this.dead){const [x,y]=cell;if(x>=0&&x<COLS&&y>=0&&y<ROWS)marks[y][x]=this.current.special.kind;}
+    return marks;
+  }
+  applySpecialAttack(kind,now=Date.now()){
+    if(this.dead)return;
+    if(kind==='haste')this.effects.speedUntil=Math.max(this.effects.speedUntil||0,now+8000);
+    if(kind==='fog')this.effects.blindUntil=Math.max(this.effects.blindUntil||0,now+5000);
+    this.lastSpecialFx={kind,at:now,received:true};
+  }
+  _applySpecialBenefit(kind){
+    if(kind==='sweep'){
+      this.board.splice(ROWS-5,5);this.specials.splice(ROWS-5,5);
+      for(let i=0;i<5;i++){this.board.unshift(new Array(COLS).fill(0));this.specials.unshift(new Array(COLS).fill(null));}
+    }
+    if(kind==='pack'){
+      for(let y=0;y<ROWS;y++){
+        const cells=[];for(let x=0;x<COLS;x++)if(this.board[y][x])cells.push([this.board[y][x],this.specials[y][x]]);
+        this.board[y]=cells.map(c=>c[0]).concat(new Array(COLS-cells.length).fill(0));
+        this.specials[y]=cells.map(c=>c[1]).concat(new Array(COLS-cells.length).fill(null));
+      }
+    }
+    // Rows removed by a power-up are not normal line clears and do not farm rewards.
+    this.lastCascadeCells=[];this.lastLockCells=[];this.lastContactCells=[];
+  }
+
+  landingPiece(){
+    if(!this.current||this.dead)return null;
+    const piece={...this.current};
+    while(!collide(this.board,piece,piece.x,piece.y+1,piece.rot))piece.y++;
+    return piece;
+  }
   _makePiece(){
     const type = this.getNextType();
     // Shape and color are intentionally independent: every falling piece gets a fresh jelly color.
@@ -177,6 +231,12 @@ export class StackGame {
   spawn(){
     this.current = this.next;
     this.current.x = 3; this.current.y = -1; this.current.rot = 0;
+    if(this.itemMode && this.pendingSpecials>0){
+      this.pendingSpecials--;
+      const kinds=Object.keys(SPECIAL_DEFS);
+      this.current.special={kind:kinds[Math.floor(this._specialRnd()*kinds.length)],slot:Math.floor(this._specialRnd()*4)};
+      this.specialEvents.push({phase:'spawn',kind:this.current.special.kind});
+    }
     this.next = this._makePiece();
     if(this._isBigNextActive()){
       // No physics change, only render enlargement handled in renderer.
@@ -212,6 +272,7 @@ export class StackGame {
       // Rising garbage: shift everything up, insert garbage at bottom
       this.board.shift();
       this.board.push(row);
+      this.specials.shift(); this.specials.push(new Array(COLS).fill(null));
 
       // If the active piece now overlaps, try pushing it up a bit; otherwise top-out.
       if(this.current && collide(this.board, this.current, this.current.x, this.current.y, this.current.rot)){
@@ -245,7 +306,7 @@ export class StackGame {
 
   _computeDropMs(){
     // faster by level
-    return Math.max(120, this.dropMs - (this.level-1)*70);
+    return Math.max(120, this.dropMs - (this.level-1)*70) / (Date.now()<this.effects.speedUntil ? 1.7 : 1);
   }
 
   move(dx){
@@ -350,6 +411,12 @@ export class StackGame {
       }
     }
 
+    const specialCell=specialPieceCell(this.current);
+    if(specialCell){const [x,y]=specialCell;if(y>=0&&y<ROWS&&x>=0&&x<COLS)this.specials[y][x]=this.current.special.kind;}
+    const activated=fullRows.flatMap(y=>this.specials[y].filter(kind=>SPECIAL_DEFS[kind]));
+    const keptMarks=this.specials.filter((_,y)=>!fullSet.has(y));
+    while(keptMarks.length<ROWS)keptMarks.unshift(new Array(COLS).fill(null));
+    this.specials=keptMarks;
     const clearResult = clearLines(this.board);
     const cleared = clearResult.cleared;
     if(cleared>0){
@@ -372,8 +439,13 @@ export class StackGame {
     if(cleared>0){
       const pts = [0,100,250,450,700][cleared] || (cleared*250);
       this.score += pts * this.level;
+      if(this.itemMode)this.pendingSpecials += Math.floor((this.lines+cleared)/5)-Math.floor(this.lines/5);
       this.lines += cleared;
       this.level = 1 + Math.floor(this.lines / 10);
+    }
+    if(this.itemMode)for(const kind of activated){
+      if(SPECIAL_DEFS[kind].helpful)this._applySpecialBenefit(kind);
+      this.lastSpecialFx={kind,at:now};this.specialEvents.push({phase:'activate',kind});
     }
     this.spawn();
     if(this.dead){
@@ -420,6 +492,13 @@ export function drawBoard(ctx, board, cell, opts={}){
   }
   ctx.restore();
 
+  if(opts.landingPiece){
+    const p=opts.landingPiece,shape=SHAPES[p.type][p.rot];ctx.save();
+    ctx.fillStyle='rgba(151,227,255,.18)';ctx.strokeStyle='rgba(185,244,255,.65)';ctx.lineWidth=Math.max(1,cell*.045);
+    for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(shape[y][x]&&p.y+y>=0){
+      ctx.beginPath();ctx.roundRect((p.x+x)*cell+2,(p.y+y)*cell+2,cell-4,cell-4,cell*.15);ctx.fill();ctx.stroke();
+    }ctx.restore();
+  }
   const active = new Set();
   // Line-clear celebration: the completed row dissolves as one surface.
   // No per-cell timing/scale; gameplay state is already cleared immediately.
@@ -606,15 +685,47 @@ export function drawBoard(ctx, board, cell, opts={}){
       ctx.restore();
     }
   }
+  drawSpecialOverlay(ctx,cell,opts);
+}
+
+function drawSpecialOverlay(ctx,cell,opts){
+ const now=Date.now(),marks=opts.specialMarks||[];
+ for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
+  const kind=marks[y]?.[x],def=SPECIAL_DEFS[kind];if(!def)continue;
+  const px=(x+.5)*cell,py=(y+.5)*cell,color=def.helpful?'#54d8ff':'#ff627d',pulse=.72+.28*Math.sin(now/160+x);
+  ctx.save();ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,cell*.075);ctx.shadowColor=color;ctx.shadowBlur=cell*.45*pulse;
+  ctx.beginPath();ctx.roundRect(x*cell+cell*.08,y*cell+cell*.08,cell*.84,cell*.84,cell*.18);ctx.stroke();
+  ctx.shadowBlur=0;ctx.fillStyle=def.helpful?'#103965ed':'#68182fed';ctx.beginPath();ctx.roundRect(px-cell*.39,py-cell*.29,cell*.78,cell*.58,cell*.12);ctx.fill();
+  ctx.font=`900 ${Math.max(9,cell*(kind==='haste'?.30:.40))}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';ctx.fillText(def.icon,px,py+cell*.01);ctx.restore();
+ }
+ const fx=opts.specialFx,age=fx?now-fx.at:9999;
+ if(fx&&age>=0&&age<950){
+  const def=SPECIAL_DEFS[fx.kind];if(def){ctx.save();const t=age/950;ctx.globalAlpha=(1-t)*.6;ctx.strokeStyle=def.helpful?'#58d8ff':'#ff668c';ctx.lineWidth=cell*.14;
+   if(fx.kind==='sweep'){for(let i=0;i<5;i++){ctx.beginPath();ctx.moveTo(0,(ROWS-i-.5-t*2)*cell);ctx.lineTo(COLS*cell,(ROWS-i-.5-t*2)*cell);ctx.stroke();}}
+   else if(fx.kind==='pack'){for(let i=0;i<7;i++){ctx.font=`900 ${cell*1.5}px system-ui`;ctx.fillStyle='#83e5ff';ctx.fillText('‹',COLS*cell*(1-t),cell*(3+i*2.5));}}
+   else if(fx.kind==='haste'){for(let i=0;i<4;i++){ctx.font=`900 ${cell*1.4}px system-ui`;ctx.fillStyle='#ffacb7';ctx.fillText('↓',cell*(1.5+i*2),cell*(2+t*ROWS));}}
+   else{for(let i=0;i<12;i++){ctx.fillStyle='#9392c2';ctx.beginPath();ctx.arc((i*97%COLS)*cell,((i*53%ROWS)+t*3)*cell,cell*(1.3+t),0,Math.PI*2);ctx.fill();}}
+   ctx.restore();}
+ }
+ if((opts.blindUntil||0)>now){
+  const seconds=Math.ceil((opts.blindUntil-now)/1000);ctx.save();ctx.fillStyle='#11172ef5';ctx.fillRect(0,0,COLS*cell,ROWS*cell);
+  for(let i=0;i<14;i++){const x=((i*79)%97)/97*COLS*cell,y=((i*53)%89)/89*ROWS*cell;ctx.fillStyle=i%2?'#282a45':'#20243e';ctx.beginPath();ctx.ellipse(x+Math.sin(now/400+i)*cell*.3,y,cell*2.1,cell*1.25,0,0,Math.PI*2);ctx.fill();}
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#f0e9ff';ctx.font=`900 ${cell*1.05}px system-ui`;ctx.fillText('☁ 먹구름!',COLS*cell/2,ROWS*cell*.43);ctx.font=`800 ${cell*.62}px system-ui`;ctx.fillText(seconds+'초 후 맑아져요',COLS*cell/2,ROWS*cell*.50);ctx.restore();
+ }
 }
 
 export function drawNext(ctx, piece, cell){
   ctx.clearRect(0,0,ctx.canvas.width,ctx.canvas.height);
-  const bg=ctx.createLinearGradient(0,0,0,ctx.canvas.height); bg.addColorStop(0,"#263f72"); bg.addColorStop(1,"#466f9d");
-  ctx.fillStyle=bg; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
-  if(!piece) return;
-  const shape=SHAPES[piece.type][0];
-  for(let y=0;y<4;y++) for(let x=0;x<4;x++) if(shape[y][x]) drawJellyCell(ctx,x*cell,y*cell,cell,fallingColor(piece.id,false),{sx:1,sy:1,dy:0,sparkle:false,t:0,x,y});
+  if(!piece)return;
+  const shape=SHAPES[piece.type][0],cells=[];
+  for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(shape[y][x])cells.push([x,y]);
+  const minX=Math.min(...cells.map(c=>c[0])),minY=Math.min(...cells.map(c=>c[1]));
+  const w=Math.max(...cells.map(c=>c[0]))-minX+1,h=Math.max(...cells.map(c=>c[1]))-minY+1;
+  cell=Math.min(cell,(ctx.canvas.width-16)/w,(ctx.canvas.height-16)/h);
+  const dx=(ctx.canvas.width-w*cell)/2,dy=(ctx.canvas.height-h*cell)/2;
+  ctx.save();ctx.translate(dx,dy);
+  for(const [x,y] of cells)drawJellyCell(ctx,(x-minX)*cell,(y-minY)*cell,cell,fallingColor(piece.id,false),{sx:1,sy:1,dy:0,sparkle:false,t:0,x,y});
+  ctx.restore();
 }
 
 function roundRect(ctx,x,y,w,h,r){ r=Math.min(r,w/2,h/2); ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
@@ -726,3 +837,4 @@ function drawJellyCell(ctx,px,py,cell,color,o){
   }
   ctx.restore();
 }
+

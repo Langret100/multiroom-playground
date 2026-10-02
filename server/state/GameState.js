@@ -19,6 +19,7 @@ export class GameState extends Schema {
     super();
     this.title = "방";
     this.mode = "stackga";
+    this.stackMode="items";
     this.modeType = "duel"; // duel | coop
     this.phase = "lobby"; // lobby | playing
     this.maxClients = 4;
@@ -32,6 +33,7 @@ export class GameState extends Schema {
 defineTypes(GameState, {
   title: "string",
   mode: "string",
+  stackMode:"string",
   maxClients: "number",
   modeType: "string",
   phase: "string",

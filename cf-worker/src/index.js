@@ -151,14 +151,14 @@ export class LobbyDO{
   }
 
   async _loadRooms(){
-    if (this.rooms) return;
-    // 요청사항: 방 나가면 서버에 기록이 남지 않도록, 영구 저장을 하지 않습니다.
-    this.rooms = {};
+    if(this.rooms)return;
+    if(!this._roomsLoading)this._roomsLoading=this.state.storage.get('active-room-directory').then(saved=>{this.rooms=saved&&typeof saved==='object'?saved:{};}).catch(err=>{this._roomsLoading=null;throw err;});
+    await this._roomsLoading;
   }
-
-  _scheduleSaveRooms(delayMs=800){
-    // no-op (no persistence)
-    return;
+  async _scheduleSaveRooms(){
+    // Persist only currently open rooms. Last-player departure removes its entry.
+    if(Object.keys(this.rooms||{}).length)await this.state.storage.put('active-room-directory',this.rooms);
+    else await this.state.storage.delete('active-room-directory');
   }
 
   _broadcast(t, d){
@@ -324,7 +324,7 @@ export class LobbyDO{
 
     // internal HTTP
     if (path === "/internal/listRooms"){
-      return json({ list: this._roomsList() });
+      return json({ list: this._roomsList() },{headers:{"cache-control":"no-store"}});
     }
 
     if (path === "/internal/createRoom" && request.method === "POST"){
@@ -347,7 +347,7 @@ export class LobbyDO{
         status: "waiting",
         updatedAt: now()
       };
-      this._scheduleSaveRooms();
+      await this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
       return json({ roomId });
     }
@@ -378,7 +378,7 @@ export class LobbyDO{
           updatedAt: now()
         };
       }
-      this._scheduleSaveRooms();
+      await this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
       return json({ ok:true });
     }
@@ -618,6 +618,7 @@ export class RoomDO{
         title: this.meta.title,
         mode: this.meta.mode,
         maxClients: this.meta.maxPlayers,
+        stackMode:this.meta.stackMode||"items",
         phase: this.meta.phase
       },
       players
@@ -862,6 +863,7 @@ export class RoomDO{
         this.meta.status = (this.meta.phase === "playing") ? "playing" : "waiting";
         this._scheduleLobbyUpdate();
         this._broadcast("room_state", this._snapshot());
+        if(this.meta.mode==='stackga')this._send(ws,'stack_mode',{stackMode:this.meta.stackMode||'items'});
 
         // SuhakTokki: if a match is already running, sync authoritative start payload to the joining client.
         // Without this, the iframe stays forever on "로딩 중..." because it never receives game_start.
@@ -965,7 +967,14 @@ export class RoomDO{
         return;
       }
 
+      if(t==='stack_mode'){
+        if(uid===this.meta.ownerUserId&&this.meta.phase==='lobby'&&this.meta.mode==='stackga'){
+          this.meta.stackMode=d?.stackMode==='normal'?'normal':'items';
+          this._broadcast('stack_mode',{stackMode:this.meta.stackMode});this._broadcast('room_state',this._snapshot());
+        }return;
+      }
       if (t === "start"){
+        if(uid===this.meta.ownerUserId&&this.meta.phase==='lobby'&&this.meta.mode==='stackga')this.meta.stackMode=d?.stackMode==='normal'?'normal':'items';
         const u = this.users.get(uid);
         if (!u) return;
         if (uid !== this.meta.ownerUserId){
@@ -1184,7 +1193,7 @@ export class RoomDO{
         } else if (this.meta.mode === "backrooms3d"){
           this._broadcast("started", { mode: this.meta.mode, startPayload: this.br && this.br.startPayload, protocolVersion:PROTOCOL_VERSION });
         } else {
-          this._broadcast("started", { mode: this.meta.mode, protocolVersion:PROTOCOL_VERSION });
+          this._broadcast("started", { mode: this.meta.mode, stackMode:this.meta.stackMode||"items", protocolVersion:PROTOCOL_VERSION });
         }
 
         // SnakeTail: start 3-minute round timer (server is source of truth)
@@ -1424,7 +1433,7 @@ export class RoomDO{
         // outer room, nobody else can publish world snapshots. End cleanly
         // instead of leaving the remaining players in a frozen match.
         if (kind === "leave" && isAuthoritativeSender) this._endAndBackToLobby(300);
-        if (kind === "game_end") this._endAndBackToLobby(2600);
+        if (kind === "game_end") this._endAndBackToLobby(3000);
         return;
       }
 
@@ -2538,6 +2547,9 @@ export class RoomDO{
       for(const [,hunter] of hunters){
         if(stamp-Number(hunter?._serverAt||stamp)>1500)continue;
         for(const [target,rabbit] of rabbits){
+            const exitZone=this.br.latestWorld?.exitZone;
+            if(this.br.latestWorld?.escaped?.includes(target))continue;
+            if(exitZone?.open&&Math.hypot(Number(rabbit.x)-exitZone.x,Number(rabbit.z)-exitZone.z)<3.5)continue;
           if(stamp-Number(rabbit?._serverAt||stamp)>1500)continue;
           if(stamp-Number(this.br.catchCooldown[target]||0)<3000)continue;
           const dx=Number(rabbit?.x||0)-Number(hunter?.x||0);
@@ -3511,3 +3523,4 @@ export class RoomDO{
     return new Response("Not found", { status:404 });
   }
 }
+

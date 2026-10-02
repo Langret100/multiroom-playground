@@ -136,6 +136,16 @@ export function createAudio({ musicUrl } = {}) {
     if (muted) return;
 
     switch (name) {
+      case 'specialSpawn':
+        [660,880,1320].forEach((f,i)=>beep({f1:f,dur:.10,gain:.09,delay:i*.07,type:'triangle'}));break;
+      case 'special_sweep':
+        [1200,1000,800,600,400].forEach((f,i)=>beep({f1:f,f2:f*.6,dur:.13,gain:.10,delay:i*.045,type:'sine'}));break;
+      case 'special_pack':
+        [220,330,440,660].forEach((f,i)=>beep({f1:f,dur:.09,gain:.10,delay:i*.07,type:'square'}));break;
+      case 'special_haste':
+        beep({f1:180,f2:1200,dur:.45,gain:.10,type:'sawtooth'});break;
+      case 'special_fog':
+        [130,156,195].forEach((f,i)=>beep({f1:f,f2:65,dur:.5,gain:.07,delay:i*.08,type:'triangle'}));break;
       case "move":
         beep({ f1: 760, f2: 680, dur: 0.035, type: "square", gain: 0.06 });
         break;

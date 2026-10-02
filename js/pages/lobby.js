@@ -78,6 +78,7 @@ function setupBgm(audioElId, btnId){
 
   let client = null;
   let lobbyRoom = null;
+  let roomsPushVersion=0,roomsFetchSeq=0;
   let myNick = null;
   // Tracks whether the user manually changed the "max clients" select inside the create-room modal.
   // If not touched, we apply per-game defaults (most games default to 4, stackga/suika are capped at 2).
@@ -371,13 +372,15 @@ function statusDot(room){
     // Manual refresh only (to reduce server usage). Primary updates come via LobbyDO push.
     if (!client) return;
     try{
+      const pushVersion=roomsPushVersion,requestSeq=++roomsFetchSeq;
       const rooms = await client.getAvailableRooms("game_room");
+      if(pushVersion!==roomsPushVersion||requestSeq!==roomsFetchSeq)return;
       renderRooms(rooms);
       setStatus("", "info");
     }catch(err){
       console.warn("rooms fetch failed", err);
       setStatus("방 목록을 불러올 수 없습니다. 서버가 켜져있는지 확인해 주세요.", "error");
-      els.roomsBody.innerHTML = `<tr><td colspan="5" class="muted">방 목록을 불러올 수 없습니다.</td></tr>`;
+      if(!roomsById.size)els.roomsBody.innerHTML = `<tr><td colspan="5" class="muted">방 목록을 불러올 수 없습니다.</td></tr>`;
     }
   }
 
@@ -595,6 +598,7 @@ function statusDot(room){
       });
       lobbyRoom.onMessage("rooms", (m)=>{
         // Primary room list updates come from LobbyDO push (reduces server usage).
+        roomsPushVersion++;
         renderRooms((m && m.list) ? m.list : []);
       });
       lobbyRoom.onMessage("presence", (m) => {
@@ -603,6 +607,9 @@ function statusDot(room){
       });
 
       requestPresenceThrottled("init");
+      try{lobbyRoom.send("list_rooms",{});}catch(_){}
+      document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"){refreshRooms();requestPresenceThrottled("visible");}});
+      window.addEventListener("online",()=>refreshRooms());
       // Optional one-shot fetch as a fallback (manual refresh is also available)
       await refreshRooms();
       // Fallback polling (low frequency): room list is primarily pushed from the server.

@@ -126,6 +126,12 @@
 #pRole.monster{color:#ff8b8b;border-color:rgba(255,70,70,.75);background:rgba(74,9,18,.84)}
 #pRole.rabbit{color:#b7ffe1;border-color:rgba(85,239,196,.65);background:rgba(8,55,48,.84)}
 
+
+#brRoster{position:fixed;left:12px;top:118px;width:210px;max-height:40vh;overflow:auto;z-index:31;padding:10px;border:1px solid #83dfcf44;border-radius:14px;background:linear-gradient(150deg,#101e24ed,#090e18eb);backdrop-filter:blur(8px);box-shadow:0 8px 28px #0005}
+.br-roster-title{font-size:11px;letter-spacing:2px;color:#a1bdc4;font-weight:800;padding:2px 4px 8px}.br-player{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;min-height:40px;padding:8px;margin:4px 0;border:1px solid #8fe1cf33;border-left:3px solid #85e8d0;border-radius:9px;background:#16302c70;color:#e0fff7;text-align:left;font:600 12px system-ui;opacity:1}.br-player:disabled{opacity:1;color:inherit}.br-player.hunter{background:#481524aa;color:#ffd6de;border-color:#ff728655;border-left-color:#ff7187}.br-player small{white-space:nowrap;font-size:10px;color:#acc6c8}.br-player-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.br-player.out{opacity:.55}.br-player.escaped{border-left-color:#f5d983;color:#f7e5a7}.br-player.watching{outline:2px solid #f5d983}.br-player:not(:disabled){cursor:pointer}
+#brDoorNotice{position:fixed;z-index:60;left:50%;top:24%;transform:translate(-50%,-12px);max-width:82vw;padding:16px 24px;border:1px solid #9effde80;border-radius:14px;background:#102d29ed;color:#defff1;text-align:center;font-weight:900;font-size:19px;box-shadow:0 10px 40px #0006;opacity:0;pointer-events:none;transition:.25s}#brDoorNotice.show{opacity:1;transform:translate(-50%,0)}
+#brSpectate{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--chatH) + 80px + var(--safeB));z-index:45;display:none;align-items:center;gap:14px;padding:8px;border:1px solid #f5d98366;border-radius:12px;background:#1b211fee;color:#fff0bd;font-size:13px}#brSpectate button{border:1px solid #b8d9cf55;border-radius:8px;background:#263e39;color:#effff8;font-size:26px;width:38px;height:36px;cursor:pointer}
+@media(max-width:600px){#brRoster{left:8px;top:110px;width:148px;padding:6px;max-height:30vh}.br-player{font-size:10px;padding:6px;min-height:34px}.br-player small{font-size:9px}#brDoorNotice{font-size:15px;padding:12px 16px}#brSpectate{font-size:11px;gap:8px;white-space:nowrap}}
 </style>
 </head>
 <body>
@@ -1213,12 +1219,13 @@ function makeRabbit(){
     const g = new THREE.Group();
     for(let i=0;i<5;i++){
       const d = new THREE.Mesh(
-        new THREE.SphereGeometry(0.07 + (i%2)*0.015, 10, 10),
+        new THREE.SphereGeometry(0.14 + (i%2)*0.03, 10, 10),
         new THREE.MeshStandardMaterial({color:0x9a9aa1, emissive:0x66666c, emissiveIntensity:0.22, transparent:true, opacity:0.72, roughness:0.9})
       );
       d.userData = { ang:(Math.PI*2/5)*i, rad:0.18 + (i%2)*0.04, y:2.18 + (i%3)*0.03, spd:0.9 + i*0.14 };
       g.add(d);
     }
+    for(const d of g.children){const u=d.userData;d.position.set(Math.cos(u.ang)*u.rad,u.y,Math.sin(u.ang)*u.rad);}
     return g;
   }
   const caughtCloud = makeCaughtCloud();
@@ -1321,7 +1328,7 @@ const countdownEl = $("countdown");
     addChat("🏁 "+msg);
     const cd = $("countdown");
     cd.style.display="block";
-    cd.textContent = msg;
+    cd.textContent = msg + " · 3초 후 룸으로 돌아갑니다";
     cd.style.background = "rgba(255,80,80,.25)";
     // freeze input by clearing keysDown
     for(const k in keysDown) keysDown[k]=0;
@@ -2082,6 +2089,12 @@ function spawnShelfPillar(wx,wz, idx=0){
   }
   function inputBlocked(){return chatMode || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||'') || $("mathModal").classList.contains("show") || $("helpModal").style.display==='flex';}
   const keysDown={w:0,s:0,a:0,d:0};
+  const lockedInputs=new Set();
+  function lockInput(k,down){
+    if(!down){lockedInputs.delete(k);return false;}
+    if(playerRole==='monster'&&monsterReleaseLeft>0)lockedInputs.add(k);
+    return lockedInputs.has(k);
+  }
   document.addEventListener('pointerdown',e=>{
     if(e.target.closest?.('canvas')){ if(chatMode) exitChat(); e.target.tabIndex=0; e.target.focus({preventScroll:true}); }
   });
@@ -2170,6 +2183,7 @@ function spawnShelfPillar(wx,wz, idx=0){
   addEventListener("keydown",(e)=>{
     if(inputBlocked()) return;
     const k=controlKey(e);
+    if(lockInput(k,true))return;
     if(keysDown[k]!=null){e.preventDefault();keysDown[k]=1;}
     if(k==='f' && !e.repeat){e.preventDefault();requestKeyTransfer();return;}
     if(k==='e'){
@@ -2180,7 +2194,7 @@ function spawnShelfPillar(wx,wz, idx=0){
     if(!multiplayerActive && k==='g' && !e.repeat){monsterAI=!monsterAI;ensureMonster();}
     if(!multiplayerActive && k==='v' && !e.repeat)seekerView=!seekerView;
   });
-  addEventListener("keyup",(e)=>{const k=controlKey(e);if(keysDown[k]!=null)keysDown[k]=0;if(k==='e')setSprintHold(false);});
+  addEventListener("keyup",(e)=>{const k=controlKey(e);lockInput(k,false);if(keysDown[k]!=null)keysDown[k]=0;if(k==='e')setSprintHold(false);});
 
   // When the room page retains keyboard focus, it forwards only Backrooms3D keys here.
   // This keeps movement responsive without leaking controls into other embedded games.
@@ -2191,6 +2205,7 @@ function spawnShelfPillar(wx,wz, idx=0){
     const fake={code:String(d.code||''),key:'',repeat:!!d.repeat};
     const k=controlKey(fake);
     const down=!!d.down;
+    if(lockInput(k,down))return;
     if(keysDown[k]!=null)keysDown[k]=down?1:0;
     if(fake.code==='ShiftLeft'||fake.code==='ShiftRight')shiftHeld=down;
     if(k==='e'){
@@ -2209,6 +2224,7 @@ function spawnShelfPillar(wx,wz, idx=0){
     if(!['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','ShiftLeft','ShiftRight','KeyE','KeyF'].includes(code))return;
     if(chatMode || document.activeElement===chatIn || document.activeElement===mathInput || $("mathModal").classList.contains("show") || $("helpModal").style.display==='flex') return;
     const k=controlKey(e);
+    if(lockInput(k,down))return;
     if(keysDown[k]!=null){ keysDown[k]=down?1:0; e.preventDefault(); }
     if(code==='ShiftLeft'||code==='ShiftRight') shiftHeld=!!down;
     if(k==='e'){
@@ -2301,6 +2317,7 @@ function spawnShelfPillar(wx,wz, idx=0){
     if(gameOver) return;
     if(chatMode || document.activeElement===chatIn || $("mathModal").classList.contains("show")) return;
     if(playerRole==='monster') return;
+    if(escapedRabbits[bridge.sid])return;
     if(rabbitGhost){
       addChat('유령 상태에서는 상호작용할 수 없습니다.');
       return;
@@ -2360,31 +2377,13 @@ function spawnShelfPillar(wx,wz, idx=0){
       if(sealLeft>0){ addChat('🚫 탈출문이 봉인되어 있습니다! ('+Math.ceil(sealLeft/1000)+'초)'); return; }
       const locks = (doorG.userData && doorG.userData.locks) ? doorG.userData.locks : [];
       const unlocked = doorState.locksUnlocked;
-      if(unlocked < 3){
-        if(rabbitGhost){ addChat('유령 상태에서는 탈출문을 조작할 수 없습니다.'); return; }
-        if(keyCount<=0){ addChat("[싱글] 자물쇠를 풀려면 열쇠가 필요하다."); return; }
-        keyCount = 0; $("pKey").textContent="🔑 "+keyCount; updateKeyIndicator();
-        try{ placeKey(); }catch(e){}
-        const idx = Math.min(2, doorState.locksUnlocked);
-        const lk = locks[idx];
-        if(lk && lk.userData){ lk.userData.locked = false; lk.userData.t = 1.0; }
-        doorState.locksUnlocked = Math.min(3, doorState.locksUnlocked + 1);
-        doorProg = doorState.locksUnlocked;
-        $("pDoor").textContent="문: "+doorProg+"/3";
-        beep(520,0.08,'triangle',0.30);
-        addChat("[싱글] 자물쇠가 풀렸다! ("+doorProg+"/3)");
-        if(doorProg>=3) addChat("[싱글] 모든 자물쇠가 풀렸다. E로 문을 열고 탈출할 수 있다.");
-        return;
+      if(unlocked<3){
+        if(bridge.active){requestHumanUnlock();return;}
+        if(keyCount<1){addChat('자물쇠를 풀려면 열쇠가 필요합니다.');return;}
+        keyCount=0;updateKeyIndicator();doorState.locksUnlocked=++doorProg;
+        $('pDoor').textContent='문: '+doorProg+'/3';if(doorProg>=3)openExitDoor();else placeKey();return;
       }
-      if(!doorState.open){
-        doorState.open = true;
-        doorState.openT = 0;
-        addChat("[싱글] 탈출문이 열린다!");
-        beep(740,0.06,'sine',0.25);
-      }else{
-        addChat("✅ 탈출 성공(테스트)!");
-        endGame("토끼 승리!");
-      }
+      if(doorState.open && doorState.openT>.85){markRabbitEscaped(bridge.sid);relay('rabbit_escaped',{});maybeSendWorld(true);}
       return;
     }
     toppleNearestShelf();
@@ -2392,7 +2391,7 @@ function spawnShelfPillar(wx,wz, idx=0){
   function updatePrompt(){
     btnGive.style.display=nearestKeyRecipient()?'flex':'none';
     if(playerRole==='monster'){hidePrompt();updateBtnELabel();return;}
-    if(rabbitGhost){hidePrompt();return;}
+    if(rabbitGhost||escapedRabbits[bridge.sid]){hidePrompt();return;}
     if(player.userData.trapped){showPrompt('E: 수학 7문제 풀고 탈출');return;}
     const k=nearestObj(keys, 2.1);
     if(k){ showPrompt("E: 열쇠 줍기"); return; }
@@ -2700,7 +2699,7 @@ function pushOutWalls(px,pz,rad){
       remaining=Math.max(0, remaining-dt);
     }
     if(remaining <= 0 && !gameOver){
-      endGame("괴물 승리!");
+      endGame("술래 승리!");
       try{ maybeSendWorld(true); }catch(_){ }
     }
     const mm=String(Math.floor(remaining/60)).padStart(2,'0');
@@ -2836,7 +2835,7 @@ function pushOutWalls(px,pz,rad){
       mSprint.charge = mSprint.active ? 1 : (mSprint.cooldown <= 0 ? 1 : 1 - mSprint.cooldown / mSprint.COOLDOWN);
       monsterSprintSfx(mSprint.active);
       const speedBuff = (nowMs < monsterSpeedBuffUntil) ? 1.5 : 1.0;
-      const sp=7.9*(mSprint.active?mSprint.mult:1)*speedBuff;
+      const sp=8.69*(mSprint.active?mSprint.mult:1)*speedBuff;
       if(d>0.01){
         const vx=(dx/d)*sp*dt, vz=(dz/d)*sp*dt;
         const oldX = monster.position.x, oldZ = monster.position.z;
@@ -2878,7 +2877,7 @@ function pushOutWalls(px,pz,rad){
           sealLeft = 0;
         }
         // Monster can seal the exit once for 10 seconds.
-        if(!doorState.sealUsed && dd<2.2 && doorState.locksUnlocked>=1){
+        if(!doorState.open && !doorState.sealUsed && dd<2.2 && doorState.locksUnlocked>=1){
           doorState.sealUsed = true;
           doorState.sealedUntil = performance.now() + 10000;
           sealLeft = 10000;
@@ -2969,6 +2968,7 @@ const v=Math.max(0, Math.min(1,(12-d)/10));
   const _camUp   = new THREE.Vector3();
 
   function updateCamera(dt){
+    if(updateSpectatorCamera(dt))return;
     // Apply role-based camera profile (rabbit: narrower, monster: wider)
     const prof = (playerRole==='monster') ? CAM_MONSTER : CAM_RABBIT;
     camDist = prof.dist;
@@ -3089,7 +3089,8 @@ let last=performance.now();
     try{
 // Global countdown for monster release
 // [FIX] 호스트만 타이머를 감소시키고, world sync로 비호스트에 전달
-if(monsterReleaseLeft>0){
+if(monsterReleaseLeft>0 && !gameOver){
+  if(playerRole==='monster'){for(const k in keysDown)keysDown[k]=0;sprint.hold=false;mSprint.requested=false;mSprint._wasHold=false;}
   if(bridge.start && Number(bridge.start.playerCount||0)>=2 && Number(bridge.start.startedAt||0)>0){
     // 시작 패킷이 여러 번 도착해도 봉인은 시작 시각부터 정확히 10초만 유지한다.
     const releaseAt=Number(bridge.start.startedAt)+10000;
@@ -3108,7 +3109,7 @@ if(monsterReleaseLeft>0){
   if(monster) monster.userData.locked = true;
   /* keep monsterAI flag as-is; only lock movement */
 }else{
-  if(countdownEl.style.display!=="none") countdownEl.style.display="none";
+  if(!gameOver && countdownEl.style.display!=="none") countdownEl.style.display="none";
   if(monsterGate){
     // Remove gate collider/mesh once
     const i = props.indexOf(monsterGate);
@@ -3201,14 +3202,16 @@ if(monsterReleaseLeft>0){
       }
     }
 
-    let turn=(keysDown.a?1:0)-(keysDown.d?1:0)+(-joyX);
+    if(playerRole==='monster'&&monsterReleaseLeft>0&&(Math.abs(joyX)+Math.abs(joyY)>.05))player.userData.lockedJoy=true;
+    if(Math.abs(joyX)+Math.abs(joyY)<.05)player.userData.lockedJoy=false;
+    let turn=(keysDown.a?1:0)-(keysDown.d?1:0)+(player.userData.lockedJoy?0:-joyX);
     // 괴물 카운트다운 중 회전/이동 잠금
     const monsterLocked = (playerRole==='monster') && (monsterReleaseLeft > 0);
     if(monsterLocked || gameOver) turn = 0;
     yaw += turn*2.35*dt;
 
     let fb=(keysDown.w?1:0)-(keysDown.s?1:0)+(-joyY);
-    if(monsterLocked || gameOver) fb = 0; // 카운트다운/게임 종료 중 이동 불가
+    if(monsterLocked || gameOver || escapedRabbits[bridge.sid] || player.userData.lockedJoy) fb = 0; // 카운트다운/게임 종료 중 이동 불가
     // sprint / water slow
     const inWater = isInPool(player.position.x, player.position.z);
     let wantSprint = (!promptVisible()) && (sprint.hold || shiftHeld);
@@ -3235,7 +3238,7 @@ if(monsterReleaseLeft>0){
       monsterSprintSfx(mSprint.active);
       // 괴물 이동속도: mSprint 활성 시 mult 적용
       const speedMul = (inWater?0.5:1) * (mSprint.active ? mSprint.mult : 1) * (performance.now()<monsterSpeedBuffUntil?1.5:1);
-      var rabbitSpeed = 7.9 * speedMul; // 괴물 기본속도 7.9 (var로 공통 이동코드에서 사용)
+      var rabbitSpeed = 8.69 * speedMul; // 괴물 기본속도 7.9 (var로 공통 이동코드에서 사용)
       sprint.active = false; // 토끼 sprint는 사용 안 함 (charge 낭비 방지)
       sprint.charge = Math.min(1, sprint.charge + sprint.regen*dt); // UI 유지용
     } else {
@@ -3269,7 +3272,8 @@ if(monsterReleaseLeft>0){
       const vz = mvz * stepDt;
       const nx = player.position.x + vx;
       const nz = player.position.z + vz;
-      const pos = resolveMove(nx, nz);
+      let pos = resolveMove(nx, nz);
+      if(playerRole==='monster')pos=projectHunterOutsideExit(pos.x,pos.z,player.position.x,player.position.z);
       player.position.x = pos.x; 
       player.position.z = pos.z;
     }
@@ -3578,6 +3582,7 @@ if(monsterReleaseLeft>0){
     captureContact.clear();
     for(const e of captureEffects)scene.remove(e.proxy);captureEffects.length=0;
     // [FIX] 역할 확정 후 로그
+    for(const sid of Object.keys(escapedRabbits))delete escapedRabbits[sid];lockedInputs.clear();exitUnlockSeen.clear();spectateSid='';doorNoticeShown=false;lastRosterSignature='';
     mSprint.active=false;mSprint.activeLeft=0;mSprint.cooldown=0;mSprint.requested=false;revealPingT=0;
     addChat('[시스템] 역할 배정: ' + (playerRole === 'monster' ? '👾 괴물' : '🐰 토끼'));
     ensureMonster();
@@ -3694,7 +3699,7 @@ if(monsterReleaseLeft>0){
     } else if (initialState){
       r.obj.position.set(Number(initialState.x)||0, Number(initialState.y)||0, Number(initialState.z)||0);
       r.obj.rotation.y = Number(initialState.yaw)||0;
-      r.obj.visible = true;
+      r.obj.visible = !escapedRabbits[sid];
       r.state = Object.assign({}, initialState, { role });
       r.targetX = Number(initialState.x)||0;
       r.targetY = Number(initialState.y)||0;
@@ -3712,22 +3717,202 @@ if(monsterReleaseLeft>0){
     bridge.remotes.delete(id);
     return r;
   }
+  const escapedRabbits=Object.create(null);
+  let spectateSid='',lastRosterSignature='',doorNoticeShown=false;
+  const exitUnlockSeen=new Set();
+  const rosterPanel=document.createElement('section');rosterPanel.id='brRoster';rosterPanel.setAttribute('aria-label','플레이어 명단');
+  const rosterTitle=document.createElement('div');rosterTitle.className='br-roster-title';rosterTitle.textContent='생존자 명단';
+  const rosterRows=document.createElement('div');rosterRows.id='brRosterRows';rosterPanel.append(rosterTitle,rosterRows);document.body.append(rosterPanel);
+  const doorNotice=document.createElement('div');doorNotice.id='brDoorNotice';doorNotice.setAttribute('role','status');document.body.append(doorNotice);
+  const spectatePanel=document.createElement('div');spectatePanel.id='brSpectate';
+  const previous=document.createElement('button'),next=document.createElement('button'),spectateLabel=document.createElement('span');
+  previous.textContent='‹';next.textContent='›';previous.setAttribute('aria-label','이전 플레이어 관전');next.setAttribute('aria-label','다음 플레이어 관전');
+  previous.onclick=()=>cycleSpectator(-1);next.onclick=()=>cycleSpectator(1);spectatePanel.append(previous,spectateLabel,next);document.body.append(spectatePanel);
+  const exitShield=new THREE.Mesh(new THREE.CylinderGeometry(4.5,4.5,3.4,48,1,true),new THREE.MeshBasicMaterial({color:0x75ecdb,transparent:true,opacity:.18,side:THREE.DoubleSide,depthWrite:false}));
+  exitShield.position.set(doorG.position.x,1.7,doorG.position.z);exitShield.visible=false;scene.add(exitShield);
+  const exitRing=new THREE.Mesh(new THREE.TorusGeometry(4.5,.045,6,64),new THREE.MeshBasicMaterial({color:0x8effe8,transparent:true,opacity:.7,depthWrite:false}));
+  exitRing.rotation.x=Math.PI/2;exitRing.position.set(doorG.position.x,.12,doorG.position.z);exitRing.visible=false;scene.add(exitRing);
+  function participantViews(){
+    const roster=bridge.start?.roster||[],nickFor=sid=>roster.find(p=>String(p.sid)===String(sid))?.nick;
+    const list=[{sid:bridge.sid||'local',nick:bridge.nick||playerName||'나',role:playerRole,caught:rabbitCaughtCount,ghost:rabbitGhost,trapped:!!player.userData.trapped,hasKey:keyCount>0,obj:playerRole==='monster'?monster:player}];
+    for(const [sid,r] of bridge.remotes){list.push({sid,nick:r.botName||r.state?.nick||nickFor(sid)||(sid.startsWith('ai-rabbit-')?(sid.endsWith('0')?'토순이':'토돌이'):'토끼'),role:r.role,caught:Number(r.state?.caught||0),ghost:!!r.state?.ghost,trapped:!!r.state?.trapped,hasKey:!!r.state?.hasKey,obj:r.obj,ai:sid.startsWith('ai-rabbit-')});}
+    return list.sort((a,b)=>(a.role==='monster'?0:1)-(b.role==='monster'?0:1));
+  }
+  function participantStatus(p){return p.role==='monster'?'술래':escapedRabbits[p.sid]?'탈출':p.ghost||p.caught>=2?'아웃':p.trapped?'철창 · '+(p.caught||0)+'/2':(p.caught||0)+'/2';}
+  function setNameplate(p){
+    if(!p.obj)return;
+    let label=p.obj.getObjectByName('brNickname');
+    if(!label){const canvas=document.createElement('canvas');canvas.width=512;canvas.height=112;const texture=new THREE.CanvasTexture(canvas);texture.minFilter=THREE.LinearFilter;
+      label=new THREE.Sprite(new THREE.SpriteMaterial({map:texture,transparent:true,depthTest:true,depthWrite:false}));label.name='brNickname';label.userData.canvas=canvas;label.scale.set(2.35,.515,1);label.position.y=p.role==='monster'?3.85:3.05;p.obj.add(label);}
+    const status=participantStatus(p),text=p.nick+(p.ai?' · AI':'')+(status==='아웃'||status==='탈출'?' · '+status:'');
+    const signature=text+':'+p.role;if(label.userData.signature===signature)return;label.userData.signature=signature;
+    const c=label.userData.canvas,ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);
+    ctx.fillStyle=p.role==='monster'?'rgba(58,11,21,.90)':'rgba(8,31,35,.90)';ctx.beginPath();ctx.roundRect(12,12,488,88,24);ctx.fill();
+    ctx.strokeStyle=p.role==='monster'?'#ff7187':'#85e8d0';ctx.lineWidth=3;ctx.stroke();ctx.fillStyle=p.role==='monster'?'#ffbbc6':'#e0fff7';ctx.font='bold 37px system-ui';ctx.textAlign='center';ctx.textBaseline='middle';
+    let shown=text;while(ctx.measureText(shown).width>452&&shown.length>3)shown=shown.slice(0,-2)+'…';ctx.fillText(shown,256,56);label.material.map.needsUpdate=true;
+  }
+  function spectatorCandidates(){return participantViews().filter(p=>p.sid!==bridge.sid&&!escapedRabbits[p.sid]&&!p.ghost&&p.obj);}
+  function cycleSpectator(step){const list=spectatorCandidates();if(!list.length)return;const i=list.findIndex(p=>p.sid===spectateSid);spectateSid=list[(i+step+list.length)%list.length].sid;lastRosterSignature='';}
+  function spectatorTarget(){const list=spectatorCandidates();let target=list.find(p=>p.sid===spectateSid);if(!target){target=list.find(p=>p.role==='rabbit')||list[0];spectateSid=target?.sid||'';}return target;}
+  function updateSpectatorCamera(dt){
+    if(!escapedRabbits[bridge.sid])return false;
+    const target=spectatorTarget();if(!target)return true;
+    const position=target.obj.position,heading=target.obj.rotation.y||0;
+    _camPos.set(position.x-Math.sin(heading)*8,position.y+4,position.z-Math.cos(heading)*8);
+    camera.position.lerp(_camPos,1-Math.exp(-dt*8));camera.lookAt(position.x,position.y+1.3,position.z);return true;
+  }
+  function openExitDoor(){
+    if(doorProg<3)return;
+    doorState.open=true;doorState.sealedUntil=0;sealSprite.visible=false;
+    if(!doorNoticeShown){doorNoticeShown=true;doorNotice.textContent='문이 열렸습니다! 문을 찾아 탈출하세요';doorNotice.classList.add('show');setTimeout(()=>doorNotice.classList.remove('show'),4200);beep(740,.1,'sine',.25);addChat('🚪 문이 열렸습니다! 모두 문을 찾아 탈출하세요.');}
+  }
+  function acceptHumanUnlock(sid,m){
+    if(!bridge.isHost||gameOver||doorProg>=3||sid.startsWith('ai-rabbit-')||exitUnlockSeen.has(m.id))return;
+    const local=sid===bridge.sid,r=bridge.remotes.get(sid),st=local?{x:player.position.x,z:player.position.z,ghost:rabbitGhost,trapped:player.userData.trapped,hasKey:keyCount>0}:r?.state;
+    if(!st||(local?playerRole:r.role)!=='rabbit'||st.ghost||st.trapped||escapedRabbits[sid]||!m.hasKey||Math.hypot(Number(m.x)-doorG.position.x,Number(m.z)-doorG.position.z)>3)return;
+    exitUnlockSeen.add(m.id);doorProg=Math.min(3,doorProg+1);doorState.locksUnlocked=doorProg;
+    if(local){keyCount=0;updateKeyIndicator();}else st.hasKey=false;
+    $('pDoor').textContent='문: '+doorProg+'/3';const lk=doorG.userData.locks?.[doorProg-1];if(lk)lk.visible=false;
+    if(doorProg===3)openExitDoor();else placeKey();maybeSendWorld(true);
+  }
+  function requestHumanUnlock(){
+    if(keyCount<1){addChat('자물쇠를 풀려면 열쇠가 필요합니다.');return;}
+    const m={id:bridge.sid+':'+Date.now(),x:player.position.x,z:player.position.z,hasKey:true};
+    if(bridge.isHost)acceptHumanUnlock(bridge.sid,m);
+    else{relay('exit_unlock_request',m);keyCount=0;updateKeyIndicator();sendState(true);}
+  }
+  function projectHunterOutsideExit(x,z,oldX=x,oldZ=z){
+    if(!doorState.open)return {x,z};const dx=x-doorG.position.x,dz=z-doorG.position.z,d=Math.hypot(dx,dz);
+    if(d>=4.5)return {x,z};const ox=oldX-doorG.position.x,oz=oldZ-doorG.position.z,od=Math.hypot(ox,oz)||1;
+    return {x:doorG.position.x+(d>.01?dx/d:ox/od)*4.5,z:doorG.position.z+(d>.01?dz/d:oz/od)*4.5};
+  }
+  function updateRoundPresentation(){
+    const views=participantViews();for(const p of views)setNameplate(p);
+    exitShield.visible=exitRing.visible=doorState.open&&playerRole==='monster';
+    if(playerRole==='monster'&&doorState.open){const pos=projectHunterOutsideExit(player.position.x,player.position.z);player.position.x=pos.x;player.position.z=pos.z;monster.position.copy(player.position);}
+    if(doorProg>=3)openExitDoor();
+    if(playerRole==='rabbit'&&!rabbitGhost&&!player.userData.trapped&&!escapedRabbits[bridge.sid]&&doorState.open&&doorState.openT>.85&&Math.hypot(player.position.x-doorG.position.x,player.position.z-doorG.position.z)<2.6){markRabbitEscaped(bridge.sid);relay('rabbit_escaped',{});maybeSendWorld(true);}
+    const spectating=!!escapedRabbits[bridge.sid];spectatePanel.style.display=spectating?'flex':'none';if(spectating){const t=spectatorTarget();spectateLabel.textContent=t?'관전 · '+t.nick:'관전 · 게임 종료 대기';player.visible=false;hidePrompt();btnGive.style.display='none';btnE.style.display='none';}else btnE.style.display='';
+    const signature=JSON.stringify(views.map(p=>[p.sid,p.nick,p.role,p.caught,p.ghost,p.trapped,p.hasKey,!!escapedRabbits[p.sid],spectating&&p.sid===spectateSid]));if(signature===lastRosterSignature)return;lastRosterSignature=signature;
+    rosterRows.replaceChildren(...views.map(p=>{const row=document.createElement('button');row.type='button';row.className='br-player '+(p.role==='monster'?'hunter':'rabbit')+(p.ghost?' out':'')+(escapedRabbits[p.sid]?' escaped':'')+(spectating&&p.sid===spectateSid?' watching':'');
+      const name=document.createElement('span'),status=document.createElement('small');name.className='br-player-name';name.textContent=(p.role==='monster'?'👹 ':'🐰 ')+p.nick+(p.ai?' · AI':'')+(p.sid===bridge.sid?' · 나':'');status.textContent=(p.hasKey?'🔑 ':'')+participantStatus(p);row.append(name,status);
+      row.disabled=!spectating||p.sid===bridge.sid||p.ghost||!!escapedRabbits[p.sid];row.onclick=()=>{spectateSid=p.sid;lastRosterSignature='';};return row;}));
+  }
+
+  function markRabbitEscaped(sid){
+    if(!sid||escapedRabbits[sid])return;
+    escapedRabbits[sid]=true;
+    if(sid===bridge.sid){keyCount=0;updateKeyIndicator();addChat('✅ 탈출 성공! 남은 토끼들을 기다립니다.');}
+    const r=bridge.remotes.get(sid);if(r){r.obj.visible=false;if(r.state)r.state.hasKey=false;}
+  }
+  function coopBotSay(r,text){
+    if(performance.now()-(r.lastBotChat||0)<6000)return;
+    r.lastBotChat=performance.now();const line='['+r.botName+' AI] '+text;
+    addChat(line);relay('chat',{text:line});
+  }
+  function botPath(x,z,tx,tz){
+    const cell=(x,z)=>[Math.max(0,Math.min(GW-1,Math.round(x/CELL+GW/2))),Math.max(0,Math.min(GH-1,Math.round(z/CELL+GH/2)))];
+    const [sx,sy]=cell(x,z),[gx,gy]=cell(tx,tz),start=sy*GW+sx;
+    const queue=[start],prev=new Map([[start,-1]]);let best=start,dist=Infinity;
+    for(let i=0;i<queue.length;i++){
+      const n=queue[i],cx=n%GW,cy=Math.floor(n/GW),d=Math.abs(cx-gx)+Math.abs(cy-gy);
+      if(d<dist){dist=d;best=n;}if(d===0)break;
+      for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=cx+dx,ny=cy+dy,id=ny*GW+nx;
+        if(nx<0||ny<0||nx>=GW||ny>=GH||grid[ny][nx]!==0||prev.has(id))continue;
+        prev.set(id,n);queue.push(id);
+      }
+    }
+    const path=[];for(let n=best;n!==start&&n!==-1;n=prev.get(n))path.push({x:(n%GW-GW/2)*CELL,z:(Math.floor(n/GW)-GH/2)*CELL});
+    return path.reverse();
+  }
+  function updateCoopRabbits(dt){
+    if(!bridge.isHost||!bridge.active||!bridge.start||gameOver)return;
+    const count=Number(bridge.start.playerCount||0);
+    if(count<1||count>4){for(const [sid,r] of bridge.remotes)if(sid.startsWith('ai-rabbit-')){removeRemote(sid);delete escapedRabbits[sid];delete captureLedger[sid];}return;}
+    for(let i=0;i<2;i++){
+      const sid='ai-rabbit-'+i;
+      if(!bridge.remotes.has(sid)){
+        const c=randFloorCell(),r=ensureRemote(sid,'rabbit',{x:(c.gx-GW/2)*CELL,y:.05,z:(c.gy-GH/2)*CELL,yaw:0,caught:0,ghost:false,trapped:false,hasKey:false,role:'rabbit'});
+        r.botName=i?'토돌이':'토순이';coopBotSay(r,'열쇠를 찾고 함께 탈출하자!');
+      }
+    }
+    const hunters=[];
+    if(playerRole==='monster')hunters.push(player.position);
+    for(const r of bridge.remotes.values())if(r.role==='monster'&&r.state)hunters.push(r.state);
+    for(const r of bridge.remotes.values()){
+      if(!r.sid.startsWith('ai-rabbit-'))continue;
+      r.botName=r.botName||(r.sid.endsWith('0')?'토순이':'토돌이');
+      r.lastAt=performance.now();const st=r.state;
+      if(st.ghost||escapedRabbits[r.sid])continue;
+      if(st.trapped){
+        r.solveAt=r.solveAt||performance.now()+14000;
+        if(cage.userData.doorOpen||performance.now()>r.solveAt){st.trapped=false;r.solveAt=0;st.x=cage.position.x+cage.userData.W*.85;st.z=cage.position.z;coopBotSay(r,'수학 문제를 풀고 나왔어!');}
+        continue;
+      }
+      let goal=null;const threat=hunters.find(h=>Math.hypot(h.x-st.x,h.z-st.z)<12 && monsterReleaseLeft<=0);
+      if(threat){
+        let best=-Infinity;
+        for(let i=0;i<8;i++){const a=i*Math.PI/4,x=st.x+Math.cos(a)*8,z=st.z+Math.sin(a)*8;
+          if(collidesWalls(x,z,.4))continue;const d=Math.hypot(x-threat.x,z-threat.z);if(d>best){best=d;goal={x,z};}}
+        coopBotSay(r,'술래가 가까워! 피해!');
+      }else if(st.hasKey){
+        const trapped=player.userData.trapped||Array.from(bridge.remotes.values()).some(o=>o!==r&&o.state?.trapped&&!o.state.ghost);
+        const human=participantViews().filter(p=>!p.ai&&p.role==='rabbit'&&!p.ghost&&!escapedRabbits[p.sid]&&!p.hasKey).sort((a,b)=>Math.hypot(a.obj.position.x-st.x,a.obj.position.z-st.z)-Math.hypot(b.obj.position.x-st.x,b.obj.position.z-st.z))[0];
+        goal=trapped?cage.position:(human?.obj.position||doorG.position);
+        if(Math.hypot(goal.x-st.x,goal.z-st.z)<3.5){
+          if(trapped){cage.userData.locked=false;cage.userData.doorOpen=1;releaseLocalRabbit();coopBotSay(r,'열쇠로 철창을 열었어!');}
+          else if(human){st.hasKey=false;r.ignoreKeysUntil=performance.now()+10000;spawnKeyAt(human.obj.position.x,human.obj.position.z);coopBotSay(r,'열쇠를 가져왔어! 네가 문을 열어줘!');maybeSendWorld(true);continue;}
+          else continue;
+          st.hasKey=false;placeKey();maybeSendWorld(true);
+        }
+      }else if(doorProg>=3){
+        goal=doorG.position;
+        if(Math.hypot(goal.x-st.x,goal.z-st.z)<3.5&&performance.now()>=doorState.sealedUntil){if(doorState.openT<.85)continue;markRabbitEscaped(r.sid);coopBotSay(r,'탈출했어! 문으로 와!');maybeSendWorld(true);continue;}
+      }else if(keys.length&&performance.now()>(r.ignoreKeysUntil||0)){
+        goal=keys[0].position;
+        if(Math.hypot(goal.x-st.x,goal.z-st.z)<2){scene.remove(keys.shift());st.hasKey=true;coopBotSay(r,'열쇠를 찾았어!');maybeSendWorld(true);}
+      }
+      if(!goal)continue;
+      const now=performance.now();
+      if(!r.path||now>(r.repathAt||0)){r.path=botPath(st.x,st.z,goal.x,goal.z);r.repathAt=now+900;}
+      if(r.path.length&&Math.hypot(r.path[0].x-st.x,r.path[0].z-st.z)<.5)r.path.shift();
+      const wp=r.path[0]||goal,dx=wp.x-st.x,dz=wp.z-st.z,d=Math.hypot(dx,dz),step=Math.min(d,(threat?8:5.5)*dt);
+      if(d>.01){
+        const nx=st.x+dx/d*step,nz=st.z+dz/d*step;
+        if(!collidesWalls(nx,nz,.4)&&!collidesProps(nx,nz,.4)){st.x=nx;st.z=nz;}
+        else if(!collidesWalls(nx,st.z,.4)&&!collidesProps(nx,st.z,.4))st.x=nx;
+        else if(!collidesWalls(st.x,nz,.4)&&!collidesProps(st.x,nz,.4))st.z=nz;
+        else{
+          let moved=false;
+          const heading=Math.atan2(dz,dx);
+          for(const angle of [.6,-.6,1.2,-1.2,Math.PI/2,-Math.PI/2]){const px=st.x+Math.cos(heading+angle)*step,pz=st.z+Math.sin(heading+angle)*step;
+            if(!collidesWalls(px,pz,.4)&&!collidesProps(px,pz,.4)){st.x=px;st.z=pz;moved=true;break;}}
+          if(!moved)r.path=null;
+        }
+        st.yaw=Math.atan2(dx,dz);
+      }
+      r.targetX=st.x;r.targetZ=st.z;r.targetYaw=st.yaw;r.obj.position.set(st.x,.05,st.z);
+    }
+  }
+
   function maybeFinishMultiplayerRound(){
     if(!bridge.isHost || gameOver || !bridge.start || Number(bridge.start.playerCount||0) < 2) return;
     let monsterPresent = playerRole === 'monster';
     let rabbitCount = playerRole === 'rabbit' ? 1 : 0;
-    let activeRabbits = (playerRole === 'rabbit' && !rabbitGhost) ? 1 : 0;
+    let activeRabbits = (playerRole === 'rabbit' && !rabbitGhost && !escapedRabbits[bridge.sid]) ? 1 : 0;
     for(const r of bridge.remotes.values()){
       if(r.role === 'monster') monsterPresent = true;
       if(r.role !== 'rabbit') continue;
       rabbitCount++;
-      if(!r.state?.ghost) activeRabbits++;
+      if(!r.state?.ghost && !escapedRabbits[r.sid]) activeRabbits++;
     }
     if(!monsterPresent){
       endGame('토끼 승리! (괴물 퇴장)');
       maybeSendWorld(true);
+    }else if(rabbitCount>0 && Object.keys(escapedRabbits).length===rabbitCount){
+      endGame('토끼 승리!');maybeSendWorld(true);
     }else if(rabbitCount === 0 || activeRabbits === 0){
-      endGame('괴물 승리!');
+      endGame('술래 승리!');
       maybeSendWorld(true);
     }
   }
@@ -3901,7 +4086,8 @@ if(monsterReleaseLeft>0){
     for(const [sid,r] of bridge.remotes)if(r.state&&performance.now()-r.lastAt<1500)entries.push({...r.state,sid,role:r.role});
     for(const rec of Object.values(captureLedger))if(rec.count===1&&stamp>=rec.resetAt){const reset={...rec,count:0,id:rec.id+'-reset'};captureLedger[rec.target]=reset;applyCaptureRecord(reset);maybeSendWorld(true);}
     const hunters=entries.filter(p=>p.role==='monster'&&!p.ghost);
-    for(const rabbit of entries){if(rabbit.role!=='rabbit'||rabbit.ghost||rabbit.trapped){captureContact.delete(rabbit.sid);continue;}
+    for(const rabbit of entries){if(rabbit.role!=='rabbit'||rabbit.ghost||rabbit.trapped||escapedRabbits[rabbit.sid]){captureContact.delete(rabbit.sid);continue;}
+      if(doorState.open&&Math.hypot(rabbit.x-doorG.position.x,rabbit.z-doorG.position.z)<3.5)continue;
       const hunter=hunters.find(h=>Math.hypot(h.x-rabbit.x,h.z-rabbit.z)<=MULTI_CATCH_RADIUS);
       if(!hunter){captureContact.delete(rabbit.sid);continue;}
       // Give an authoritative Worker event time to arrive before compatibility fallback.
@@ -3920,6 +4106,9 @@ if(monsterReleaseLeft>0){
   function snapshotWorld(){
     return {
       kind:'world',
+      bots:Array.from(bridge.remotes.values()).filter(r=>r.sid.startsWith('ai-rabbit-')).map(r=>({...r.state,sid:r.sid})),
+      escaped:Object.keys(escapedRabbits),
+      exitZone:{x:doorG.position.x,z:doorG.position.z,radius:4.5,open:doorState.open},
       captures:Object.values(captureLedger),
       carrots: carrots.map(c=>({x:c.position.x,z:c.position.z,ry:c.rotation.y})),
       pushables: snapshotPushables(),
@@ -3963,7 +4152,7 @@ if(monsterReleaseLeft>0){
   function buildInteractionPatch(before, after){
     const patch = { kind:'world_patch', ts:Date.now() };
     let changed = false;
-    const fields = ['keys','shelves','doorProg','doorOpen','cageLocked','cageDoorOpen','sealUsed','gameOver','gameOverMessage'];
+    const fields = ['keys','shelves','cageLocked','cageDoorOpen','sealUsed','gameOver','gameOverMessage'];
     for(const key of fields){
       const value=s=>key==='shelves' ? s?.shelves?.map(x=>[x.netKey,x.fallen,x.halfX,x.halfZ]) : s?.[key];
       if(JSON.stringify(value(before)) === JSON.stringify(value(after))) continue;
@@ -3979,6 +4168,9 @@ if(monsterReleaseLeft>0){
   function applySharedWorld(w, includeTimers){
     if(!w || typeof w!=='object') return;
     try{
+      if(includeTimers && Array.isArray(w.escaped))for(const sid of w.escaped)markRabbitEscaped(sid);
+      if(includeTimers && !bridge.isHost && Array.isArray(w.bots)){const ids=new Set(w.bots.map(st=>st.sid));for(const [sid] of bridge.remotes)if(sid.startsWith('ai-rabbit-')&&!ids.has(sid))removeRemote(sid);}
+      if(includeTimers && !bridge.isHost && Array.isArray(w.bots))for(const st of w.bots){const r=ensureRemote(st.sid,'rabbit',st);r.lastAt=performance.now();}
       if(Array.isArray(w.keys)){
         while(keys.length>w.keys.length){ const k=keys.pop(); scene.remove(k); }
         w.keys.forEach((it,i)=>{
@@ -4022,8 +4214,9 @@ if(monsterReleaseLeft>0){
           if(lk) lk.visible = !unlocked;
         });
       }
-      if(w.doorOpen !== undefined) doorState.open = !!w.doorOpen;
-      if(w.doorOpenT !== undefined) doorState.openT = Math.max(0, Math.min(1, Number(w.doorOpenT||0)));
+      if(w.doorOpen !== undefined) doorState.open = doorProg>=3||!!w.doorOpen;
+      if(doorProg>=3)openExitDoor();
+      if(w.doorOpenT !== undefined) doorState.openT = Math.max(doorState.openT,Math.max(0, Math.min(1, Number(w.doorOpenT||0))));
       if(w.cageLocked !== undefined) cage.userData.locked = !!w.cageLocked;
       if(w.cageDoorOpen !== undefined) cage.userData.doorOpen = !!w.cageDoorOpen;
       if(w.cageAutoCloseT !== undefined) cage.userData.autoCloseT = Math.max(0, Number(w.cageAutoCloseT||0));
@@ -4140,7 +4333,7 @@ if(monsterReleaseLeft>0){
     // relay window. Timer/door animation frames do not dirty shared state.
     if(now-bridge.lastWorldAt<110) return;
     const snap=snapshotWorld();
-    const signature=JSON.stringify([snap.keys,snap.carrots,snap.shelves.map(s=>[s.netKey,s.fallen,s.halfX,s.halfZ]),snap.doorProg,snap.doorOpen,snap.cageLocked,snap.cageDoorOpen,snap.sealUsed,doorState.sealedUntil,snap.gameOver,snap.captures]);
+    const signature=JSON.stringify([snap.keys,snap.carrots,snap.shelves.map(s=>[s.netKey,s.fallen,s.halfX,s.halfZ]),snap.doorProg,snap.doorOpen,snap.cageLocked,snap.cageDoorOpen,snap.sealUsed,doorState.sealedUntil,snap.gameOver,snap.captures,snap.escaped,snap.bots]);
     if(!bridge.worldRequested && signature===bridge.worldSignature) return;
     bridge.worldRequested=false;bridge.worldSignature=signature;
     bridge.lastWorldAt = now;
@@ -4292,6 +4485,8 @@ if(monsterReleaseLeft>0){
         if(bridge.isHost) maybeFinishMultiplayerRound();
         return;
       }
+      if(kind==='exit_unlock_request'){acceptHumanUnlock(String(m.from||m.sid||''),m);return;}
+      if(kind==='rabbit_escaped'){if(bridge.isHost){const r=bridge.remotes.get(String(m.from));if(r?.role==='rabbit'&&!r.state?.ghost&&doorState.open&&Math.hypot(r.state.x-doorG.position.x,r.state.z-doorG.position.z)<5){markRabbitEscaped(r.sid);maybeFinishMultiplayerRound();maybeSendWorld(true);}}return;}
       if(kind==='game_end'){
         if(!gameOver) endGame(String(m.message || m.gameOverMessage || '게임 종료'));
         return;
@@ -4356,11 +4551,12 @@ if(monsterReleaseLeft>0){
       if(playerRole==='monster'){
         player.visible = false; ensureMonster(); monster.visible = true; monster.position.copy(player.position); monster.rotation.y = yaw;
       } else {
-        player.visible = true;
+        player.visible = !escapedRabbits[bridge.sid];
         setAvatarGhostVisual(player, !!rabbitGhost, 0.38);
         if(monster) monster.visible = false;
       }
       for (const [sid,r] of bridge.remotes.entries()){
+        if(escapedRabbits[sid]){r.obj.visible=false;continue;}
         const st=r.state;
         if(!st){ if(r.obj) r.obj.visible=false; continue; }
         if(playerRole==='monster' && !!st.ghost){ r.obj.visible=false; continue; }
@@ -4395,6 +4591,9 @@ if(monsterReleaseLeft>0){
         if(r.role==='monster') animateMonsterAvatar(r.obj,bridgeNow/1000,Math.hypot(st.vx||0,st.vz||0),!!st.running||Math.hypot(st.vx||0,st.vz||0)>10);
         if(r.role!=='monster'){ const ki=r.obj.getObjectByName('remoteKey'); if(ki) ki.visible=(!st.ghost && !!st.hasKey); const cc=r.obj.getObjectByName('remoteCaught'); if(cc) cc.visible = (!st.ghost && Number(st.caught||0)===1); }
       }
+      updateRoundPresentation();
+      updateCoopRabbits(bridgeDt);
+      maybeFinishMultiplayerRound();
       const nowp=performance.now();
       if(nowp-(bridge.lastCaptureCheck||0)>50){bridge.lastCaptureCheck=nowp;checkHostCaptures();}
       animateCaptures(nowp);

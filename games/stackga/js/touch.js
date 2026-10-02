@@ -75,11 +75,12 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   // Mobile/tablet: preserve the existing compact right rail.
   if(boardCard){ boardCard.style.width=''; boardCard.style.height=''; }
   if(oppCard){ oppCard.style.width=''; }
-  const boardInnerW = Math.max(180, (boardCard?.clientWidth || shellW*.74) - 20);
-  const boardInnerH = Math.max(260, (boardCard?.clientHeight || shellH) - 20);
+  const railW=shellW<=480?92:clamp(shellW*.23,100,164);
+  const boardInnerW=Math.max(100,shellW-railW-32);
+  const boardInnerH = Math.max(200,shellH-20);
   const meSize = sizeBoard(cvMe, boardInnerW, boardInnerH, 56);
   const cell = meSize.cell;
-  const sideW  = sideCol?.clientWidth || clamp(Math.floor(shellW * 0.26), 104, 180);
+  const sideW = railW;
   const sideH = sideCol?.clientHeight || shellH;
   const gap = 10;
   const pad = 16;
@@ -197,3 +198,4 @@ export function initTouchControls(canvas, onAction){
   canvas.addEventListener("touchcancel", onEnd, { passive:false });
   canvas.addEventListener("contextmenu", (e)=>e.preventDefault());
 }
+

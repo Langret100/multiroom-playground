@@ -1,9 +1,9 @@
 // Firebase dependency removed.
-import { createAudio } from "./audio.js";
+import { createAudio } from "./audio.js?v=20261002-items3";
 import { initMatchButton } from "./match.js";
-import { StackGame, drawBoard, drawNext, COLS } from "./game.js?v=20260902-combojelly1";
+import { StackGame, drawBoard, drawNext, COLS, SPECIAL_DEFS } from "./game.js?v=20261002-items3";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20260902-combojelly1";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20261002-items3";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -378,7 +378,32 @@ function updateHud(){
   safeSetText(ui.effect, e.length?e.join(", "):"-");
 }
 
+let oppSpecialMarks=[],oppBlindUntil=0,oppSpecialFx=null;
+function isItemMode(){return (window.__EMBED_INIT__?.stackMode || new URLSearchParams(location.search).get('stackMode') || 'items')==='items';}
+function specialNotice(kind,phase,side){
+  const def=SPECIAL_DEFS[kind];if(!def)return;
+  let el=document.getElementById('specialNotice');
+  if(!el){el=document.createElement('div');el.id='specialNotice';document.body.appendChild(el);}
+  el.className=def.helpful?'helpful':'attack';
+  el.textContent=(side==='opp'?'상대 · ':'')+def.icon+' '+def.label+(phase==='spawn'?' 블록 등장!':'!');
+  el.dataset.serial=String(Date.now());const serial=el.dataset.serial;
+  el.hidden=false;setTimeout(()=>{if(el.dataset.serial===serial)el.hidden=true;},1600);
+  shake('soft');audio.sfx(phase==='spawn'?'specialSpawn':'special_'+kind);
+}
+function processSpecials(game,side){
+  if(!game)return;
+  for(const event of game.drainSpecialEvents()){
+    specialNotice(event.kind,event.phase,side);
+    if(event.phase==='activate'&&!SPECIAL_DEFS[event.kind].helpful){
+      const target=side==='me'?cpuGame:meGame;
+      if(mode==='cpu')target?.applySpecialAttack(event.kind);
+    }
+    if(mode==='online'&&side==='me')pushEvent({event:{from:pid,kind:'special',payload:event,t:Date.now()+'-'+Math.random()}}).catch(()=>{});
+  }
+}
 function render(){
+  processSpecials(meGame,'me');if(mode==='cpu')processSpecials(cpuGame,'opp');
+  if(ui.mode)ui.mode.textContent=(mode==='online'?'온라인':'PC')+' · '+(isItemMode()?'아이템전':'일반전');
   const ctxMe = ui.cvMe.getContext("2d");
   const ctxOpp = ui.cvOpp.getContext("2d");
   const ctxNext = ui.cvNext.getContext("2d");
@@ -403,7 +428,8 @@ function render(){
       }
     }
     drawBoard(ctxMe, meGame.board, cellMe, {
-      activePiece: meGame.current,
+      activePiece: meGame.current, landingPiece:meGame.landingPiece(),
+      specialMarks:meGame.specialSnapshot(),specialFx:meGame.lastSpecialFx,blindUntil:meGame.effects.blindUntil,
       lastLockAt: meGame.lastLockAt, lastLockCells: meGame.lastLockCells,
       lastContactAt: meGame.lastContactAt, lastContactCells: meGame.lastContactCells,
       lastCascadeAt: meGame.lastCascadeAt, lastCascadeCells: meGame.lastCascadeCells,
@@ -416,9 +442,9 @@ function render(){
   }
 
   if(oppLastBoard){
-    drawBoard(ctxOpp, oppLastBoard, cellOpp, { ghost:true });
+    drawBoard(ctxOpp, oppLastBoard, cellOpp, { ghost:true,specialMarks:mode==='cpu'?cpuGame?.specialSnapshot():oppSpecialMarks,specialFx:mode==='cpu'?cpuGame?.lastSpecialFx:oppSpecialFx,blindUntil:mode==='cpu'?cpuGame?.effects.blindUntil:oppBlindUntil });
   }else{
-    ctxOpp.clearRect(0,0,ui.cvOpp.width,ui.cvOpp.height);
+    drawBoard(ctxOpp,Array.from({length:23},()=>new Array(COLS).fill(0)),cellOpp,{ghost:true});
   }
 }
 
@@ -470,10 +496,10 @@ function beginLoop(){
       const dt = now - last; last = now;
       try{
         // mirror frame() logic
-        if(mode==="online" && meGame) autoCtl?.update(dt);
+        if(mode==="online" && meGame) if(Date.now()>=(meGame.effects.blindUntil||0))autoCtl?.update(dt);
         if(meGame) meGame.tick(dt);
       if(mode==="cpu" && cpuGame){
-        cpuCtl?.update(dt);
+        if(Date.now()>=(cpuGame.effects.blindUntil||0))cpuCtl?.update(dt);
         cpuGame.tick(dt);
         oppLastBoard = cpuGame.snapshot();
       }
@@ -500,13 +526,13 @@ function beginLoop(){
     try {
       // Embedded CPU role: drive local controls automatically.
       if(mode==="online" && meGame){
-        autoCtl?.update(dt);
+        if(Date.now()>=(meGame.effects.blindUntil||0))autoCtl?.update(dt);
       }
 
       if(meGame) meGame.tick(dt);
 
       if(mode==="cpu" && cpuGame){
-        cpuCtl?.update(dt);
+        if(Date.now()>=(cpuGame.effects.blindUntil||0))cpuCtl?.update(dt);
         cpuGame.tick(dt);
         oppLastBoard = cpuGame.snapshot();
 
@@ -572,7 +598,7 @@ function beginLoop(){
         sendAcc = 0;
         publishMyState({
           api, statesRef, pid,
-          state:{ board: meGame.snapshot(), score: meGame.score, level: meGame.level, dead: !!meGame.dead }
+          state:{ board: meGame.snapshot(), specialMarks:meGame.specialSnapshot(), blindRemainingMs:Math.max(0,meGame.effects.blindUntil-Date.now()), score: meGame.score, level: meGame.level, dead: !!meGame.dead }
         }).catch(()=>{});
       }
     }
@@ -642,8 +668,8 @@ function startCpuMode(reason){
   oppUnsub?.(); oppUnsub=null;
   evUnsub?.(); evUnsub=null;
 
-  meGame = new StackGame(((Math.random()*2**32)>>>0), playRows||20);
-  cpuGame = new StackGame(((Math.random()*2**32)>>>0), playRows||20);
+  meGame = new StackGame(((Math.random()*2**32)>>>0), {itemMode:isItemMode()});
+  cpuGame = new StackGame(((Math.random()*2**32)>>>0), {itemMode:isItemMode()});
   cpuCtl = new CpuController(cpuGame, ((Math.random()*2**32)>>>0), "low");
   oppLastBoard = cpuGame.snapshot();
   comboStreak = 0;
@@ -666,7 +692,7 @@ async function endGame(won){
     try{
       publishMyState({
         api, statesRef, pid,
-        state:{ board: meGame.snapshot(), score: meGame.score, level: meGame.level, dead: true }
+        state:{ board: meGame.snapshot(), specialMarks:meGame.specialSnapshot(), blindRemainingMs:Math.max(0,meGame.effects.blindUntil-Date.now()), score: meGame.score, level: meGame.level, dead: true }
       }).catch(()=>{});
     }catch(_){}
     // parent(room.html)에 결과 알림
@@ -784,7 +810,7 @@ function onRoomUpdate(room){
     if(ui.oppTag) ui.oppTag.textContent = (window.__EMBED_INIT__?.oppNick || "Player");
 
     // rows는 고정(23행). seed만 동일하게 맞춤.
-    meGame = new StackGame(((meta.seed>>>0) || 1), playRows);
+    meGame = new StackGame(((meta.seed>>>0) || 1), {itemMode:isItemMode()});
     // If this iframe is a hidden CPU bot (embedded solo mode), drive inputs automatically.
     if (window.__EMBED_INIT__?.role === "cpu"){
       const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "low");
@@ -828,6 +854,8 @@ function onOppState(res){
   if(mode!=="online") return;
   if(!res){ oppLastBoard=null; return; }
   oppLastBoard = res.state?.board || null;
+  oppSpecialMarks=res.state?.specialMarks||[];
+  oppBlindUntil=Date.now()+Math.min(5000,Math.max(0,Number(res.state?.blindRemainingMs)||0));
   // 상대가 dead 상태를 전달하면 내가 승리
   if(res.state?.dead && !finished){
     if(started) endGame(true);
@@ -844,7 +872,7 @@ function onEventRecv(payload){
   // Firebase: {key, ev}
   // Embedded stub: {key, ev} or {event} or the event object directly
   const ev = payload?.ev ?? payload?.event ?? payload;
-  const key = payload?.key || (ev?.t ? `ev_${ev.t}` : `ev_${Date.now()}_${Math.random()}`);
+  const key = (ev?.kind==='special' && ev?.t ? 'special_'+ev.t : payload?.key) || (ev?.t ? `ev_${ev.t}` : `ev_${Date.now()}_${Math.random()}`);
   if(!ev) return;
   if(seenEvents.has(key)) return;
   seenEvents.add(key);
@@ -859,6 +887,13 @@ function onEventRecv(payload){
     return;
   }
 
+  if(ev.kind==='special'&&isItemMode()&&SPECIAL_DEFS[ev.payload?.kind]){
+    const event=ev.payload;
+    if(event.phase==='spawn'||event.phase==='activate'){
+      specialNotice(event.kind,event.phase,'opp');if(event.phase==='activate')oppSpecialFx={kind:event.kind,at:Date.now()};
+      if(event.phase==='activate'&&!SPECIAL_DEFS[event.kind].helpful)meGame?.applySpecialAttack(event.kind);
+    }
+  }
   if(ev.kind === "garbage"){
     const n = Math.max(0, (ev.payload && ev.payload.n) | 0);
     const streak = Math.max(0, (ev.payload && ev.payload.streak) | 0);
@@ -924,7 +959,7 @@ async function boot(){
     evUnsub = subscribeEvents({ pid, onEvent: onEventRecv });
 
     // Start local game immediately.
-    meGame = new StackGame(seed, playRows);
+    meGame = new StackGame(seed, {itemMode:isItemMode()});
     if (window.__EMBED_INIT__?.role === "cpu"){
       const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "low");
       autoCtl = new CpuController(meGame, (seed ^ 0x9e3779b9) >>> 0, cpuDiff);
@@ -980,3 +1015,4 @@ document.addEventListener("visibilitychange", ()=>{
 });
 
 boot();
+

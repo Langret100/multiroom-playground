@@ -8,9 +8,9 @@ const camera={ox:0,oy:0,ready:false};
 let gardenCache=null,gardenCacheKey='';
 function resize(){DPR=Math.min(2,devicePixelRatio||1);CW=innerWidth;CH=innerHeight;cvs.width=Math.round(CW*DPR);cvs.height=Math.round(CH*DPR);ctx.setTransform(DPR,0,0,DPR,0,0);ctx.imageSmoothingEnabled=false;
  const touch=typeof matchMedia==='function'&&matchMedia('(pointer:coarse)').matches,wide=CW>=1000&&CH>=600&&!touch,land=CW>CH;
- const left=wide?192:land?106:6,right=land&&!wide?84:6,top=wide?48:land?38:122,bottom=wide?28:land?8:180;
+ const left=wide?192:land?106:6,right=land&&!wide?84:6,top=wide?48:land?38:122,bottom=wide?94:land?64:216;
  viewX=left;viewY=top;viewW=Math.max(120,CW-left-right);viewH=Math.max(120,CH-top-bottom);
- const visibleCols=wide?13.2:land?11.6:8.4,visibleRows=wide?10.4:land?8.8:10.8;
+ const visibleCols=wide?16:land?14:10.2,visibleRows=wide?12.6:land?10.6:13;
  cell=Math.max(18,Math.min(viewW/visibleCols,viewH/visibleRows));camera.ready=false;gardenCacheKey='';
 } addEventListener('resize',resize);resize();
 function updateCamera(w){const p=w?.players?.[bridge.sid],source=!bridge.isHost&&p&&motion.pose?{...p,x:motion.pose.x,y:motion.pose.y}:p;if(!source){ox=viewX+(viewW-W*cell)/2;oy=viewY+(viewH-H*cell)/2;return;}
@@ -297,7 +297,7 @@ ctx.globalAlpha=.20;ctx.fillStyle=shade(target,.42);ctx.fillRect(-b.w*.40,b.h*.3
 if(b.paintAt&&prog<1){const q=prog*prog*(3-2*prog);ctx.globalAlpha=.10+.17*q;ctx.fillStyle=target;const hh=b.h*.70*q;roundRect(-b.w*.39,b.h*.36-hh,b.w*.78,hh,r*.46);ctx.fill();ctx.globalAlpha=.10+.14*Math.sin(Math.PI*q);ctx.fillStyle='#ffffff';const sw=b.w*.12,xx=-b.w*.47+(b.w+sw)*q;roundRect(xx,-b.h*.38+topShift,sw,b.h*.70,sw*.48);ctx.fill();}
 // Larger star glints scale with the enlarged 56px cell.
 const showStar=!LOW_SPEC&&(b.owner<0||prog>.74);if(showStar){const seed=b.jellySeed||0,tw=.48+.40*Math.sin(now/520+seed*8);drawBlockStar(b.w*.17,-b.h*.12+topShift,b.w*.075,b.owner<0?'#e7f1ff':'#ffffff',(b.owner<0?.52:.24)*tw)}ctx.restore()}
-function gardenBlock(k,x,y){drawBlock({alive:true,x:x+2,y:y+2,w:cell-4,h:cell-4,owner:hash(k)%4,jelly:0,jellySeed:hash(k)%100},0,0,performance.now());}
+function gardenBlock(k,x,y){drawBlock({alive:true,x:x-.5,y:y-.5,w:cell+1,h:cell+1,owner:hash(k)%4,jelly:0,jellySeed:hash(k)%100},0,0,performance.now());}
 
 const hudIcons={},rosterEl=document.getElementById('roster'),playersPanel=document.getElementById('playersPanel'),rosterToggle=document.getElementById('rosterToggle');
 let rosterStamp='',rosterAt=0;
@@ -394,6 +394,41 @@ function observeArcade(w){
  const dt=Math.min(.05,(performance.now()-(arcade.last||performance.now()))/1000);arcade.last=performance.now();for(const q of arcade.particles){q.x+=q.vx*dt;q.y+=q.vy*dt;q.vy+=5*dt;q.life-=dt;}arcade.particles=arcade.particles.filter(p=>p.life>0);arcade.labels=arcade.labels.filter(p=>p.until>performance.now());
 }
 function arcadePixel(x,y,w,h,color){ctx.fillStyle=color;ctx.fillRect(Math.round(x),Math.round(y),Math.ceil(w),Math.ceil(h));}
+const hedgeCrops=new Map(),cleanSlimeFrames=new Map();
+function townSpriteBounds(index){
+ if(hedgeCrops.has(index))return hedgeCrops.get(index);
+ const fw=townImg.naturalWidth/4,fh=townImg.naturalHeight/2,c=document.createElement('canvas');c.width=fw;c.height=fh;
+ const g=c.getContext('2d');g.drawImage(townImg,(index%4)*fw,Math.floor(index/4)*fh,fw,fh,0,0,fw,fh);const d=g.getImageData(0,0,fw,fh).data;let l=fw,t=fh,r=0,b=0;
+ for(let y=0;y<fh;y++)for(let x=0;x<fw;x++)if(d[(y*fw+x)*4+3]>90){l=Math.min(l,x);r=Math.max(r,x);t=Math.min(t,y);b=Math.max(b,y);}
+ const rect=[(index%4)*fw+l,Math.floor(index/4)*fh+t,r-l+1,b-t+1];hedgeCrops.set(index,rect);return rect;
+}
+function drawConnectedHedge(x,y){
+ const px=ox+x*cell,py=oy+y*cell,overlap=Math.max(1,cell*.035);
+ // Opaque green footing and overlapping opaque sprite bounds join all four sides.
+ arcadePixel(px,py,cell+1,cell+1,'#2e653d');
+ if(townImg.naturalWidth){const r=townSpriteBounds((x+y)%5===0?5:4);ctx.drawImage(townImg,...r,px-overlap,py-overlap,cell+overlap*2,cell+overlap*2);}
+ else{arcadePixel(px,py,cell+1,cell+1,'#4a914c');arcadePixel(px,py,cell+1,cell*.2,'#8ab957');}
+ if(x===0)arcadePixel(px,py,Math.max(1,cell*.025),cell+1,'#234a32');if(x===W-1)arcadePixel(px+cell-cell*.025,py,cell*.025+1,cell+1,'#234a32');
+}
+function paddedSlimeFrame(index){
+ if(cleanSlimeFrames.has(index))return cleanSlimeFrames.get(index);
+ const fw=slimeAtlasImg.naturalWidth/8,fh=slimeAtlasImg.naturalHeight/4,raw=document.createElement('canvas');raw.width=fw;raw.height=fh;
+ const g=raw.getContext('2d');g.drawImage(slimeAtlasImg,index%8*fw,Math.floor(index/8)*fh,fw,fh,0,0,fw,fh);
+ const pixels=g.getImageData(0,0,fw,fh).data;let right=0,left=0;
+ for(let y=0;y<fh;y++){if(pixels[(y*fw+fw-4)*4+3]>64)right++;if(pixels[(y*fw+3)*4+3]>64)left++;}
+ const pushed=index>=12&&index<=20,clipped=right>=12&&right>left*1.7;
+ if(pushed||clipped){
+  // Use complete, closed silhouettes. Squash the whole source frame for pushing
+  // instead of reusing atlas cells with a cut-off face or side.
+  const base=pushed?(index<=14?0:index<=17?4:8):(index<4?0:index<8?4:index<12?8:24);
+  const phase=pushed?(index-12)%3:index%4;g.clearRect(0,0,fw,fh);g.save();g.translate(fw/2,fh/2);
+  g.scale(1,pushed?.67+phase*.035:1+phase*.025);
+  if(pushed)g.rotate((phase-1)*.045);
+  g.drawImage(slimeAtlasImg,base%8*fw,Math.floor(base/8)*fh,fw,fh,-fw/2,-fh/2,fw,fh);g.restore();
+ }
+ const padded=document.createElement('canvas'),pad=8;padded.width=fw+pad*2;padded.height=fh+pad*2;padded.getContext('2d').drawImage(raw,pad,pad);padded.repaired=pushed||clipped;cleanSlimeFrames.set(index,padded);return padded;
+}
+
 function townFloor(){
  ctx.save();ctx.beginPath();ctx.rect(viewX,viewY,viewW,viewH);ctx.clip();
  arcadePixel(viewX,viewY,viewW,viewH,'#bde9ef');for(let y=viewY-32;y<viewY+viewH+32;y+=32)for(let x=viewX-32;x<viewX+viewW+32;x+=32)if(((Math.floor(x/32)+Math.floor(y/32))&1)===0)arcadePixel(x,y,32,32,'#c9f0ec');
@@ -404,10 +439,11 @@ function townFloor(){
 }
 
 function townObstacle(x,y){const px=ox+x*cell,py=oy+y*cell,s=cell;
+ if(x===0||y===0||x===W-1||y===H-1){drawConnectedHedge(x,y);return;}
  if(townImg.naturalWidth){const edge=x===0||y===0||x===W-1||y===H-1,index=edge?((x+y)%3===0?5:4):(Math.min(x,W-1-x)===4&&Math.min(y,H-1-y)===2)?3:Math.floor(Math.min(y,H-1-y)/2)%3;
  const height=s*(edge?1:index===3?1.65:1.42),width=s*(edge?1.08:.96),foot=py+s;
  if(!edge){ctx.fillStyle='#315b7138';ctx.beginPath();ctx.ellipse(px+s*.5,foot-s*.10,s*.43,s*.13,0,0,Math.PI*2);ctx.fill();}
- const fw=townImg.naturalWidth/4,fh=townImg.naturalHeight/2;ctx.drawImage(townImg,(index%4)*fw,Math.floor(index/4)*fh,fw,fh,px+(s-width)/2,foot-height,width,height);return;}
+ const rect=townSpriteBounds(index),dw=s*1.035,dh=dw*rect[3]/rect[2];ctx.drawImage(townImg,...rect,px+(s-dw)/2,foot-dh,dw,dh);return;}
 
  ctx.save();ctx.translate(px,py);ctx.scale(s/48,s/48);
  const edge=x===0||y===0||x===W-1||y===H-1;
@@ -415,7 +451,7 @@ function townObstacle(x,y){const px=ox+x*cell,py=oy+y*cell,s=cell;
  else if((x+2*y)%8===0){arcadePixel(20,29,9,17,'#9e6d43');arcadePixel(7,12,34,25,'#2f9273');arcadePixel(12,3,25,30,'#46ac76');arcadePixel(16,0,17,20,'#83ce78');arcadePixel(9,25,30,5,'#65be72');}
  else{const roof=['#ee8069','#66b9db','#edbf59'][(x/2+y/2)%3];arcadePixel(5,20,38,26,'#b39769');arcadePixel(7,17,34,26,'#fff0c6');arcadePixel(3,11,42,13,'#805965');arcadePixel(7,5,34,17,roof);arcadePixel(12,0,24,8,roof);arcadePixel(10,8,28,3,'#ffffff66');arcadePixel(18,29,12,17,'#578b99');arcadePixel(21,32,6,7,'#b9e9ed');arcadePixel(8,27,7,8,'#75b7c6');arcadePixel(33,27,7,8,'#75b7c6');arcadePixel(17,43,15,3,'#eee0b2');}
  ctx.restore();}
-function slimeAtlasFrame(name,x,y,size,flip=false,rotation=0,alpha=.78){if(!slimeAtlasImg?.naturalWidth)return false;const map={b0:0,b1:1,b2:2,b3:3,y0:4,y1:5,y2:6,y3:7,p0:8,p1:9,p2:10,p3:11,bb0:12,bb1:13,bb2:14,yy0:15,yy1:16,yy2:17,pp0:18,pp1:19,pp2:20,pre0:21,pre1:22,boom0:23,boom1:24,boom2:25},idx=map[name];if(idx==null)return false;const cellA=slimeAtlasImg.naturalWidth/8,col=idx%8,row=Math.floor(idx/8),cellH=slimeAtlasImg.naturalHeight/4;ctx.save();ctx.translate(x,y);ctx.rotate(rotation);if(flip)ctx.scale(-1,1);ctx.globalAlpha=alpha;ctx.imageSmoothingEnabled=false;ctx.drawImage(slimeAtlasImg,col*cellA,row*cellH,cellA,cellH,-size/2,-size/2,size,size);ctx.restore();return true;}
+function slimeAtlasFrame(name,x,y,size,flip=false,rotation=0,alpha=.78){if(!slimeAtlasImg?.naturalWidth)return false;const map={b0:0,b1:1,b2:2,b3:3,y0:4,y1:5,y2:6,y3:7,p0:8,p1:9,p2:10,p3:11,bb0:12,bb1:13,bb2:14,yy0:15,yy1:16,yy2:17,pp0:18,pp1:19,pp2:20,pre0:21,pre1:22,boom0:23,boom1:24,boom2:25},idx=map[name];if(idx==null)return false;const cellA=slimeAtlasImg.naturalWidth/8,col=idx%8,row=Math.floor(idx/8),cellH=slimeAtlasImg.naturalHeight/4;ctx.save();ctx.translate(x,y);ctx.rotate(rotation);if(flip)ctx.scale(-1,1);ctx.globalAlpha=alpha;ctx.imageSmoothingEnabled=false;const frame=paddedSlimeFrame(idx),renderSize=size*frame.width/cellA;ctx.drawImage(frame,-renderSize/2,-renderSize/2,renderSize,renderSize);ctx.restore();return true;}
 function arcadeSlime(b,now){let v=arcade.bombViews.get(b.id);if(!v){v={x:b.x,y:b.y,at:now,tx:b.x,ty:b.y,pushAt:0,pushDx:0,pushDy:0};arcade.bombViews.set(b.id,v);}if(v.tx!==b.x||v.ty!==b.y){v.pushDx=b.x-v.tx;v.pushDy=b.y-v.ty;v.tx=b.x;v.ty=b.y;v.pushAt=now;}const step=Math.max(0,Math.min(.4,(now-v.at)/100));v.at=now;v.x+=clamp(b.x-v.x,-step,step);v.y+=clamp(b.y-v.y,-step,step);const x=ox+(v.x+.5)*cell,y=oy+(v.y+.5)*cell,age=Math.max(0,now-b.bornAt),life=clamp(age/FUSE,0,1),color=slimeColor(b,now),prefix=color==='blue'?'b':color==='yellow'?'y':'p',pushAge=now-(v.pushAt||0),size=cell*1.10;
  ctx.save();ctx.fillStyle='#236e6530';ctx.beginPath();ctx.ellipse(x,y+cell*.28,cell*.31,cell*.085,0,0,7);ctx.fill();ctx.restore();
  let drawn=false;if(pushAge>=0&&pushAge<300&&(v.pushDx||v.pushDy)){const f=Math.min(2,Math.floor(pushAge/100)),name=(color==='blue'?'bb':color==='yellow'?'yy':'pp')+f,vertical=Math.abs(v.pushDy)>Math.abs(v.pushDx),flip=!vertical&&v.pushDx<0,rotation=vertical?(v.pushDy<0?-Math.PI/2:Math.PI/2):0;drawn=slimeAtlasFrame(name,x,y,size*1.08,flip,rotation,.76);}else if(life>.93){const f=Math.floor(now/95)%2;drawn=slimeAtlasFrame(f?'pre1':'pre0',x,y,size*1.11,false,0,.76);}else{const f=Math.floor(now/125+b.id.length)%4;drawn=slimeAtlasFrame(prefix+f,x,y,size,false,0,.74+.05*Math.sin(now/150));}
@@ -482,7 +518,14 @@ function drawArcadeScene(w){const now=gameNow();observeArcade(w);updateCamera(w)
  ctx.restore();
 }
 
-function draw(){ctx.clearRect(0,0,CW,CH);const w=world;if(!w)return;drawArcadeScene(w);updateRoster();const me=w.players?.[bridge.sid];if(me){potionCount.textContent=String(me.potions||0);potionBtn.disabled=!canUsePotion(me);potionBtn.classList.toggle('ready',canUsePotion(me));potionBtn.setAttribute('aria-label','제거 포션 '+(me.potions||0)+'개 · C키 또는 터치로 사용');statsEl.textContent=`🫧${me.maxBombs} · 📏${me.range} · 👟${Math.max(1,Math.round((me.speed-2.7)/.35))}${me.broom?' · 🧹':''}`;statusEl.textContent=me.alive?(me.bubbled?(me.potions>0?'갇힘! C / 포션 버튼으로 탈출':'슬라임! 이동키 / 🫧 버튼 연타로 탈출!'):me.dizzyUntil>gameNow()?(me.potions>0?'탈락 직전! C / 포션으로 구조':'빙글빙글… 기절!'):`KO ${me.kos} · ${bridge.isHost?'HOST':'PLAYER'}`):'탈락 · 결과를 기다리는 중'}const now=gameNow(),sec=Math.ceil(Math.min(ROUND_MS,Math.max(0,w.endAt-now))/1000);timerEl.textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;if(w.ended){const win=w.players?.[w.winnerSid];center.classList.remove('hidden');big.textContent=win?.sid===bridge.sid?'VICTORY! 🏆':`${win?.nick||'플레이어'} 승리!`;small.textContent=`${win?.nick||'우승자'} · KO ${win?.kos||0} · 잠시 후 방으로 돌아갑니다.`;const portrait=document.getElementById('winnerPortrait');if(portrait){portrait.src=hudIcons[charName(win||{seat:0})];portrait.hidden=false;}document.getElementById('center').classList.add('victory')}else if(now<w.startAt){center.classList.remove('hidden');big.textContent=String(Math.max(1,Math.ceil((w.startAt-now)/1000)));small.textContent='슬라임을 설치하고 물줄기를 피해 마지막까지 살아남으세요!'}else center.classList.add('hidden')}
+function updateInventory(p){
+ const el=document.getElementById('inventoryBar');if(!el||!p)return;
+ const speed=Math.max(0,Math.round((p.speed-3.05)/.35)),range=Math.max(0,p.range-2),bomb=Math.max(0,p.maxBombs-1);
+ const entries=[['bomb','슬라임','강화 +'+bomb,'설치 '+p.maxBombs+'개'],['range','물줄기','강화 +'+range,'범위 '+p.range+'칸'],['speed','이동속도','강화 +'+speed,'속도 '+p.speed.toFixed(2)],['potion','포션','보유 '+(p.potions||0)+'개','C키 사용'],['broom','빗자루',p.broom?'탑승 중':'미보유',''],['shield','보호막',p.shield?'보유 1개':'미보유','']];
+ const stamp=JSON.stringify(entries);if(el.dataset.stamp===stamp)return;el.dataset.stamp=stamp;el.replaceChildren();
+ for(const [icon,name,level,value]of entries){const card=document.createElement('div');card.className='inventoryItem';const image=document.createElement('img');image.src='assets/pixel-v21/'+icon+'.webp';image.alt='';const text=document.createElement('div'),title=document.createElement('b'),detail=document.createElement('span');title.textContent=name+' · '+level;detail.textContent=value;text.append(title,detail);card.append(image,text);el.append(card);}
+}
+function draw(){ctx.clearRect(0,0,CW,CH);const w=world;if(!w)return;drawArcadeScene(w);updateRoster();const me=w.players?.[bridge.sid];if(me){updateInventory(me);potionCount.textContent=String(me.potions||0);potionBtn.disabled=!canUsePotion(me);potionBtn.classList.toggle('ready',canUsePotion(me));potionBtn.setAttribute('aria-label','제거 포션 '+(me.potions||0)+'개 · C키 또는 터치로 사용');statsEl.textContent=`🫧${me.maxBombs} · 📏${me.range} · 👟${Math.max(1,Math.round((me.speed-2.7)/.35))}${me.broom?' · 🧹':''}`;statusEl.textContent=me.alive?(me.bubbled?(me.potions>0?'갇힘! C / 포션 버튼으로 탈출':'슬라임! 이동키 / 🫧 버튼 연타로 탈출!'):me.dizzyUntil>gameNow()?(me.potions>0?'탈락 직전! C / 포션으로 구조':'빙글빙글… 기절!'):`KO ${me.kos} · ${bridge.isHost?'HOST':'PLAYER'}`):'탈락 · 결과를 기다리는 중'}const now=gameNow(),sec=Math.ceil(Math.min(ROUND_MS,Math.max(0,w.endAt-now))/1000);timerEl.textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;if(w.ended){const win=w.players?.[w.winnerSid];center.classList.remove('hidden');big.textContent=win?.sid===bridge.sid?'VICTORY! 🏆':`${win?.nick||'플레이어'} 승리!`;small.textContent=`${win?.nick||'우승자'} · KO ${win?.kos||0} · 잠시 후 방으로 돌아갑니다.`;const portrait=document.getElementById('winnerPortrait');if(portrait){portrait.src=hudIcons[charName(win||{seat:0})];portrait.hidden=false;}document.getElementById('center').classList.add('victory')}else if(now<w.startAt){center.classList.remove('hidden');big.textContent=String(Math.max(1,Math.ceil((w.startAt-now)/1000)));small.textContent='슬라임을 설치하고 물줄기를 피해 마지막까지 살아남으세요!'}else center.classList.add('hidden')}
 function loop(t){
  const d=Math.min(.05,(t-lastFrame)/1000);lastFrame=t;acc+=d;
  if(bridge.isHost){

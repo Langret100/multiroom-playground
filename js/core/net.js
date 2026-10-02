@@ -84,6 +84,7 @@
       this.protocolVersion = "";
       this.state = buildRoomState();
       this._handlers = new Map(); // type -> [fn]
+      this._latestLobby = new Map();
       this._helloOk = new Promise((res)=>{ this._helloResolve = res; });
       ws.onmessage = (ev)=> this._onWsMessage(ev);
       ws.onclose = ()=> {
@@ -94,8 +95,10 @@
       const arr = this._handlers.get(type) || [];
       arr.push(fn);
       this._handlers.set(type, arr);
+      if(this.kind==='lobby'&&this._latestLobby.has(type)){try{fn(this._latestLobby.get(type));}catch(_){}}
     }
     _emit(type, payload){
+      if(this.kind==='lobby'&&(type==='rooms'||type==='presence'))this._latestLobby.set(type,payload);
       const arr = this._handlers.get(type);
       if(arr){ for(const fn of arr){ try{ fn(payload); }catch(e){} } }
     }
@@ -127,6 +130,7 @@
       const meta = clientRoomMeta(snap.meta || {});
       this.state.title = meta.title ?? this.state.title;
       this.state.mode  = meta.mode  ?? this.state.mode;
+      this.state.stackMode=meta.stackMode||"items";
       if(meta.phase==='lobby')this._bloomSnapshot=null;
       this.state.phase = meta.phase ?? this.state.phase;
       this.state.maxClients = meta.maxClients ?? this.state.maxClients;
@@ -228,6 +232,7 @@ if (isDuel && humans.length === 1){
     if(kind === "lobby"){
       if(legacyType === "chat") return { t:"lobby_chat", d:{ text: safeText(payload?.text, 300) } };
       if(legacyType === "presence") return { t:"presence", d:{} };
+      if(legacyType === "list_rooms") return {t:"list_rooms",d:{}};
       return null;
     }
     if(kind === "room"){
@@ -423,7 +428,7 @@ if (isDuel && humans.length === 1){
     }
     async getAvailableRooms(roomName){
       if(roomName !== "game_room") return [];
-      const res = await fetch(this.httpBase + "/api/rooms", { method:"GET" });
+      const res = await fetch(this.httpBase + "/api/rooms", { method:"GET", cache:"no-store" });
       if(!res.ok) throw new Error("rooms fetch failed");
       const data = await res.json();
       // match Colyseus getAvailableRooms shape
