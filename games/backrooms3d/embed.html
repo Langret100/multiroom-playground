@@ -133,7 +133,7 @@
 #brSpectate{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(var(--chatH) + 80px + var(--safeB));z-index:45;display:none;align-items:center;gap:14px;padding:8px;border:1px solid #f5d98366;border-radius:12px;background:#1b211fee;color:#fff0bd;font-size:13px}#brSpectate button{border:1px solid #b8d9cf55;border-radius:8px;background:#263e39;color:#effff8;font-size:26px;width:38px;height:36px;cursor:pointer}
 @media(max-width:600px){#brRoster{left:8px;top:110px;width:148px;padding:6px;max-height:30vh}.br-player{font-size:10px;padding:6px;min-height:34px}.br-player small{font-size:9px}#brDoorNotice{font-size:15px;padding:12px 16px}#brSpectate{font-size:11px;gap:8px;white-space:nowrap}}
 </style>
-</head>
+<script src="../../js/games/solo-ai.js?v=20261002-solo1"></script><script src="../../js/games/mobile-viewport.js?v=20261002-mobile1"></script><link rel="stylesheet" href="../../js/games/mobile-portrait.css?v=20261002-mobile1"></head>
 <body>
   <div id="loading"><div class="box"><div class="spin"></div><div class="t">로딩 중…</div><div class="s" id="loadingSub">three.js 준비</div></div></div>
   <div id="fallback"><div class="box">
@@ -1334,6 +1334,7 @@ const countdownEl = $("countdown");
     for(const k in keysDown) keysDown[k]=0;
     sprint.active=false; sprint.hold=false;
     monsterAI=false;
+    if(window.SoloAI?.active){parent.postMessage({type:'solo_over',gameId:'backrooms3d'},location.origin);return;}
     // 호스트가 게임 종료를 서버에도 알려 방 상태가 다시 대기실로 돌아가게 한다.
     // 비호스트의 탈출은 world_patch를 통해 호스트가 적용한 뒤 이 경로를 탄다.
     try{
@@ -2000,7 +2001,7 @@ function spawnShelfPillar(wx,wz, idx=0){
 
   // Monster
   let monster = null;
-  let monsterAI = false; // 기본 OFF — 멀티플레이어 모드에서 불필요한 AI 연산 방지 (솔로 테스트: G키로 ON)
+  let monsterAI = !!window.SoloAI?.active; // 기본 OFF — 멀티플레이어 모드에서 불필요한 AI 연산 방지 (솔로 테스트: G키로 ON)
   function makeMonster(){
     const g = new THREE.Group();
     const black = new THREE.MeshStandardMaterial({color:0x171b24, roughness:0.95});
@@ -2716,7 +2717,9 @@ function pushOutWalls(px,pz,rad){
   vign.style.opacity="0";
   document.body.appendChild(vign);
 
+  const practiceMonsterBrain=window.SoloAI?.active?SoloAI.brain(739):null;let practiceMonsterPauseUntil=0;
   function updateMonster(dt){
+    if(practiceMonsterBrain){const now=Date.now();if(practiceMonsterBrain.ready(now)&&practiceMonsterBrain.mistake)practiceMonsterPauseUntil=now+SoloAI.config.reaction*.65;if(now<practiceMonsterPauseUntil)return;}
     if(!monster) return;
     if(bridge.active){
       // Multiplayer uses the visible remote hunter, never the hidden solo AI.
@@ -2835,7 +2838,7 @@ function pushOutWalls(px,pz,rad){
       mSprint.charge = mSprint.active ? 1 : (mSprint.cooldown <= 0 ? 1 : 1 - mSprint.cooldown / mSprint.COOLDOWN);
       monsterSprintSfx(mSprint.active);
       const speedBuff = (nowMs < monsterSpeedBuffUntil) ? 1.5 : 1.0;
-      const sp=8.69*(mSprint.active?mSprint.mult:1)*speedBuff;
+      const sp=8.69*(mSprint.active?mSprint.mult:1)*speedBuff*(window.SoloAI?.active?SoloAI.config.speed:1);
       if(d>0.01){
         const vx=(dx/d)*sp*dt, vz=(dz/d)*sp*dt;
         const oldX = monster.position.x, oldZ = monster.position.z;
@@ -3736,6 +3739,7 @@ if(monsterReleaseLeft>0 && !gameOver){
     const roster=bridge.start?.roster||[],nickFor=sid=>roster.find(p=>String(p.sid)===String(sid))?.nick;
     const list=[{sid:bridge.sid||'local',nick:bridge.nick||playerName||'나',role:playerRole,caught:rabbitCaughtCount,ghost:rabbitGhost,trapped:!!player.userData.trapped,hasKey:keyCount>0,obj:playerRole==='monster'?monster:player}];
     for(const [sid,r] of bridge.remotes){list.push({sid,nick:r.botName||r.state?.nick||nickFor(sid)||(sid.startsWith('ai-rabbit-')?(sid.endsWith('0')?'토순이':'토돌이'):'토끼'),role:r.role,caught:Number(r.state?.caught||0),ghost:!!r.state?.ghost,trapped:!!r.state?.trapped,hasKey:!!r.state?.hasKey,obj:r.obj,ai:sid.startsWith('ai-rabbit-')});}
+    if(window.SoloAI?.active&&monster)list.push({sid:'solo-ai-hunter',nick:'연습 괴물',role:'monster',caught:0,ghost:false,trapped:false,hasKey:false,obj:monster,ai:true});
     return list.sort((a,b)=>(a.role==='monster'?0:1)-(b.role==='monster'?0:1));
   }
   function participantStatus(p){return p.role==='monster'?'술래':escapedRabbits[p.sid]?'탈출':p.ghost||p.caught>=2?'아웃':p.trapped?'철창 · '+(p.caught||0)+'/2':(p.caught||0)+'/2';}
@@ -4370,6 +4374,7 @@ if(monsterReleaseLeft>0 && !gameOver){
         selfSeat: Number.isFinite(Number(d.selfSeat)) ? Number(d.selfSeat) : Number(d.seat),
         isHost: (typeof d.isHost === 'boolean') ? !!d.isHost : ((typeof d.host === 'boolean') ? !!d.host : bridge.isHost),
       });
+      if(window.SoloAI?.active){bridge.active=false;monsterAI=true;ensureMonster();monster.visible=true;return;}
       if (d.startPayload) applyBridgeStartPayload(d.startPayload);
       else if (pendingStartPayload) applyBridgeStartPayload(pendingStartPayload);
       // bridge_ready is emitted once after boot. Echoing it here makes the

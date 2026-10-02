@@ -126,11 +126,13 @@ function clearLines(board){
   return { cleared:rows.length, rows };
 }
 
+export function itemChargeColor(progress){return 'rgb('+paletteAt(Math.max(0,Math.min(1,progress/5))).map(v=>Math.min(255,v+42)).join(',')+')';}
 export const SPECIAL_DEFS={
  sweep:{icon:'−5',label:'바닥 5줄 청소',helpful:true},
  pack:{icon:'←',label:'왼쪽으로 착!',helpful:true},
  haste:{icon:'↓⚡',label:'낙하 가속',helpful:false},
- fog:{icon:'☁',label:'먹구름 5초',helpful:false}
+ fog:{icon:'☁',label:'먹구름 5초',helpful:false},
+ laser:{icon:'↧',label:'세로 레이저',helpful:false}
 };
 export function specialPieceCell(piece){
  if(!piece?.special)return null;
@@ -188,6 +190,10 @@ export class StackGame {
   }
 
   drainSpecialEvents(){return this.specialEvents.splice(0);}
+  specialFxSnapshot(now=Date.now()){
+    const fx=this.lastSpecialFx;if(!fx||now-fx.at<0||now-fx.at>1300)return null;
+    const {at,...data}=fx;return {...data,ageMs:now-at};
+  }
   specialSnapshot(){
     const marks=this.specials.map(row=>row.slice()),cell=specialPieceCell(this.current);
     if(cell&&!this.dead){const [x,y]=cell;if(x>=0&&x<COLS&&y>=0&&y<ROWS)marks[y][x]=this.current.special.kind;}
@@ -195,9 +201,21 @@ export class StackGame {
   }
   applySpecialAttack(kind,now=Date.now()){
     if(this.dead)return;
+    let extra={};
+    if(kind==='laser'){
+      const column=Math.floor(this._specialRnd()*COLS),cells=[];
+      for(let y=0;y<ROWS;y++){
+        if(this.board[y][column])cells.push({x:column,y,id:this.board[y][column]});
+        this.board[y][column]=0;this.specials[y][column]=null;
+      }
+      this.lastLockCells=this.lastLockCells.filter(([x])=>x!==column);
+      this.lastContactCells=this.lastContactCells.filter(([x])=>x!==column);
+      this.lastCascadeCells=this.lastCascadeCells.filter(c=>c.x!==column);
+      extra={column,cells};
+    }
     if(kind==='haste')this.effects.speedUntil=Math.max(this.effects.speedUntil||0,now+8000);
     if(kind==='fog')this.effects.blindUntil=Math.max(this.effects.blindUntil||0,now+5000);
-    this.lastSpecialFx={kind,at:now,received:true};
+    this.lastSpecialFx={kind,at:now,received:true,id:(this._specialFxSerial=(this._specialFxSerial||0)+1),...extra};
   }
   _applySpecialBenefit(kind){
     if(kind==='sweep'){
@@ -205,11 +223,13 @@ export class StackGame {
       for(let i=0;i<5;i++){this.board.unshift(new Array(COLS).fill(0));this.specials.unshift(new Array(COLS).fill(null));}
     }
     if(kind==='pack'){
+      const moves=[];
       for(let y=0;y<ROWS;y++){
-        const cells=[];for(let x=0;x<COLS;x++)if(this.board[y][x])cells.push([this.board[y][x],this.specials[y][x]]);
+        const cells=[];for(let x=0;x<COLS;x++)if(this.board[y][x]){if(x!==cells.length)moves.push({x:cells.length,fromX:x,y,id:this.board[y][x]});cells.push([this.board[y][x],this.specials[y][x]]);}
         this.board[y]=cells.map(c=>c[0]).concat(new Array(COLS-cells.length).fill(0));
         this.specials[y]=cells.map(c=>c[1]).concat(new Array(COLS-cells.length).fill(null));
       }
+      this._benefitFx={moves};
     }
     // Rows removed by a power-up are not normal line clears and do not farm rewards.
     this.lastCascadeCells=[];this.lastLockCells=[];this.lastContactCells=[];
@@ -444,8 +464,9 @@ export class StackGame {
       this.level = 1 + Math.floor(this.lines / 10);
     }
     if(this.itemMode)for(const kind of activated){
+      this._benefitFx=null;
       if(SPECIAL_DEFS[kind].helpful)this._applySpecialBenefit(kind);
-      this.lastSpecialFx={kind,at:now};this.specialEvents.push({phase:'activate',kind});
+      this.lastSpecialFx={kind,at:now,id:(this._specialFxSerial=(this._specialFxSerial||0)+1),...(this._benefitFx||{})};this.specialEvents.push({phase:'activate',kind});
     }
     this.spawn();
     if(this.dead){
@@ -494,7 +515,7 @@ export function drawBoard(ctx, board, cell, opts={}){
 
   if(opts.landingPiece){
     const p=opts.landingPiece,shape=SHAPES[p.type][p.rot];ctx.save();
-    ctx.fillStyle='rgba(151,227,255,.10)';ctx.strokeStyle='rgba(185,244,255,.32)';ctx.lineWidth=Math.max(.7,cell*.023);
+    ctx.fillStyle='rgba(151,227,255,.025)';ctx.strokeStyle='rgba(185,244,255,.32)';ctx.lineWidth=Math.max(.7,cell*.023);
     const pad=Math.max(.28,cell*.008),size=cell-pad*2;
     for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(shape[y][x]&&p.y+y>=0){
       roundRect(ctx,(p.x+x)*cell+pad,(p.y+y)*cell+pad,size,size,Math.max(1.8,cell*.125));ctx.fill();ctx.stroke();
@@ -638,7 +659,8 @@ export function drawBoard(ctx, board, cell, opts={}){
         cellColor=mixColor(settledColor(cascadeInfo.fromY,v,false),targetColor,k);
       }
     }
-    drawJellyCell(ctx,x*cell,y*cell,cell,cellColor,{
+    const packDx=!isActive?packCellOffset(opts.specialFx,x,y,now):0;
+    drawJellyCell(ctx,x*cell+packDx*cell,y*cell,cell,cellColor,{
       sx,sy,dy,
       sparkle:!isActive && v!==8 && (ROWS-y)>=9 && (!isFreshLock || settleMix>.58),
       t:now,x,y,
@@ -689,17 +711,23 @@ export function drawBoard(ctx, board, cell, opts={}){
   drawSpecialOverlay(ctx,cell,opts);
 }
 
+function packCellOffset(fx,x,y,now){
+ if(fx?.kind!=='pack')return 0;const t=Math.max(0,Math.min(1,(now-fx.at)/720));
+ if(t>=1)return 0;const move=fx.moves?.find(m=>m.x===x&&m.y===y);
+ return move?(move.fromX-x)*Math.pow(1-t,3):0;
+}
 function drawSpecialOverlay(ctx,cell,opts){
  const now=Date.now(),marks=opts.specialMarks||[];
  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
   const kind=marks[y]?.[x],def=SPECIAL_DEFS[kind];if(!def)continue;
-  const px=(x+.5)*cell,py=(y+.5)*cell,color=def.helpful?'#54d8ff':'#ff627d',pulse=.72+.28*Math.sin(now/160+x);
+  const activeMark=specialPieceCell(opts.activePiece),dx=activeMark&&activeMark[0]===x&&activeMark[1]===y?0:packCellOffset(opts.specialFx,x,y,now);
+  const px=(x+.5+dx)*cell,py=(y+.5)*cell,color=def.helpful?'#54d8ff':'#ff627d',pulse=.72+.28*Math.sin(now/160+x);
   ctx.save();
   // The item belongs to the jelly cell itself: one soft light wash, no badge or extra border.
   const pad=Math.max(.28,cell*.008),size=cell-pad*2;
   ctx.shadowColor=color;ctx.shadowBlur=cell*(.38+.12*pulse);
   ctx.fillStyle=def.helpful?'rgba(71,208,255,.20)':'rgba(255,69,107,.22)';
-  roundRect(ctx,x*cell+pad,y*cell+pad,size,size,Math.max(1.8,cell*.125));ctx.fill();
+  roundRect(ctx,(x+dx)*cell+pad,y*cell+pad,size,size,Math.max(1.8,cell*.125));ctx.fill();
   ctx.shadowColor=def.helpful?'#063958':'#631b32';ctx.shadowBlur=Math.max(2,cell*.09);
   ctx.shadowOffsetY=cell*.025;
   ctx.font=`900 ${Math.max(8,cell*(kind==='haste'?.32:.45))}px system-ui`;
@@ -710,7 +738,24 @@ function drawSpecialOverlay(ctx,cell,opts){
  if(fx&&age>=0&&age<950){
   const def=SPECIAL_DEFS[fx.kind];if(def){ctx.save();const t=age/950;ctx.globalAlpha=(1-t)*.6;ctx.strokeStyle=def.helpful?'#58d8ff':'#ff668c';ctx.lineWidth=cell*.14;
    if(fx.kind==='sweep'){for(let i=0;i<5;i++){ctx.beginPath();ctx.moveTo(0,(ROWS-i-.5-t*2)*cell);ctx.lineTo(COLS*cell,(ROWS-i-.5-t*2)*cell);ctx.stroke();}}
-   else if(fx.kind==='pack'){for(let i=0;i<7;i++){ctx.font=`900 ${cell*1.5}px system-ui`;ctx.fillStyle='#83e5ff';ctx.fillText('‹',COLS*cell*(1-t),cell*(3+i*2.5));}}
+   else if(fx.kind==='pack'){
+    ctx.shadowColor='#55ddff';ctx.shadowBlur=cell*.3;
+    for(const m of fx.moves||[]){const x=(m.x+packCellOffset(fx,m.x,m.y,now)+.5)*cell,y=(m.y+.5)*cell;ctx.strokeStyle='#8bf0ff';ctx.lineWidth=cell*.08;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(Math.min((m.fromX+1)*cell,x+cell*1.2),y);ctx.stroke();}
+    ctx.fillStyle='#a7f4ff';ctx.fillRect(0,0,cell*.09,ROWS*cell);
+    for(let i=0;i<7;i++){ctx.font=`900 ${cell*1.1}px system-ui`;ctx.fillText('‹',COLS*cell*(1-t),cell*(3+i*2.5));}
+   }
+   else if(fx.kind==='laser'){
+    if(fx.received&&Number.isInteger(fx.column)){
+     const x=(fx.column+.5)*cell,h=ROWS*cell,head=h*Math.min(1,Math.max(0,(age-120)/180));
+     ctx.globalAlpha=Math.max(0,1-age/950);ctx.fillStyle='#ff3b6b';ctx.shadowColor='#ff254f';ctx.shadowBlur=cell*.7;
+     ctx.fillRect(x-cell*.25,0,cell*.5,Math.max(cell*.3,head));ctx.fillStyle='#fff5fb';ctx.fillRect(x-cell*.055,0,cell*.11,Math.max(cell*.3,head));
+     ctx.beginPath();ctx.arc(x,Math.min(h-cell*.2,head),cell*(.24+.09*Math.sin(age/19)),0,Math.PI*2);ctx.fill();
+     for(const q of fx.cells||[]){const hitAt=120+(q.y+.5)/ROWS*180,elapsed=age-hitAt;
+      if(elapsed<0){ctx.globalAlpha=1;drawJellyCell(ctx,q.x*cell,q.y*cell,cell,settledColor(q.y,q.id,false),{sx:1,sy:1,dy:0,sparkle:false,t:now,x:q.x,y:q.y});continue;}
+      for(let i=0;i<4;i++){const progress=Math.min(1,elapsed/580),dir=i%2?-1:1;ctx.globalAlpha=(1-progress)*.85;ctx.fillStyle=i%2?'#ff668f':'#fff3f7';const px=x+dir*cell*progress*(.4+i*.16),py=(q.y+.5)*cell+Math.sin(i*2.4)*cell*progress;ctx.fillRect(px,py,cell*.1*(1-progress),cell*.1*(1-progress));}
+     }
+    }else{ctx.fillStyle='#ff7296';ctx.font=`900 ${cell*1.2}px system-ui`;for(let i=0;i<3;i++)ctx.fillText('↑',cell*(2+i*3),ROWS*cell*(1-t));}
+   }
    else if(fx.kind==='haste'){for(let i=0;i<4;i++){ctx.font=`900 ${cell*1.4}px system-ui`;ctx.fillStyle='#ffacb7';ctx.fillText('↓',cell*(1.5+i*2),cell*(2+t*ROWS));}}
    else{for(let i=0;i<12;i++){ctx.fillStyle='#9392c2';ctx.beginPath();ctx.arc((i*97%COLS)*cell,((i*53%ROWS)+t*3)*cell,cell*(1.3+t),0,Math.PI*2);ctx.fill();}}
    ctx.restore();}

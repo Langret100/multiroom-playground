@@ -7,8 +7,8 @@
   <style id="stackga-critical-bg">html,body{margin:0;background:#183560}</style>
   <title>쌓기게임</title>
   <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="./css/game.css?v=20261002-visual5" />
-</head>
+  <link rel="stylesheet" href="./css/game.css?v=20261002-mobile1" />
+<script src="../../js/games/solo-ai.js?v=20261002-solo1"></script><script src="../../js/games/mobile-viewport.js?v=20261002-mobile1"></script><link rel="stylesheet" href="../../js/games/mobile-portrait.css?v=20261002-mobile1"></head>
 <body>
   <div class="wrap">
     <!-- 상단 타이틀/연결바 제거: 게임 화면만 -->
@@ -29,6 +29,7 @@
       <div class="playShell" id="playShell">
         <!-- 내 게임 화면: 좌측에 딱 붙음 -->
         <div class="cardBox boardCard" id="boardCol" aria-label="me">
+          <div class="itemGauge" id="itemGaugeMe" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="내 다음 아이템까지 5줄" hidden><span class="itemGaugeTitle">ITEM</span><div class="itemGaugePips"><i class="itemGaugePip"></i><i class="itemGaugePip"></i><i class="itemGaugePip"></i><i class="itemGaugePip"></i><i class="itemGaugePip"></i></div><b class="itemGaugeCount">5줄</b></div>
           <canvas id="cvMe" width="360" height="720"></canvas>
           <div class="comboArea comboIdle" id="comboAreaMe" aria-label="내 콤보">
             <div class="comboVisual">
@@ -45,6 +46,7 @@
             <canvas id="cvNext" width="120" height="120"></canvas>
           </div>
           <div class="cardBox oppCard" id="oppCard" aria-label="opponent">
+            <div class="itemGauge" id="itemGaugeOpp" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="상대 다음 아이템까지 확인 중" hidden><span class="itemGaugeTitle">ITEM</span><div class="itemGaugePips"><i class="itemGaugePip"></i><i class="itemGaugePip"></i><i class="itemGaugePip"></i><i class="itemGaugePip"></i><i class="itemGaugePip"></i></div><b class="itemGaugeCount">—</b></div>
             <!-- 요청: 라벨은 카드 내부 좌측 상단 (NEXT와 동일한 스타일) -->
             <div class="cardTag" id="oppTag">Player</div>
             <canvas id="cvOpp" width="120" height="240"></canvas>
@@ -74,7 +76,7 @@
     <div id="log" class="hidden"></div>
   </div>
 
-  <script type="module" src="./js/main.js?v=20261002-visual4"></script>
+  <script type="module" src="./js/main.js?v=20261002-mobile1"></script>
 
 <script>
 (function(){
@@ -114,6 +116,7 @@
   }
 })();
 </script>
-<div class="itemLegend"><b>−5 바닥 청소 · ← 왼쪽 정렬</b>　<em>↓⚡ 낙하 가속 · ☁ 먹구름</em><br>아이템전: 5줄 삭제 → 특수 블록 등장 → 표시된 칸의 줄을 지우면 발동</div></body>
+<div class="itemLegend"><b>−5 바닥 청소 · ← 왼쪽 정렬</b>　<em>↓⚡ 낙하 가속 · ☁ 먹구름 · ↧ 세로 레이저</em><br>아이템전: 5줄 삭제 → 특수 블록 등장 → 표시된 칸의 줄을 지우면 발동</div></body>
 </html>
+
 

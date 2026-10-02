@@ -106,7 +106,7 @@ art.smokePuffs=load(`${SMOKE_PUFFS}?v=35`);
 art.mapPreviewImages=MAP_ART.map((entry,i)=>load(`${entry.preview}?v=34`,()=>drawMapPreview(i)));
 ensureMapArt(0);
 fetch('assets/manifest.json?v=34').then(r=>r.json()).then(m=>{if(m.characters){art.characters=m.characters.map(load);refreshPortraitAssets();}}).catch(()=>{});
-function send(type,data={}){if(embedded)parent.postMessage({type,gameId:'bloomshot',...data},location.origin);}
+function send(type,data={}){if(window.SoloAI?.active&&!SoloAI.allowPacket(type))return;if(embedded)parent.postMessage({type,gameId:'bloomshot',...data},location.origin);}
 function publish(){if(!state||!bridge.isHost)return;state.seq++;state.hostTime=Date.now();lastSent=Date.now();publishedEvent=state.eventSeq;publishedPhase=state.phase;send('bs_state',{state});}
 function toast(message){$('notice').textContent=message;noticeUntil=Date.now()+2300;}
 async function ensureAudio(){
@@ -186,6 +186,7 @@ function adopt(incoming,hostTime){
 function applyBridgeInit(d){
  if(!embedded||!d||d.type!=='bridge_init'||d.gameId!=='bloomshot')return false;
  bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];
+ if(window.SoloAI?.active){bridge.isHost=true;bridge.hostSid=bridge.sid;if(!state){state=E.create([{sessionId:bridge.sid,nick:d.nick||'나',seat:0}],(Math.random()*4294967296)>>>0,Date.now());reported=false;renderUI();}return true;}
  send('bs_sync');
  return true;
 }
@@ -277,11 +278,11 @@ function renderUI(){
  $('modeHint').textContent=!teamEligible?'참가자가 홀수라 팀전을 선택할 수 없습니다.':state.mode==='team'?'참가 순서 위쪽 절반 A팀 / 아래쪽 절반 B팀':'방장이 전투 방식을 고릅니다';
  $('start').disabled=!bridge.isHost||!state||!allReady||(state.mode==='team'&&!teamEligible);$('start').textContent=bridge.isHost?(allReady?'READY TO BATTLE ▶':`캐릭터 선택 ${readyCount}/${selectable.length}`):'방장의 시작을 기다리는 중';
  document.body.classList.toggle('team-battle',state.mode==='team'&&state.phase!=='setup');
- const modeText=state.mode==='team'?'팀전':'개인전';$('setupHint').textContent=state.players.some(p=>p.cpu)?`1인 CPU 연습 · 쉬움 · ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 후 출발`:`${state.players.length}명 온라인 ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 시 방장이 시작할 수 있습니다.`;
+ const modeText=state.mode==='team'?'팀전':'개인전';$('setupHint').textContent=state.players.some(p=>p.cpu)?`1인 CPU 연습 · ${window.SoloAI?.difficulty==='high'?'상':window.SoloAI?.difficulty==='mid'?'중':'하'} · ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 후 출발`:`${state.players.length}명 온라인 ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 시 방장이 시작할 수 있습니다.`;
  const startingSpans=document.querySelectorAll('.starting span');if(startingSpans.length>=3){startingSpans[0].hidden=!!(p?.characterReady&&p.character===C.length-1);startingSpans[1].hidden=false;startingSpans[2].hidden=false;}
  if(p){const setupKey=p.randomSelected?-99:p.character;if(setupCharacter!==setupKey){setupCharacter=setupKey;selectionProfile(p);if(!p.randomSelected){$('angle').min=c.angle[0];$('angle').max=c.angle[1];$('angle').value=Math.max(c.angle[0],Math.min(c.angle[1],Number($('angle').value)));}}}
  [...$('characters').children].forEach((b,i)=>{const chosen=!!p?.characterReady&&(p?.randomSelected?i===C.length-1:p?.character===i);b.classList.toggle('selected',chosen);b.disabled=state.phase!=='setup';});[...$('maps').children].forEach((b,i)=>{b.classList.toggle('selected',state.map===i);b.disabled=!bridge.isHost;});
- $('status').textContent=!embedded?'CPU · 쉬움':bridge.isHost?'ONLINE · HOST':Date.now()-received>4000?'재연결 대기':'ONLINE · CONNECTED';
+ $('status').textContent=window.SoloAI?.active?'LOCAL · CPU':!embedded?'CPU · 쉬움':bridge.isHost?'ONLINE · HOST':Date.now()-received>4000?'재연결 대기':'ONLINE · CONNECTED';
  $('turnBadge').textContent=state.phase==='setup'?'READY ROOM':state.phase==='over'?'BATTLE COMPLETE':state.phase==='flight'?`${active.nick} · 탄 추적 중`:state.phase==='jump'?`${active.nick} · 점프`:`${state.round}R  ${active.nick}  ${Math.max(0,Math.ceil((state.deadline-now)/1000))}초`;
  const remain=Math.max(0,Math.ceil((state.deadline-now)/1000));
  if(state.turnSerial!==lastCountdownTurn){lastCountdownTurn=state.turnSerial;lastCountdownValue=99;}
@@ -567,7 +568,8 @@ function draw(now){
 }
 function hostTick(){
  const now=Date.now();if(state&&bridge.isHost){E.tick(state,now);const p=state.players[state.turn];
-  if(state.phase==='aim'&&p?.cpu&&!p.falling&&state.deadline-now<8500&&cpuTurn!==state.turnSerial){cpuTurn=state.turnSerial;const aim=E.cpuAim(state);if(p.hp<p.maxHp*.35&&p.items.heal)E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'item',item:'heal'},now,bridge.hostSid);else if(state.round>=4&&state.turnSerial%4===0&&p.items.double)E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'item',item:'double'},now,bridge.hostSid);E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'fire',weapon:state.round%3===0?'special':'normal',...aim},now,bridge.hostSid);publish();}
+  if(state.phase==='aim'&&p?.cpu&&!p.falling&&state.deadline-now<(window.SoloAI?.active?15000-SoloAI.config.reaction*4:8500)&&cpuTurn!==state.turnSerial){cpuTurn=state.turnSerial;const cfg=window.SoloAI?.config,aim=E.cpuAim(state,window.SoloAI?.difficulty==='high');
+    if(cfg){const error=Math.random()<cfg.mistake?2.2:1;aim.angle=Math.max(E.spec(p).angle[0],Math.min(E.spec(p).angle[1],aim.angle+(Math.random()*2-1)*cfg.aimError*17*error));aim.power=Math.max(18,Math.min(100,aim.power+(Math.random()*2-1)*cfg.aimError*24*error));}if(p.hp<p.maxHp*.35&&p.items.heal)E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'item',item:'heal'},now,bridge.hostSid);else if(state.round>=4&&state.turnSerial%4===0&&p.items.double)E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'item',item:'double'},now,bridge.hostSid);E.command(state,p.sid,{seq:p.lastSeq+1,match:state.id,kind:'fire',weapon:state.round%3===0?'special':'normal',...aim},now,bridge.hostSid);publish();}
   if(state.eventSeq!==publishedEvent||state.phase!==publishedPhase||now-lastSent>1200)publish();
   if(state.phase==='over'&&!reported){reported=true;send('bs_over',{winnerSeat:state.players.find(p=>p.sid===state.winner)?.seat??-1,winnerTeam:state.winnerTeam??null,mode:state.mode||'solo'});}
  }
@@ -617,4 +619,5 @@ let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frame
 if(!embedded){state=E.create([{sessionId:'local',nick:'나',seat:0}],Date.now()>>>0);roster=[{sessionId:'local',nick:'나',seat:0}];renderUI();}else{send('bridge_ready');}
 setInterval(hostTick,16);requestAnimationFrame(loop);
 })();
+
 

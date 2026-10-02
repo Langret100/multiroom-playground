@@ -31,6 +31,7 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   const shellH = playShell?.clientHeight || (window.visualViewport?.height || window.innerHeight || 640);
   const rowsVal = (rows|0) > 0 ? (rows|0) : ROWS;
   const isWide = shellW >= 900;
+  const gaugeSpace=document.body.classList.contains('stackItems')?20:0;
 
   // Clear old inline sizing before measuring a new responsive mode.
   if(nextCard) nextCard.style.height = '';
@@ -55,10 +56,10 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
     const centerW = clamp(Math.floor(shellW * .075), 104, 142);
     const boardSlotW = Math.max(260, Math.floor((shellW - centerW - gap*2) / 2));
     const boardInnerH = Math.max(320, shellH - 16);
-    const meSize = sizeBoard(cvMe, boardSlotW - 16, boardInnerH - 16, 56);
-    const oppSize = sizeBoard(cvOpp, boardSlotW - 16, boardInnerH - 16, 56);
-    if(boardCard){ boardCard.style.width=(meSize.cssW+16)+'px'; boardCard.style.height=(meSize.cssH+16)+'px'; }
-    if(oppCard){ oppCard.style.width=(oppSize.cssW+16)+'px'; oppCard.style.height=(oppSize.cssH+16)+'px'; }
+    const meSize = sizeBoard(cvMe, boardSlotW - 28-gaugeSpace, boardInnerH - 28, 56);
+    const oppSize = sizeBoard(cvOpp, boardSlotW - 28-gaugeSpace, boardInnerH - 28, 56);
+    if(boardCard){ boardCard.style.width=(meSize.cssW+28+gaugeSpace)+'px'; boardCard.style.height=(meSize.cssH+28)+'px'; }
+    if(oppCard){ oppCard.style.width=(oppSize.cssW+28+gaugeSpace)+'px'; oppCard.style.height=(oppSize.cssH+28)+'px'; }
 
     // NEXT stays compact in the center information rail.
     const nextInnerW = Math.max(60, centerW - 14);
@@ -76,7 +77,7 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   if(boardCard){ boardCard.style.width=''; boardCard.style.height=''; }
   if(oppCard){ oppCard.style.width=''; }
   const railW=shellW<=480?92:clamp(shellW*.23,100,164);
-  const boardInnerW=Math.max(100,shellW-railW-32);
+  const boardInnerW=Math.max(100,shellW-railW-32-gaugeSpace);
   const boardInnerH = Math.max(200,shellH-20);
   const meSize = sizeBoard(cvMe, boardInnerW, boardInnerH, 56);
   const cell = meSize.cell;
@@ -89,7 +90,7 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
   let nextInner = clamp(Math.min((sideW - pad), Math.floor(sideH * 0.20)), 52, 118);
   const nextCardH = nextInner + pad;
   const remain = Math.max(160, sideH - nextCardH - gap);
-  const oppInnerW = Math.max(64, (sideW - pad));
+  const oppInnerW = Math.max(40, (sideW - pad-gaugeSpace));
   const oppInnerMaxH = Math.max(120, remain - comboMinH - gap);
 
   let oppCell = Math.floor(Math.min(oppInnerW / COLS, oppInnerMaxH / rowsVal));

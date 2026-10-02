@@ -1,0 +1,20 @@
+/* New overrides are activated only for actual mobile devices in portrait. */
+html.phone-portrait{height:100%;overscroll-behavior:none}
+html.phone-portrait body{min-width:0;max-width:100vw}
+html.phone-portrait #soloPracticeBadge{display:none!important}
+html.phone-portrait[data-phone-game="suhaktokki"] .sheet{max-height:calc(var(--phone-visible-height,100dvh) - 24px);overflow:auto;overscroll-behavior:contain}
+html.phone-portrait[data-phone-game="suhaktokki"] #meetingChatLog{height:160px;max-height:25dvh}
+html.phone-portrait[data-phone-game="suhaktokki"] #voteList{max-height:150px}
+html.phone-portrait[data-phone-game="suhaktokki"] #meetingLeftPane{min-width:0}
+html.phone-portrait[data-phone-game="suhaktokki"] #meetingChatText{min-width:0}
+html.phone-portrait[data-phone-game="suhaktokki"] #joy{width:128px;height:128px}
+html.phone-portrait[data-phone-game="suhaktokki"] #joyKnob{width:56px;height:56px}
+html.phone-portrait[data-phone-game="mathexplorer"] #charScreen{overflow:auto;padding:16px 12px;justify-content:flex-start}
+html.phone-portrait[data-phone-game="mathexplorer"] #charScreen .title{font-size:30px}
+html.phone-portrait[data-phone-game="mathexplorer"] .characterSelect{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}
+html.phone-portrait[data-phone-game="mathexplorer"] .character{padding:8px;font-size:12px;min-width:0}
+html.phone-portrait[data-phone-game="mathexplorer"] .screen{max-width:100vw;box-sizing:border-box}
+html.phone-portrait[data-phone-game="mathexplorer"] .mathQuestion{max-width:calc(100vw - 24px);max-height:calc(var(--phone-visible-height,100dvh) - 24px);overflow:auto;box-sizing:border-box}
+html.phone-portrait[data-phone-game="geumchikeo"] #helpM>div,html.phone-portrait[data-phone-game="geumchikeo"] .mb{max-height:calc(var(--phone-visible-height,100dvh) - 24px);overflow:auto;max-width:calc(100vw - 24px);box-sizing:border-box}
+html.phone-portrait[data-phone-game="drawanswer"] input{font-size:16px!important;min-width:0}
+html.phone-portrait[data-phone-game="backrooms3d"] #mathCard{max-height:calc(var(--phone-visible-height,100dvh) - 24px);overflow:auto;max-width:calc(100vw - 24px)}

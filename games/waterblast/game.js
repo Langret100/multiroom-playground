@@ -100,7 +100,28 @@ function explode(b,now){
 }
 function knockoutNow(p,now,killerSid=''){p.bubbled=false;p.bubbleUntil=0;p.dizzyUntil=0;p.mash=0;p.alive=false;p.broom=false;p.broomDismountUntil=0;p.pushUntil=0;p.placeUntil=0;if(killerSid)p.lastHitBy=killerSid;const killer=world.players[p.lastHitBy];if(killer&&killer.sid!==p.sid)killer.kos++;}
 function itemPick(p){if(!p.alive||p.bubbled||p.dizzyUntil>simNow)return;const k=key(Math.floor(p.x),Math.floor(p.y)),it=world.items[k];if(!it||(it==='potion'&&p.potions>=1))return;const atCap=it==='speed'?p.speed>=5.2:it==='range'?p.range>=7:it==='bomb'?p.maxBombs>=6:false;p.pickupAtCap=atCap;delete world.items[k];if(it==='speed')p.speed=Math.min(5.2,p.speed+.35);if(it==='range')p.range=Math.min(7,p.range+1);if(it==='bomb'||it==='bonus')p.maxBombs=Math.min(6,p.maxBombs+1);if(it==='bonus'){p.speed=Math.min(5.2,p.speed+.35);p.range=Math.min(7,p.range+1);}if(it==='shield')p.shield=1;if(it==='maxpower')p.range=7;p.pickupKind=it;p.pickupSerial=(p.pickupSerial||0)+1;if(it==='broom'){p.broomStartAt=simNow;p.broom=true;}if(it==='potion')p.potions=1;}
+const slimeBotBrains=new Map();
+function localSlimeBots(now){
+ const out={};if(!world)return out;for(const p of Object.values(world.players)){
+  if(!SoloAI.isBot(p.sid))continue;
+  let bot=slimeBotBrains.get(p.sid);if(!bot){bot={brain:SoloAI.brain(hash(p.sid)),input:{bombSeq:0,mashSeq:0,potionSeq:0}};slimeBotBrains.set(p.sid,bot);}
+  p.speed=3.05*SoloAI.config.speed;
+  if(bot.brain.ready(now)){
+   const b=bot.brain,inp=bot.input,tx=Math.floor(p.x),ty=Math.floor(p.y),me=world.players[bridge.sid];
+   inp.l=inp.r=inp.u=inp.d=false;
+   const danger=(x,y)=>world.bombs.some(q=>Math.abs(q.x-x)+Math.abs(q.y-y)<=q.range+1&&(q.x===x||q.y===y));
+   const choices=[[1,0,'r'],[-1,0,'l'],[0,1,'d'],[0,-1,'u']].filter(([dx,dy])=>!isWall(tx+dx,ty+dy)&&!world.crates[key(tx+dx,ty+dy)]&&!bombAt(tx+dx,ty+dy));
+   choices.sort((a,b)=>{const score=c=>{const x=tx+c[0],y=ty+c[1];return (danger(x,y)?50:0)+Math.hypot(x-(me?.x||8),y-(me?.y||7))+bot.brain.random()*3;};return score(a)-score(b);});
+   const chosen=b.mistake?choices[Math.floor(b.random()*choices.length)]:choices[0];if(chosen)inp[chosen[2]]=true;
+   const crateNear=[[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>world.crates[key(tx+dx,ty+dy)]);
+   if(!b.mistake&&!danger(tx,ty)&&choices.length&&(crateNear||(me&&Math.hypot(me.x-p.x,me.y-p.y)<3)))inp.bombSeq++;
+   if(p.bubbled&&!b.mistake)inp.mashSeq+=SoloAI.difficulty==='low'?1:SoloAI.difficulty==='mid'?2:3;
+   if(!b.mistake&&(p.bubbled||p.dizzyUntil>now)&&p.potions)inp.potionSeq++;
+  }out[p.sid]=bot.input;
+ }return out;
+}
 function simulate(dt,inputs,now){
+ if(window.SoloAI?.active)inputs={...inputs,...localSlimeBots(now)};
  simNow=now;if(!world||world.ended||now<world.startAt)return;
  for(const p of Object.values(world.players)){
   const inp=inputs[p.sid]||{};
@@ -217,6 +238,7 @@ const guestInputs={};function applyPackets(map){
  if(bridge.isHost&&world){world.stateSeq=Number(world.stateSeq||0)+1;world.serverNow=gameNow();state.__waterblastWorld=world;}
  post('wb_state',{state});
 }function reconcile(players){
+ if(window.SoloAI?.active)players=SoloAI.roster(players||[],bridge.sid);
  bridge.players=(players||[]).filter(p=>p&&(p.sessionId||p.sid)).map(p=>({...p,sessionId:String(p.sessionId||p.sid)}));
  if(bridge.isHost&&world)for(const[sid,p]of Object.entries(world.players))if(!bridge.players.some(x=>x.sessionId===sid)&&p.alive){p.alive=false;p.bubbled=false;}
 }

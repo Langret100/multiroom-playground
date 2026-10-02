@@ -1,9 +1,9 @@
 // Firebase dependency removed.
-import { createAudio } from "./audio.js?v=20261002-items3";
+import { createAudio } from "./audio.js?v=20261002-laser1";
 import { initMatchButton } from "./match.js";
-import { StackGame, drawBoard, drawNext, COLS, SPECIAL_DEFS } from "./game.js?v=20261002-visual4";
+import { StackGame, drawBoard, drawNext, COLS, SPECIAL_DEFS, itemChargeColor } from "./game.js?v=20261002-mobile1";
 import { CpuController } from "./cpu.js";
-import { fitCanvases, initTouchControls } from "./touch.js?v=20261002-items3";
+import { fitCanvases, initTouchControls } from "./touch.js?v=20261002-laser1";
 import {
   joinLobby, watchRoom,
   roomRefs, setRoomState, publishMyState, subscribeOppState,
@@ -309,6 +309,7 @@ initTouchControls(ui.cvMe, performAction);
 let playRows = 23;
 // --- Responsive sizing
 function fit(){
+  document.body.classList.toggle('stackItems',isItemMode());
   fitCanvases(ui.cvMe, ui.cvOpp, ui.cvNext, playRows);
 }
 window.addEventListener("resize", fit);
@@ -378,8 +379,22 @@ function updateHud(){
   safeSetText(ui.effect, e.length?e.join(", "):"-");
 }
 
-let oppSpecialMarks=[],oppBlindUntil=0,oppSpecialFx=null;
-function isItemMode(){return (window.__EMBED_INIT__?.stackMode || new URLSearchParams(location.search).get('stackMode') || 'items')==='items';}
+let oppSpecialMarks=[],oppBlindUntil=0,oppSpecialFx=null,oppItemProgress=null;
+function isItemMode(){return (new URLSearchParams(location.search).get('stackMode') || window.__EMBED_INIT__?.stackMode || 'items')==='items';}
+document.body.classList.toggle('stackItems',isItemMode());
+function updateItemGauges(){
+ const enabled=meGame?.itemMode??isItemMode();document.body.classList.toggle('stackItems',enabled);
+ for(const [id,g,label] of [['itemGaugeMe',meGame,'내'],['itemGaugeOpp',mode==='cpu'?cpuGame:oppItemProgress,'상대']]){
+  const el=document.getElementById(id);if(!el)continue;el.hidden=!enabled;
+  const known=g&&Number.isFinite(g.lines),pending=known&&g.pendingSpecials>0,progress=known?(pending?5:g.lines%5):0,remaining=known?(pending?0:5-progress):null;
+  const stamp=[known,progress,remaining].join(':');if(el.dataset.stamp===stamp)continue;el.dataset.stamp=stamp;
+  el.setAttribute('aria-valuenow',progress);el.setAttribute('aria-label',label+' 다음 아이템까지 '+(known?remaining+'줄':'확인 중'));
+  el.querySelector('.itemGaugeCount').textContent=known?(pending?'준비':remaining+'줄'):'—';
+  el.style.setProperty('--charge',itemChargeColor(progress));
+  el.querySelectorAll('.itemGaugePip').forEach((p,i)=>{p.classList.toggle('lit',i<progress);p.style.setProperty('--pip-charge',itemChargeColor(i+1));});
+  const milestone=known?Math.floor(g.lines/5):0;if(milestone>Number(el.dataset.milestone||0)){el.classList.remove('itemGaugeReward');void el.offsetWidth;el.classList.add('itemGaugeReward');}el.dataset.milestone=milestone;
+ }
+}
 function specialNotice(kind,phase,side){
   const def=SPECIAL_DEFS[kind];if(!def)return;
   let el=document.getElementById('specialNotice');
@@ -388,7 +403,7 @@ function specialNotice(kind,phase,side){
   el.textContent=(side==='opp'?'상대 · ':'')+def.icon+' '+def.label+(phase==='spawn'?' 블록 등장!':'!');
   el.dataset.serial=String(Date.now());const serial=el.dataset.serial;
   el.hidden=false;setTimeout(()=>{if(el.dataset.serial===serial)el.hidden=true;},1600);
-  shake('soft');audio.sfx(phase==='spawn'?'specialSpawn':'special_'+kind);
+  shake(kind==='laser'&&phase==='activate'?'strong':'soft');audio.sfx(phase==='spawn'?'specialSpawn':'special_'+kind);
 }
 function processSpecials(game,side){
   if(!game)return;
@@ -403,7 +418,9 @@ function processSpecials(game,side){
 }
 function render(){
   processSpecials(meGame,'me');if(mode==='cpu')processSpecials(cpuGame,'opp');
-  if(ui.mode)ui.mode.textContent=(mode==='online'?'온라인':'PC')+' · '+(isItemMode()?'아이템전':'일반전');
+  updateItemGauges();
+  if(ui.mode)ui.mode.textContent=(mode==='online'?'온라인':'PC')+' · '+((meGame?.itemMode??isItemMode())?'아이템전':'일반전');
+  const legend=document.querySelector('.itemLegend');if(legend)legend.hidden=!(meGame?.itemMode??isItemMode());
   const ctxMe = ui.cvMe.getContext("2d");
   const ctxOpp = ui.cvOpp.getContext("2d");
   const ctxNext = ui.cvNext.getContext("2d");
@@ -598,7 +615,7 @@ function beginLoop(){
         sendAcc = 0;
         publishMyState({
           api, statesRef, pid,
-          state:{ board: meGame.snapshot(), specialMarks:meGame.specialSnapshot(), blindRemainingMs:Math.max(0,meGame.effects.blindUntil-Date.now()), score: meGame.score, level: meGame.level, dead: !!meGame.dead }
+          state:{ board: meGame.snapshot(), specialMarks:meGame.specialSnapshot(), specialFx:meGame.specialFxSnapshot(), lines:meGame.lines,pendingSpecials:meGame.pendingSpecials, blindRemainingMs:Math.max(0,meGame.effects.blindUntil-Date.now()), score: meGame.score, level: meGame.level, dead: !!meGame.dead }
         }).catch(()=>{});
       }
     }
@@ -670,7 +687,7 @@ function startCpuMode(reason){
 
   meGame = new StackGame(((Math.random()*2**32)>>>0), {itemMode:isItemMode()});
   cpuGame = new StackGame(((Math.random()*2**32)>>>0), {itemMode:isItemMode()});
-  cpuCtl = new CpuController(cpuGame, ((Math.random()*2**32)>>>0), "low");
+  cpuCtl = new CpuController(cpuGame, ((Math.random()*2**32)>>>0), window.SoloAI?.difficulty||"low");
   oppLastBoard = cpuGame.snapshot();
   comboStreak = 0;
   cpuComboStreak = 0;
@@ -692,7 +709,7 @@ async function endGame(won){
     try{
       publishMyState({
         api, statesRef, pid,
-        state:{ board: meGame.snapshot(), specialMarks:meGame.specialSnapshot(), blindRemainingMs:Math.max(0,meGame.effects.blindUntil-Date.now()), score: meGame.score, level: meGame.level, dead: true }
+        state:{ board: meGame.snapshot(), specialMarks:meGame.specialSnapshot(), specialFx:meGame.specialFxSnapshot(), lines:meGame.lines,pendingSpecials:meGame.pendingSpecials, blindRemainingMs:Math.max(0,meGame.effects.blindUntil-Date.now()), score: meGame.score, level: meGame.level, dead: true }
       }).catch(()=>{});
     }catch(_){}
     // parent(room.html)에 결과 알림
@@ -706,6 +723,7 @@ async function endGame(won){
     }
   }
 
+  if(window.SoloAI?.active)parent.postMessage({type:'solo_over'},'*');
   const title = won ? "승리!" : "패배…";
   audio.sfx(won ? "win" : "lose");
   showOverlay(title, "", {showCpuBtn:false});
@@ -855,6 +873,8 @@ function onOppState(res){
   if(!res){ oppLastBoard=null; return; }
   oppLastBoard = res.state?.board || null;
   oppSpecialMarks=res.state?.specialMarks||[];
+  oppItemProgress=Number.isFinite(res.state?.lines)?{lines:Math.max(0,res.state.lines),pendingSpecials:Math.max(0,res.state.pendingSpecials||0)}:null;
+  const fx=res.state?.specialFx;if(fx&&SPECIAL_DEFS[fx.kind]&&fx.id!==oppSpecialFx?.id)oppSpecialFx={...fx,at:Date.now()-Math.min(1300,Math.max(0,Number(fx.ageMs)||0))};
   oppBlindUntil=Date.now()+Math.min(5000,Math.max(0,Number(res.state?.blindRemainingMs)||0));
   // 상대가 dead 상태를 전달하면 내가 승리
   if(res.state?.dead && !finished){
@@ -913,6 +933,7 @@ function onEventRecv(payload){
 }
 
 async function boot(){
+  if(window.SoloAI?.active){startCpuMode('로컬 싱글 AI 대전');return;}
   // Embedded(룸) 모드에서는 Firebase/로비 매칭 없이 parent bridge로만 동작합니다.
   // (bridge_ready/bridge_init 레이스나 초기 room snapshot 누락이 있어도 게임이 즉시 시작되도록 보강)
   if (EMBED){

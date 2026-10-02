@@ -21,6 +21,10 @@ if (IS_MOBILE) document.body.classList.add('mobile');
 
 function bridgeSend(type, payload={}){
   if (!EMBED) return;
+  if(window.SoloAI?.active){
+    if(type==='sc_compat'&&payload.packet?.kind==='submit')soccerCompatAcceptSubmit(mySid,payload.packet);
+    if(!SoloAI.allowPacket(type))return;
+  }
   // gameId 태그는 room.js가 일부 모바일 WebView의 source=null postMessage도
   // 현재 열려 있는 수학축구 iframe의 패킷으로 안전하게 식별하는 데 쓴다.
   try{ parent.postMessage({ type, gameId:'soccer', ...payload }, '*'); }catch(_){}
@@ -199,7 +203,10 @@ function updateCamera(){
   const targetZoom=portrait?1.62:1.28;
   const pp=projectWorld(me.x,me.y,0);
   camera.zoom=lerp(camera.zoom,targetZoom,.12);
-  const halfW=CW/(2*camera.zoom), halfH=CH/(2*camera.zoom);
+  // Cover sizing crops the logical canvas on narrow phones. Clamp the camera
+  // using the visible span, otherwise players near either goal remain offscreen.
+  const visibleRatio=window.MobileViewport?.portrait?Math.min(1,document.getElementById('wrap').clientWidth/Math.max(1,parseFloat(canvas.style.width))):1;
+  const halfW=CW*visibleRatio/(2*camera.zoom), halfH=CH/(2*camera.zoom);
   const tx=clamp(pp.x,halfW,CW-halfW);
   const ty=clamp(pp.groundY,halfH,CH-halfH);
   camera.x=lerp(camera.x,tx,.14); camera.y=lerp(camera.y,ty,.14);
@@ -1419,6 +1426,25 @@ function smoothToward(cur, netX, netY, netVX, netVY, netT, now, factor){
            y: lerp(cur.y, clamp(ty, FY+PR, FY+FH-PR), factor) };
 }
 
+const soccerBotBrain=window.SoloAI?.active?SoloAI.brain(951):null;
+function updateSoccerBot(){
+ if(!gameActive||gameOver||isRoundLocked()||!soccerBotBrain)return;
+ const p=players['solo-ai-1'];if(!p)return;const now=Date.now(),cfg=SoloAI.config;
+ if(soccerBotBrain.ready(now)){
+  if(soccerBotBrain.mistake){p.botTarget={x:p.x+(soccerBotBrain.random()-.5)*100,y:p.y+(soccerBotBrain.random()-.5)*100};p.botSkipKick=true;}
+  else {p.botTarget={x:ball.x,y:ball.y};p.botSkipKick=false;}
+ }
+ const target=p.botTarget||{x:p.x,y:p.y},dx=target.x-p.x,dy=target.y-p.y,d=Math.hypot(dx,dy),speed=2.4*cfg.speed;
+ p.vx=d>6?dx/d*speed:0;p.vy=d>6?dy/d*speed:0;
+ p.x=clamp(p.x+p.vx,FX+PR,FX+FW-PR);p.y=clamp(p.y+p.vy,FY+PR,FY+FH-PR);
+ p.netX=p.x;p.netY=p.y;p.netVX=p.vx;p.netVY=p.vy;p.netT=now;p.netSamples=[];
+ if(d>6)p.dir=Math.atan2(p.vy,p.vx);
+ if(!p.botSkipKick&&Math.hypot(ball.x-p.x,ball.y-p.y)<KICK_RANGE&&now>=(p.botKickAt||0)){
+  p.botKickAt=now+cfg.reaction*1.5;p.kickAt=now;p.kickX=p.x;p.kickY=p.y;p.kickBallX=ball.x;p.kickBallY=ball.y;p._pendingKickAt=now;p._kickReceivedAt=now;
+  p.kickDir=Math.atan2((GOAL_Y1+GOAL_Y2)/2-p.y,FX-p.x)+(soccerBotBrain.random()-.5)*cfg.aimError;
+  p.kickCharge=.3+soccerBotBrain.random()*.4;
+ }
+}
 function lerpRemote(){
   const now = Date.now();
   const renderAt = now - 72; // 지터를 흡수할 작은 재생 지연
@@ -2870,6 +2896,7 @@ function startLoop(){
       while(accumulator>=FIXED_STEP_MS&&steps<MAX_FIXED_STEPS){
         updateKickoffCountdown();
         updateMe();
+        if(window.SoloAI?.active)updateSoccerBot();
         lerpRemote();
         updateNetBall();
         updateBallHost(true);
@@ -2923,6 +2950,7 @@ function soccerCompatSnapshot(){
 function soccerCompatBroadcast(){
   if(!isHost||!soccerCompatRound)return;
   const snap=soccerCompatSnapshot();
+  if(window.SoloAI?.active){applySoccerRoundSnapshot(snap);return;}
   bridgeSend('sc_compat',{packet:{
     kind:'state',hostSid:mySid,version:++soccerCompatLastHostVersion,snapshot:snap,scores:{...soccerCompatScores},
     goalResetSerial:Number(soccerCompatGoalResetSerial||0),goalSerial:Number(soccerCompatGoalSerial||0),goalTeam:soccerCompatGoalResetTeam||'',
@@ -2949,11 +2977,16 @@ function soccerCompatTick(){
   const r=soccerCompatRound,now=Date.now();
   if(r.phase==='playing'&&soccerCompatMatchDeadlineAt>0&&now>=soccerCompatMatchDeadlineAt){
     r.phase='over';durationMs=0;matchDeadlineAt=now;
+    if(window.SoloAI?.active)parent.postMessage({type:'solo_over'},'*');
     const finalSnap=soccerCompatSnapshot();
     applySoccerRoundSnapshot(finalSnap);
     soccerCompatBroadcast();
     soccerCompatScheduleTick();
     return;
+  }
+  if(window.SoloAI?.active&&r.phase==='quiz'){
+    const id='solo-ai-1';if(!r.botNextAt)r.botNextAt=now+SoloAI.config.reaction*3;
+    if(now>=r.botNextAt&&now<r.endsAt){r.botNextAt=now+SoloAI.config.reaction*3;if(Math.random()>SoloAI.config.mistake)soccerCompatScores[id]=(soccerCompatScores[id]||0)+1;}
   }
   if(r.phase==='quiz'&&now>=r.endsAt+150){
     let a=0,b=0;for(const [sid,v] of Object.entries(soccerCompatScores)){if(soccerCompatTeamOfSid(sid)==='A')a+=Number(v||0);else b+=Number(v||0);}
@@ -3192,7 +3225,7 @@ window.addEventListener('message', e=>{
     mySeat = Number(d.seat ?? -1);
     isHost = !!d.isHost || (mySeat===0);
 
-    const incoming = (d.players||[]).map(p=>({
+    const incoming = (window.SoloAI?.active?SoloAI.roster(d.players||[],mySid):(d.players||[])).map(p=>({
       sid: String(p.sid||p.sessionId||''),
       nick: String(p.nick||'Player'),
       seat: Number(p.seat ?? -1),

@@ -90,7 +90,7 @@ function configure(p){const c=spec(p);p.maxHp=c.hp;p.hp=c.hp;p.maxFuel=c.move;p.
 function create(roster,seed=1234,now=Date.now()){
  const s={version:12,seed:seed>>>0,id:String(seed)+'-'+now,seq:0,phase:'setup',mode:'solo',map:0,turn:0,turnSerial:0,round:1,wind:0,deadline:0,simAt:now,nextDropAt:0,nextEnvAt:0,dropSeq:0,envSeq:0,zoneSeq:0,eventSeq:0,events:[],drops:[],zones:[],envs:[],projectiles:[],queue:[],repeatShot:null,jump:null,solids:[],terrain:[],players:[],shot:null,winner:null,winnerTeam:null,teamLastTurn:[-1,-1],turnOrder:[],turnCursor:0,teamTurnOrder:[[],[]],teamCursor:[0,0],startTeam:0,spawnOrder:[]};
  s.players=roster.slice(0,8).map((r,i)=>({sid:String(r.sessionId),nick:String(r.nick||'정령').slice(0,24),seat:Number(r.seat)||0,team:0,character:i%7,characterReady:!!r.cpu,randomSelected:false,x:0,y:0,face:1,items:{double:1,power:1,heal:1,move:0,shield:0,poison:0,freeze:0,wind:0},slots:['double','power','heal',null],lastSeq:0,cpu:!!r.cpu,lastAngle:45,lastPower:60,deathType:''}));
- if(s.players.length===1)s.players.push({...s.players[0],sid:'bloom-cpu',nick:'연습 정령',seat:1,team:1,character:2,cpu:true,items:{...s.players[0].items},slots:[...s.players[0].slots]});
+ if(s.players.length===1)s.players.push({...s.players[0],sid:'bloom-cpu',nick:'연습 정령',seat:1,team:1,character:Math.floor(random(s)*CHARACTERS.length),cpu:true,items:{...s.players[0].items},slots:[...s.players[0].slots]});
  assignTeams(s);s.players.forEach(p=>{configure(p);resetStartingInventory(p);});buildMap(s);return s;
 }
 function buildMap(s){

@@ -251,7 +251,7 @@ body{font-family:'Noto Sans KR',sans-serif;color:#f0f0f0;display:flex;flex-direc
 #loadBar{width:200px;height:5px;background:rgba(255,255,255,.1);border-radius:3px;overflow:hidden;}
 #loadFill{height:100%;width:0%;background:linear-gradient(90deg,var(--b),var(--y));border-radius:3px;transition:width .2s;}
 </style>
-</head>
+<script src="../../js/games/solo-ai.js?v=20261002-solo1"></script><script src="../../js/games/mobile-viewport.js?v=20261002-mobile1"></script><link rel="stylesheet" href="../../js/games/mobile-portrait.css?v=20261002-mobile1"></head>
 <body>
 
 <!-- Loading -->
@@ -876,7 +876,7 @@ window.addEventListener('message',ev=>{
       if(d.nick)myNick=d.nick;if(d.sessionId){myUid=d.sessionId;mySessionId=d.sessionId;}
       if(typeof d.isHost==='boolean')isHost=d.isHost;if(d.roomCode)roomId=d.roomCode;
       if(EMBED){
-        const pArr=d.players||[];roomPls={};
+        const pArr=window.SoloAI?.active?SoloAI.roster(d.players||[],myUid):(d.players||[]);roomPls={};
         pArr.forEach((p,i)=>{roomPls[p.sessionId||p.sid||('p'+i)]={nick:p.nick||('플레이어'+(i+1)),seat:p.seat??i,isHost:!!(p.isHost||(d.sessionId&&p.sessionId===d.sessionId&&d.isHost)),ready:true};});
         if(!roomPls[myUid]){const s=Object.keys(roomPls).length;roomPls[myUid]={nick:myNick,seat:s,isHost:!!d.isHost,ready:true};}
         if(phase==='idle'||phase==='waiting')initKeyword();
@@ -1034,12 +1034,25 @@ function toggleReady(){myReady=!myReady;wsSend('ready',{v:myReady});renderWait()
 function hostStart(){if(!isHost)return;if(Object.keys(roomPls).length<2){showSt('2명 이상 필요합니다');return;}wsSend('start',{});}
 
 // ── KEYWORD ──
+let localChatBotTimer=null,localChatBotLast=0;
+function startLocalChatBot(){
+ if(localChatBotTimer)return;const brain=SoloAI.brain(592);
+ localChatBotTimer=setInterval(()=>{
+  if(phase!=='playing')return;const bot=players['solo-ai-1'];if(!bot||bot.elim)return;
+  const now=Date.now();if(now-localChatBotLast<SoloAI.config.chatDelay)return;localChatBotLast=now;
+  const lines=['오늘은 어떤 게임이 재미있어?','좋아하는 음식이 뭐야?','주말에 뭘 하고 싶어?','난 산책하는 걸 좋아해.','나도 열심히 해 볼게!','쉽지 않네. 잠깐 생각해 볼게.'];
+  const risk=brain.random()<SoloAI.config.mistake;
+  const kw=myKws.filter(w=>w&&w!=='??')[0];
+  onRchat('solo-ai-1',risk&&kw?'나는 '+kw+' 좋아해.':lines[Math.floor(brain.random()*lines.length)]);
+ },500);
+}
 function initKeyword(){
   if(phase==='keyword')return;
   phase='keyword';startLock=false;players={};myKws=[];
   const list=Object.entries(roomPls).sort((a,b)=>(a[1].seat||0)-(b[1].seat||0));
   list.forEach(([uid,p],i)=>{players[uid]={nick:p.nick,seat:p.seat??i,ci:i%8,score:100,kws:null,kwDone:false,elim:false,lastSpk:0};});
   if(!players[myUid]){const seat=Object.keys(players).length;players[myUid]={nick:myNick,seat,ci:seat%8,score:100,kws:null,kwDone:false,elim:false,lastSpk:0};}
+  if(window.SoloAI?.active){const bot=players['solo-ai-1'];if(bot){bot.kwDone=true;bot.kws=['사과','학교','게임'];}startLocalChatBot();}
   scr('kwScreen');renderKwStatus();startKwTimer();
 }
 function startKwTimer(){
@@ -2044,7 +2057,8 @@ function spawnConfetti(){
 window.addEventListener('resize',()=>{if(phase==='playing')resizeWorld();});
 
 // ── INIT ──
-loadAllAssets().then(()=>{ scr('lobbyScreen'); });
+loadAllAssets().then(()=>{ if(!(EMBED&&bridgeInitDone))scr('lobbyScreen'); });
 </script>
 </body>
 </html>
+

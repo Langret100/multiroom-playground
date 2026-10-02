@@ -141,7 +141,12 @@ export function createAudio({ musicUrl } = {}) {
       case 'special_sweep':
         [1200,1000,800,600,400].forEach((f,i)=>beep({f1:f,f2:f*.6,dur:.13,gain:.10,delay:i*.045,type:'sine'}));break;
       case 'special_pack':
-        [220,330,440,660].forEach((f,i)=>beep({f1:f,dur:.09,gain:.10,delay:i*.07,type:'square'}));break;
+        beep({f1:850,f2:240,dur:.35,gain:.055,type:'triangle'});
+        [330,440,660,880].forEach((f,i)=>beep({f1:f,f2:f*.8,dur:.07,gain:.075,delay:.25+i*.07,type:'square'}));break;
+      case 'special_laser':
+        beep({f1:280,f2:1700,dur:.14,gain:.075,type:'triangle'});
+        beep({f1:1500,f2:80,dur:.38,gain:.10,delay:.12,type:'sawtooth'});
+        [2200,1100,550].forEach((f,i)=>beep({f1:f,f2:90,dur:.065,gain:.055,delay:.19+i*.055,type:'square'}));break;
       case 'special_haste':
         beep({f1:180,f2:1200,dur:.45,gain:.10,type:'sawtooth'});break;
       case 'special_fog':

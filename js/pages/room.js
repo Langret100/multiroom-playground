@@ -18,6 +18,12 @@
   }
 
   function exitGameFullscreen(){
+    const localPractice=window.__roomCoop;
+    if(localPractice?.practice){
+      clearTimeout(localPractice.soloReturnTimer);localPractice.soloReturnTimer=null;
+      localPractice.active=false;localPractice.practice=false;localPractice.meta=null;
+      localPractice.iframeLoaded=false;localPractice.iframeReady=false;
+    }
     try{ document.body.classList.remove("in-game"); }catch(_){ }
 
     // Proactively stop audio that may continue playing after returning to the room.
@@ -73,6 +79,7 @@
     }catch(_){ }
     // Reset dock layout vars (avoids residual blank space after leaving a docked game)
     try{ setTogesterDock(false); }catch(_){ }
+    try{ window.__refreshRoomControls?.(); }catch(_){ }
   }
 
   // Local UI override: when a player leaves SnakeTail mid-match ("나가기"),
@@ -297,6 +304,7 @@ function setupBgm(audioElId, btnId){
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
+  const localSoloModes=new Set(["backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot"]);
   let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
   let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
@@ -1242,6 +1250,16 @@ function updatePreview(modeId){
       return;
     }
     if (!room) return;
+    // Local practice owns its simulation. Do not relay practice game packets to the room server.
+    if(coop.practice&&fromMain&&localSoloModes.has(coop.meta?.id)){
+      if(d.type==='solo_quit'||/(_quit|_exit)$/.test(d.type||'')){
+        try{exitGameFullscreen();}catch(_){};return;
+      }
+      if(/(_over|_end)$/.test(d.type||'')){
+        if(!coop.soloReturnTimer)coop.soloReturnTimer=setTimeout(()=>{coop.soloReturnTimer=null;if(coop.practice)exitGameFullscreen();},3000);
+      }
+      return;
+    }
 
     // In-game "나가기" from embedded duel iframe (forfeit & return to room UI)
     if (d.type === "duel_quit"){
@@ -2119,6 +2137,7 @@ function updatePreview(modeId){
   }
 
   function renderPlayers(){
+    window.__refreshRoomControls=renderPlayers;
     if (!room) return;
     const state = room.state;
 
@@ -2250,6 +2269,9 @@ const isTogester = (modeId === "togester");
 const isSnakeTail = (modeId === "snaketail");
 const isSuhakTokki = (modeId === "suhaktokki");
 
+if(isDuel&&humanCount===1&&localSoloModes.has(modeId)&&isHost&&state.phase==='lobby'){
+ canStart=true;startText='싱글 AI 대전 시작';startAction='practice';
+}
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
@@ -2257,6 +2279,8 @@ else if (isCoop){
     canStart = true;
     startText = 'CPU 연습 시작';
     startAction = 'start';
+   } else if (localSoloModes.has(modeId) && humanCount===1){
+    canStart=true;startText='싱글 연습 시작';startAction='practice';
   } else if (isTogester && humanCount === 1){
     // 투게스터: 혼자일 때는 방 안 연습 모드(서버 시작 없이 iframe만 실행)
     canStart = true;
@@ -2304,16 +2328,17 @@ else if (isCoop){
   else canStart = true;
 }
 
+if(isHost&&state.phase==='lobby'&&humanCount===1&&localSoloModes.has(modeId)){canStart=true;startText='싱글 '+(modeId==='drawanswer'?'연습':'AI 연습')+' 시작';startAction='practice';}
 els.startBtn.disabled = !canStart;
 els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
 els.startBtn.title = canStart ? startText : reason;
 
-  if(stackModeWrap){stackModeWrap.style.display=modeId==='stackga'&&state.phase==='lobby'?'flex':'none';stackModeSelect.disabled=!isHost;stackModeSelect.value=stackMode;}
+  if(stackModeWrap){stackModeWrap.style.display=modeId==='stackga'&&(phase==='lobby'||!document.body.classList.contains('in-game'))?'flex':'none';stackModeSelect.disabled=!isHost||state.phase!=='lobby';stackModeSelect.value=stackMode;}
   // Show CPU difficulty only when host starts a solo duel in lobby.
   try{
     if (cpuDiffWrap){
-      const showCpuDiff = !!(isHost && state.phase === "lobby" && isDuel && humanCount === 1);
+      const showCpuDiff = !!(isHost && state.phase === "lobby" && (isDuel || localSoloModes.has(modeId)) && humanCount === 1);
       cpuDiffWrap.style.display = showCpuDiff ? "flex" : "none";
       if (cpuDiffSelect) cpuDiffSelect.value = cpuDifficulty;
     }
@@ -2432,6 +2457,7 @@ function postTo(targetIframe, msg){
 }
 function postToMain(msg){ postTo(duel.iframeEl, msg); }
 function syncSoccerAuthoritativeState(){
+  if(coop.practice)return;
   try{
     if (!room || !coop.active || String(coop.meta?.id||"") !== "soccer" || !coop.iframeReady) return;
     room.send("sc_sync", {});
@@ -2735,7 +2761,9 @@ function sendCoopBridgeInit(){
     expectedHumans,
     humanCount,
     roomCode: roomId,
-    players: bridgePlayers,
+    players: coop.practice ? bridgePlayers.filter(p=>String(p.sessionId)===String(mySessionId)) : bridgePlayers,
+    stackMode,
+    cpuDifficulty,
     ...(brBridgeStartPayload ? { startPayload: brBridgeStartPayload } : (coop?.meta?.id === 'backrooms3d' && coop?.startPayload ? { startPayload: coop.startPayload } : {})),
     level: coop.level || 1,
     // Soccer round timing is carried by the host-authoritative compatibility state.
@@ -3064,6 +3092,8 @@ function startCoopPractice(meta){
   coop.active = true;
   coop.meta = meta;
   coop.practice = true;
+  duel.active=null;duel.meta=null;duel.iframeLoaded=false;duel.iframeReady=false;
+  coop.startPayload=null;coop.sentGameStart=false;coop.soloReturnTimer=null;
   coop.level = 1;
   coop.iframeLoaded = false;
   coop.iframeReady = false;
@@ -3082,7 +3112,7 @@ function startCoopPractice(meta){
   if (duel.ui.duelSub) duel.ui.duelSub.textContent = "";
 
   const practiceEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
-  const src = `${meta.embedPath}${practiceEmbedSep}embed=1&practice=1&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
+  const src = `${meta.embedPath}${practiceEmbedSep}embed=1&practice=1&cpu=${encodeURIComponent(cpuDifficulty)}&stackMode=${stackMode}&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
@@ -3102,7 +3132,7 @@ function startSim(){
       // wait for server match message
       return;
     }
-    if (meta && meta.type === "coop" && meta.embedPath){
+    if (meta && (meta.type === "coop" || localSoloModes.has(meta.id)) && meta.embedPath){
       startCoopEmbed(meta);
       return;
     }
@@ -3341,7 +3371,7 @@ try{
 
       room.onMessage('stack_mode',(m)=>{stackMode=m?.stackMode==='normal'?'normal':'items';if(stackModeSelect)stackModeSelect.value=stackMode;});
       room.onMessage("started", (m)=> {
-        stackMode=m?.stackMode==='normal'?'normal':'items';
+        if(m?.stackMode==='normal'||m?.stackMode==='items')stackMode=m.stackMode;
         try{ enterGameFullscreen(); }catch(_){ }
         try{ window.SFX?.start?.(); }catch(_){ }
         try{ shakeOnce(); }catch(_){ }
@@ -3764,7 +3794,7 @@ try{
         if (action === "practice"){
           const modeId = room?.state?.mode || "";
           const meta = window.gameById ? window.gameById(modeId) : null;
-          if (meta && meta.type === "coop" && meta.embedPath){
+          if (meta && (meta.type === "coop" || localSoloModes.has(meta.id)) && meta.embedPath){
             try{ enterGameFullscreen(); }catch(_){ }
             try{ playGameBgm(meta.id); }catch(_){ }
             startCoopPractice(meta);
@@ -3882,3 +3912,4 @@ try{
   // Reduce room BGM volume by ~30%
   window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.147 });
 })();
+
