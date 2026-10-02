@@ -30,7 +30,9 @@
   // embed (multiroom iframe)
   const QS = new URLSearchParams(location.search);
   const EMBED = QS.get("embed") === "1";
+  const LOCAL_SOLO=EMBED&&QS.get("practice")==="1";
   function bridgeSend(type, payload){
+    if(LOCAL_SOLO&&!['bridge_ready','sk_quit'].includes(type))return;
     try{ window.parent && window.parent.postMessage({ type, gameId:'suhaktokki', ...(payload||{}) }, "*"); }catch(_){ }
   }
   // In embed mode, request an authoritative snapshot from the host.
@@ -569,6 +571,7 @@
   }
 
   exitBtn.addEventListener('click', () => {
+    if(LOCAL_SOLO){leaveRoom('practice_quit');return;}
     // If host tries to leave mid-game, require a second press and end the match for everyone.
     try {
       if (G.net && G.net.isHost && G.phase !== 'lobby') { tryHostLeave(); return; }
@@ -2159,9 +2162,11 @@
 	  // Stable per-iframe id for robust routing even if `from` is rewritten.
 	  msg.cid = this.clientId;
 	      if (this.sessionId) msg.sessionId = this.sessionId;
+      if(LOCAL_SOLO){const h=this.handlers.get(msg.t);if(h)h(msg);return;}
       try{ window.parent && window.parent.postMessage({ type:"sk_msg", gameId:'suhaktokki', msg }, "*"); }catch(_){ }
     }
     async discoverHost(){
+      if(LOCAL_SOLO){this.becomeHost();return;}
       // In embed mode, do NOT auto-elect host on clients.
       this.post({ t:"discover", at: Date.now() });
       await new Promise(r => setTimeout(r, 300));
@@ -2731,6 +2736,7 @@
       }
     }catch(_){ }
 
+    if(LOCAL_SOLO){practice=false;while(Object.values(st.players).filter(p=>p.isBot).length<3){const n=Object.values(st.players).filter(p=>p.isBot).length;hostAddPlayer(n===0?'AI 선생토끼':'AI 학생토끼 '+n,true);}}
     // Ensure the initial lighting state is fully bright (all lamps on) at game start.
     // This prevents an occasional "slightly dark" look reported on some devices.
     try{
@@ -2743,12 +2749,13 @@
     G.host.started = true;
     st.started = true;
     st.practice = !!practice;
-    st.infiniteMissions = !st.practice;
+    st.infiniteMissions = !st.practice&&!LOCAL_SOLO;
     st.winner = null;
     st.winnerReason = '';
     st.timeLeft = 180;
     st.maxTime = 180;
     hostAssignTeacher();
+    if(LOCAL_SOLO){const bots=Object.values(st.players).filter(p=>p.isBot);st.teacherId=bots[0].id;st.total=Math.min(6,st.total);for(const p of Object.values(st.players)){p.role=p.id===st.teacherId?'teacher':'crew';p.botBrain={t:0,target:null};if(p.role==='teacher'){p.killCdUntil=now()+8000;p.botBrain.saboAt=now()+15000;}}}
 
     // 왕관/플로우리스 추적(호스트 전용)
     G.host._flawless = new Map(); // playerId -> Set(kind)
@@ -3173,6 +3180,7 @@
       }
 
       let spd = SPEED;
+      if(LOCAL_SOLO&&p.isBot)spd*=window.SoloAI?.config?.speed||.72;
       if (now() < p.slowUntil) spd *= 0.6;
       // Ghosts move slightly faster (Among Us feel).
       if (p.down && p.role !== 'teacher' && !st.practice) spd *= 1.22;
@@ -3207,7 +3215,51 @@
     }
   }
 
+  function rabbitPath(p,target){
+    const width=AS.map.width,height=AS.map.height,sx=Math.floor(p.x/TS),sy=Math.floor(p.y/TS);
+    let gx=Math.floor(target.x/TS),gy=Math.floor(target.y/TS);
+    const open=(x,y)=>x>=0&&y>=0&&x<width&&y<height&&!_isSolidTile(x,y)&&!G._doorSolidSet?.has(x+','+y);
+    if(!open(gx,gy)){const nearby=[];for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++)if(open(gx+dx,gy+dy))nearby.push([gx+dx,gy+dy,dx*dx+dy*dy]);nearby.sort((a,b)=>a[2]-b[2]);if(!nearby.length)return [];[gx,gy]=nearby[0];}
+    const start=sy*width+sx,end=gy*width+gx,parents=new Int32Array(width*height);parents.fill(-2);parents[start]=-1;
+    const queue=[start];for(let at=0;at<queue.length;at++){const current=queue[at];if(current===end)break;const x=current%width,y=Math.floor(current/width);for(const [dx,dy]of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy,id=ny*width+nx;if(open(nx,ny)&&parents[id]===-2){parents[id]=current;queue.push(id);}}}
+    if(parents[end]===-2)return [];const path=[];for(let id=end;id!==start&&id>=0;id=parents[id])path.unshift({x:(id%width+.5)*TS,y:(Math.floor(id/width)+.5)*TS});return path;
+  }
+  function localRabbitThink(p,dt){
+    const brain=p.botBrain,stamp=now(),cfg=window.SoloAI?.config||{reaction:950,mistake:.36};
+    brain.next=Number(brain.next)||0;
+    if(stamp>=brain.next){
+      brain.next=stamp+cfg.reaction*(.9+Math.random()*.3);brain.pause=Math.random()<cfg.mistake;
+      const st=G.state,teacher=st.players[st.teacherId];
+      const missions=Object.values(st.objects).filter(o=>o.type==='mission'&&st.missions[o.id]?.state==='active'&&(p.role==='teacher'||!st.missions[o.id].inUseBy||st.missions[o.id].inUseBy===p.id||stamp>=Number(st.missions[o.id].inUseUntil||0)));
+      if(p.role==='teacher'){
+        const victims=Object.values(st.players).filter(q=>q.id!==p.id&&q.alive&&!q.down&&dist2(q.x,q.y,p.x,p.y)<(TS*9)**2&&lineOfSight(p.x,p.y,q.x,q.y)).sort((a,b)=>dist2(a.x,a.y,p.x,p.y)-dist2(b.x,b.y,p.x,p.y));
+        brain.target=victims[0]||missions.sort((a,b)=>dist2((a.x+.5)*TS,(a.y+.5)*TS,p.x,p.y)-dist2((b.x+.5)*TS,(b.y+.5)*TS,p.x,p.y)).map(getObjInteractPoint)[0];
+        if(!brain.pause){hostHandleKill(p.id);if(stamp>Number(brain.saboAt||0)){hostHandleSabotage(p.id);brain.saboAt=stamp+20000+Math.random()*10000;}}
+      }else{
+        const threatened=teacher&&!teacher.down&&dist2(p.x,p.y,teacher.x,teacher.y)<(TS*4)**2;
+        missions.sort((a,b)=>{const pa=getObjInteractPoint(a),pb=getObjInteractPoint(b);return threatened?dist2(pb.x,pb.y,teacher.x,teacher.y)-dist2(pa.x,pa.y,teacher.x,teacher.y):dist2(pa.x,pa.y,p.x,p.y)-dist2(pb.x,pb.y,p.x,p.y);});
+        brain.siteId=missions[0]?.id;brain.target=missions[0]?getObjInteractPoint(missions[0]):null;
+        if(!brain.pause&&!threatened&&brain.target&&dist2(p.x,p.y,brain.target.x,brain.target.y)<(INTERACT_RANGE*.8)**2&&lineOfSight(p.x,p.y,brain.target.x,brain.target.y)&&stamp>Number(brain.answerAt||0)){
+          const m=st.missions[brain.siteId];m.inUseBy=p.id;m.inUseUntil=stamp+6500+cfg.reaction*2;let prog=hostGetMissionProg(p.id,brain.siteId)||hostInitMissionProg(p.id,brain.siteId,m.kind,false);
+          hostMissionSubmit(p.id,{siteId:brain.siteId,answer:prog.question.answer});brain.answerAt=stamp+3500+cfg.reaction*2;
+        }
+      }
+      if(!brain.target){const objects=Object.values(st.objects).filter(o=>o.type==='mission');brain.target=objects.length?getObjInteractPoint(objects[Math.floor(Math.random()*objects.length)]):{x:p.x,y:p.y};}
+      brain.path=rabbitPath(p,brain.target);
+    }
+    while(brain.path?.length&&dist2(p.x,p.y,brain.path[0].x,brain.path[0].y)<12**2)brain.path.shift();
+    const target=brain.path?.[0],dx=target?target.x-p.x:0,dy=target?target.y-p.y:0,len=Math.hypot(dx,dy);
+    G.host.inputs.set(p.id,{mvx:brain.pause||!len?0:dx/len,mvy:brain.pause||!len?0:dy/len,at:stamp});
+  }
+  function localRabbitVotes(){
+    const stamp=now();for(const p of Object.values(G.state.players)){if(!p.isBot||!p.alive||p.down||G.host.votes?.has(p.id))continue;
+      if(!p.botBrain.voteAt||p.botBrain.voteMeeting!==G.host.meetingEndsAt){p.botBrain.voteMeeting=G.host.meetingEndsAt;p.botBrain.voteAt=stamp+2500+Math.random()*3000;}
+      if(stamp>=p.botBrain.voteAt){const candidates=Object.values(G.state.players).filter(q=>q.id!==p.id&&q.alive&&!q.down);hostSubmitVote(p.id,Math.random()<.75?null:candidates[Math.floor(Math.random()*candidates.length)]?.id);}
+    }
+  }
   function botThink(p, dt) {
+    p.botBrain??={t:0,target:null};
+    if(LOCAL_SOLO){localRabbitThink(p,dt);return;}
     p.botBrain.t -= dt;
     if (p.botBrain.t <= 0) {
       p.botBrain.t = 0.6 + Math.random() * 1.2;
@@ -4040,6 +4092,7 @@ function hostHandleInteract(playerId) {
     for (const p of Object.values(st.players)) {
       if (!p.alive || p.down) continue;
       if (p.id === killer.id) continue;
+      if(LOCAL_SOLO&&!lineOfSight(killer.x,killer.y,p.x,p.y))continue;
       const d2 = dist2(killer.x, killer.y, p.x, p.y);
       if (d2 < bestD2) { bestD2 = d2; target = p; }
     }
@@ -9499,6 +9552,7 @@ try{
 
     // host sim
     if (G.net?.isHost && G.host.started) {
+      if(LOCAL_SOLO&&G.phase==='meeting')localRabbitVotes();
       if (G.phase === 'meeting' && Number(G.host.meetingEndsAt || 0) > 0 && now() >= G.host.meetingEndsAt) {
         hostResolveMeeting();
       }
@@ -9778,8 +9832,9 @@ try{
         st.practice = false;
         st.timeLeft = 180;
         st.maxTime = 180;
-        st.infiniteMissions = !st.practice;
+        st.infiniteMissions = !st.practice&&!LOCAL_SOLO;
         hostAssignTeacher();
+    if(LOCAL_SOLO){const bots=Object.values(st.players).filter(p=>p.isBot);st.teacherId=bots[0].id;st.total=Math.min(6,st.total);for(const p of Object.values(st.players)){p.role=p.id===st.teacherId?'teacher':'crew';p.botBrain={t:0,target:null};if(p.role==='teacher'){p.killCdUntil=now()+8000;p.botBrain.saboAt=now()+15000;}}}
         for (const pp of Object.values(st.players)) {
           sendToPlayer(pp.id, { t: 'toast', text: (pp.role === 'teacher') ? '당신은 선생토끼야! (술래)' : '당신은 학생토끼야! 미션을 해결해!' });
           // Refresh role reveal for everyone on conversion.
@@ -10884,7 +10939,7 @@ net.on('uiMeetingOpen', (m) => {
     const n = Object.values(G.state.players).filter(p => p && !p.isBot).length;
     const practice = (n < 4);
     hostStartGame(practice);
-    broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
+    broadcast({ t: 'toast', text: LOCAL_SOLO?'로컬 AI 대전! AI 선생토끼를 피해 미션을 해결하세요.':practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' });
     applyPhaseUI();
   });
 
@@ -10901,7 +10956,7 @@ net.on('uiMeetingOpen', (m) => {
     const n = Object.values(G.state.players || {}).filter(p => p && !p.isBot).length;
     const practice = (n < 4);
     hostStartGame(practice);
-    try{ broadcast({ t: 'toast', text: practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
+    try{ broadcast({ t: 'toast', text: LOCAL_SOLO?'로컬 AI 대전! AI 선생토끼를 피해 미션을 해결하세요.':practice ? '연습 모드 시작! (선생토끼 없음)' : '게임 시작!' }); }catch(_){ }
     applyPhaseUI();
   }
 
@@ -10944,7 +10999,8 @@ net.on('uiMeetingOpen', (m) => {
     if (!init) return;
     // Some parents may omit/rename the room code field; be tolerant.
     const roomCode = String(init.roomCode || init.roomId || init.room || '').trim() || 'local';
-    if (G.net) return;
+    if (G.net||G.ui._embedStarting) return;
+    G.ui._embedStarting=true;
 
     // wait assets (they load asynchronously)
     // IMPORTANT (embed): joinRoom() early-returns when assets aren't ready.
@@ -11171,3 +11227,8 @@ window.__EMBED_IS_HOST__ = !!__electedHost;
     requestAnimationFrame(frame);
   })();
 })();
+
+
+
+
+

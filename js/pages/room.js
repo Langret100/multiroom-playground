@@ -304,7 +304,7 @@ function setupBgm(audioElId, btnId){
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
-  const localSoloModes=new Set(["backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot"]);
+  const localSoloModes=new Set(["backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
   let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
   let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
@@ -1594,6 +1594,7 @@ function updatePreview(modeId){
       try{ room.send("tg_sync", {}); }catch(_){ }
       return;
     }
+    if(d.type==='wb_snapshot'){if(!fromMainForWb||!wbModeLikely||!getMyIsHost())return;try{room.send('duel_event',{event:{__waterblastWorldFast:1,world:d.world}});}catch(_){}return;}
     if (d.type === "wb_state"){
       if (!fromMainForWb || !wbModeLikely) return;
       try{ room.send("tg_state", {state:d.state || {}}); }catch(_){ }
@@ -2328,7 +2329,7 @@ else if (isCoop){
   else canStart = true;
 }
 
-if(isHost&&state.phase==='lobby'&&humanCount===1&&localSoloModes.has(modeId)){canStart=true;startText='싱글 '+(modeId==='drawanswer'?'연습':'AI 연습')+' 시작';startAction='practice';}
+if(isHost&&state.phase==='lobby'&&humanCount===1&&localSoloModes.has(modeId)){canStart=true;startText=modeId==='drawanswer'?'그림연습모드 시작':'싱글 AI 연습 시작';startAction='practice';}
 els.startBtn.disabled = !canStart;
 els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
@@ -2338,7 +2339,7 @@ els.startBtn.title = canStart ? startText : reason;
   // Show CPU difficulty only when host starts a solo duel in lobby.
   try{
     if (cpuDiffWrap){
-      const showCpuDiff = !!(isHost && state.phase === "lobby" && (isDuel || localSoloModes.has(modeId)) && humanCount === 1);
+      const showCpuDiff = !!(isHost && state.phase === "lobby" && (isDuel || localSoloModes.has(modeId)) && modeId !== "drawanswer" && humanCount === 1);
       cpuDiffWrap.style.display = showCpuDiff ? "flex" : "none";
       if (cpuDiffSelect) cpuDiffSelect.value = cpuDifficulty;
     }
@@ -3458,6 +3459,7 @@ try{
       });
 
       room.onMessage("duel_event", (msg)=>{
+        if(msg?.event?.__waterblastWorldFast===1){if(String(coop?.meta?.id||room?.state?.mode||'')==='waterblast')postToMain({type:'wb_snapshot',gameId:'waterblast',sid:msg.sid,world:msg.event.world});return;}
         if (msg?.event?.__waterblastFast === 1){
           if (String(coop?.meta?.id || room?.state?.mode || "") === "waterblast") postToMain({type:"wb_action",gameId:"waterblast",sid:msg.sid,input:msg.event.input});
           return;
@@ -3912,4 +3914,6 @@ try{
   // Reduce room BGM volume by ~30%
   window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.147 });
 })();
+
+
 

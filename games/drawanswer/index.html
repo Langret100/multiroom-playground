@@ -262,7 +262,14 @@
       .side{ flex:1 1 auto; max-width:none; min-width:unset; height:auto; min-height:0; }
     }
   </style>
-<script src="../../js/games/solo-ai.js?v=20261002-solo1"></script><script src="../../js/games/mobile-viewport.js?v=20261002-mobile1"></script><link rel="stylesheet" href="../../js/games/mobile-portrait.css?v=20261002-mobile1"></head>
+<script src="../../js/games/solo-ai.js?v=20261002-controls3"></script><script src="../../js/games/mobile-viewport.js?v=20261002-controls3"></script><link rel="stylesheet" href="../../js/games/mobile-portrait.css?v=20261002-controls3"><style>
+body.drawingPractice .side .chat,body.drawingPractice .side .row{display:none}
+body.drawingPractice .side{flex:0 0 auto;min-width:0;height:auto;width:auto;max-width:none}
+body.drawingPractice .game{flex-wrap:nowrap}body.drawingPractice [hidden]{display:none!important}
+body.drawingPractice .canvasWrap{flex:1 1 auto}
+body.drawingPractice .side .hint{font-size:12px}
+html.phone-portrait[data-phone-game="drawanswer"] body.drawingPractice .side{flex:0 0 28px;min-height:28px;height:28px}
+</style></head>
 <body>
     <header>
     <div class="title">
@@ -420,14 +427,15 @@
     let __timeupPlayedFor = 0;
 
     function resizeCanvas(){
+      const oldImage=drawingPractice&&canvas.width?Object.assign(document.createElement('canvas'),{width:canvas.width,height:canvas.height}):null;if(oldImage)oldImage.getContext('2d').drawImage(canvas,0,0);
       const dpr = window.devicePixelRatio || 1;
       const rect = canvas.getBoundingClientRect();
-      let w = Math.max(280, Math.floor(rect.width));
-      let h = Math.max(240, Math.floor(rect.height));
+      let w = Math.max(window.MobileViewport?.portrait?1:280, Math.floor(rect.width));
+      let h = Math.max(window.MobileViewport?.portrait?1:240, Math.floor(rect.height));
 
       // Mobile: 항상 정사각형 캔버스(그려지는 영역도 동일)
       const isMobile = window.matchMedia('(max-width: 860px)').matches;
-      if (isMobile) {
+      if (isMobile&&!window.MobileViewport?.portrait) {
         const s = Math.min(w, h);
         w = s; h = s;
         const wrap = canvas.closest('.canvasWrap');
@@ -442,6 +450,7 @@
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      if(oldImage)ctx.drawImage(oldImage,0,0,oldImage.width,oldImage.height,0,0,w,h);
     }
 
     function clearLocal(){
@@ -484,31 +493,22 @@
       chatEl.scrollTop = chatEl.scrollHeight;
     }
 
-    let localDrawingRound=0,localDrawingScore=0,localDrawingAnswer='',localDrawingDeadline=0,localDrawingTimer=null,localDrawingStrokeTimer=null,localDrawingFinished=false;
-    const practicePictures=[
-      {word:'집',lines:[[230,340,450,150],[450,150,670,340],[260,320,260,550],[640,320,640,550],[260,550,640,550],[410,550,410,420],[410,420,490,420],[490,420,490,550],[300,380,350,380],[350,380,350,440],[350,440,300,440],[300,440,300,380]]},
-      {word:'나무',lines:[[420,350,420,550],[480,350,480,550],[420,550,480,550],[250,360,450,120],[450,120,650,360],[650,360,250,360],[280,290,620,290]]},
-      {word:'우산',lines:[[200,300,250,210],[250,210,350,160],[350,160,450,140],[450,140,550,160],[550,160,650,210],[650,210,700,300],[200,300,700,300],[450,140,450,500],[450,500,490,540],[490,540,530,500]]},
-      {word:'고양이',lines:[[300,260,290,160],[290,160,370,220],[370,220,530,220],[530,220,610,160],[610,160,600,260],[600,260,620,350],[620,350,550,440],[550,440,350,440],[350,440,280,350],[280,350,300,260],[360,300,390,300],[510,300,540,300],[430,350,470,350],[450,350,450,380],[370,360,220,340],[530,360,680,340]]},
-      {word:'물고기',lines:[[250,320,350,240],[350,240,520,250],[520,250,590,320],[590,320,700,230],[700,230,700,420],[700,420,590,320],[590,320,520,400],[520,400,350,400],[350,400,250,320],[310,310,320,310]]}
-    ];
-    function localDrawingEmit(d){window.postMessage(d,'*');}
-    function startLocalDrawing(){if(localDrawingTimer)return;localDrawingRound=0;localDrawingScore=0;localDrawingFinished=false;nextLocalDrawing();localDrawingTimer=setInterval(()=>{if(!localDrawingFinished&&Date.now()>=localDrawingDeadline)nextLocalDrawing();},250);}
-    function nextLocalDrawing(){
-      if(localDrawingStrokeTimer)clearInterval(localDrawingStrokeTimer);
-      if(localDrawingRound>=5){localDrawingFinished=true;clearInterval(localDrawingTimer);localDrawingTimer=null;localDrawingEmit({type:'da_chat',nick:'시스템',text:'연습 끝! '+localDrawingScore+' / 5 정답'});parent.postMessage({type:'solo_over'},'*');return;}
-      const pic=practicePictures[localDrawingRound++];localDrawingAnswer=pic.word;localDrawingDeadline=Date.now()+(SoloAI.difficulty==='low'?60000:SoloAI.difficulty==='mid'?45000:30000);
-      localDrawingEmit({type:'da_clear'});localDrawingEmit({type:'da_state',round:localDrawingRound,maxRounds:5,drawerNick:'그림 AI',youAreDrawer:false,endAt:localDrawingDeadline,scores:{local:{nick:myNick,correct:localDrawingScore}},announce:'AI 그림을 맞혀 보세요!'+(SoloAI.difficulty==='low'?' 힌트: '+pic.word[0]+'…':'')});
-      let at=0;localDrawingStrokeTimer=setInterval(()=>{if(at>=pic.lines.length){clearInterval(localDrawingStrokeTimer);localDrawingStrokeTimer=null;return;}localDrawingEmit({type:'da_draw',segs:[pic.lines[at++]],c:'#294b69',w:6});},Math.max(110,SoloAI.config.reaction*.35));
+    let drawingPractice=false;
+    function startLocalDrawing(){
+      if(drawingPractice)return;
+      drawingPractice=true;document.body.classList.add('drawingPractice');
+      isDrawer=true;currentWord='';endAt=0;painting=false;sendBuf=[];
+      clearBtn.disabled=false;roundPill.textContent='그림연습모드';
+      turnPill.hidden=wordPill.hidden=true;
+      document.getElementById('scorePill').hidden=true;
+      document.querySelector('.title h1').textContent='🖌️ 그림연습모드';
+      timerEl.hidden=true;if(mobileTimerEl)mobileTimerEl.hidden=true;
+      if(centerInfoEl)centerInfoEl.textContent='시간제한 없이 자유롭게 그려 보세요';
+      if(mobileWordTextEl)mobileWordTextEl.textContent='그림연습모드 · 자유롭게 그리기';
+      hintEl.textContent='색상 · 지우개 · 지우기로 마음껏 연습하세요.';
+      requestAnimationFrame(()=>resizeCanvas());
     }
-    function localDrawingPacket(obj){
-      if(obj.type==='da_chat'){
-        const answer=String(obj.text||'').replace(/\s+/g,'');localDrawingEmit({type:'da_chat',nick:myNick,text:obj.text});
-        if(!localDrawingFinished&&localDrawingAnswer&&answer===localDrawingAnswer){localDrawingScore++;localDrawingAnswer='';localDrawingDeadline=Infinity;localDrawingEmit({type:'da_chat',nick:'시스템',text:'정답!'});setTimeout(nextLocalDrawing,1200);}return true;
-      }
-      if(['da_enter','da_sync','da_draw','da_clear'].includes(obj.type))return true;
-      return false;
-    }
+    function localDrawingPacket(obj){return ['da_chat','da_enter','da_sync','da_draw','da_clear'].includes(obj.type);}
     function sendToParent(obj){
       if(window.SoloAI?.active&&localDrawingPacket(obj))return;
       try{ window.parent.postMessage(obj, '*'); }catch(_){ }
@@ -659,6 +659,7 @@
       return `${m}:${r}`;
     }
     setInterval(()=>{
+      if(drawingPractice)return;
       const left = endAt ? (endAt - Date.now()) : 120000;
       const t = fmt(left);
       timerEl.textContent = t;
@@ -692,6 +693,7 @@
         return;
       }
 
+      if(drawingPractice)return;
       if (d.type === 'da_state'){
         const newRound = Number(d.round||0);
         if (lastRoundSeen !== null && newRound && newRound !== lastRoundSeen){
@@ -824,7 +826,8 @@
     __hookBgmGesture();
 
     // standalone fallback (dev)
-    if (window.parent === window){
+    if(window.SoloAI?.active){startLocalDrawing();}
+    else if (window.parent === window){
       mySid = 'local';
       myNick = '로컬';
       setDrawer(true);
@@ -839,3 +842,8 @@
   </script>
 </body>
 </html>
+
+
+
+
+

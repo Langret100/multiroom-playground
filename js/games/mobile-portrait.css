@@ -18,3 +18,67 @@ html.phone-portrait[data-phone-game="mathexplorer"] .mathQuestion{max-width:calc
 html.phone-portrait[data-phone-game="geumchikeo"] #helpM>div,html.phone-portrait[data-phone-game="geumchikeo"] .mb{max-height:calc(var(--phone-visible-height,100dvh) - 24px);overflow:auto;max-width:calc(100vw - 24px);box-sizing:border-box}
 html.phone-portrait[data-phone-game="drawanswer"] input{font-size:16px!important;min-width:0}
 html.phone-portrait[data-phone-game="backrooms3d"] #mathCard{max-height:calc(var(--phone-visible-height,100dvh) - 24px);overflow:auto;max-width:calc(100vw - 24px)}
+
+/* Reserve thumb space even when an embedded browser reports a zero safe inset. */
+html.phone-portrait{--phone-control-lift:calc(max(36px,env(safe-area-inset-bottom,0px)) + var(--phone-bottom-occlusion,0px))}
+html.phone-portrait[data-phone-game="starpaint"] .mobile .jump,
+html.phone-portrait[data-phone-game="starpaint"] .mobile .use{bottom:calc(18px + var(--phone-control-lift))!important;transform:none!important}
+html.phone-portrait[data-phone-game="starpaint"] .mobile .swap{bottom:calc(92px + var(--phone-control-lift))!important;transform:none!important}
+html.phone-portrait[data-phone-game="starpaint"] .aimHint{bottom:calc(168px + var(--phone-control-lift))!important}
+html.phone-portrait[data-phone-game="soccer"] #joy,
+html.phone-portrait[data-phone-game="soccer"] #actionBtns,
+html.phone-portrait[data-phone-game="snaketail"] #controls,
+html.phone-portrait[data-phone-game="snaketail"] #btnBoost,
+html.phone-portrait[data-phone-game="geumchikeo"] #joystickZone,
+html.phone-portrait[data-phone-game="geumchikeo"] #joystick,
+html.phone-portrait[data-phone-game="geumchikeo"] #jumpBtn,
+html.phone-portrait[data-phone-game="suhaktokki"] #joy,
+html.phone-portrait[data-phone-game="suhaktokki"] #interactBtn,
+html.phone-portrait[data-phone-game="suhaktokki"] #killBtn,
+html.phone-portrait[data-phone-game="suhaktokki"] #forceBtnTouch,
+html.phone-portrait[data-phone-game="suhaktokki"] #saboBtnTouch,
+html.phone-portrait[data-phone-game="waterblast"] .joyBase,
+html.phone-portrait[data-phone-game="waterblast"] .bombBtn,
+html.phone-portrait[data-phone-game="waterblast"] .pushBtn,
+html.phone-portrait[data-phone-game="waterblast"] .potionBtn,
+html.phone-portrait[data-phone-game="waterblast"] #inventoryBar,
+html.phone-portrait[data-phone-game="togester"] #actionButtons{translate:0 calc(-1 * var(--phone-control-lift))}
+html.phone-portrait[data-phone-game="backrooms3d"]{--safeB:calc(max(36px,env(safe-area-inset-bottom,0px)) + var(--phone-bottom-occlusion,0px))}
+html.phone-portrait[data-phone-game="bloomshot"] body{--mobile-ui-clearance:calc(8px + var(--phone-control-lift))!important}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster{top:40px!important;bottom:auto!important;left:5px!important;right:auto!important;width:166px!important;height:auto!important;max-height:116px!important;display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:2px!important;overflow:auto!important;pointer-events:auto;touch-action:pan-y}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .player{width:100%!important;max-width:none!important;min-width:0!important;padding:3px 4px!important;font-size:7px!important;line-height:11px!important;border-radius:4px!important;display:flex;align-items:center;gap:3px}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .player b{overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .player span{display:inline!important;margin-left:0!important;font-size:6px!important;flex-shrink:0}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .team-roster{position:static!important;width:100%!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;justify-content:flex-start!important;gap:2px!important;overflow:visible!important}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .team-roster>strong{font-size:6px!important;padding:2px 4px!important;line-height:10px!important}
+html.phone-portrait[data-phone-game="bloomshot"] body.mobile-play.mobile-portrait.team-battle .arena{bottom:calc(var(--dash-h,190px) + var(--mobile-ui-clearance) + 7px)!important}
+html.phone-portrait[data-phone-game="stackga"] body .wrap{height:calc(var(--phone-visible-height,100dvh) - max(36px,env(safe-area-inset-bottom,0px)))!important;min-height:0!important}
+html.phone-portrait[data-phone-game="stackga"] .itemLegend{bottom:calc(10px + var(--phone-control-lift))!important}
+html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .player{min-height:17px!important;height:17px!important;flex:0 0 17px!important}html.phone-mobile[data-phone-game="bloomshot"] body #roster#roster .team-roster>strong{min-height:14px!important;height:14px!important}
+
+html.phone-portrait[data-phone-game="drawanswer"] body{height:calc(var(--phone-visible-height,100dvh) - max(36px,env(safe-area-inset-bottom,0px)));min-height:0}
+html.phone-portrait[data-phone-game="drawanswer"] .canvasWrap{flex:1 1 auto;min-height:80px;height:auto;aspect-ratio:auto}
+html.phone-portrait[data-phone-game="drawanswer"] .side{flex:0 0 110px;min-height:110px;height:110px}
+html.phone-portrait[data-phone-game="drawanswer"] .side .row{flex-shrink:0}
+
+/* Floating left-half joystick and thumb-height, translucent actions. */
+html.phone-mobile[data-phone-game="waterblast"] #joy.floatingJoy{position:fixed!important;display:none!important;translate:none!important;transform:none;pointer-events:none;z-index:30;opacity:.7}
+html.phone-mobile[data-phone-game="waterblast"] #joy.floatingJoy.joyActive{display:block!important}
+html.phone-mobile[data-phone-game="waterblast"] :is(.bombBtn,.pushBtn,.potionBtn){left:auto!important;right:14px!important;width:68px!important;height:68px!important;min-height:68px!important;translate:none!important;border-radius:18px;background:#16455899!important;color:#f0fbff!important;border:1px solid #b4eeff88!important;box-shadow:0 4px 12px #061b3455!important;backdrop-filter:blur(3px);opacity:.8;padding:4px;z-index:15}
+html.phone-portrait[data-phone-game="waterblast"] .bombBtn{bottom:calc(max(100px,18dvh) + var(--phone-bottom-occlusion,0px))!important}
+html.phone-portrait[data-phone-game="waterblast"] .pushBtn{bottom:calc(max(100px,18dvh) + 78px + var(--phone-bottom-occlusion,0px))!important;font-size:11px!important}
+html.phone-portrait[data-phone-game="waterblast"] .potionBtn{bottom:calc(max(100px,18dvh) + 156px + var(--phone-bottom-occlusion,0px))!important}
+html.phone-mobile[data-phone-game="waterblast"] .potionBtn img{width:26px;height:26px}
+html.phone-mobile[data-phone-game="waterblast"] .potionBtn :is(span,small){font-size:9px}
+html.phone-mobile[data-phone-game="waterblast"] :is(.bombBtn,.pushBtn,.potionBtn):active{opacity:1;background:#26758bbb!important}
+html.phone-mobile[data-phone-game="waterblast"] .potionBtn:disabled{opacity:.45}
+html.phone-portrait[data-phone-game="waterblast"] #inventoryBar{bottom:calc(12px + var(--phone-control-lift))!important}
+html.phone-portrait[data-phone-game="starpaint"] .mobile :is(.jump,.use){bottom:calc(max(90px,16dvh) + var(--phone-bottom-occlusion,0px))!important}
+html.phone-portrait[data-phone-game="starpaint"] .mobile .swap{bottom:calc(max(90px,16dvh) + 74px + var(--phone-bottom-occlusion,0px))!important}
+html.phone-portrait[data-phone-game="starpaint"] .aimHint{bottom:calc(max(90px,16dvh) + 150px + var(--phone-bottom-occlusion,0px))!important}
+
+@media(orientation:landscape){
+html.phone-mobile[data-phone-game="waterblast"] .bombBtn{bottom:max(54px,15dvh)!important}
+html.phone-mobile[data-phone-game="waterblast"] .pushBtn{bottom:calc(max(54px,15dvh) + 74px)!important}
+html.phone-mobile[data-phone-game="waterblast"] .potionBtn{bottom:calc(max(54px,15dvh) + 148px)!important}
+}

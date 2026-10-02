@@ -217,7 +217,7 @@ function choiceButtons(){
 }
 choiceButtons();
 function selectionProfile(p){const profileArt=$('selectedPortrait').parentElement;if(p.randomSelected){setupCharacter=-99;profileArt?.classList.add('random-hidden');$('selectedPortrait').removeAttribute('src');$('selectedPortrait').alt='랜덤';$('selectedName').textContent='?';$('selectedTitle').textContent='게임 시작 시 공개';$('stats').replaceChildren();$('weaponOne').textContent='랜덤 캐릭터';$('weaponTwo').textContent='결과는 전투 시작 전까지 공개되지 않습니다.';return;}profileArt?.classList.remove('random-hidden');const c=E.spec(p);setupCharacter=p.character;$('selectedPortrait').src=art.portraitsLarge[p.character]||art.characters[p.character]?.src||`assets/portrait-${p.character}.webp`;$('selectedPortrait').alt=c.name;$('selectedName').textContent=c.name;$('selectedTitle').textContent=c.title;
- const names=['방어력','이동력','일반탄','특수탄','발사각','사거리'],values=[Math.round(c.armor*100)+'%',c.move,c.damage,'고유 효과',c.angle.join('~')+'°',Math.round(c.speed*100)+'%'];
+ const names=['방어력','이동력','일반탄','특수탄','발사각','사거리'],values=[Math.round(c.armor*100)+'%',c.move,E.projectileMetrics(p,'normal').damage.toFixed(1),'고유 효과',c.angle.join('~')+'°',Math.round(c.speed*100)+'%'];
  $('stats').replaceChildren(...names.map((name,i)=>{const row=document.createElement('div');row.className='stat';const label=document.createElement('span');label.textContent=name;const bar=document.createElement('div');bar.className='bar';for(let j=0;j<6;j++){const segment=document.createElement('i');if(j<c.stats[i])segment.className='on';bar.append(segment);}const value=document.createElement('b');value.textContent=values[i];row.append(label,bar,value);return row;}));
  $('weaponOne').textContent=`일반 / ${c.weapon} — ${E.weaponDescription(p,'normal').details}`;$('weaponTwo').textContent=`특수 / ${c.weapon2} — ${E.weaponDescription(p,'special').details}`;
 }
@@ -237,7 +237,7 @@ dialCanvas.onpointermove=e=>{if(e.buttons)angleFromDialPointer(e);};
 const weaponTip=document.createElement('div');weaponTip.id='weaponTooltip';weaponTip.setAttribute('role','tooltip');weaponTip.hidden=true;document.body.append(weaponTip);
 let tipTimer=0,tipDismiss=0,tipButton=null;
 function hideWeaponTip(){clearTimeout(tipTimer);clearTimeout(tipDismiss);weaponTip.hidden=true;if(tipButton)tipButton.removeAttribute('aria-describedby');tipButton=null;}
-function showWeaponTip(button){const p=mine();if(!p)return;const d=E.weaponDescription(p,button.dataset.weapon);hideWeaponTip();tipButton=button;const title=document.createElement('strong'),detail=document.createElement('p'),stats=document.createElement('p'),note=document.createElement('small');title.textContent=d.kind+' · '+d.name;detail.textContent=d.details;stats.textContent=d.stats;stats.className='tip-stats';note.textContent=d.compare;weaponTip.replaceChildren(title,detail,stats,note);weaponTip.hidden=false;button.setAttribute('aria-describedby','weaponTooltip');const r=button.getBoundingClientRect(),w=weaponTip.offsetWidth,h=weaponTip.offsetHeight;weaponTip.style.left=Math.max(8,Math.min(innerWidth-w-8,r.left+r.width/2-w/2))+'px';weaponTip.style.top=Math.max(8,r.top-h-12)+'px';}
+function showWeaponTip(button){const p=mine();if(!p)return;const d=E.weaponDescription(p,button.dataset.weapon);hideWeaponTip();tipButton=button;const title=document.createElement('strong'),detail=document.createElement('p'),stats=document.createElement('p');title.textContent=d.kind+' · '+d.name;detail.textContent=d.details;stats.textContent=d.stats;stats.className='tip-stats';weaponTip.replaceChildren(title,detail,stats);weaponTip.hidden=false;button.setAttribute('aria-describedby','weaponTooltip');const r=button.getBoundingClientRect(),w=weaponTip.offsetWidth,h=weaponTip.offsetHeight;weaponTip.style.left=Math.max(8,Math.min(innerWidth-w-8,r.left+r.width/2-w/2))+'px';weaponTip.style.top=Math.max(8,r.top-h-12)+'px';}
 for(const b of document.querySelectorAll('[data-weapon]')){let held=false,origin=null;
  b.onclick=e=>{if(held){held=false;e.preventDefault();return;}hideWeaponTip();if(canAct()){weapon=b.dataset.weapon;renderUI();}};
  b.onpointerenter=e=>{if(e.pointerType==='mouse'){clearTimeout(tipTimer);tipTimer=setTimeout(()=>showWeaponTip(b),350);}};
@@ -619,5 +619,6 @@ let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frame
 if(!embedded){state=E.create([{sessionId:'local',nick:'나',seat:0}],Date.now()>>>0);roster=[{sessionId:'local',nick:'나',seat:0}];renderUI();}else{send('bridge_ready');}
 setInterval(hostTick,16);requestAnimationFrame(loop);
 })();
+
 
 

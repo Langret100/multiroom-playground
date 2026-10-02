@@ -1267,6 +1267,11 @@ this.onMessage("sc_sync", (client) => {
     });
 
     this.onMessage("duel_event", (client, payload) => {
+      const fastEvent=payload?.event;
+      if(this.state.mode==='waterblast'&&this.state.phase==='playing'&&(fastEvent?.__waterblastFast===1||fastEvent?.__waterblastWorldFast===1)){
+        if(fastEvent.__waterblastWorldFast===1&&!this.state.players.get(client.sessionId)?.isHost)return;
+        this.broadcast('duel_event',{sid:client.sessionId,event:fastEvent});return;
+      }
       if (this.state.modeType !== "duel") return;
       if (this.state.phase !== "playing") return;
 
