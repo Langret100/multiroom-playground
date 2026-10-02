@@ -248,13 +248,10 @@ const guestInputs={};function applyPackets(map){
   hostOffset=Number(ww.serverNow||Date.now())-Date.now();remoteWorld=ww;world=ww;if(!bridge.isHost)rebuildMotion();
   if(bridge.isHost){const me=world.players[bridge.sid];me._bombSeq=input.bombSeq;me._mashSeq=input.mashSeq;me._potionSeq=input.potionSeq;me._pushSeq=input.pushSeq;reconcile(bridge.players);}
  }
-}let lastFallbackState=0;function sendState(now){
+}function sendState(now){
  if(!bridge.ready||(bridge.isHost&&!world)||now-lastSent<SEND_MS)return;lastSent=now;
- const state={__waterblastInput:inputPacket()};
- if(!bridge.isHost){post('wb_action',{input:state.__waterblastInput});return;}
- if(bridge.isHost&&world){world.stateSeq=Number(world.stateSeq||0)+1;world.serverNow=gameNow();state.__waterblastWorld=world;}
- if(bridge.isHost&&world){post('wb_snapshot',{world});if(now-lastFallbackState<250)return;lastFallbackState=now;}
- post('wb_state',{state});
+ if(!bridge.isHost){post('wb_action',{input:inputPacket()});return;}
+ if(world){world.stateSeq=Number(world.stateSeq||0)+1;world.serverNow=gameNow();post('wb_snapshot',{world});}
 }function reconcile(players){
  if(window.SoloAI?.active)players=SoloAI.roster(players||[],bridge.sid);
  bridge.players=(players||[]).filter(p=>p&&(p.sessionId||p.sid)).map(p=>({...p,sessionId:String(p.sessionId||p.sid)}));

@@ -51,12 +51,12 @@ function terrainDestroyScale(p,weapon,baseRadius){
 }
 function projectileMetrics(p,weapon,boost){
  const c=spec(p),w=weaponSpec(p,weapon),small=w.size<=5||p.character===3||p.character===7||c.special==='star';
- const rangeScale=p.character===3&&weapon==='normal'?.85:p.character===1?(weapon==='normal'?1.10:.85):1;
+ const rangeScale=p.character===3&&weapon==='normal'?.85:p.character===1?(weapon==='normal'?1.10:.85*.80):1;
  let radius=Math.max(c.radius*w.blast*(small?1.94:1.83),small?48:0);
  const baseCrater=Math.max(c.radius*w.crater*(small?2.35:1.96),small?54:0);
  const craterRadius=baseCrater*terrainDestroyScale(p,weapon,baseCrater)*rangeScale;
  radius*=rangeScale;if(p.character===6&&weapon==='special')radius=craterRadius;
- return {damage:c.damage*w.damage*(boost==='power'?1.5:1)*1.98*characterDamageScale(p)*(p.character===3&&weapon==='normal'?.75:1),radius,craterRadius,freezeRadius:p.character===6&&weapon==='special'?radius*1.15:radius};
+ const damage=p.character===2&&weapon==='special'?20*(boost==='power'?1.5:1):(c.damage*w.damage*(boost==='power'?1.5:1)*1.98*characterDamageScale(p)*(p.character===3?(weapon==='normal'?.75:.30):1)+(p.character===1?(weapon==='normal'?5:-3)*(boost==='power'?1.5:1):0));return {damage,radius,craterRadius,freezeRadius:p.character===6&&weapon==='special'?radius*1.15:radius};
 }
 function weaponDescription(p,weapon){const c=spec(p),w=weaponSpec(p,weapon),metrics=projectileMetrics(p,weapon);const details=weapon==='normal'?w.desc:({burst:'부채꼴 3발. 일반탄보다 발당 피해와 파임을 줄인 분산 포격입니다.',petal:'꽃잎 3발을 좁은 부채꼴로 발사합니다. 여러 발을 맞힐수록 피해가 커집니다.',poison:'독안개 단발. 직격 피해와 함께 장판을 남깁니다. 장판은 처음 5칸으로 생성되고 이후 7칸, 9칸까지 양옆으로 퍼지며 4턴째까지 유지됩니다. 범위 안 대상에게 턴당 9 피해를 줍니다. 중독된 대상이 범위를 벗어나도 추가 2턴 동안 턴당 9 피해가 지속됩니다.',pierce:'작은 관통탄. 지형 약 200 관통, 방어력 65% 무시. 파괴 범위는 작습니다.',crater:'넓게 폭파하는 지반 파괴탄. 즉시 피해보다 발판 제거와 낙사를 노립니다.',fire:'불길 단발. 직격 피해와 함께 장판을 남깁니다. 장판은 처음 5칸으로 생성되고 이후 7칸, 9칸까지 양옆으로 퍼지며 4턴째까지 유지됩니다. 범위 안 대상에게 2초마다 2 피해를 줍니다.',ice:'서리 단발. 적중한 상대는 다음 자기 턴부터 2턴 동안 이동과 점프를 할 수 없습니다.',star:'길잡이 별 3발. 비행 중 280 이내 적이 잡히면 조준 표시 후 완만하게 추적합니다. 급격하게 꺾이지 않으며, 팀전에서는 아군을 락온하지 않습니다.'})[c.special];return {name:weapon==='normal'?c.weapon:c.weapon2,kind:weapon==='normal'?'일반탄':'특수탄',details,stats:w.count+'발 · 데미지 '+metrics.damage.toFixed(1)+' · 피해 반경 '+Math.round(metrics.radius)+' · 파괴 반경 '+Math.round(metrics.craterRadius)};}
 
