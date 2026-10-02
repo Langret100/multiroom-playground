@@ -611,3 +611,9 @@ html,body{background:#091626!important;color:#e4f8ff}
 .playShell{min-height:0}.comboBadge{right:auto!important;left:50%!important;bottom:26%!important;transform:translateX(-50%);font-size:clamp(22px,3vw,36px)!important}
 .itemLegend{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);z-index:3;max-width:95vw;pointer-events:none;opacity:.75}
 @media(max-width:899px){.boardCard{width:100%!important}.hudLeft{left:8px;top:8px;gap:4px}.hudLeft>div{font-size:11px;padding:5px}.itemLegend{display:none}}
+
+/* Center the preview in the panel, independent of labels and inherited canvas sizes. */
+.nextCard{position:relative!important}
+#cvNext{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%);width:calc(100% - 24px)!important;height:calc(100% - 24px)!important;max-width:none!important;max-height:none!important;margin:0!important;object-fit:contain;border-radius:0!important}
+@media(max-width:600px){#cvNext{width:calc(100% - 14px)!important;height:calc(100% - 14px)!important}}
+

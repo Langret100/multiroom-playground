@@ -1,7 +1,7 @@
 // Firebase dependency removed.
 import { createAudio } from "./audio.js?v=20261002-items3";
 import { initMatchButton } from "./match.js";
-import { StackGame, drawBoard, drawNext, COLS, SPECIAL_DEFS } from "./game.js?v=20261002-items3";
+import { StackGame, drawBoard, drawNext, COLS, SPECIAL_DEFS } from "./game.js?v=20261002-visual4";
 import { CpuController } from "./cpu.js";
 import { fitCanvases, initTouchControls } from "./touch.js?v=20261002-items3";
 import {

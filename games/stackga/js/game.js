@@ -494,9 +494,10 @@ export function drawBoard(ctx, board, cell, opts={}){
 
   if(opts.landingPiece){
     const p=opts.landingPiece,shape=SHAPES[p.type][p.rot];ctx.save();
-    ctx.fillStyle='rgba(151,227,255,.18)';ctx.strokeStyle='rgba(185,244,255,.65)';ctx.lineWidth=Math.max(1,cell*.045);
+    ctx.fillStyle='rgba(151,227,255,.10)';ctx.strokeStyle='rgba(185,244,255,.32)';ctx.lineWidth=Math.max(.7,cell*.023);
+    const pad=Math.max(.28,cell*.008),size=cell-pad*2;
     for(let y=0;y<4;y++)for(let x=0;x<4;x++)if(shape[y][x]&&p.y+y>=0){
-      ctx.beginPath();ctx.roundRect((p.x+x)*cell+2,(p.y+y)*cell+2,cell-4,cell-4,cell*.15);ctx.fill();ctx.stroke();
+      roundRect(ctx,(p.x+x)*cell+pad,(p.y+y)*cell+pad,size,size,Math.max(1.8,cell*.125));ctx.fill();ctx.stroke();
     }ctx.restore();
   }
   const active = new Set();
@@ -693,10 +694,17 @@ function drawSpecialOverlay(ctx,cell,opts){
  for(let y=0;y<ROWS;y++)for(let x=0;x<COLS;x++){
   const kind=marks[y]?.[x],def=SPECIAL_DEFS[kind];if(!def)continue;
   const px=(x+.5)*cell,py=(y+.5)*cell,color=def.helpful?'#54d8ff':'#ff627d',pulse=.72+.28*Math.sin(now/160+x);
-  ctx.save();ctx.strokeStyle=color;ctx.lineWidth=Math.max(2,cell*.075);ctx.shadowColor=color;ctx.shadowBlur=cell*.45*pulse;
-  ctx.beginPath();ctx.roundRect(x*cell+cell*.08,y*cell+cell*.08,cell*.84,cell*.84,cell*.18);ctx.stroke();
-  ctx.shadowBlur=0;ctx.fillStyle=def.helpful?'#103965ed':'#68182fed';ctx.beginPath();ctx.roundRect(px-cell*.39,py-cell*.29,cell*.78,cell*.58,cell*.12);ctx.fill();
-  ctx.font=`900 ${Math.max(9,cell*(kind==='haste'?.30:.40))}px system-ui`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff';ctx.fillText(def.icon,px,py+cell*.01);ctx.restore();
+  ctx.save();
+  // The item belongs to the jelly cell itself: one soft light wash, no badge or extra border.
+  const pad=Math.max(.28,cell*.008),size=cell-pad*2;
+  ctx.shadowColor=color;ctx.shadowBlur=cell*(.38+.12*pulse);
+  ctx.fillStyle=def.helpful?'rgba(71,208,255,.20)':'rgba(255,69,107,.22)';
+  roundRect(ctx,x*cell+pad,y*cell+pad,size,size,Math.max(1.8,cell*.125));ctx.fill();
+  ctx.shadowColor=def.helpful?'#063958':'#631b32';ctx.shadowBlur=Math.max(2,cell*.09);
+  ctx.shadowOffsetY=cell*.025;
+  ctx.font=`900 ${Math.max(8,cell*(kind==='haste'?.32:.45))}px system-ui`;
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#f5fcff';
+  ctx.fillText(def.icon,px,py+cell*.015);ctx.restore();
  }
  const fx=opts.specialFx,age=fx?now-fx.at:9999;
  if(fx&&age>=0&&age<950){
