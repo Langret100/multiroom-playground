@@ -626,7 +626,7 @@ html,body{background:#091626!important;color:#e4f8ff}
   --gauge-h:var(--stack-item-gauge-h,160px);
   position:absolute;
   left:-28px;
-  bottom:-1px;
+  bottom:2px;
   z-index:8;
   width:24px;
   display:flex;
@@ -676,7 +676,7 @@ html,body{background:#091626!important;color:#e4f8ff}
 @media(max-width:899px){
   .stackItems .boardCard{margin-left:24px!important;padding-left:7px!important}
   .stackItems .oppCard{margin-right:24px!important;padding-right:7px!important}
-  .itemGauge{left:-22px;bottom:-1px;width:20px;gap:4px}
+  .itemGauge{left:-22px;bottom:2px;width:20px;gap:4px}
   #itemGaugeOpp{left:auto;right:-22px}
   .itemGaugeMeter{width:18px;border-radius:6px}
   .itemGaugeTitle{font-size:7px}
