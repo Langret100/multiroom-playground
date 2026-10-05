@@ -61,11 +61,7 @@ try{
 // In the multiroom embed (iframe) we play per-game BGM from the parent page (room.html).
 // If we also play the game's internal music/SFX here, users will hear an extra rhythm/click track.
 // So: in embed mode disable internal audio and only send a "gesture" ping to the parent to unlock autoplay.
-const audio = createAudio({ musicUrl: EMBED ? "../../assets/audio/stackmusic.mp3" : "./assets/arcade-music.mp3" });
-// Embedded Stackga owns its BGM so playback happens inside the actual user-gesture
-// context. Parent-window playback can be rejected by autoplay policy because an
-// iframe gesture does not grant transient user activation to the parent.
-try{ audio.setMuted(localStorage.getItem("audio_enabled") === "0"); }catch(_){}
+const audio = createAudio({ musicUrl: EMBED ? null : "./assets/arcade-music.mp3" });
 // 소리 버튼은 제거됨. (필요 시 내부에서 음소거 토글만 유지)
 
 // "매칭" 버튼(단독) / "나가기" 버튼(로비-임베드)
@@ -90,14 +86,6 @@ function notifyParentGesture(){
 // start/retry audio on user gestures (mobile: 첫 play()가 실패할 수 있어 재시도 필요)
 window.addEventListener("pointerdown", ()=>{ notifyParentGesture(); audio.gestureStart(); }, { passive:true });
 window.addEventListener("keydown", ()=>{ notifyParentGesture(); audio.gestureStart(); });
-
-// Keep the embedded game's own BGM in sync with the room-wide mute preference.
-window.addEventListener("message", (e)=>{
-  const d = e?.data || {};
-  if (d && d.type === "audio_pref" && typeof d.enabled === "boolean") {
-    try{ audio.setMuted(!d.enabled); if (d.enabled) audio.gestureStart(); }catch(_){}
-  }
-});
 
 // Ensure BGM stops immediately when leaving the game to prevent room BGM overlap.
 const _stopBgmNow = ()=>{ try{ audio.stopMusic?.(); }catch{} };
@@ -203,7 +191,7 @@ function toggleFullscreen(){
 ui.btnFull?.addEventListener("click", toggleFullscreen);
 
 function showOverlay(title, desc, {showCpuBtn=false}={}){
-  if (EMBED) { showCpuBtn = false; if (ui.btnRestart) ui.btnRestart.style.display = "none"; }
+  if (EMBED) showCpuBtn = false;
   safeSetText(ui.overlayTitle, title);
   safeSetText(ui.overlayDesc, desc || "");
   ui.overlay.classList.remove("hidden");
@@ -399,11 +387,17 @@ function updateItemGauges(){
  for(const [id,g,label] of [['itemGaugeMe',meGame,'내'],['itemGaugeOpp',mode==='cpu'?cpuGame:oppItemProgress,'상대']]){
   const el=document.getElementById(id);if(!el)continue;el.hidden=!enabled;
   const known=g&&Number.isFinite(g.lines),pending=known&&g.pendingSpecials>0,progress=known?(pending?5:g.lines%5):0,remaining=known?(pending?0:5-progress):null;
-  const stamp=[known,progress,remaining].join(':');if(el.dataset.stamp===stamp)continue;el.dataset.stamp=stamp;
-  el.setAttribute('aria-valuenow',progress);el.setAttribute('aria-label',label+' 다음 아이템까지 '+(known?remaining+'줄':'확인 중'));
+  const pct=known?(pending?100:(progress/5)*100):0;
+  const stamp=[known,progress,remaining,pending].join(':');if(el.dataset.stamp===stamp)continue;el.dataset.stamp=stamp;
+  el.setAttribute('aria-valuenow',progress);el.setAttribute('aria-label',label+' 다음 아이템까지 '+(known?(pending?'준비':remaining+'줄'):'확인 중'));
   el.querySelector('.itemGaugeCount').textContent=known?(pending?'준비':remaining+'줄'):'—';
-  el.style.setProperty('--charge',itemChargeColor(progress));
-  el.querySelectorAll('.itemGaugePip').forEach((p,i)=>{p.classList.toggle('lit',i<progress);p.style.setProperty('--pip-charge',itemChargeColor(i+1));});
+  el.style.setProperty('--charge',itemChargeColor(Math.max(progress,1)));
+  el.style.setProperty('--fill', pct+'%');
+  const fill=el.querySelector('.itemGaugeFill');
+  if(fill){
+    fill.style.height = pct+'%';
+    fill.style.filter = pending ? 'brightness(1.2) saturate(1.2)' : '';
+  }
   const milestone=known?Math.floor(g.lines/5):0;if(milestone>Number(el.dataset.milestone||0)){el.classList.remove('itemGaugeReward');void el.offsetWidth;el.classList.add('itemGaugeReward');}el.dataset.milestone=milestone;
  }
 }
@@ -500,7 +494,7 @@ function startLoop(){
       startCuePending = false;
       started = true;
       hideOverlay();
-      ui.btnRestart.style.display = EMBED ? "none" : "";
+      ui.btnRestart.style.display = "";
       beginLoop();
     }, 900)
   ];

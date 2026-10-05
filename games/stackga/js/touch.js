@@ -60,6 +60,7 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
     const oppSize = sizeBoard(cvOpp, boardSlotW - 28-gaugeSpace, boardInnerH - 28, 56);
     if(boardCard){ boardCard.style.width=(meSize.cssW+28+gaugeSpace)+'px'; boardCard.style.height=(meSize.cssH+28)+'px'; }
     if(oppCard){ oppCard.style.width=(oppSize.cssW+28+gaugeSpace)+'px'; oppCard.style.height=(oppSize.cssH+28)+'px'; }
+    try{ document.documentElement.style.setProperty('--stack-item-gauge-h', clamp(Math.floor(meSize.cssH/3), 84, 240)+'px'); }catch(_){ }
 
     // NEXT stays compact in the center information rail.
     const nextInnerW = Math.max(60, centerW - 14);
@@ -102,6 +103,7 @@ export function fitCanvases(cvMe, cvOpp, cvNext, rows=0){
 
   if(nextCard) nextCard.style.height = nextCardH + 'px';
   if(oppCard)  oppCard.style.height  = oppCardH + 'px';
+  try{ document.documentElement.style.setProperty('--stack-item-gauge-h', clamp(Math.floor(meSize.cssH/3), 72, 170)+'px'); }catch(_){ }
   if(comboArea) comboArea.style.height = comboH + 'px';
 
   cvNext.width  = Math.floor(nextInner * dpr);
