@@ -101,7 +101,7 @@ let inventorySignature='';renderer.dashTrails?.clear();
 function updateHud(){
   const s=snapshot;if(!s)return;const master=s.masterId==='local',me=s.me||s.entities.find(e=>e.id===s.possession);
   renderer.sidebarOpen=!$('side').hidden;
-  $('timer').textContent=`${Math.floor(s.remaining/60)}:${String(Math.floor(s.remaining%60)).padStart(2,'0')}`;
+  const remaining=Math.max(0,600-s.time);$('timer').textContent=`${Math.floor(remaining/60)}:${String(Math.floor(remaining%60)).padStart(2,'0')}`;
   $('status').textContent=s.phase==='planning'?'방을 설계한 뒤 공략 시작 버튼을 누르세요':s.phase==='spawn'?`시작 위치 선택 · ${Math.ceil(10-s.time)}초`:master?s.possession?'보스 직접 조작 중':'방을 준비하고 모험가를 저지하세요':me?.dead?'유령 관전 · 클릭으로 생존자 따라가기':s.mode==='dungeon'?`${(me?.room||0)+1} / 8번 방`:'용암을 피해 생존하세요';
   $('objective').hidden=master;$('objective').innerHTML=master?'':s.mode==='dungeon'?`<b>${(s.objective?.room||0)+1}번 방 · 던전 공략</b><small>남은 몬스터 ${s.objective?.monsters||0} · 상자 ${s.objective?.chests||0}</small><small>${s.objective?.exit?'출구 열림 → 다음 방으로 이동':s.map.rooms[s.objective?.room]?.heal?'중앙 치유 샘 사용 · 전원 집결 '+s.objective.gathered+'/'+s.objective.livingParty+' · 20초 휴식':'몬스터를 처치해 출구를 여세요'}</small>`:`<b>아레나 · 생존 ${s.roster.filter(p=>!p.dead).length}명</b><small>장비를 모으고 용암을 피하세요</small>`;
   document.querySelector('.actions').hidden=master&&!s.possession;document.querySelector('.control-help').textContent=master?'방 선택 → 카드 선택 → 바닥 클릭 · 몬스터 선택 후 우클릭: 명령':'WASD 이동 · Shift 질주 · E 상호작용 · I / Tab 장비 · M 지도';

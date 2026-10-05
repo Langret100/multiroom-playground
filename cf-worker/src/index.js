@@ -3465,7 +3465,7 @@ export class RoomDO{
       if(this.meta.phase!=='playing'||!this.users.size){this._stopDungeon();return;}
       const time=Date.now();acc+=Math.min(.15,(time-last)/1000);last=time;
       while(acc>=1/60){this.dw.step(1/60);acc-=1/60;}
-      if(time-sendAt>=100){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id))this._send(ws,'dw_packet',{packet:this.dw.packet(id)});}
+      if(time-sendAt>=100){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id)){const packet=this.dw.packet(id);if(packet)this._send(ws,'dw_packet',{packet});}}
       if(this.dw.game.result){const result=this.dw.game.result;this._broadcast('result',{mode:this.meta.mode,done:true,...result});this._stopDungeon();this._endAndBackToLobby(3000);}
     }catch(error){console.error('Dungeon room tick',error);this._stopDungeon();this._broadcast('system',{text:'던전 연결이 종료되었습니다. 방에서 다시 시작해 주세요.'});this._endAndBackToLobby(0);}},50);
   }
