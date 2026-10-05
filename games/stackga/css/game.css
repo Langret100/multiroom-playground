@@ -617,69 +617,30 @@ html,body{background:#091626!important;color:#e4f8ff}
 #cvNext{position:absolute!important;left:50%!important;top:50%!important;transform:translate(-50%,-50%);width:calc(100% - 24px)!important;height:calc(100% - 24px)!important;max-width:none!important;max-height:none!important;margin:0!important;object-fit:contain;border-radius:0!important}
 @media(max-width:600px){#cvNext{width:calc(100% - 14px)!important;height:calc(100% - 14px)!important}}
 
-/* Item-mode gauge: attached outside the board frame, lowered, continuous fill. */
-.boardCard,.oppCard{position:relative;overflow:visible!important}
-.stackItems .boardCard{margin-left:30px!important;padding-left:12px!important}
-.stackItems .oppCard{margin-right:30px!important;padding-right:12px!important}
-.itemGauge{
-  --fill:0%;
-  --gauge-h:var(--stack-item-gauge-h,160px);
-  position:absolute;
-  left:-28px;
-  bottom:2px;
-  z-index:8;
-  width:24px;
-  display:flex;
-  flex-direction:column;
-  align-items:center;
-  gap:5px;
-  pointer-events:none;
-}
-#itemGaugeOpp{left:auto;right:-28px}
+/* Item mode: keep the side gauge beside each board, but lower it and render as a filled meter. */
+.boardCard,.oppCard{position:relative}
+.stackItems .boardCard{padding-left:34px!important}
+.stackItems .oppCard{padding-right:34px!important}
+.itemGauge{--charge:#78e5ff;--gauge-h:var(--stack-item-gauge-h,160px);--gauge-w:24px;--fill:0%;position:absolute;left:4px;bottom:18px;z-index:5;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;min-height:0;pointer-events:none}
+#itemGaugeOpp{--charge:#b9c9ff;left:auto;right:4px}
 .itemGauge[hidden],body:not(.stackItems) .itemGauge{display:none!important}
-.itemGaugeTitle{font-size:8px;line-height:1;font-weight:1000;letter-spacing:.4px;color:#78e5ff}
-#itemGaugeOpp .itemGaugeTitle{color:#b9c9ff}
-.itemGaugeMeter{
-  position:relative;
-  width:22px;
-  height:var(--gauge-h);
-  overflow:hidden;
-  border:1px solid rgba(111,220,255,.52);
-  border-radius:7px;
-  background:#0a2035;
-  box-shadow:inset 0 0 0 2px rgba(255,255,255,.035),0 5px 14px rgba(2,12,27,.36);
-}
-#itemGaugeOpp .itemGaugeMeter{border-color:rgba(185,201,255,.50)}
-.itemGaugeFill{
-  position:absolute;
-  left:2px;
-  right:2px;
-  bottom:2px;
-  height:var(--fill);
-  border-radius:4px 4px 3px 3px;
-  background:linear-gradient(to top,#43c9ff 0%,#59e7dc 30%,#a0ef78 54%,#f3df69 74%,#ffae67 88%,#ff79aa 100%);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.30),0 0 10px rgba(86,218,255,.25);
-  transition:height .18s ease-out;
-}
-.itemGaugeFill::after{
-  content:"";
-  position:absolute;
-  left:1px;
-  right:1px;
-  top:0;
-  height:5px;
-  border-radius:3px;
-  background:linear-gradient(180deg,rgba(255,255,255,.48),rgba(255,255,255,0));
-}
+.itemGaugeBottom{position:absolute}
+.itemGaugeTitle{font-size:8px;letter-spacing:.55px;font-weight:1000;color:var(--charge);text-shadow:0 0 8px color-mix(in srgb,var(--charge) 36%,transparent)}
+.itemGaugeMeter{position:relative;width:var(--gauge-w);height:var(--gauge-h);border-radius:14px;border:1px solid color-mix(in srgb,var(--charge) 42%, rgba(255,255,255,.14));background:linear-gradient(180deg,rgba(12,33,53,.96),rgba(6,17,30,.96));box-shadow:inset 0 1px rgba(230,250,255,.10), inset 0 0 0 1px rgba(255,255,255,.05), 0 6px 18px rgba(3,12,27,.45);overflow:hidden}
+.itemGaugeMeter::before{content:"";position:absolute;inset:2px;border-radius:11px;background:repeating-linear-gradient(to top,rgba(255,255,255,.04) 0 12%,rgba(255,255,255,0) 12% 20%),linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,0));pointer-events:none}
+.itemGaugeMeter::after{content:"";position:absolute;left:4px;right:4px;top:4px;bottom:4px;border-radius:10px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05);pointer-events:none}
+.itemGaugeFill{position:absolute;left:2px;right:2px;bottom:2px;height:var(--fill);min-height:0;border-radius:10px;transition:height .18s ease-out, filter .18s ease-out;background:linear-gradient(to top,#47c8ff 0%,#5ae6ff 20%,#6ef0d2 38%,#9ff06d 56%,#f0dc63 74%,#ffb35d 88%,#ff78a7 100%);box-shadow:0 0 14px color-mix(in srgb,var(--charge) 42%,transparent), inset 0 0 10px rgba(255,255,255,.24)}
+.itemGaugeFill::before{content:"";position:absolute;inset:0;background:repeating-linear-gradient(to top,rgba(255,255,255,.18) 0 10%,rgba(255,255,255,0) 10% 20%);mix-blend-mode:screen;opacity:.55}
+.itemGaugeCount{font-size:10px;line-height:1.1;color:#e4f8ff;white-space:nowrap;font-weight:900;text-shadow:0 1px 0 rgba(0,0,0,.18)}
 .itemGaugeReward{animation:gaugeReward .7s ease-out}
-@keyframes gaugeReward{0%,35%{filter:brightness(1.65) saturate(1.2)}100%{filter:brightness(1)}}
+@keyframes gaugeReward{0%,35%{filter:brightness(1.8) saturate(1.3)}100%{filter:brightness(1)}}
 @media(max-width:899px){
-  .stackItems .boardCard{margin-left:24px!important;padding-left:7px!important}
-  .stackItems .oppCard{margin-right:24px!important;padding-right:7px!important}
-  .itemGauge{left:-22px;bottom:2px;width:20px;gap:4px}
-  #itemGaugeOpp{left:auto;right:-22px}
-  .itemGaugeMeter{width:18px;border-radius:6px}
-  .itemGaugeTitle{font-size:7px}
+  .stackItems .boardCard{padding-left:28px!important}
+  .stackItems .oppCard{padding-right:28px!important}
+  .itemGauge{--gauge-w:20px;left:3px;bottom:14px;gap:5px}
+  #itemGaugeOpp{right:3px}
+  .itemGaugeTitle{font-size:7px;letter-spacing:.35px}
+  .itemGaugeCount{font-size:8px}
 }
 @media(prefers-reduced-motion:reduce){.itemGaugeReward{animation:none}.itemGaugeFill{transition:none}}
 
