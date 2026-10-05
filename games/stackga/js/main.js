@@ -61,7 +61,11 @@ try{
 // In the multiroom embed (iframe) we play per-game BGM from the parent page (room.html).
 // If we also play the game's internal music/SFX here, users will hear an extra rhythm/click track.
 // So: in embed mode disable internal audio and only send a "gesture" ping to the parent to unlock autoplay.
-const audio = createAudio({ musicUrl: EMBED ? null : "./assets/arcade-music.mp3" });
+const audio = createAudio({ musicUrl: EMBED ? "../../assets/audio/stackmusic.mp3" : "./assets/arcade-music.mp3" });
+// Embedded Stackga owns its BGM so playback happens inside the actual user-gesture
+// context. Parent-window playback can be rejected by autoplay policy because an
+// iframe gesture does not grant transient user activation to the parent.
+try{ audio.setMuted(localStorage.getItem("audio_enabled") === "0"); }catch(_){}
 // 소리 버튼은 제거됨. (필요 시 내부에서 음소거 토글만 유지)
 
 // "매칭" 버튼(단독) / "나가기" 버튼(로비-임베드)
@@ -86,6 +90,14 @@ function notifyParentGesture(){
 // start/retry audio on user gestures (mobile: 첫 play()가 실패할 수 있어 재시도 필요)
 window.addEventListener("pointerdown", ()=>{ notifyParentGesture(); audio.gestureStart(); }, { passive:true });
 window.addEventListener("keydown", ()=>{ notifyParentGesture(); audio.gestureStart(); });
+
+// Keep the embedded game's own BGM in sync with the room-wide mute preference.
+window.addEventListener("message", (e)=>{
+  const d = e?.data || {};
+  if (d && d.type === "audio_pref" && typeof d.enabled === "boolean") {
+    try{ audio.setMuted(!d.enabled); if (d.enabled) audio.gestureStart(); }catch(_){}
+  }
+});
 
 // Ensure BGM stops immediately when leaving the game to prevent room BGM overlap.
 const _stopBgmNow = ()=>{ try{ audio.stopMusic?.(); }catch{} };
@@ -191,7 +203,7 @@ function toggleFullscreen(){
 ui.btnFull?.addEventListener("click", toggleFullscreen);
 
 function showOverlay(title, desc, {showCpuBtn=false}={}){
-  if (EMBED) showCpuBtn = false;
+  if (EMBED) { showCpuBtn = false; if (ui.btnRestart) ui.btnRestart.style.display = "none"; }
   safeSetText(ui.overlayTitle, title);
   safeSetText(ui.overlayDesc, desc || "");
   ui.overlay.classList.remove("hidden");
@@ -488,7 +500,7 @@ function startLoop(){
       startCuePending = false;
       started = true;
       hideOverlay();
-      ui.btnRestart.style.display = "";
+      ui.btnRestart.style.display = EMBED ? "none" : "";
       beginLoop();
     }, 900)
   ];

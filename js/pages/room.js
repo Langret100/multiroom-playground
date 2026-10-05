@@ -437,7 +437,7 @@ function setupBgm(audioElId, btnId){
   // ---- Game BGM (per-game music during play) ----
   const GAME_BGM_MAP = {
     suika: "assets/audio/suikamusic.mp3",
-    stackga: "assets/audio/stackmusic.mp3",
+    // Stackga plays its BGM inside its iframe so the browser sees the real user gesture.
     // NOTE: soccmusic.mp3 파일은 games/soccer/ 안에 이미 있었지만 이 맵에
     // 등록이 안 되어 있어서 축구 경기 중 배경음악이 전혀 나오지 않던 버그.
     soccer: "games/soccer/soccmusic.mp3",

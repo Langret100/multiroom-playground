@@ -76,7 +76,7 @@
     <div id="log" class="hidden"></div>
   </div>
 
-  <script type="module" src="./js/main.js?v=20261002-controls3"></script>
+  <script type="module" src="./js/main.js?v=stack-audio-roomfix"></script>
 
 <script>
 (function(){
@@ -84,6 +84,8 @@
   if(sp.get("embed")==="1"){
     // Embedded mode: show exit label immediately (even before module loads)
     try{
+      const restart = document.getElementById("btnRestart");
+      if(restart) restart.style.display = "none";
       const b = document.getElementById("btnMatch");
       if(b){
         b.textContent = "나가기";
