@@ -93,7 +93,7 @@ export default {
     const path = url.pathname;
 
     if (path === "/api/version" && request.method === "GET") {
-      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261005-dungeon-v1' });
+      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261005-dungeon-v4' });
     }
 
     const upgrade = request.headers.get("Upgrade") || "";
