@@ -1,6 +1,9 @@
 (function(){
   // Game registry. Room creation cards and the in-room help panel both read this metadata.
   const GAME_REGISTRY = [
+{"id": "dungeonwarden", "name": "던전 수호 · 아레나", "category": "액션 · 던전", "type": "coop", "badgeClass": "coop", "maxClients": 8, "embedPath": "games/dungeonwarden/index.html?gameId=dungeonwarden&roomMode=arena&v=20261005-dungeon-v1", "cardImage": "assets/images/game_cards/dungeonwarden.webp?v=20261005", "lobbyDesc": "최대 8인 생존전. 시작 위치를 고르고 장비를 주워 용암을 피해 마지막까지 살아남으세요.", "descLines": ["10초 동안 시작 위치를 선택합니다. 용암이 찬 방은 지도에 표시됩니다.", "바닥 장비는 바로 줍고, 보물상자는 계산 문제를 풀어 엽니다.", "무기마다 다른 일반 공격과 특수 공격으로 상대를 제압하세요."], "pcHint": "WASD 이동 · Shift 질주 · 클릭/Space 공격 · Q 특수 · E 줍기/상자 · I 장비 · M 지도", "mobileHint": "왼쪽 조이스틱 이동 · 오른쪽 공격/특수/상호작용 버튼", "pcControls": [["WASD", "이동"], ["SHIFT", "질주"], ["CLICK / SPACE", "일반 공격"], ["Q", "특수 공격"], ["E", "줍기 / 상자"], ["I / TAB", "장비"], ["M", "지도"]], "mobileControls": [["조이스틱", "이동"], ["공격", "일반 공격"], ["특수", "무기 고유 공격"], ["상호작용", "줍기 / 상자"]]},
+{"id": "dungeonraid", "name": "던전 수호 · 공략", "category": "액션 · 던전", "type": "coop", "badgeClass": "coop", "maxClients": 8, "embedPath": "games/dungeonwarden/index.html?gameId=dungeonraid&roomMode=dungeon&v=20261005-dungeon-v1", "cardImage": "assets/images/game_cards/dungeonwarden.webp?v=20261005", "lobbyDesc": "최대 8명이 함께 장비를 모으고 던전의 8개 방과 보스를 공략하는 협동 액션.", "descLines": ["동료와 시야를 공유하며 방의 몬스터와 보스를 쓰러뜨립니다.", "장비는 실제 캐릭터 외형에 반영되고 무기마다 고유 공격이 있습니다.", "혼자 시작해도 AI 동료 두 명이 함께 따라다니며 돕습니다."], "pcHint": "WASD 이동 · Shift 질주 · 클릭/Space 공격 · Q 특수 · E 줍기/상자 · I 장비 · M 지도", "mobileHint": "왼쪽 조이스틱 이동 · 오른쪽 공격/특수/상호작용 버튼", "pcControls": [["WASD", "이동"], ["SHIFT", "질주"], ["CLICK / SPACE", "일반 공격"], ["Q", "특수 공격"], ["E", "줍기 / 상자"], ["I / TAB", "장비"], ["M", "지도"]], "mobileControls": [["조이스틱", "이동"], ["공격", "일반 공격"], ["특수", "무기 고유 공격"], ["상호작용", "줍기 / 상자"]]},
+{"id": "dungeonmaster", "name": "던전 수호 · 마스터", "category": "액션 · 던전", "type": "coop", "badgeClass": "coop", "maxClients": 8, "embedPath": "games/dungeonwarden/index.html?gameId=dungeonmaster&roomMode=master&v=20261005-dungeon-v1", "cardImage": "assets/images/game_cards/dungeonwarden.webp?v=20261005", "lobbyDesc": "방장은 던전마스터로 몬스터와 함정을 배치하고, 나머지 모험가는 던전을 돌파합니다.", "descLines": ["방장이 자원 범위 안에서 몬스터·함정·보물을 배치합니다.", "모험가는 장비를 확보하고 함께 던전을 돌파합니다.", "마스터는 보스를 직접 조작하거나 몬스터에게 명령할 수 있습니다."], "pcHint": "WASD 이동 · Shift 질주 · 클릭/Space 공격 · Q 특수 · E 줍기/상자 · I 장비 · M 지도", "mobileHint": "왼쪽 조이스틱 이동 · 오른쪽 공격/특수/상호작용 버튼", "pcControls": [["WASD", "이동"], ["SHIFT", "질주"], ["CLICK / SPACE", "일반 공격"], ["Q", "특수 공격"], ["E", "줍기 / 상자"], ["I / TAB", "장비"], ["M", "지도"]], "mobileControls": [["조이스틱", "이동"], ["공격", "일반 공격"], ["특수", "무기 고유 공격"], ["상호작용", "줍기 / 상자"]]},
     {
       id:'bloomshot', name:'블룸샷', category:'턴제 · 포격', type:'coop', badgeClass:'coop', maxClients:8,
       embedPath:'games/bloomshot/index.html?v=20260923-random-spawn-v1', cardImage:'games/bloomshot/assets/card-bloomshot.webp?v=1',
@@ -12,7 +15,7 @@
       mobileControls:[['◀ ▶','이동 / 방향'],['점프','점프'],['슬라이더','각도 / 파워'],['발사','현재 탄 발사']]
     },
     {
-      id:'starpaint', name:'별빛 컬러 배틀', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
+      id:'starpaint', name:'스타페인트', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
       embedPath:'games/starpaint/index.html?v=20260915-game-recovery-v11', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',
       descLines:['3개의 60초 라운드 동안 더 많은 블록을 자기 색으로 칠하세요.','1~4인은 기본 맵, 5~8인은 확장 맵에서 시작하며 10초마다 인원수에 맞춰 아이템이 보급됩니다.','아이템으로 상대를 밀치거나 바닥을 부수세요. 빙결 아이템은 X를 짧게 누르면 바로 앞에 던집니다. 3라운드에는 보스가 등장합니다.'],

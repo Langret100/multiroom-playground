@@ -1,3 +1,4 @@
+import {DungeonRoomRuntime} from './dungeon/room-runtime.mjs';
 /**
  * Cloudflare Workers + Durable Objects backend (Colyseus replacement).
  *
@@ -92,7 +93,7 @@ export default {
     const path = url.pathname;
 
     if (path === "/api/version" && request.method === "GET") {
-      return json({ ok:true, protocolVersion:PROTOCOL_VERSION });
+      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261005-dungeon-v1' });
     }
 
     const upgrade = request.headers.get("Upgrade") || "";
@@ -668,7 +669,7 @@ export class RoomDO{
       this.meta.mode === "snaketail" ||
       this.meta.mode === "mathexplorer" ||
       this.meta.mode === "math-explorer" ||
-      this.meta.mode === "starpaint"
+      this.meta.mode === "starpaint" || ["dungeonwarden","dungeonraid","dungeonmaster"].includes(this.meta.mode)
     );
     let humanCount = 0;
     for (const [uid] of this.users.entries()){
@@ -808,6 +809,9 @@ export class RoomDO{
           }
         }
 
+        if(this.dw&&this.meta.phase==='playing'&&!this.dw.game.roster.some(p=>p.id===wantUid)){
+          this._send(ws,'system',{text:'던전 경기가 진행 중입니다. 경기 종료 후 참가해 주세요.'});try{ws.close(1008,'match-in-progress');}catch(_){}return;
+        }
         // capacity check: reconnecting an existing uid does not consume a new seat.
         if (!this.users.has(wantUid) && this.users.size >= (this.meta.maxPlayers || 4)){
           this._send(ws, "system", { text:"방이 꽉 찼습니다.", ts: now() });
@@ -997,7 +1001,7 @@ export class RoomDO{
 
         if (!duel){
           // Co-op usually requires 2+ humans; allow solo for SuhakTokki and SnakeTail.
-          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer"].includes(this.meta.mode)) ? 1 : 2;
+          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer","dungeonwarden","dungeonraid","dungeonmaster"].includes(this.meta.mode)) ? 1 : 2;
           if (humanCount < minHumans){
             this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
             return;
@@ -1184,6 +1188,7 @@ export class RoomDO{
         }
 
         this.meta.phase = "playing";
+        if(['dungeonwarden','dungeonraid','dungeonmaster'].includes(this.meta.mode))this._startDungeon();
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
         if (this.meta.mode === "suhaktokki"){
@@ -1228,6 +1233,12 @@ export class RoomDO{
         return;
       }
 
+      if(['dw_sync','dw_input','dw_command'].includes(t)){
+        if(!['dungeonwarden','dungeonraid','dungeonmaster'].includes(this.meta.mode)||this.meta.phase!=='playing'||!this.users.has(uid)||!this.dw)return;
+        if(t==='dw_sync'){const player=this.dw.game.entities.find(e=>e.id===uid);if(player)player.bot=false;this._send(ws,'dw_packet',{packet:this.dw.packet(uid,true)});}
+        if(t==='dw_input'){const input=d.input||{};this.dw.input(uid,{mx:input.mx,my:input.my,aimX:input.aimX,aimY:input.aimY,attack:!!input.attack,special:!!input.special,sprint:!!input.sprint,block:!!input.block});}
+        if(t==='dw_command'){const c=d.command||{},allowed=['interact','answer','drop','swap','clone','attack','spawn','follow','place','fillRoom','startRaid','possess','bossSkill','order'];if(!allowed.includes(c.action))return;const clean={};for(const k of ['action','target','targetId','slot','room','type','tier','x','y','skill','answer','entity','special','id'])if(c[k]===null||['string','number','boolean'].includes(typeof c[k]))clean[k]=typeof c[k]==='string'?c[k].slice(0,100):c[k];delete clean.id;this.dw.command(uid,clean);}return;
+      }
       // ----- SuhakTokki relay (generic packet) -----
       if (t === "sk_msg"){
         if (this.meta.phase !== "playing") return;
@@ -2301,6 +2312,7 @@ export class RoomDO{
       this._recalcHost();
       this._applyHostFlags();
 
+      if(this.dw){if(this.dw.game.masterId===uid){this._broadcast('result',{mode:this.meta.mode,done:true,reason:'던전마스터가 퇴장했습니다.'});this._stopDungeon();this._endAndBackToLobby(2000);}else this.dw.leave(uid);}
       // ---- transient per-game state cleanup (no persistence) ----
       // Make sure a leaving player does not remain in any server-side snapshots
       // (prevents ghost state and avoids leaving per-user records in memory).
@@ -3434,6 +3446,18 @@ export class RoomDO{
   }
 
 
+  _stopDungeon(){if(this.dwTimer)clearInterval(this.dwTimer);this.dwTimer=null;this.dw=null;}
+  _startDungeon(){
+    this._stopDungeon();const cpu=this._cpuUid();const players=Array.from(this.users.entries()).filter(([id])=>id!==cpu).sort((a,b)=>Number(a[1].seat)-Number(b[1].seat)).map(([id,u])=>({id,name:u.nick}));
+    this.dw=new DungeonRoomRuntime(players,{mode:this.meta.mode==='dungeonwarden'?'arena':'dungeon',masterId:this.meta.mode==='dungeonmaster'?this.meta.ownerUserId:null});let last=Date.now(),acc=0,sendAt=0;
+    this.dwTimer=setInterval(()=>{try{
+      if(this.meta.phase!=='playing'||!this.users.size){this._stopDungeon();return;}
+      const time=Date.now();acc+=Math.min(.15,(time-last)/1000);last=time;
+      while(acc>=1/60){this.dw.step(1/60);acc-=1/60;}
+      if(time-sendAt>=100){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id))this._send(ws,'dw_packet',{packet:this.dw.packet(id)});}
+      if(this.dw.game.result){const result=this.dw.game.result;this._broadcast('result',{mode:this.meta.mode,done:true,...result});this._stopDungeon();this._endAndBackToLobby(3000);}
+    }catch(error){console.error('Dungeon room tick',error);this._stopDungeon();this._broadcast('system',{text:'던전 연결이 종료되었습니다. 방에서 다시 시작해 주세요.'});this._endAndBackToLobby(0);}},50);
+  }
   _endAndBackToLobby(delayMs){
     // Several clients may report the same shared game end nearly simultaneously.
     // Schedule exactly one reset/backToRoom broadcast for the room.
@@ -3441,6 +3465,7 @@ export class RoomDO{
     const d = Number(delayMs || 0);
     this._backToLobbyTimer = setTimeout(()=>{
       this._backToLobbyTimer = null;
+      this._stopDungeon();
       this.meta.phase = "lobby";
       this.meta.status = "waiting";
       this.tour = null;
@@ -3523,4 +3548,5 @@ export class RoomDO{
     return new Response("Not found", { status:404 });
   }
 }
+
 

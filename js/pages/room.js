@@ -1087,6 +1087,16 @@ function updatePreview(modeId){
     const srcWin = e.source;
     const duelWin = (()=>{ try{ return duel?.iframeEl?.contentWindow || null; }catch(_){ return null; } })();
     const fromMain = !!(duelWin && srcWin === duelWin);
+    // Dungeon iframe packets are restricted to the active same-origin game frame.
+    const dungeonModes=['dungeonwarden','dungeonraid','dungeonmaster'];
+    const activeDungeon=dungeonModes.includes(String(coop?.meta?.id||''));
+    const fromDungeon=activeDungeon&&d.gameId===coop.meta.id&&e.origin===location.origin&&(srcWin===duelWin||(!srcWin&&activeDungeon));
+    if(fromDungeon&&d.type==='bridge_ready'){duel.iframeReady=true;coop.iframeReady=true;sendCoopBridgeInit();return;}
+    if(fromDungeon&&['dw_sync','dw_input','dw_command','dw_quit'].includes(d.type)){
+      if(d.type==='dw_quit'){leaveToLobby();return;}
+      try{room.send(d.type,{input:d.input,command:d.command});}catch(_){}return;
+    }
+
     const fromCpu  = !!(cpuFrame.iframeEl && srcWin === cpuFrame.iframeEl.contentWindow);
     const isMxPacket = (d.type === "bridge_ready" || d.type === "mx_game_start_ack" || d.type === "mx_msg" || d.type === "mx_quit");
     const isBrPacket = (d.type === "bridge_ready" || d.type === "br_game_start_ack" || d.type === "br_msg" || d.type === "br_batch") && (!d.gameId || d.gameId === 'backrooms3d');
@@ -2276,9 +2286,9 @@ if(isDuel&&humanCount===1&&localSoloModes.has(modeId)&&isHost&&state.phase==='lo
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
-  if (modeId === 'bloomshot' && humanCount === 1){
+  if (['dungeonwarden','dungeonraid','dungeonmaster','bloomshot'].includes(modeId) && humanCount === 1){
     canStart = true;
-    startText = 'CPU 연습 시작';
+    startText = ['dungeonwarden','dungeonraid','dungeonmaster'].includes(modeId)?'AI와 게임 시작':'CPU 연습 시작';
     startAction = 'start';
    } else if (localSoloModes.has(modeId) && humanCount===1){
     canStart=true;startText='싱글 연습 시작';startAction='practice';
@@ -3590,6 +3600,7 @@ try{
           if (modeId === "soccer") postToMain({ type:"sc_compat_players", players: playerMap });
         }catch(_){ }
       });
+      room.onMessage('dw_packet',msg=>{if(['dungeonwarden','dungeonraid','dungeonmaster'].includes(coop?.meta?.id))postToMain({type:'dw_packet',gameId:coop.meta.id,packet:msg.packet});});
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
       });
