@@ -211,16 +211,44 @@ export class Renderer {
     let bubbles=0;for(const e of s.entities){if(!e.speech||bubbles>=3)continue;const p=this.screenPoint(e);if(p.x<35||p.x>this.width-35||p.y<90||p.y>this.height)continue;ctx.font='11px sans-serif';const text=e.speech.text,w=Math.min(220,ctx.measureText(text).width+20),x=Math.max(8,Math.min(this.width-w-8,p.x-w/2)),y=p.y-3*scale-25;ctx.fillStyle='#ece0c5';ctx.strokeStyle='#796448';ctx.lineWidth=2;ctx.beginPath();ctx.roundRect(x,y,w,29,5);ctx.fill();ctx.stroke();ctx.beginPath();ctx.moveTo(p.x-5,y+29);ctx.lineTo(p.x,y+35);ctx.lineTo(p.x+5,y+29);ctx.fill();ctx.fillStyle='#302838';ctx.textAlign='center';ctx.fillText(text,x+w/2,y+19);bubbles++;}
     ctx.restore();if(!overview)this.minimap(s);
   }
+  fogGeometry(s){
+    const rooms=s.map.rooms||[],corridors=s.map.corridors||[],obstacles=s.map.obstacles||[];
+    const key=[obstacles.map(o=>`${o.x},${o.y},${o.w},${o.h}`).join(';'),rooms.map(r=>`${r.x},${r.y},${r.w},${r.h},${r.locked?1:0}`).join(';'),corridors.map(c=>`${c.x},${c.y},${c.w},${c.h},${c.to||''}`).join(';')].join('|');
+    if(this._fogGeometry?.key===key)return this._fogGeometry;
+    const pack=values=>{const out=new Float32Array(values.length*4);let i=0;for(const r of values){out[i++]=r.x;out[i++]=r.y;out[i++]=r.x+r.w;out[i++]=r.y+r.h;}return out;};
+    const walk=[...rooms,...corridors.filter(c=>!c.to||!rooms[c.to]?.locked)];
+    this._fogGeometry={key,obstacles:pack(obstacles),walk:pack(walk)};return this._fogGeometry;
+  }
   drawFog(s){
     const ctx=this.ctx,scale=this.camera.scale;
     if(!this.fogCanvas){this.fogCanvas=document.createElement('canvas');this.fogCtx=this.fogCanvas.getContext('2d');this.lightCanvas=document.createElement('canvas');this.lightCtx=this.lightCanvas.getContext('2d');}
     for(const c of [this.fogCanvas,this.lightCanvas])if(c.width!==Math.ceil(this.width)||c.height!==Math.ceil(this.height)){c.width=Math.ceil(this.width);c.height=Math.ceil(this.height);}
     const f=this.fogCtx,l=this.lightCtx;f.clearRect(0,0,this.width,this.height);l.clearRect(0,0,this.width,this.height);f.globalCompositeOperation='source-over';f.fillStyle='#10111bb0';f.fillRect(0,0,this.width,this.height);
-    for(const rawSource of s.visionSources){const source={...rawSource,...this.renderPositions.get(rawSource.id)};const p=this.screenPoint(source),radius=source.poison?.6:Math.min(45,source.radius),omni=source.fullRoom||source.poison,arc=Math.PI,start=(source.facing||0)-Math.PI;this.rayCache=this.rayCache||new Map();const key=source.id||String(source.x),old=this.rayCache.get(key),turn=source.facing||0;let worldPoints=old?.points;
-      if(!old||s.time-old.at>1/30||Math.abs(turn-old.turn)>.08||Math.hypot(source.x-old.x,source.y-old.y)>.2||old.radius!==radius){worldPoints=[];for(let i=0;i<=96;i++){const angle=start+arc*2*i/96;const rayRadius=omni||Math.cos(angle-turn)>=Math.cos(source.arc||Math.PI/3)?radius:Math.min(radius,source.nearRadius||3);let far=0;for(let d=.2;d<=rayRadius;d+=.25){const q={x:source.x+Math.cos(angle)*d,y:source.y+Math.sin(angle)*d};if(s.map.obstacles.some(o=>inside(q,o))||!(s.map.rooms.some(r=>inside(q,r))||s.map.corridors.some(r=>inside(q,r)&&(!r.to||!s.map.rooms[r.to].locked))))break;far=d;}worldPoints.push({x:source.x+Math.cos(angle)*far,y:source.y+Math.sin(angle)*far});}this.rayCache.set(key,{points:worldPoints,at:s.time,turn,x:source.x,y:source.y,radius});}
-      this.lightTracks??=new Map();const previousLight=this.lightTracks.get(key),lightBlend=1-Math.exp(-24*(this.frameDt||1/60));const localPoints=worldPoints.map((q,i)=>{const target={x:q.x-(this.rayCache.get(key)?.x||0),y:q.y-(this.rayCache.get(key)?.y||0)},prior=previousLight?.[i];return prior?{x:prior.x+(target.x-prior.x)*lightBlend,y:prior.y+(target.y-prior.y)*lightBlend}:target;});this.lightTracks.set(key,localPoints);const points=localPoints.map(q=>this.screenPoint({x:source.x+q.x,y:source.y+q.y}));
-      l.save();l.beginPath();l.moveTo(p.x,p.y);for(const q of points)l.lineTo(q.x,q.y);l.closePath();l.clip();const g=l.createRadialGradient(p.x,p.y,0,p.x,p.y,radius*scale);g.addColorStop(0,'#fffffffa');g.addColorStop(.35,'#ffffffe8');g.addColorStop(.65,'#ffffffa0');g.addColorStop(.85,'#ffffff40');g.addColorStop(1,'#ffffff00');l.fillStyle=g;l.fillRect(0,0,this.width,this.height);const near=l.createRadialGradient(p.x,p.y,0,p.x,p.y,Math.min(radius,3)*scale);near.addColorStop(0,'#fffffffa');near.addColorStop(.45,'#ffffffd0');near.addColorStop(.75,'#ffffff60');near.addColorStop(1,'#ffffff00');l.fillStyle=near;l.fillRect(p.x-3*scale,p.y-3*scale,6*scale,6*scale);l.restore();
-
+    const geometry=this.fogGeometry(s),blocked=(x,y)=>{const obs=geometry.obstacles;for(let i=0;i<obs.length;i+=4)if(x>=obs[i]&&x<=obs[i+2]&&y>=obs[i+1]&&y<=obs[i+3])return true;const walk=geometry.walk;for(let i=0;i<walk.length;i+=4)if(x>=walk[i]&&x<=walk[i+2]&&y>=walk[i+1]&&y<=walk[i+3])return false;return true;};
+    const RAYS=96,POINTS=RAYS+1;
+    this.rayCache??=new Map();this.lightTracks??=new Map();
+    for(const rawSource of s.visionSources){
+      const rp=this.renderPositions.get(rawSource.id),sourceX=rp?.x??rawSource.x,sourceY=rp?.y??rawSource.y,turn=rawSource.facing||0;
+      const p=this.screenPoint({x:sourceX,y:sourceY}),radius=rawSource.poison?.6:Math.min(45,rawSource.radius),omni=rawSource.fullRoom||rawSource.poison,arc=Math.PI,start=turn-Math.PI,key=rawSource.id||String(sourceX);
+      let cache=this.rayCache.get(key),worldPoints=cache?.points;
+      const recalc=!cache||s.time-cache.at>1/30||Math.abs(turn-cache.turn)>.08||Math.hypot(sourceX-cache.x,sourceY-cache.y)>.2||cache.radius!==radius;
+      if(recalc){
+        if(!(worldPoints instanceof Float32Array)||worldPoints.length!==POINTS*2)worldPoints=new Float32Array(POINTS*2);
+        for(let i=0;i<POINTS;i++){
+          const angle=start+arc*2*i/RAYS,ca=Math.cos(angle),sa=Math.sin(angle),rayRadius=omni||Math.cos(angle-turn)>=Math.cos(rawSource.arc||Math.PI/3)?radius:Math.min(radius,rawSource.nearRadius||3);let far=0;
+          for(let d=.2;d<=rayRadius;d+=.25){const x=sourceX+ca*d,y=sourceY+sa*d;if(blocked(x,y))break;far=d;}
+          worldPoints[i*2]=sourceX+ca*far;worldPoints[i*2+1]=sourceY+sa*far;
+        }
+        cache={points:worldPoints,at:s.time,turn,x:sourceX,y:sourceY,radius};this.rayCache.set(key,cache);
+      }
+      let local=this.lightTracks.get(key);if(!(local instanceof Float32Array)||local.length!==POINTS*2){local=new Float32Array(POINTS*2);for(let i=0;i<POINTS;i++){local[i*2]=worldPoints[i*2]-cache.x;local[i*2+1]=worldPoints[i*2+1]-cache.y;}this.lightTracks.set(key,local);}
+      const lightBlend=1-Math.exp(-24*(this.frameDt||1/60));
+      l.save();l.beginPath();l.moveTo(p.x,p.y);
+      for(let i=0;i<POINTS;i++){
+        const ix=i*2,tx=worldPoints[ix]-cache.x,ty=worldPoints[ix+1]-cache.y;local[ix]+=(tx-local[ix])*lightBlend;local[ix+1]+=(ty-local[ix+1])*lightBlend;
+        const sx=(sourceX+local[ix]-this.camera.x)*this.camera.scale+this.width/2,sy=(sourceY+local[ix+1]-this.camera.y)*this.camera.scale*this.projectionY+this.height/2;l.lineTo(sx,sy);
+      }
+      l.closePath();l.clip();const g=l.createRadialGradient(p.x,p.y,0,p.x,p.y,radius*scale);g.addColorStop(0,'#fffffffa');g.addColorStop(.35,'#ffffffe8');g.addColorStop(.65,'#ffffffa0');g.addColorStop(.85,'#ffffff40');g.addColorStop(1,'#ffffff00');l.fillStyle=g;l.fillRect(0,0,this.width,this.height);const near=l.createRadialGradient(p.x,p.y,0,p.x,p.y,Math.min(radius,3)*scale);near.addColorStop(0,'#fffffffa');near.addColorStop(.45,'#ffffffd0');near.addColorStop(.75,'#ffffff60');near.addColorStop(1,'#ffffff00');l.fillStyle=near;l.fillRect(p.x-3*scale,p.y-3*scale,6*scale,6*scale);l.restore();
     }
     f.globalCompositeOperation='destination-out';f.filter=`blur(${Math.max(10,Math.min(18,scale*.65))}px)`;f.drawImage(this.lightCanvas,0,0);f.filter='none';f.globalCompositeOperation='source-over';ctx.drawImage(this.fogCanvas,0,0,this.width,this.height);
   }
