@@ -12,7 +12,7 @@ export class DungeonGame {
     this.options=options;this.seed=options.seed??Date.now();this.itemCatalog=createMatchItemCatalog(this.seed);this.random=rng(this.seed);this.serial=0;this.time=0;this.tickId=0;
     this.mode=options.mode==='dungeon'?'dungeon':'arena';this.role=options.role==='master'?'master':'adventurer';
     this.map=buildMap(this.mode,this.random);this.entities=[];this.loot=[];this.chests=[];this.traps=[];this.projectiles=[];this.zones=[];this.effects=[];
-    this.messages=[];this.result=null;this.phase=this.mode==='arena'?'spawn':this.role==='master'?'planning':'playing';this.spawnUntil=10;this.respawnAt=60;this.currentRoom=0;this.healUntil=0;
+    this.messages=[];this.result=null;this.phase=this.mode==='arena'?'spawn':this.role==='master'?'planning':'playing';this.spawnUntil=10;this.respawnAt=60;this.currentRoom=0;this.healUntil=0;this.arenaWave=0;this.arenaReinforceAt=Infinity;this.arenaWarnAt=Infinity;this.arenaWarned=false;
     this.masterId=this.mode==='dungeon'?(this.role==='master'?(options.masterId||'local'):'ai-master'):null;
     this.possession=null;this.directed=new Map();this.builders={};this.quizByPlayer=new Map();this.inputs=new Map();this.commands=[];
     this.roster=(options.roster||[{id:'local',name:'나'}]).map(p=>({...p}));const botCount=clamp(options.bots??2,0,2);
@@ -31,7 +31,7 @@ export class DungeonGame {
         if(r.id===0)for(let i=0;i<this.partySize;i++)this.addChest(r,0,{x:r.x+6+(i%4)*3,y:r.y+6+Math.floor(i/4)*3},2);
         if(r.id===1)for(let i=0;i<this.partySize;i++)this.addMonster('skeleton',0,r);
       }else{
-        const n=1;for(let i=0;i<n;i++){const slime=this.addMonster('slime',0,r);slime.equipment={};slime.base={hp:18,attack:3,defense:0,agility:100};slime.speed=1.8;slime.maxHp=18;slime.hp=18;slime.starterSlime=true;}
+        const n=1;for(let i=0;i<n;i++){const slime=this.addMonster('slime',0,r);slime.equipment={};slime.base={hp:45,attack:5,defense:0,agility:100};slime.speed=1.8;slime.maxHp=45;slime.hp=45;slime.starterSlime=true;}
         for(let i=0;i<1+(5-n);i++)this.addChest(r);
       }
     }
@@ -45,7 +45,7 @@ export class DungeonGame {
   note(text){this.messages.push({id:this.serial++,time:this.time,text});if(this.messages.length>5)this.messages.shift();}
   actor(id,kind,x,y,extra={}){
     const main=this.createItem(this.id('item'),{kind:'main',tier:0,starter:true});
-    return {id,kind,x,y,room:0,name:id,team:'monsters',hp:100,maxHp:100,base:{hp:100,attack:20,defense:10,agility:100},equipment:{main,off:null,helmet:null,armor:null,boots:null},facing:Math.PI/2,
+    return {id,kind,x,y,room:0,name:id,team:'monsters',hp:120,maxHp:120,base:{hp:120,attack:20,defense:10,agility:100},equipment:{main,off:null,helmet:null,armor:null,boots:null},facing:Math.PI/2,
       cooldowns:{attack:0,special:0},guard:5,guardRecovery:0,dash:3,dashRecovery:0,blocking:false,dead:false,stun:0,root:0,slow:0,immune:0,invuln:0,burn:0,poison:0,bleed:0,acid:0,attackPose:0,cast:null,lastMove:0,aiAt:0,...extra};
   }
   stats(e){
@@ -105,15 +105,55 @@ export class DungeonGame {
     if(e.type==='bombardier'){this.scheduleZone(e,'meteor',target,2,.95,this.attackDamage(e));e.cast={kind:'bomb-windup',ends:this.time+.65,x:target.x,y:target.y};e.cooldowns.attack=2.8;this.fx('cast',e,aim,.65);}
     else this.attack(e,{aimX:target.x,aimY:target.y});
   }
+  arenaWaveInfo(wave=this.arenaWave||0){
+    const tiers=[0,1,2,3,3],tier=tiers[Math.min(wave,tiers.length-1)];
+    const labels=['일반','R','SR','SSR'];
+    return {tier,label:labels[tier],name:['1차','2차','3차','4차','최종'][Math.min(wave,4)]};
+  }
+  arenaSpawnWarning(){
+    const wave=this.arenaWave||0,{label}=this.arenaWaveInfo(wave);
+    const bossChance=[0,.08,.12,.16,.20][Math.min(wave,4)];
+    this.note(`⚠ 몬스터 출현 임박 · 약 5초 후 ${label} 증원이 각 방 모서리에서 진입합니다.${bossChance>0?' 강력한 보스가 섞일 수도 있습니다.':''}`);
+    this.arenaWarned=true;
+  }
   arenaReinforcements(){
-    this.arenaReinforced=true;this.note('추가 몬스터가 모서리 벽에서 진입합니다!');
-    for(const r of this.map.rooms)for(let i=0;i<2;i++){
-      const corners=[{x:r.x+1.2,y:r.y+1.2},{x:r.x+r.w-1.2,y:r.y+1.2},{x:r.x+1.2,y:r.y+r.h-1.2},{x:r.x+r.w-1.2,y:r.y+r.h-1.2}];
-      const to=corners[(r.id+i*2)%4];if(!walkable(this.map,to,.48)||!bodyClear(this.map,{kind:'monster',id:'incoming',dead:false},to))continue;
-      const e=this.addMonster(['archer','mage','bombardier','healer'][(r.id+i)%4],0,r,to);
-      e.enterTo={...to};e.enterFrom={x:to.x+(to.x<r.x+r.w/2?-1:1),y:to.y+(to.y<r.y+r.h/2?-1:1)};e.x=e.enterFrom.x;e.y=e.enterFrom.y;e.enterUntil=this.time+1.2;e.invuln=1.2;
-      this.fx('entry',to,0,1.2,{radius:1});
+    const wave=this.arenaWave||0,{tier,label,name}=this.arenaWaveInfo(wave);
+    const pools=[
+      ['slime','goblin','bat','skeleton'],
+      ['skeleton','goblin','archer','spider'],
+      ['archer','mage','bombardier','ogre','spectre'],
+      ['mage','bombardier','ogre','spectre','archer'],
+      ['ogre','spectre','mage','bombardier']
+    ];
+    const pool=pools[Math.min(wave,pools.length-1)],rooms=this.map.rooms.filter(r=>!r.lava);
+    const combatCount=r=>this.entities.filter(e=>e.kind==='monster'&&e.type!=='treasure'&&!e.dead&&e.room===r.id).length;
+    const eligible=rooms.filter(r=>combatCount(r)<3);
+    const bossChance=[0,.08,.12,.16,.20][Math.min(wave,4)];
+    const bossRoom=eligible.length&&this.random()<bossChance?eligible[Math.floor(this.random()*eligible.length)]:null;
+    const bossTypes=['golem','lich','dragon'];
+    this.note(`${name} 증원 · ${label} 몬스터가 진입합니다! 방당 최대 3마리`);
+    for(const r of rooms){
+      if(combatCount(r)>=3)continue;
+      if(bossRoom&&r.id===bossRoom.id){
+        const bossType=bossTypes[Math.floor(this.random()*bossTypes.length)],p=this.point(r),e=this.addMonster(bossType,3,r,p);
+        e.spawnRevealUntil=this.time+1.4;e.invuln=1.4;
+        this.fx('entry',p,0,1.4,{radius:2.2});
+        this.note(`★ ${r.id+1}번 방에 최고티어 보스 · ${e.name} 출현!`);
+        continue;
+      }
+      const corners=[{x:r.x+1.4,y:r.y+1.4},{x:r.x+r.w-1.4,y:r.y+1.4},{x:r.x+1.4,y:r.y+r.h-1.4},{x:r.x+r.w-1.4,y:r.y+r.h-1.4}];
+      let to=null;for(let i=0;i<4;i++){const c=corners[(r.id+wave+i)%4];if(walkable(this.map,c,.48)&&bodyClear(this.map,{kind:'monster',id:'incoming',dead:false},c)&&!this.entities.some(m=>m.kind==='monster'&&!m.dead&&distance(m,c)<2.2)){to=c;break;}}
+      if(!to)continue;
+      const type=pool[(r.id+wave)%pool.length],e=this.addMonster(type,tier,r,to);
+      const sx=to.x<r.x+r.w/2?-1:1,sy=to.y<r.y+r.h/2?-1:1;
+      e.enterTo={...to};e.enterFrom={x:to.x+sx*2.2,y:to.y+sy*2.2};e.x=e.enterFrom.x;e.y=e.enterFrom.y;e.enterUntil=this.time+1.35;e.invuln=1.35;
+      this.fx('entry',to,0,1.35,{radius:1.15});
     }
+    this.arenaWave=wave+1;
+    const schedule=[120,240,360,480];
+    this.arenaReinforceAt=schedule[wave]??Infinity;
+    this.arenaWarnAt=Number.isFinite(this.arenaReinforceAt)?Math.max(this.time+1,this.arenaReinforceAt-5):Infinity;
+    this.arenaWarned=false;
   }
   autoBuild(){for(const r of this.map.rooms.filter(x=>x.editable))this.fillRoom(r.id);}
   fillRoom(room){
@@ -462,9 +502,10 @@ export class DungeonGame {
   step(dt=.05){
     if(this.result)return;this.map.bodies=this.entities;if(this.phase==='planning'){if(this.commands.length)this.tickId++;for(const c of this.commands.splice(0))this.process(c.id,c);if(this.phase==='planning')return;}dt=clamp(finite(dt,.05),0,.1);this.time+=dt;this.tickId++;
     for(const c of this.commands.splice(0))this.process(c.id,c);
-    if(this.phase==='spawn'){if(this.time>=this.spawnUntil){this.phase='playing';this.arenaReinforceAt=this.time+20;this.note('20초 후 추가 몬스터가 진입합니다.');}return;}
+    if(this.phase==='spawn'){if(this.time>=this.spawnUntil){this.phase='playing';this.arenaWave=0;this.arenaReinforceAt=30;this.arenaWarnAt=25;this.arenaWarned=false;this.note('20초 후 첫 몬스터 증원이 시작됩니다. 각 방 최대 3마리 · 시간이 흐를수록 고티어가 등장합니다.');}return;}
     if(this.treasureRespawnAt&&this.time>=this.treasureRespawnAt){this.entities=this.entities.filter(e=>e.type!=='treasure'||!e.dead);this.treasureRespawnAt=0;this.spawnTreasure();this.map.bodies=this.entities;}
-    if(this.mode==='arena'&&!this.arenaReinforced&&this.time>=this.arenaReinforceAt)this.arenaReinforcements();
+    if(this.mode==='arena'&&!this.arenaWarned&&this.time>=this.arenaWarnAt&&this.time<this.arenaReinforceAt)this.arenaSpawnWarning();
+    if(this.mode==='arena'&&this.time>=this.arenaReinforceAt)this.arenaReinforcements();
     for(const e of this.entities){
       if(e.emergeUntil>this.time)continue;
       if(e.enterUntil>this.time){const t=1-(e.enterUntil-this.time)/1.2;e.x=e.enterFrom.x+(e.enterTo.x-e.enterFrom.x)*t;e.y=e.enterFrom.y+(e.enterTo.y-e.enterFrom.y)*t;continue;}

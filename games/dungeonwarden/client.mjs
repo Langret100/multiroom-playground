@@ -3,7 +3,7 @@ import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=0.5.4';
+import {Renderer} from './renderer.mjs?v=0.5.6';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
 import {roomAt} from './shared/world.mjs';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);
@@ -109,7 +109,6 @@ function setPhaseBanner({show=false,title='',sub='',timeLabel='',progress=1}={})
   timer.hidden=!hasTimer;
   if(hasTimer){label.textContent=timeLabel;fill.style.width=`${Math.max(0,Math.min(1,progress))*100}%`;}
 }
-
 function updateHud(){
   const s=snapshot;if(!s)return;const master=s.masterId==='local',me=s.me||s.entities.find(e=>e.id===s.possession);
   renderer.sidebarOpen=!$('side').hidden;
