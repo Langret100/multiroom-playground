@@ -437,7 +437,7 @@ function setupBgm(audioElId, btnId){
   // ---- Game BGM (per-game music during play) ----
   const GAME_BGM_MAP = {
     suika: "assets/audio/suikamusic.mp3",
-    // Stackga plays its BGM inside its iframe so the browser sees the real user gesture.
+    stackga: "assets/audio/stackmusic.mp3",
     // NOTE: soccmusic.mp3 파일은 games/soccer/ 안에 이미 있었지만 이 맵에
     // 등록이 안 되어 있어서 축구 경기 중 배경음악이 전혀 나오지 않던 버그.
     soccer: "games/soccer/soccmusic.mp3",
@@ -3907,21 +3907,26 @@ try{
 
   function leaveToLobby(){
     try{ stopGameBgm(); }catch(_){}
-    try{
-      if (room) room.leave();
-    }catch(_){}
+    // Tell the room server explicitly before destroying this page/iframe. In an
+    // embedded room, immediately swapping the iframe to about:blank can otherwise
+    // abort the WebSocket close frame and leave a ghost 1/N room in the lobby.
+    try{ room?.send?.('client_leave', { at: Date.now(), reason:'leave_to_lobby' }); }catch(_){}
     // clear room chat UI (no persistence)
     if (els.roomChatLog) els.roomChatLog.innerHTML = "";
     try{ window.__fsNavigating = true; }catch(_){ }
 
-    // If this room is running inside the lobby fullscreen overlay,
-    // ask the parent to close the iframe instead of navigating.
-    if (isEmbedded){
-      try{ window.parent.postMessage({ type:'embedded_room_leave' }, '*'); }catch(_){ }
-      return;
-    }
+    const finishLeave = ()=>{
+      try{ room?.leave(); }catch(_){}
+      if (isEmbedded){
+        try{ window.parent.postMessage({ type:'embedded_room_leave' }, '*'); }catch(_){ }
+        return;
+      }
+      location.href = "./index.html";
+    };
 
-    location.href = "./index.html";
+    // A very short grace is enough to put client_leave on the socket while keeping
+    // the UI responsive. The server then performs the authoritative cleanup.
+    setTimeout(finishLeave, 90);
   }
 
   connect();
