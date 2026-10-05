@@ -26,18 +26,6 @@ export class RoomTransport {
   this.lastReceiveAt=now;this.frames.push({at:now,state:next});if(this.frames.length>12)this.frames.shift();
   this.reconcileLocal(next.me||next.entities?.find(e=>e.id==='local'));
  }
- reconcileLocal(server){
-  if(!server)return;this.serverMe=server;
-  if(!this.predictedMe||this.predictedMe.room!==server.room||this.predictedMe.dead!==server.dead){this.predictedMe=cloneEntity(server);this.correction.x=this.correction.y=0;return;}
-  const dx=server.x-this.predictedMe.x,dy=server.y-this.predictedMe.y,dist=Math.hypot(dx,dy);
-  if(dist>2.2){this.predictedMe=cloneEntity(server);this.correction.x=this.correction.y=0;return;}
-  this.correction.x+=dx;this.correction.y+=dy;
-  // Keep all non-position authoritative fields current.
-  const x=this.predictedMe.x,y=this.predictedMe.y;
-  this.predictedMe=cloneEntity(server);this.predictedMe.x=x;this.predictedMe.y=y;
- }
- sendInput(input){this.pending=input||{};}
- sendCommand(command){const c={...command};if(c.target==='local')c.target=this.id;if(c.targetId==='local')c.targetId=this.id;this.post('dw_command',{command:c});}
  localSpeed(e){
   let agility=e.base?.agility??100;
   for(const item of Object.values(e.equipment||{}))if(item?.stats?.agility)agility+=item.stats.agility;
@@ -46,10 +34,8 @@ export class RoomTransport {
   if(main&&WEAPONS[main.type]?.hands===1&&!off)speed*=1.07;
   return speed;
  }
- predictLocal(dt){
-  const e=this.predictedMe,s=this.latest,i=this.pending||{};if(!e||!s?.map||e.dead)return;
-  // Smoothly absorb normal server reconciliation without creating a visible snap.
-  const settle=1-Math.exp(-dt*12);e.x+=this.correction.x*settle;e.y+=this.correction.y*settle;this.correction.x*=1-settle;this.correction.y*=1-settle;
+ advanceLocal(e,dt){
+  const s=this.latest,i=this.pending||{};if(!e||!s?.map||e.dead||dt<=0)return;
   const dx=Number(i.mx)||0,dy=Number(i.my)||0,len=Math.hypot(dx,dy);
   if(!len||e.stun>0||e.root>0||e.cast)return;
   let speed=this.localSpeed(e);
@@ -58,6 +44,39 @@ export class RoomTransport {
   const map={...s.map,bodies:(s.entities||[]).filter(x=>x.id!=='local')};
   move(map,e,dx/Math.max(1,len)*speed*dt,dy/Math.max(1,len)*speed*dt,false);
   if(!WEAPONS[e.equipment?.main?.type]?.range&&!(i.block&&e.equipment?.off?.type==='shield'))e.facing=Math.atan2(dy,dx);
+ }
+ reconcileLocal(server){
+  if(!server)return;
+  const previousServer=this.serverMe;this.serverMe=server;
+  if(!this.predictedMe||this.predictedMe.room!==server.room||this.predictedMe.dead!==server.dead){this.predictedMe=cloneEntity(server);this.correction.x=this.correction.y=0;return;}
+
+  // Server snapshots arrive at ~10 Hz and therefore describe a position roughly one
+  // snapshot interval behind the locally predicted position. Comparing that old
+  // position directly with the prediction makes every packet look like an error and
+  // produces the visible forward/backward tug. Build an authoritative target at the
+  // same visual time by advancing the fresh server state by one smoothed packet gap.
+  const target=cloneEntity(server);
+  const moving=Math.hypot(Number(this.pending?.mx)||0,Number(this.pending?.my)||0)>.001;
+  if(moving&&previousServer&&previousServer.room===server.room&&!server.dead)this.advanceLocal(target,clamp(this.arrivalGap,.06,.14));
+
+  const dx=target.x-this.predictedMe.x,dy=target.y-this.predictedMe.y,dist=Math.hypot(dx,dy);
+  if(dist>2.2){this.predictedMe=target;this.correction.x=this.correction.y=0;return;}
+
+  // Replace the outstanding correction instead of accumulating the full error again
+  // on every packet. This keeps genuine collision/knockback correction, but removes
+  // the oscillating backlog that caused small backward jumps while walking.
+  this.correction.x=dx;this.correction.y=dy;
+  const x=this.predictedMe.x,y=this.predictedMe.y,facing=this.predictedMe.facing;
+  this.predictedMe=cloneEntity(server);this.predictedMe.x=x;this.predictedMe.y=y;this.predictedMe.facing=facing;
+ }
+ sendInput(input){this.pending=input||{};}
+ sendCommand(command){const c={...command};if(c.target==='local')c.target=this.id;if(c.targetId==='local')c.targetId=this.id;this.post('dw_command',{command:c});}
+ predictLocal(dt){
+  const e=this.predictedMe;if(!e||!this.latest?.map||e.dead)return;
+  // A fresh correction represents only current divergence; never stack stale packet
+  // errors. Settle it without changing the authoritative gameplay simulation.
+  const settle=1-Math.exp(-dt*14);e.x+=this.correction.x*settle;e.y+=this.correction.y*settle;this.correction.x*=1-settle;this.correction.y*=1-settle;
+  this.advanceLocal(e,dt);
  }
  update(dt){
   this.clock+=dt;this.predictLocal(dt);
