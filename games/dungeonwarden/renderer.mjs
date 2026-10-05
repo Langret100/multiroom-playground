@@ -83,6 +83,42 @@ export class Renderer {
     for(const x of [r.x+8,r.x+r.w-9]){const frame=Math.floor(time*5)%3;this.region('wall_fountain_top_1',x,r.y-1);this.region('wall_fountain_mid_blue_anim_f'+frame,x,r.y);this.region('wall_fountain_basin_blue_anim_f'+frame,x,r.y+1);}
   }
 
+  drawPlanningHighlights(s,overview,master){
+    if(!(master&&s.mode==='dungeon'&&s.phase==='planning'))return;
+    const ctx=this.ctx;
+    const pulse=.55+.45*Math.sin(s.time*4.2);
+    for(const r of s.map.rooms){
+      if(r.id<=0) continue;
+      const buildable=!!s.builders?.[r.id];
+      if(!buildable){
+        ctx.save();
+        ctx.fillStyle='rgba(0,0,0,.72)';
+        ctx.fillRect(r.x,r.y,r.w,r.h);
+        ctx.strokeStyle='rgba(30,34,40,.95)';
+        ctx.lineWidth=2/this.camera.scale;
+        ctx.strokeRect(r.x,r.y,r.w,r.h);
+        ctx.restore();
+        continue;
+      }
+      ctx.save();
+      ctx.fillStyle=`rgba(112, 240, 196, ${0.10+0.06*pulse})`;
+      ctx.fillRect(r.x+.18,r.y+.18,r.w-.36,r.h-.36);
+      ctx.strokeStyle=`rgba(248, 224, 139, ${0.48+0.36*pulse})`;
+      ctx.lineWidth=3/this.camera.scale;
+      ctx.shadowColor='rgba(126,217,197,.78)';
+      ctx.shadowBlur=20/this.camera.scale;
+      ctx.strokeRect(r.x+.15,r.y+.15,r.w-.3,r.h-.3);
+      ctx.shadowBlur=0;
+      if(overview){
+        ctx.fillStyle='rgba(236,245,223,.96)';
+        ctx.font=`${11/this.camera.scale}px monospace`;
+        ctx.textAlign='center';
+        ctx.fillText('배치 가능',r.x+r.w/2,r.y+r.h/2+2/this.camera.scale);
+      }
+      ctx.restore();
+    }
+  }
+
   draw(snapshot,dt){
     if(!snapshot)return;this.frameDt=dt;const s=snapshot,ctx=this.ctx,master=s.masterId==='local';
     const focus=s.me||s.entities.find(e=>e.id===s.possession);this.hitStop=Math.max(0,this.hitStop-dt);
@@ -107,6 +143,7 @@ export class Renderer {
       if(r.heal){ctx.fillStyle='#75d7bd';ctx.beginPath();ctx.arc(r.x+r.w/2,r.y+r.h/2,2,0,Math.PI*2);ctx.fill();}
       if(overview){ctx.fillStyle='#d2dce8';ctx.font=`${12/scale}px sans-serif`;ctx.textAlign='center';ctx.fillText(`${r.id+1}${r.lava?' / 용암':''}`,r.x+r.w/2,r.y+6);}
     }
+    this.drawPlanningHighlights(s,overview,master);
     for(const o of s.map.obstacles){ctx.fillStyle='#111d2c';ctx.fillRect(o.x+.4,o.y+.5,o.w,o.h);ctx.fillStyle='#526171';ctx.fillRect(o.x,o.y,o.w,o.h);ctx.fillStyle='#6b7988';ctx.fillRect(o.x,o.y,o.w,.3);this.region(o.fixed?'column':'crate',o.x,o.y-o.h*.45,o.w,o.h*1.45);}
     }
     for(const e of s.entities){const c=e.cast;if(c?.kind!=='monster-shot')continue;ctx.save();traceAttackShape(ctx,{shape:'line',x:c.ox,y:c.oy,angle:c.angle,length:c.range*(c.projectileKind==='magic'?2:1),width:.9});ctx.fillStyle='#ec595b38';ctx.strokeStyle='#f18a79';ctx.lineWidth=.08;ctx.fill();ctx.stroke();ctx.restore();}
