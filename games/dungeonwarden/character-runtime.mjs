@@ -1,4 +1,4 @@
-import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=0.5.5';
+import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=0.5.7';
 import {WEAPONS} from './shared/catalog.mjs';
 import {paintItemIcon,paintWeapon} from './graphics.mjs';
 const directions=['front','side','back'];
@@ -65,5 +65,5 @@ export class CharacterRenderer {
   if(eq.off&&eq.off.type!=='shield'){const icon=this.accessory(eq.off),sway=Math.sin(time*(moving?9:2.5)-.5)*.05;ctx.save();ctx.translate(e.x+(dir==='side'?0:-.9),e.y-1.25+sway);ctx.rotate(sway);ctx.drawImage(icon,-.4,-.4,.8,.8);ctx.restore();}return true;
  }
  itemSprite(item){if(!this.ready)return null;if(item.kind==='main')return this.weapon(item).sprite;if(item.kind==='armor')return this.wearPart(this.art.body.front.torso,item,'torso');if(item.kind==='boots'){const key='boot-pair:'+this.key(item);if(!this.icons.has(key)){const c=this.factory(12,9),g=c.getContext('2d');g.drawImage(this.wearPart(this.art.body.front.leftLeg,item,'leftLeg'),0,0);g.drawImage(this.wearPart(this.art.body.front.rightLeg,item,'rightLeg'),7,0);this.icons.set(key,c);}return this.icons.get(key);}return this.accessory(item);}
- drawDrop(ctx,item){const c=this.itemSprite(item);if(!c)return false;const baseLength=c.motionLength||(item.kind==='main'?(['greatsword','hammer'].includes(this.family(item))?27:21):item.kind==='armor'?16:14),boost={main:1.26,armor:1.24,helmet:1.2,boots:1.22,off:1.18}[item.kind]||1.16,scale=baseLength/c.height/16*boost,offsetY={main:-.04,armor:-.08,helmet:-.14,boots:.04,off:-.02}[item.kind]||0;ctx.save();ctx.imageSmoothingEnabled=false;ctx.translate(0,offsetY);if(item.kind==='main')ctx.rotate(-.45);ctx.drawImage(c,-c.width*scale/2,-c.height*scale/2,c.width*scale,c.height*scale);ctx.restore();return true;}
+ drawDrop(ctx,item){const c=this.itemSprite(item);if(!c)return false;const baseLength=c.motionLength||(item.kind==='main'?(['greatsword','hammer'].includes(this.family(item))?27:21):item.kind==='armor'?16:14),boost={main:1.26,armor:1.24,helmet:1.2,boots:1.22,off:1.18}[item.kind]||1.16,scale=baseLength/c.height/16*boost*5,offsetY={main:-.12,armor:-.18,helmet:-.22,boots:.12,off:-.08}[item.kind]||0;ctx.save();ctx.imageSmoothingEnabled=false;ctx.translate(0,offsetY);if(item.kind==='main')ctx.rotate(-.45);ctx.drawImage(c,-c.width*scale/2,-c.height*scale/2,c.width*scale,c.height*scale);ctx.restore();return true;}
 }

@@ -270,7 +270,7 @@ export class DungeonGame {
     return true;
   }
   status(e,key,seconds){if(e.immune<=0)e[key]=Math.max(e[key]||0,seconds);}
-  hurt(target,amount,source=null,{ignore=false,push=0,stun=0,dot=false,proc=true}={}){
+  hurt(target,amount,source=null,{ignore=false,push=null,stun=0,dot=false,proc=true}={}){
     if(target.dead||target.invuln>0)return;
     if(source&&!this.validHit(source,target))return;
     const aff=this.affixes(target);const auto=aff.find(a=>a.key==='autoblock'&&a.charges>0);
@@ -282,7 +282,8 @@ export class DungeonGame {
     target.hp-=dmg;target.hitPose=.12;
     if(!dot||this.time-(target.dotFxAt||0)>.5){this.fx('hit',target,0,.28,{value:dot?Math.round(amount/.05):Math.round(dmg),target:target.id,dot:!!dot,heavy:!dot&&dmg>=25,feedback:source?itemFeedback(source.equipment?.main):null});target.dotFxAt=this.time;}
     if(stun)this.status(target,'stun',stun);
-    if(source&&push){const ang=Math.atan2(target.y-source.y,target.x-source.x);move(this.map,target,Math.cos(ang)*push,Math.sin(ang)*push,target.kind==='monster');}
+    const knockback=push??(source&&!dot?1:0);
+    if(source&&knockback>0){const ang=Math.atan2(target.y-source.y,target.x-source.x);move(this.map,target,Math.cos(ang)*knockback,Math.sin(ang)*knockback,target.kind==='monster');}
     if(source&&proc&&!dot){
       for(const a of this.affixes(source))if(this.random()<a.chance){
         if(['poison','burn'].includes(a.key))this.status(target,a.key,3);
@@ -341,7 +342,7 @@ export class DungeonGame {
     this.fx('slash',e,e.facing,.22,{radius:range,combo:e.combo||1,weapon:e.equipment.main?.type,appearance:e.equipment.main?.appearance,feedback:itemFeedback(e.equipment.main)});
     if(playerCombo&&heavy&&e.combo===2&&itemFeedback(e.equipment.main).material!=='bread')this.fx('slam',{x:e.x+Math.cos(e.facing)*range*.65,y:e.y+Math.sin(e.facing)*range*.65},e.facing,.3,{radius:range*.45,feedback:itemFeedback(e.equipment.main)});
     for(const t of this.entities)if(distance(e,t)<=range+.4&&Math.cos(Math.atan2(t.y-e.y,t.x-e.x)-e.facing)>.1&&lineOfSight(this.map,e,t)&&this.validHit(e,t)){
-      this.hurt(t,bonus,e,{push:.3});
+      this.hurt(t,bonus,e,{push:1});
       if(!['greatsword','hammer'].includes(e.equipment.main?.type))break;
     }
   }
@@ -562,7 +563,7 @@ export class DungeonGame {
         if(!walkable(this.map,p,.05)){p.x=old.x;p.y=old.y;p.done=true;}
         const hit=this.entities.find(e=>!e.dead&&e.id!==owner.id&&!p.hitIds?.includes(e.id)&&distance(e,p)<.6&&lineOfSight(this.map,old,e)&&(p.kind==='heal'?e.team===owner.team:this.validHit(owner,e)));
         if(hit){
-          if(p.kind==='heal'){hit.hp=Math.min(hit.maxHp,hit.hp+(p.healAmount||hit.maxHp*.1));this.fx('heal',hit);}else this.hurt(hit,p.damage,{...owner,projectile:true},{ignore:!!p.ignore,push:.25});
+          if(p.kind==='heal'){hit.hp=Math.min(hit.maxHp,hit.hp+(p.healAmount||hit.maxHp*.1));this.fx('heal',hit);}else this.hurt(hit,p.damage,{...owner,projectile:true},{ignore:!!p.ignore,push:1});
           if(p.stun)this.status(hit,'stun',p.stun);if(p.root)this.status(hit,'root',p.root);if(p.burn)this.status(hit,'burn',p.burn);if(p.pierce){p.hitIds??=[];p.hitIds.push(hit.id);}else p.done=true;
         }
         if(p.remaining<=.01)p.done=true;
