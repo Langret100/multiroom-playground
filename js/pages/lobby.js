@@ -188,7 +188,7 @@ function statusDot(room){
     const status = meta.status ?? r.status ?? "waiting";
     const clients = Number(r.clients ?? r.players ?? 0);
     const maxClients = Number(r.maxClients ?? r.maxPlayers ?? 4);
-    return { roomId, title, mode, status, clients, maxClients };
+    return { roomId, title, mode, status, clients, maxClients, randomGame:!!(meta.randomGame??r.randomGame) };
   }
 
   // ---- Fullscreen-friendly room entry (no top-level navigation) ----
@@ -321,7 +321,7 @@ function statusDot(room){
 
       const dot = (r.status === "playing") ? "danger" : ((r.clients >= r.maxClients) ? "warn" : "ok");
       const title = safeText(r.title || "방", 30);
-      const mode = safeText(modeLabel(r.mode), 16);
+      const mode = safeText(r.randomGame?'?':modeLabel(r.mode), 16);
       const isPlaying = (r.status === "playing");
       if (isPlaying) tr.classList.add("playing");
       const isFull = (r.clients >= r.maxClients);
@@ -403,6 +403,7 @@ function statusDot(room){
     const wrap = els.playerCountChips;
     const sel = els.maxClients;
     if (!wrap || !sel || !meta) return;
+    if(meta.id==='random'){sel.innerHTML='<option value="8">자동</option>';wrap.innerHTML='';els.maxClientsLabel.textContent='선택된 게임의 최대 인원으로 자동 설정';return;}
     const cap = Math.max(1, Number(meta.maxClients || 4));
     const min = meta.id === 'mathexplorer' ? 1 : 2;
     const evenOnly = meta.id === 'soccer';
@@ -492,7 +493,8 @@ function statusDot(room){
       return;
     }
     const title = safeText(rawTitle, els.roomTitle.maxLength);
-    const mode = els.gameMode.value || ((window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id) ? window.GAME_REGISTRY[0].id : "stackga");
+    let mode = els.gameMode.value || ((window.GAME_REGISTRY && window.GAME_REGISTRY[0] && window.GAME_REGISTRY[0].id) ? window.GAME_REGISTRY[0].id : "stackga");
+    const randomGame=mode==='random';if(randomGame)mode=window.pickRandomGame().id;
     const meta = (window.gameById ? window.gameById(mode) : null);
     const modeType = meta?.type || "coop";
     if (meta?.disabled){
@@ -501,10 +503,10 @@ function statusDot(room){
     }
     const cap = (meta && typeof meta.maxClients === "number") ? meta.maxClients : 4;
     const minCap = (mode === "mathexplorer") ? 1 : 2;
-    const maxClients = Math.max(minCap, Math.min(cap, parseInt(els.maxClients.value||String(cap),10)||cap));
+    const maxClients = randomGame ? cap : Math.max(minCap, Math.min(cap, parseInt(els.maxClients.value||String(cap),10)||cap));
 
     try{
-      const room = await client.create("game_room", { title, mode, modeType, maxClients, hostNick: myNick, nick: myNick });
+      const room = await client.create("game_room", { title, mode, modeType, maxClients, randomGame, hostNick: myNick, nick: myNick });
       sessionStorage.setItem("pendingRoomId", room.id);
       try{ window.__fsNavigating = true; }catch(_){ }
       if (isFullscreenActive()) openEmbeddedRoom(room.id);

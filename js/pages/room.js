@@ -535,7 +535,8 @@ function renderControlGuide(meta){
 }
 
 function updatePreview(modeId){
-  const meta = window.gameById ? window.gameById(modeId) : null;
+  const selected = window.gameById ? window.gameById(modeId) : null;
+  const meta=room?.state?.randomGame?{...selected,name:'?',category:'?',cardImage:'assets/images/game_cards/random.webp?v=20261005',descLines:['?']}:selected;
   const label = meta?.name || modeLabel(modeId) || "-";
   const gameId = meta?.id || modeId || "";
   renderControlGuide(meta);
@@ -619,6 +620,7 @@ function updatePreview(modeId){
       }
     }
   }catch(_){ }
+  if(room?.state?.randomGame){for(const key of ['desc','modeBadge','flow','tip'])if(previewEls[key])previewEls[key].textContent='?';if(previewEls.thumb){previewEls.thumb.dataset.game='random';previewEls.thumb.dataset.label='?';}}
 }
 
 
@@ -2142,6 +2144,7 @@ function updatePreview(modeId){
   }
 
   function modeLabel(modeId){
+    if(room?.state?.randomGame)return '?';
     const g = window.gameById ? window.gameById(modeId) : null;
     const name = g ? g.name : (modeId || "-");
     try{

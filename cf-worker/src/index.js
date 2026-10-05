@@ -197,6 +197,7 @@ export class LobbyDO{
       roomId: r.roomId,
       title: r.title,
       mode: r.mode,
+      randomGame:!!r.randomGame,
       maxPlayers: r.maxPlayers,
       players: r.players || 0,
       status: r.status || "waiting",
@@ -343,6 +344,7 @@ export class LobbyDO{
       }
       this.rooms[roomId] = {
         roomId, title, mode,
+        randomGame:!!opts.randomGame,
         maxPlayers,
         players: 0,
         status: "waiting",
@@ -617,6 +619,7 @@ export class RoomDO{
       meta: {
         roomId: this.meta.roomId,
         title: this.meta.title,
+        randomGame:!!this.meta.randomGame,
         mode: this.meta.mode,
         maxClients: this.meta.maxPlayers,
         stackMode:this.meta.stackMode||"items",
@@ -711,6 +714,7 @@ export class RoomDO{
       const js = await res.json();
       const lm = js.meta;
       if (lm){
+        this.meta.randomGame=!!lm.randomGame;
         this.meta.title = lm.title ?? this.meta.title;
         this.meta.mode = lm.mode ?? this.meta.mode;
         this.meta.maxPlayers = lm.maxPlayers ?? this.meta.maxPlayers;

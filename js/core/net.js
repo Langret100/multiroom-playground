@@ -134,6 +134,7 @@
       if(meta.mode==='dungeonwarden')this.state.dungeonMode=meta.dungeonMode||"arena";
       if(meta.phase==='lobby')this._bloomSnapshot=null;
       this.state.phase = meta.phase ?? this.state.phase;
+      this.state.randomGame = !!meta.randomGame;
       this.state.maxClients = meta.maxClients ?? this.state.maxClients;
 
       const playersArr = Array.isArray(snap.players) ? snap.players : [];
@@ -167,7 +168,7 @@ this.state.playerCount = humans.length;
 
 // Host does not need to be ready; only non-host human players must be ready.
 const nonHost = humans.filter(p => !p.isHost);
-const COOP_MODES = new Set(["bloomshot","togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo","starpaint","waterblast"]);
+const COOP_MODES = new Set(["bloomshot","togester","snaketail","suhaktokki","drawanswer","mathexplorer","math-explorer","backrooms3d","soccer","geumchikeo","starpaint","waterblast","dungeonwarden"]);
 const isCoop = COOP_MODES.has(String(this.state.mode||""));
 const isDuel = !isCoop;
 const isSoccer = (String(this.state.mode||"") === "soccer");
@@ -176,7 +177,7 @@ if (isDuel && humans.length === 1){
   // 1인 듀얼은 서버가 CPU를 붙여 시작하므로 ready 조건을 true로 봄(프론트 UX용)
   this.state.allReady = true;
 } else {
-  const soloCoopOk = isCoop && humans.length === 1 && new Set(["bloomshot","suhaktokki","snaketail","mathexplorer","math-explorer","starpaint"]).has(String(this.state.mode||""));
+  const soloCoopOk = isCoop && humans.length === 1 && new Set(["bloomshot","suhaktokki","snaketail","mathexplorer","math-explorer","starpaint","dungeonwarden"]).has(String(this.state.mode||""));
   const baseReady = soloCoopOk || (humans.length >= 2 && nonHost.length >= 1 && nonHost.every(p=> !!p.ready));
   // 수학축구: 반드시 짝수 인원(2·4·6·8)이어야 시작 가능
   const evenOk = !isSoccer || (humans.length % 2 === 0);
@@ -294,6 +295,7 @@ if (isDuel && humans.length === 1){
       if(msg.t === "backToRoom") return { type:"backToRoom", payload: msg.d };
       // relay game events
       const passthrough = new Set([
+        "dw_packet","dw_mode",
         "duel_state","duel_event",
         // DrawAnswer
         "da_state","da_word","da_draw","da_clear","da_replay","da_chat","da_over",
@@ -437,7 +439,7 @@ if (isDuel && humans.length === 1){
         roomId: r.roomId,
         clients: r.players,
         maxClients: r.maxPlayers,
-        metadata: { title: r.title, mode: r.mode, status: r.status }
+        metadata: { title: r.title, mode: r.mode, status: r.status, randomGame:!!r.randomGame }
       }));
     }
   }
