@@ -29,8 +29,8 @@
       <div class="playShell" id="playShell">
         <!-- 내 게임 화면: 좌측에 딱 붙음 -->
         <div class="cardBox boardCard" id="boardCol" aria-label="me">
+          <div class="itemGauge" id="itemGaugeMe" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="내 아이템 게이지" hidden><span class="itemGaugeTitle">ITEM</span><div class="itemGaugeMeter"><div class="itemGaugeFill"></div></div></div>
           <canvas id="cvMe" width="360" height="720"></canvas>
-          <div class="itemGauge itemGaugeBottom" id="itemGaugeMe" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="내 다음 아이템까지 5줄" hidden><span class="itemGaugeTitle">ITEM</span><div class="itemGaugeMeter"><div class="itemGaugeFill"></div></div><b class="itemGaugeCount">5줄</b></div>
           <div class="comboArea comboIdle" id="comboAreaMe" aria-label="내 콤보">
             <div class="comboVisual">
               <img class="comboJelly" id="comboJellyMe" src="./assets/combo/combo-1.png" alt="콤보!" />
@@ -46,10 +46,10 @@
             <canvas id="cvNext" width="120" height="120"></canvas>
           </div>
           <div class="cardBox oppCard" id="oppCard" aria-label="opponent">
+            <div class="itemGauge" id="itemGaugeOpp" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-valuenow="0" aria-label="상대 아이템 게이지" hidden><span class="itemGaugeTitle">ITEM</span><div class="itemGaugeMeter"><div class="itemGaugeFill"></div></div></div>
             <!-- 요청: 라벨은 카드 내부 좌측 상단 (NEXT와 동일한 스타일) -->
             <div class="cardTag" id="oppTag">Player</div>
             <canvas id="cvOpp" width="120" height="240"></canvas>
-            <div class="itemGauge itemGaugeBottom" id="itemGaugeOpp" role="progressbar" aria-valuemin="0" aria-valuemax="5" aria-label="상대 다음 아이템까지 확인 중" hidden><span class="itemGaugeTitle">ITEM</span><div class="itemGaugeMeter"><div class="itemGaugeFill"></div></div><b class="itemGaugeCount">—</b></div>
             <div class="comboArea comboIdle" id="comboAreaOpp" aria-label="상대 콤보">
               <div class="comboVisual">
                 <img class="comboJelly" id="comboJellyOpp" src="./assets/combo/combo-1.png" alt="콤보!" />
@@ -66,7 +66,6 @@
             <div class="small" id="overlayDesc"></div>
             <div class="row" id="overlayBtns">
               <button class="btn" id="btnStartCpu">PC와 시작</button>
-              <button class="btn ghost" id="btnRestart">다시 만들기</button>
             </div>
           </div>
         </div>
@@ -76,7 +75,7 @@
     <div id="log" class="hidden"></div>
   </div>
 
-  <script type="module" src="./js/main.js?v=20261002-controls3"></script>
+  <script type="module" src="./js/main.js?v=stack-clean-final"></script>
 
 <script>
 (function(){
