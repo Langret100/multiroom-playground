@@ -437,7 +437,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer" || m === "backrooms3d" || m === "soccer" || m === "geumchikeo");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer" || m === "backrooms3d" || m === "soccer" || m === "geumchikeo" || m === "dungeonwarden");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -620,6 +620,7 @@ export class RoomDO{
         mode: this.meta.mode,
         maxClients: this.meta.maxPlayers,
         stackMode:this.meta.stackMode||"items",
+        dungeonMode:this.meta.dungeonMode||"arena",
         phase: this.meta.phase
       },
       players
@@ -669,7 +670,7 @@ export class RoomDO{
       this.meta.mode === "snaketail" ||
       this.meta.mode === "mathexplorer" ||
       this.meta.mode === "math-explorer" ||
-      this.meta.mode === "starpaint" || ["dungeonwarden","dungeonraid","dungeonmaster"].includes(this.meta.mode)
+      this.meta.mode === "starpaint" || ["dungeonwarden"].includes(this.meta.mode)
     );
     let humanCount = 0;
     for (const [uid] of this.users.entries()){
@@ -971,6 +972,11 @@ export class RoomDO{
         return;
       }
 
+      if(t==='dw_mode'){
+        if(uid===this.meta.ownerUserId&&this.meta.phase==='lobby'&&this.meta.mode==='dungeonwarden'){
+          this.meta.dungeonMode=d.mode==='dungeon'?'dungeon':'arena';this._broadcast('dw_mode',{mode:this.meta.dungeonMode});this._broadcast('room_state',this._snapshot());
+        }return;
+      }
       if(t==='stack_mode'){
         if(uid===this.meta.ownerUserId&&this.meta.phase==='lobby'&&this.meta.mode==='stackga'){
           this.meta.stackMode=d?.stackMode==='normal'?'normal':'items';
@@ -1001,7 +1007,7 @@ export class RoomDO{
 
         if (!duel){
           // Co-op usually requires 2+ humans; allow solo for SuhakTokki and SnakeTail.
-          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer","dungeonwarden","dungeonraid","dungeonmaster"].includes(this.meta.mode)) ? 1 : 2;
+          const minHumans = (["suhaktokki","snaketail","mathexplorer","math-explorer","dungeonwarden"].includes(this.meta.mode)) ? 1 : 2;
           if (humanCount < minHumans){
             this._send(ws, "system", { text:`${minHumans}명 이상 있어야 시작할 수 있습니다.`, ts: now() });
             return;
@@ -1188,7 +1194,7 @@ export class RoomDO{
         }
 
         this.meta.phase = "playing";
-        if(['dungeonwarden','dungeonraid','dungeonmaster'].includes(this.meta.mode))this._startDungeon();
+        if(['dungeonwarden'].includes(this.meta.mode))this._startDungeon();
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
         if (this.meta.mode === "suhaktokki"){
@@ -1198,7 +1204,8 @@ export class RoomDO{
         } else if (this.meta.mode === "backrooms3d"){
           this._broadcast("started", { mode: this.meta.mode, startPayload: this.br && this.br.startPayload, protocolVersion:PROTOCOL_VERSION });
         } else {
-          this._broadcast("started", { mode: this.meta.mode, stackMode:this.meta.stackMode||"items", protocolVersion:PROTOCOL_VERSION });
+          this._broadcast("started", { mode: this.meta.mode, stackMode:this.meta.stackMode||"items",
+        dungeonMode:this.meta.dungeonMode||"arena", protocolVersion:PROTOCOL_VERSION });
         }
 
         // SnakeTail: start 3-minute round timer (server is source of truth)
@@ -1234,7 +1241,7 @@ export class RoomDO{
       }
 
       if(['dw_sync','dw_input','dw_command'].includes(t)){
-        if(!['dungeonwarden','dungeonraid','dungeonmaster'].includes(this.meta.mode)||this.meta.phase!=='playing'||!this.users.has(uid)||!this.dw)return;
+        if(!['dungeonwarden'].includes(this.meta.mode)||this.meta.phase!=='playing'||!this.users.has(uid)||!this.dw)return;
         if(t==='dw_sync'){const player=this.dw.game.entities.find(e=>e.id===uid);if(player)player.bot=false;this._send(ws,'dw_packet',{packet:this.dw.packet(uid,true)});}
         if(t==='dw_input'){const input=d.input||{};this.dw.input(uid,{mx:input.mx,my:input.my,aimX:input.aimX,aimY:input.aimY,attack:!!input.attack,special:!!input.special,sprint:!!input.sprint,block:!!input.block});}
         if(t==='dw_command'){const c=d.command||{},allowed=['interact','answer','drop','swap','clone','attack','spawn','follow','place','fillRoom','startRaid','possess','bossSkill','order'];if(!allowed.includes(c.action))return;const clean={};for(const k of ['action','target','targetId','slot','room','type','tier','x','y','skill','answer','entity','special','id'])if(c[k]===null||['string','number','boolean'].includes(typeof c[k]))clean[k]=typeof c[k]==='string'?c[k].slice(0,100):c[k];delete clean.id;this.dw.command(uid,clean);}return;
@@ -3449,7 +3456,7 @@ export class RoomDO{
   _stopDungeon(){if(this.dwTimer)clearInterval(this.dwTimer);this.dwTimer=null;this.dw=null;}
   _startDungeon(){
     this._stopDungeon();const cpu=this._cpuUid();const players=Array.from(this.users.entries()).filter(([id])=>id!==cpu).sort((a,b)=>Number(a[1].seat)-Number(b[1].seat)).map(([id,u])=>({id,name:u.nick}));
-    this.dw=new DungeonRoomRuntime(players,{mode:this.meta.mode==='dungeonwarden'?'arena':'dungeon',masterId:this.meta.mode==='dungeonmaster'?this.meta.ownerUserId:null});let last=Date.now(),acc=0,sendAt=0;
+    this.dw=new DungeonRoomRuntime(players,{mode:this.meta.dungeonMode==='dungeon'?'dungeon':'arena',masterId:this.meta.dungeonMode==='dungeon'?this.meta.ownerUserId:null});let last=Date.now(),acc=0,sendAt=0;
     this.dwTimer=setInterval(()=>{try{
       if(this.meta.phase!=='playing'||!this.users.size){this._stopDungeon();return;}
       const time=Date.now();acc+=Math.min(.15,(time-last)/1000);last=time;

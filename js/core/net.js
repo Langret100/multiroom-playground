@@ -131,6 +131,7 @@
       this.state.title = meta.title ?? this.state.title;
       this.state.mode  = meta.mode  ?? this.state.mode;
       this.state.stackMode=meta.stackMode||"items";
+      if(meta.mode==='dungeonwarden')this.state.dungeonMode=meta.dungeonMode||"arena";
       if(meta.phase==='lobby')this._bloomSnapshot=null;
       this.state.phase = meta.phase ?? this.state.phase;
       this.state.maxClients = meta.maxClients ?? this.state.maxClients;

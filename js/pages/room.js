@@ -305,6 +305,7 @@ function setupBgm(audioElId, btnId){
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
   const localSoloModes=new Set(["backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
+  let dungeonMode='arena',dungeonModeWrap=null,dungeonModeSelect=null;
   let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
   let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
@@ -349,6 +350,11 @@ function setupBgm(audioElId, btnId){
       controls.parentElement?.insertBefore(stackModeWrap,controls);
       stackModeSelect=stackModeWrap.querySelector('select');
       stackModeSelect.addEventListener('change',()=>{stackMode=stackModeSelect.value;room?.send('stack_mode',{stackMode});});
+      dungeonModeWrap=document.createElement('div');
+      dungeonModeWrap.style.cssText=stackModeWrap.style.cssText;
+      dungeonModeWrap.innerHTML='<span>던전 아레나 · 경기 방식</span><select class="input" aria-label="던전 아레나 경기 방식"><option value="arena">아레나 모드</option><option value="dungeon">던전 모드</option></select><small>던전 모드: 방장 = 던전마스터 · 나머지 = 모험가</small>';
+      controls.parentElement?.insertBefore(dungeonModeWrap,controls);dungeonModeSelect=dungeonModeWrap.querySelector('select');
+      dungeonModeSelect.addEventListener('change',()=>room?.send('dw_mode',{mode:dungeonModeSelect.value}));
       cpuDiffWrap = wrap;
       cpuDiffSelect = wrap.querySelector('#cpuDiffSel');
       if (cpuDiffSelect){
@@ -1088,7 +1094,7 @@ function updatePreview(modeId){
     const duelWin = (()=>{ try{ return duel?.iframeEl?.contentWindow || null; }catch(_){ return null; } })();
     const fromMain = !!(duelWin && srcWin === duelWin);
     // Dungeon iframe packets are restricted to the active same-origin game frame.
-    const dungeonModes=['dungeonwarden','dungeonraid','dungeonmaster'];
+    const dungeonModes=['dungeonwarden'];
     const activeDungeon=dungeonModes.includes(String(coop?.meta?.id||''));
     const fromDungeon=activeDungeon&&d.gameId===coop.meta.id&&e.origin===location.origin&&(srcWin===duelWin||(!srcWin&&activeDungeon));
     if(fromDungeon&&d.type==='bridge_ready'){duel.iframeReady=true;coop.iframeReady=true;sendCoopBridgeInit();return;}
@@ -2244,6 +2250,7 @@ function updatePreview(modeId){
 const CPU_SID = "__cpu__";
 const modeId = state.mode || "";
 if(state.stackMode)stackMode=state.stackMode;
+if(state.dungeonMode)dungeonMode=state.dungeonMode;
 const gmeta = (window.gameById ? window.gameById(modeId) : null);
 	// Update capacity badge (matches server room maxClients when available)
 	try{
@@ -2286,9 +2293,9 @@ if(isDuel&&humanCount===1&&localSoloModes.has(modeId)&&isHost&&state.phase==='lo
 if (!isHost) reason = "방장만 시작할 수 있습니다.";
 else if (state.phase !== "lobby") reason = "이미 진행 중입니다.";
 else if (isCoop){
-  if (['dungeonwarden','dungeonraid','dungeonmaster','bloomshot'].includes(modeId) && humanCount === 1){
+  if (['dungeonwarden','bloomshot'].includes(modeId) && humanCount === 1){
     canStart = true;
-    startText = ['dungeonwarden','dungeonraid','dungeonmaster'].includes(modeId)?'AI와 게임 시작':'CPU 연습 시작';
+    startText = ['dungeonwarden'].includes(modeId)?'AI와 게임 시작':'CPU 연습 시작';
     startAction = 'start';
    } else if (localSoloModes.has(modeId) && humanCount===1){
     canStart=true;startText='싱글 연습 시작';startAction='practice';
@@ -2345,6 +2352,7 @@ els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
 els.startBtn.title = canStart ? startText : reason;
 
+  if(dungeonModeWrap){dungeonModeWrap.style.display=modeId==='dungeonwarden'&&state.phase==='lobby'?'flex':'none';dungeonModeSelect.disabled=!isHost||state.phase!=='lobby';dungeonModeSelect.value=dungeonMode;}
   if(stackModeWrap){stackModeWrap.style.display=modeId==='stackga'&&(phase==='lobby'||!document.body.classList.contains('in-game'))?'flex':'none';stackModeSelect.disabled=!isHost||state.phase!=='lobby';stackModeSelect.value=stackMode;}
   // Show CPU difficulty only when host starts a solo duel in lobby.
   try{
@@ -3380,6 +3388,7 @@ try{
       }catch(_){ }
 
 
+      room.onMessage('dw_mode',m=>{dungeonMode=m?.mode==='dungeon'?'dungeon':'arena';if(dungeonModeSelect)dungeonModeSelect.value=dungeonMode;});
       room.onMessage('stack_mode',(m)=>{stackMode=m?.stackMode==='normal'?'normal':'items';if(stackModeSelect)stackModeSelect.value=stackMode;});
       room.onMessage("started", (m)=> {
         if(m?.stackMode==='normal'||m?.stackMode==='items')stackMode=m.stackMode;
@@ -3600,7 +3609,7 @@ try{
           if (modeId === "soccer") postToMain({ type:"sc_compat_players", players: playerMap });
         }catch(_){ }
       });
-      room.onMessage('dw_packet',msg=>{if(['dungeonwarden','dungeonraid','dungeonmaster'].includes(coop?.meta?.id))postToMain({type:'dw_packet',gameId:coop.meta.id,packet:msg.packet});});
+      room.onMessage('dw_packet',msg=>{if(['dungeonwarden'].includes(coop?.meta?.id))postToMain({type:'dw_packet',gameId:coop.meta.id,packet:msg.packet});});
       room.onMessage("tg_button", (msg)=>{
         postToMain({ type:"tg_button", idx: msg.idx, pressed: msg.pressed });
       });

@@ -162,7 +162,12 @@ function refreshActionButtons(me){
 const embedded=parent!==window;const roomGameId=new URLSearchParams(location.search).get('gameId')||'dungeonwarden';let roomTransport=null,roomStarted=false;
 if(embedded){$('status').textContent='게임 룸 연결 중…';$('hud').hidden=false;
  const ready=()=>parent.postMessage({type:'bridge_ready',gameId:roomGameId},location.origin);ready();const readyTimer=setInterval(()=>{if(!roomTransport)ready();else clearInterval(readyTimer);},700);
- addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)return;const d=e.data||{};if(d.gameId&&d.gameId!==roomGameId)return;
+ const connectStarted=performance.now();const syncTimer=setInterval(()=>{
+ if(roomStarted){clearInterval(syncTimer);return;}
+ if(roomTransport)roomTransport.post('dw_sync');else ready();
+ if(performance.now()-connectStarted>10000)$('status').textContent=roomTransport?'던전 서버 응답 없음 · Worker 자동 배포 상태를 확인해 주세요.':'게임 룸 초기화 신호 없음 · 방으로 돌아가 다시 시작해 주세요.';
+},1500);
+addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)return;const d=e.data||{};if(d.gameId&&d.gameId!==roomGameId)return;
   if(d.type==='bridge_init'&&!roomTransport){roomTransport=new RoomTransport(String(d.sessionId),roomGameId);roomTransport.post('dw_sync');}
   if(d.type==='dw_packet'&&roomTransport){roomTransport.receive(d.packet);if(!roomStarted&&roomTransport.latest){roomStarted=true;const state=roomTransport.latest;start({mode:state.mode,role:state.masterId==='local'?'master':'adventurer',transport:roomTransport});}}
  });}
