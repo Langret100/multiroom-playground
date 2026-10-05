@@ -1,4 +1,4 @@
-import {RoomTransport} from './room-transport.mjs?v=0.5.8';
+import {RoomTransport} from './room-transport.mjs?v=0.6.0';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
