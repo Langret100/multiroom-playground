@@ -1,9 +1,9 @@
-import {RoomTransport} from './room-transport.mjs?v=0.7.0';
+import {RoomTransport} from './room-transport.mjs?v=0.7.1';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=0.6.0';
+import {Renderer} from './renderer.mjs?v=0.6.1';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
 import {roomAt} from './shared/world.mjs';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);

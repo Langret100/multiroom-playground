@@ -90,7 +90,8 @@ export class RoomTransport {
    const dt=clamp(now-(this.visualAt||now),0,.05),blend=1-Math.exp(-dt*42),x=prev.x+(target.x-prev.x)*blend,y=prev.y+(target.y-prev.y)*blend;
    this.visualMe=cloneEntity(target);this.visualMe.x=x;this.visualMe.y=y;
   }
-  this.visualAt=now;const me=this.visualMe,localEntity={...this.serverMe,x:me.x,y:me.y,facing:me.facing};
+  this.visualAt=now;const me=this.visualMe,pmx=Number(this.pending?.mx)||0,pmy=Number(this.pending?.my)||0,plen=Math.hypot(pmx,pmy);
+  const localEntity={...this.serverMe,x:me.x,y:me.y,facing:me.facing,visualMoving:plen>.001&&!me.dead&&!(me.stun>0)&&!(me.root>0)&&!me.cast,visualMoveFacing:plen>.001?Math.atan2(pmy,pmx):me.facing};
   const entities=(state.entities||[]).map(e=>e.id==='local'?localEntity:e);
   // Remote actors are intentionally shown on the interpolation timeline, but the local
   // player's attack state must not live on that delayed timeline. Otherwise the character

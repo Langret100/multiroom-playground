@@ -27,11 +27,25 @@ export class Renderer {
   drawActor(e,now,index,visualTime=this.visualClock??now){
     if(e.kind==='monster'&&e.dead)return;
     const ctx=this.ctx,move=this.tracks.get(e.id),mx=move?e.x-move.x:0,my=move?e.y-move.y:0,delta=Math.hypot(mx,my),changed=!!move&&delta>.0025;
-    const movingUntil=changed?visualTime+.15:(move?.movingUntil||0),moving=movingUntil>visualTime;
-    // Combat facing is authoritative (aim/block/attack), but passive walking should face
-    // the actual direction of travel. This prevents strafing left/right while the sprite
-    // keeps looking toward the previous aim direction.
-    let moveFacing=move?.moveFacing??e.facing??0;if(changed&&delta>.006)moveFacing=Math.atan2(my,mx);
+    const isLocal=e.id==='local',inputMoving=isLocal&&typeof e.visualMoving==='boolean'?e.visualMoving:null;
+    const movingUntil=changed?visualTime+.15:(move?.movingUntil||0),moving=inputMoving??(movingUntil>visualTime);
+    // The local actor already carries the current input-facing from RoomTransport.
+    // Never infer its facing again from the smoothed render delta: on a reversal the
+    // render position keeps drifting toward the previous target for a few frames and
+    // would otherwise flip old/new directions every frame (the visible spin/jitter).
+    // Remote actors still derive walking direction from travel, but only commit a new
+    // direction after a meaningful displacement so packet jitter cannot rotate them.
+    let moveFacing=move?.moveFacing??e.facing??0;
+    if(isLocal){
+      moveFacing=Number.isFinite(e.visualMoveFacing)?e.visualMoveFacing:(e.facing??moveFacing);
+    }else if(changed&&delta>.018){
+      const candidate=Math.atan2(my,mx),prevDir=this.direction(moveFacing),nextDir=this.direction(candidate);
+      if(prevDir===nextDir){moveFacing=candidate;}
+      else{
+        const since=move?.turnCandidate===nextDir?(move.turnCandidateSince||visualTime):visualTime;
+        if(move?.turnCandidate===nextDir&&visualTime-since>=.045)moveFacing=candidate;
+      }
+    }
     const useMoveFacing=moving&&!e.attackPose&&!e.cast&&!e.whirl&&!e.blocking;
     const visualEntity=useMoveFacing?{...e,facing:moveFacing}:e;
     const motion=e.dead?'ghost':e.cast?'cast':e.hitPose?'hit':e.attackPose?'attack':moving?'walk':'idle';
@@ -69,7 +83,14 @@ export class Renderer {
     if(e.blocking){ctx.strokeStyle='#a3d7ef';ctx.lineWidth=.1;ctx.beginPath();ctx.arc(e.x,e.y-.5,1,e.facing-.9,e.facing+.9);ctx.stroke();}
     if(e.cast||e.bowCharge>=2){ctx.strokeStyle=e.cast?'#b994ff':'#ffe29b';ctx.lineWidth=.07;ctx.beginPath();ctx.arc(e.x,e.y,1.1,0,Math.PI*2);ctx.stroke();}
     if(this.selected===e.id){ctx.strokeStyle='#f3d49d';ctx.lineWidth=.09;ctx.strokeRect(e.x-1,e.y-1.7,2,2);}
-    ctx.restore();this.tracks.set(e.id,{x:e.x,y:e.y,movingUntil,moveFacing});
+    ctx.restore();
+    let turnCandidate=move?.turnCandidate,turnCandidateSince=move?.turnCandidateSince;
+    if(!isLocal&&changed&&delta>.018){
+      const nextDir=this.direction(Math.atan2(my,mx)),currentDir=this.direction(moveFacing);
+      if(nextDir===currentDir){turnCandidate=null;turnCandidateSince=0;}
+      else if(turnCandidate!==nextDir){turnCandidate=nextDir;turnCandidateSince=visualTime;}
+    }else if(isLocal||!moving){turnCandidate=null;turnCandidateSince=0;}
+    this.tracks.set(e.id,{x:e.x,y:e.y,movingUntil,moveFacing,turnCandidate,turnCandidateSince});
     if(!e.dead&&!e.afterimage){const w=e.boss?2.2:1.5;ctx.fillStyle='#0b1018';ctx.fillRect(e.x-w/2-.06,e.y+.4,w+.12,.42);ctx.fillStyle=e.kind==='monster'?'#dc625f':'#82ca91';ctx.fillRect(e.x-w/2,e.y+.46,w*Math.max(0,e.hp/e.maxHp),.3);ctx.fillStyle='#ffffff26';ctx.fillRect(e.x-w/2,e.y+.46,w*Math.max(0,e.hp/e.maxHp),.07);}
   }
   tile(index,x,y,w=1,h=1){const a=this.manifest.terrain;if(!a||!this.terrain?.complete)return;const t=a.tile;this.ctx.drawImage(this.terrain,index%a.columns*t,Math.floor(index/a.columns)*t,t,t,x,y,w,h);}
