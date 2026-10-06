@@ -193,76 +193,25 @@ export class LobbyDO{
     try{ ws.send(JSON.stringify({ t, d })); }catch(_){}
   }
 
-  async _pruneGhostRooms(force=false){
+  async _pruneExpiredPendingRooms(){
+    // Room directory is event-driven. RoomDO sends roomUpdate on actual lifecycle
+    // changes (join/leave/start/return), and sends deleted when the last user leaves.
+    // The only entry that has no later lifecycle event is a room that was created
+    // but never entered, so expire only that deterministic 10-minute pending case.
     const stamp = now();
-    if (!force && stamp - Number(this._lastGhostSweepAt||0) < 15000) return;
-    if (this._ghostSweepPromise) return this._ghostSweepPromise;
-    this._lastGhostSweepAt = stamp;
-    this._ghostSweepPromise = (async()=>{
-      const entries = Object.values(this.rooms || {});
-      let changed = false;
-      for (const room of entries){
-        const roomId = safeId(room?.roomId || '');
-        if (!roomId) continue;
-        try{
-          const stub = this.env.ROOM.get(this.env.ROOM.idFromName(roomId));
-          const res = await stub.fetch(`https://room/internal/health?roomId=${encodeURIComponent(roomId)}&staleMs=60000`);
-          if (!res.ok) continue;
-          const health = await res.json();
-          if (health?.empty){
-            // Health probes are advisory only.  A live RoomDO can briefly report zero
-            // authenticated sockets during navigation/reconnect/hibernation recovery.
-            // Deleting the lobby entry on the first empty probe makes a perfectly live
-            // room disappear from the room list until some later roomUpdate happens.
-            //
-            // Clean browser exits still delete immediately through _deleteFromLobby().
-            // This path is only the crash/ghost fallback, so require a sustained empty
-            // result and no global presence pointing at the room before pruning it.
-            const listedPlayers = Math.max(0, Number(room.players)||0);
-            const ageMs = Math.max(0, stamp - Number(room.createdAt || room.updatedAt || stamp));
-            const creationGraceMs = 10 * 60 * 1000;
-            const ghostGraceMs = 45 * 1000;
-            let hasPresence = false;
-            for (const p of this.presence.values()){
-              if (safeId(p?.roomId || '') === roomId){ hasPresence = true; break; }
-            }
-
-            if (listedPlayers <= 0 && ageMs < creationGraceMs){
-              // Brand-new room: keep it for the existing 10-minute first-entry window.
-              if (room._emptyHealthSince){ delete room._emptyHealthSince; this.rooms[roomId]=room; changed=true; }
-            } else if (hasPresence){
-              // Someone is globally registered in this room, so never hide it because of
-              // one transient health result. Clear any old candidate timestamp.
-              if (room._emptyHealthSince){ delete room._emptyHealthSince; this.rooms[roomId]=room; changed=true; }
-            } else {
-              const emptySince = Number(room._emptyHealthSince || 0);
-              if (!emptySince){
-                room._emptyHealthSince = stamp;
-                this.rooms[roomId] = room;
-                changed = true;
-              } else if (stamp - emptySince >= ghostGraceMs){
-                delete this.rooms[roomId];
-                changed = true;
-              }
-            }
-          } else if (health && Number.isFinite(Number(health.players))){
-            const players = Math.max(0, Number(health.players)||0);
-            if (room._emptyHealthSince){ delete room._emptyHealthSince; changed = true; }
-            if (Number(room.players||0) !== players){
-              room.players = players;
-              room.updatedAt = now();
-              changed = true;
-            }
-            if (changed) this.rooms[roomId] = room;
-          }
-        }catch(_){ }
+    let changed = false;
+    for (const [roomId, room] of Object.entries(this.rooms || {})){
+      const neverEntered = !room?.everJoined && Math.max(0, Number(room?.players)||0) === 0;
+      const createdAt = Number(room?.createdAt || room?.updatedAt || stamp);
+      if (neverEntered && stamp - createdAt >= 10 * 60 * 1000){
+        delete this.rooms[roomId];
+        changed = true;
       }
-      if (changed){
-        await this._scheduleSaveRooms();
-        this._broadcast('rooms', { list:this._roomsList() });
-      }
-    })().finally(()=>{ this._ghostSweepPromise = null; });
-    return this._ghostSweepPromise;
+    }
+    if (changed){
+      await this._scheduleSaveRooms();
+      this._broadcast('rooms', { list:this._roomsList() });
+    }
   }
 
   _roomsList(){
@@ -310,7 +259,7 @@ export class LobbyDO{
         // Register as online in lobby (roomId=""). RoomDO can override roomId later.
         this.presence.set(wantUid, { nick, roomId:"", lastSeen: now() });
 
-        await this._pruneGhostRooms();
+        await this._pruneExpiredPendingRooms();
         this._send(ws, "hello_ok", { userId: wantUid, nick, protocolVersion:PROTOCOL_VERSION });
         this._send(ws, "rooms", { list: this._roomsList() });
         this._broadcast("system", { text: `${nick} 접속`, ts: now() });
@@ -322,7 +271,7 @@ export class LobbyDO{
       if (!uid) return;
 
       if (t === "list_rooms"){
-        await this._pruneGhostRooms();
+        await this._pruneExpiredPendingRooms();
         this._send(ws, "rooms", { list: this._roomsList() });
         return;
       }
@@ -402,7 +351,7 @@ export class LobbyDO{
 
     // internal HTTP
     if (path === "/internal/listRooms"){
-      await this._pruneGhostRooms();
+      await this._pruneExpiredPendingRooms();
       return json({ list: this._roomsList() },{headers:{"cache-control":"no-store"}});
     }
 
@@ -427,7 +376,8 @@ export class LobbyDO{
         players: 0,
         status: "waiting",
         createdAt,
-        updatedAt: createdAt
+        updatedAt: createdAt,
+        everJoined: false
       };
       await this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
@@ -458,6 +408,7 @@ export class LobbyDO{
           players: u.players ?? prev.players ?? 0,
           status: u.status ?? prev.status ?? "waiting",
           createdAt: prev.createdAt ?? prev.updatedAt ?? now(),
+          everJoined: !!prev.everJoined || Math.max(0, Number(u.players ?? prev.players ?? 0)) > 0,
           updatedAt: now()
         };
       }
@@ -879,14 +830,8 @@ export class RoomDO{
       }
 
       if (t === "client_ping") {
-        // Active rooms periodically re-announce their lobby metadata.  This is a cheap
-        // self-healing lease (one update per RoomDO, not per player) so an accidental
-        // directory loss cannot leave a room playable but invisible in the room list.
-        const stamp = now();
-        if (uid && this.users.size > 0 && stamp - Number(this._lastLobbyLeaseAt||0) >= 20000){
-          this._lastLobbyLeaseAt = stamp;
-          this._scheduleLobbyUpdate(0);
-        }
+        // Connection keepalive only. Lobby metadata is updated by lifecycle events,
+        // never by periodic re-registration.
         return;
       }
 

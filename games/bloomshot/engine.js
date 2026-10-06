@@ -156,7 +156,18 @@ function nextTeamTurn(s){
 function nextSoloTurn(s){if(!Array.isArray(s.turnOrder)||!s.turnOrder.length)prepareTurnOrder(s);const order=s.turnOrder;if(!order.length)return false;let cursor=Number.isInteger(s.turnCursor)?s.turnCursor:0;for(let n=0;n<order.length;n++){const pos=(cursor+n)%order.length,idx=order[pos];if(s.players[idx]?.hp>0){if(pos<cursor||n+cursor>=order.length)s.round++;s.turn=idx;s.turnCursor=(pos+1)%order.length;return true;}}return false;}
 function next(s,now){
  const previous=s.players[s.turn];if(previous)previous.frozenActive=false;
- if(checkWinner(s,now))return;if(s.mode==='team'){if(!nextTeamTurn(s)){checkWinner(s,now);return;}}else if(!nextSoloTurn(s)){checkWinner(s,now);return;}
+ if(checkWinner(s,now))return;
+ if(s.mode==='team'){
+  if(!nextTeamTurn(s)){
+   // Exact team-flight lock case: the opposite team has no living candidate, but
+   // checkWinner intentionally defers the result while every survivor is falling.
+   // The old code returned here without changing phase, leaving an empty
+   // phase='flight' forever from the UI's point of view. Represent that state
+   // explicitly and let tick() finish the fall before resolving winner/next turn.
+   if(s.players.some(p=>p.hp>0&&p.falling)){s.phase='settle';s.deadline=0;return;}
+   checkWinner(s,now);return;
+  }
+ }else if(!nextSoloTurn(s)){checkWinner(s,now);return;}
  const p=s.players[s.turn];if(!Array.isArray(s.zones))s.zones=[];advanceZones(s);zoneTurnDamage(s);turnEffects(s,p);decayZones(s);if(p.hp<=0){next(s,now);return;}p.frozenActive=p.frozen>0;p.fuel=p.frozenActive?0:p.maxFuel;if(p.frozen>0)p.frozen--;p.boost=null;
  s.phase='aim';s.turnSerial++;s.deadline=now+15000;s.shot=null;setWind(s);event(s,'turn',{sid:p.sid});
 }
@@ -307,7 +318,24 @@ function tick(s,now){
   if(s.phase==='jump'&&s.jump){const j=s.jump,p=s.players.find(p=>p.sid===j.sid);if(p){const f=clamp((t-j.at)/j.duration,0,1),x=clamp(j.fromX+j.distance*f,25,W-25),y=j.fromY-140*Math.sin(Math.PI*f),blockedByPlayer=s.players.some(q=>q!==p&&q.hp>0&&Math.abs(q.x-x)<36&&Math.abs(q.y-y)<48),blocked=bodyBlocked(s,x,y)||blockedByPlayer,floor=ground(s,x,y-2),descending=f>.5;if(!blocked){p.x=x;p.y=y;j.lastClearX=x;j.lastClearY=y;}else if(!descending){p.x=j.lastClearX;p.y=Math.max(j.lastClearY,y+10);}if((descending&&p.y>=floor)||f>=1||(descending&&blocked)){p.x=clamp(p.x,25,W-25);s.jump=null;s.phase='aim';settle(s);event(s,'jump_land',{sid:p.sid,x:p.x,y:p.y});} }
   }
   advanceFalls(s);
-  if(s.phase==='flight')updateProjectiles(s,t);
+  if(s.phase==='settle'&&!s.players.some(p=>p.hp>0&&p.falling)){
+   // Falling has reached an authoritative result. Resolve the deferred winner/turn
+   // now instead of pretending a projectile is still being tracked.
+   if(!checkWinner(s,t))next(s,t);
+  }
+  if(s.phase==='flight'){
+   updateProjectiles(s,t);
+   // A flight deadline has always been assigned when a shot starts, but the old
+   // state machine never consumed it. If a delayed/corrupt queued shot survives
+   // normal projectile cleanup, every client remains locked in phase='flight'
+   // forever. The deadline is authoritative server/host simulation time, so use it
+   // as the terminal invariant for the whole flight transaction.
+   if(s.phase==='flight'&&Number.isFinite(s.deadline)&&t>=s.deadline){
+    s.projectiles=[];s.queue=[];s.repeatShot=null;s.flightEnd=0;
+    event(s,'flight_timeout',{sid:s.shot?.owner||''});
+    next(s,t);
+   }
+  }
   if(s.phase==='aim'&&t>=s.deadline)next(s,t);if(s.phase==='aim'&&!checkWinner(s,t)&&s.players[s.turn].hp<=0)next(s,t);
  }return changed;
 }
