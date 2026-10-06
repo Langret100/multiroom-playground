@@ -196,7 +196,7 @@ export class DungeonGame {
     if(!e)return;
     if(c.action==='spawn'&&this.phase==='spawn'){const p={x:finite(c.x),y:finite(c.y)};if(walkable(this.map,p,.48)&&bodyClear(this.map,e,p)&&roomAt(this.map,p)){e.x=p.x;e.y=p.y;e.room=roomAt(this.map,p).id;}return;}
     if(e.dead){if(c.action==='follow')e.follow=String(c.target||'');return;}
-    if(c.action==='attack'){this.attack(e,this.inputs.get(id)||{},!!c.special);return;}
+    if(c.action==='attack'){const input={...(this.inputs.get(id)||{})};if(Number.isFinite(c.aimX))input.aimX=c.aimX;if(Number.isFinite(c.aimY))input.aimY=c.aimY;if(Number.isFinite(input.aimX)&&Number.isFinite(input.aimY)&&Math.hypot(input.aimX-e.x,input.aimY-e.y)>.1)e.facing=Math.atan2(input.aimY-e.y,input.aimX-e.x);this.attack(e,input,!!c.special);return;}
     if(c.action==='interact')this.interact(e,false,c.target?{kind:c.target,id:c.targetId}:null);
     if(c.action==='answer')this.answer(e,String(c.answer??''));
     if(c.action==='drop'&&SLOTS.includes(c.slot)){const it=e.equipment[c.slot];if(it){this.drop(it,e);e.equipment[c.slot]=null;this.syncHp(e);}return;}
@@ -262,7 +262,7 @@ export class DungeonGame {
     }else return false;
     b.spent+=cost;return true;
   }
-  fx(kind,p,angle=0,life=.4,extra={}){this.effects.push({id:this.id('fx'),kind,x:p.x,y:p.y,angle,life,maxLife:life,...extra});}
+  fx(kind,p,angle=0,life=.4,extra={}){this.effects.push({id:this.id('fx'),kind,x:p.x,y:p.y,angle,life,maxLife:life,owner:extra.owner??p?.id??null,...extra});}
   enemies(a,b){return a.id!==b.id&&!b.dead&&a.team!==b.team&&b.kind!=='ghost'&&!(a.kind==='monster'&&b.kind==='monster');}
   validHit(a,b){
     if(!this.enemies(a,b))return false;
@@ -340,7 +340,7 @@ export class DungeonGame {
     }
     const range=e.kind==='monster'?e.range:(weapon?.range||.7);if(playerCombo&&e.root<=0)move(this.map,e,Math.cos(e.facing)*(heavy?.3:e.combo===3?.38:.22),Math.sin(e.facing)*(heavy?.3:e.combo===3?.38:.22));
     this.fx('slash',e,e.facing,.22,{radius:range,combo:e.combo||1,weapon:e.equipment.main?.type,appearance:e.equipment.main?.appearance,feedback:itemFeedback(e.equipment.main)});
-    if(playerCombo&&heavy&&e.combo===2&&itemFeedback(e.equipment.main).material!=='bread')this.fx('slam',{x:e.x+Math.cos(e.facing)*range*.65,y:e.y+Math.sin(e.facing)*range*.65},e.facing,.3,{radius:range*.45,feedback:itemFeedback(e.equipment.main)});
+    if(playerCombo&&heavy&&e.combo===2&&itemFeedback(e.equipment.main).material!=='bread')this.fx('slam',{x:e.x+Math.cos(e.facing)*range*.65,y:e.y+Math.sin(e.facing)*range*.65},e.facing,.3,{radius:range*.45,owner:e.id,feedback:itemFeedback(e.equipment.main)});
     for(const t of this.entities)if(distance(e,t)<=range+.4&&Math.cos(Math.atan2(t.y-e.y,t.x-e.x)-e.facing)>.1&&lineOfSight(this.map,e,t)&&this.validHit(e,t)){
       this.hurt(t,bonus,e,{push:1});
       if(!['greatsword','hammer'].includes(e.equipment.main?.type))break;
@@ -380,7 +380,7 @@ export class DungeonGame {
       case 'push':melee(1.5,stats.attack,{push:3});break;
       case 'bleed':melee(1.5,stats.attack);for(const t of this.entities)if(this.validHit(e,t)&&distance(e,t)<2)this.status(t,'bleed',5);break;
       case 'backstep':move(this.map,e,-dir.x*2,-dir.y*2);this.fx('dash',e,e.facing,.3);break;
-      case 'slam':{const reach=WEAPONS[e.equipment[c.slot||'main']?.type]?.range||2.5,at={x:e.x+dir.x*reach*.65,y:e.y+dir.y*reach*.65};this.area(e,at,reach*.45,stats.attack*1.5,{stun:1});this.fx('slam',at,e.facing,.5,{radius:reach*.45,feedback:itemFeedback(e.equipment[c.slot||'main'])});break;}
+      case 'slam':{const reach=WEAPONS[e.equipment[c.slot||'main']?.type]?.range||2.5,at={x:e.x+dir.x*reach*.65,y:e.y+dir.y*reach*.65};this.area(e,at,reach*.45,stats.attack*1.5,{stun:1});this.fx('slam',at,e.facing,.5,{radius:reach*.45,owner:e.id,feedback:itemFeedback(e.equipment[c.slot||'main'])});break;}
       case 'spin':e.whirl={ends:this.time+2,next:this.time,damage:stats.attack,slot:c.slot||'main'};break;
       case 'meteor':this.scheduleZone(e,'meteor',p,5,.3,65,2);break;
       case 'poison':this.scheduleZone(e,'poison',p,4,0,7,3);this.zones.at(-1).steerable=true;break;

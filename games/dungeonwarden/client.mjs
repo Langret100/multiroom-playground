@@ -1,4 +1,4 @@
-import {RoomTransport} from './room-transport.mjs?v=0.6.2';
+import {RoomTransport} from './room-transport.mjs?v=0.7.0';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
@@ -13,6 +13,7 @@ const keys=new Set(),pressed={attack:false,special:false,block:false},mouse={x:i
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const held=k=>keys.has(k);
 const command=c=>transport?.sendCommand(c);
+const attackCommand=(special=false,p=null)=>{p=p||renderer.worldPoint(mouse.x,mouse.y);command({action:'attack',special,aimX:p.x,aimY:p.y});};
 const slotNames={main:'오른손 · 주 무기',off:'왼손 · 보조',helmet:'머리 장비',armor:'몸통 장비',boots:'신발'};
 function resetInput(){keys.clear();pressed.attack=pressed.special=pressed.block=pressed.sprint=false;touch={mx:0,my:0};transport?.sendInput({});}
 function start(options){
@@ -32,7 +33,7 @@ function toggleInventory(){const show=getComputedStyle($('side')).display==='non
 $('inventoryBtn').onclick=$('closeEquipment').onclick=()=>{gameAudio.play('ui',.4);toggleInventory();};
 function interact(){const target=actionState(snapshot).interact;if(target?.kind==='chest')quizDismissed=null;command({action:'interact',target:target?.kind,targetId:target?.id});}
 
-function holdButton(id,key){const b=$(id);b.addEventListener('pointerdown',e=>{b.setPointerCapture(e.pointerId);if(key==='attack'&&actionState(snapshot).interact){interact();e.preventDefault();return;}const activeKey=key==='special'&&actionState(snapshot).shield?'block':key;pressed[activeKey]=true;if(activeKey!=='block'&&(key==='attack'||key==='special')&&snapshot?.me?.equipment.main?.type!=='bow')command({action:'attack',special:key==='special'});e.preventDefault();});b.addEventListener('pointerup',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});b.addEventListener('pointercancel',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});}
+function holdButton(id,key){const b=$(id);b.addEventListener('pointerdown',e=>{b.setPointerCapture(e.pointerId);if(key==='attack'&&actionState(snapshot).interact){interact();e.preventDefault();return;}const activeKey=key==='special'&&actionState(snapshot).shield?'block':key;pressed[activeKey]=true;if(activeKey!=='block'&&(key==='attack'||key==='special')&&snapshot?.me?.equipment.main?.type!=='bow')attackCommand(key==='special');e.preventDefault();});b.addEventListener('pointerup',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});b.addEventListener('pointercancel',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});}
 holdButton('dashBtn','sprint');holdButton('attackBtn','attack');holdButton('specialBtn','special');
 addEventListener('keydown',e=>{
   if(e.target.closest('input,select,textarea')||!transport)return;
@@ -57,7 +58,7 @@ canvas.addEventListener('pointerdown',e=>{
   if(renderer.overview){renderer.overview=false;return;}
   if(s.me?.dead){const t=s.entities.find(x=>x.kind==='player'&&!x.dead&&distance(x,p)<2);if(t)command({action:'follow',target:t.id});return;}
   if(e.button===2)pressed.special=true;else pressed.attack=true;
-  if(!(e.button===2&&actionState(snapshot).shield)&&snapshot?.me?.equipment.main?.type!=='bow')command({action:'attack',special:e.button===2});
+  if(!(e.button===2&&actionState(snapshot).shield)&&snapshot?.me?.equipment.main?.type!=='bow')attackCommand(e.button===2,p);
   canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointerup',()=>{pressed.attack=false;pressed.special=false;});canvas.addEventListener('pointercancel',resetInput);

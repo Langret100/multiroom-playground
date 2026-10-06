@@ -1334,7 +1334,7 @@ export class RoomDO{
         if(!['dungeonwarden'].includes(this.meta.mode)||this.meta.phase!=='playing'||!this.users.has(uid)||!this.dw)return;
         if(t==='dw_sync'){const player=this.dw.game.entities.find(e=>e.id===uid);if(player)player.bot=false;this._send(ws,'dw_packet',{packet:this.dw.packet(uid,true)});}
         if(t==='dw_input'){const input=d.input||{};this.dw.input(uid,{mx:input.mx,my:input.my,aimX:input.aimX,aimY:input.aimY,attack:!!input.attack,special:!!input.special,sprint:!!input.sprint,block:!!input.block});}
-        if(t==='dw_command'){const c=d.command||{},allowed=['interact','answer','drop','swap','clone','attack','spawn','follow','place','fillRoom','startRaid','possess','bossSkill','order'];if(!allowed.includes(c.action))return;const clean={};for(const k of ['action','target','targetId','slot','room','type','tier','x','y','skill','answer','entity','special','id'])if(c[k]===null||['string','number','boolean'].includes(typeof c[k]))clean[k]=typeof c[k]==='string'?c[k].slice(0,100):c[k];delete clean.id;this.dw.command(uid,clean);}return;
+        if(t==='dw_command'){const c=d.command||{},allowed=['interact','answer','drop','swap','clone','attack','spawn','follow','place','fillRoom','startRaid','possess','bossSkill','order'];if(!allowed.includes(c.action))return;const clean={};for(const k of ['action','target','targetId','slot','room','type','tier','x','y','aimX','aimY','skill','answer','entity','special','id'])if(c[k]===null||['string','number','boolean'].includes(typeof c[k]))clean[k]=typeof c[k]==='string'?c[k].slice(0,100):c[k];delete clean.id;this.dw.command(uid,clean);}return;
       }
       // ----- SuhakTokki relay (generic packet) -----
       if (t === "sk_msg"){
@@ -3553,7 +3553,7 @@ export class RoomDO{
       if(this.meta.phase!=='playing'||!this.users.size){this._stopDungeon();return;}
       const time=Date.now();acc+=Math.min(.15,(time-last)/1000);last=time;
       while(acc>=1/60){this.dw.step(1/60);acc-=1/60;}
-      if(time-sendAt>=100){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id))this._send(ws,'dw_packet',{packet:this.dw.packet(id)});}
+      if(time-sendAt>=50){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id))this._send(ws,'dw_packet',{packet:this.dw.packet(id)});}
       if(this.dw.game.result){const result=this.dw.game.result;this._broadcast('result',{mode:this.meta.mode,done:true,...result});this._stopDungeon();this._endAndBackToLobby(3000);}
     }catch(error){console.error('Dungeon room tick',error);this._stopDungeon();this._broadcast('system',{text:'던전 연결이 종료되었습니다. 방에서 다시 시작해 주세요.'});this._endAndBackToLobby(0);}},50);
   }
