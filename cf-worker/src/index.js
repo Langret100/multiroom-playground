@@ -210,8 +210,21 @@ export class LobbyDO{
           if (!res.ok) continue;
           const health = await res.json();
           if (health?.empty){
-            delete this.rooms[roomId];
-            changed = true;
+            // A newly-created room legitimately has zero sockets until the creator's
+            // room page finishes navigation and opens /ws/room/:roomId.  Treating that
+            // short window as a ghost deletes the authoritative game metadata and makes
+            // RoomDO fall back to its defaults (stackga / 4 players).
+            //
+            // Empty rooms that have never been entered are allowed to wait up to the
+            // existing 10-minute auto-expiry window. Rooms that previously had players
+            // can still be pruned immediately if their sockets disappeared unexpectedly.
+            const listedPlayers = Math.max(0, Number(room.players)||0);
+            const ageMs = Math.max(0, stamp - Number(room.createdAt || room.updatedAt || stamp));
+            const creationGraceMs = 10 * 60 * 1000;
+            if (listedPlayers > 0 || ageMs >= creationGraceMs){
+              delete this.rooms[roomId];
+              changed = true;
+            }
           } else if (health && Number.isFinite(Number(health.players))){
             const players = Math.max(0, Number(health.players)||0);
             if (Number(room.players||0) !== players){
@@ -385,13 +398,15 @@ export class LobbyDO{
       if (mode === "soccer" && maxPlayers % 2 !== 0){
         maxPlayers = Math.max(2, maxPlayers - 1);
       }
+      const createdAt = now();
       this.rooms[roomId] = {
         roomId, title, mode,
         randomGame:!!opts.randomGame,
         maxPlayers,
         players: 0,
         status: "waiting",
-        updatedAt: now()
+        createdAt,
+        updatedAt: createdAt
       };
       await this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
@@ -421,6 +436,7 @@ export class LobbyDO{
           maxPlayers: u.maxPlayers ?? prev.maxPlayers ?? 4,
           players: u.players ?? prev.players ?? 0,
           status: u.status ?? prev.status ?? "waiting",
+          createdAt: prev.createdAt ?? prev.updatedAt ?? now(),
           updatedAt: now()
         };
       }
@@ -756,13 +772,15 @@ export class RoomDO{
       const res = await lobby.fetch(`https://lobby/internal/roomMeta?roomId=${encodeURIComponent(roomId)}`);
       const js = await res.json();
       const lm = js.meta;
-      if (lm){
-        this.meta.randomGame=!!lm.randomGame;
-        this.meta.title = lm.title ?? this.meta.title;
-        this.meta.mode = lm.mode ?? this.meta.mode;
-        this.meta.maxPlayers = lm.maxPlayers ?? this.meta.maxPlayers;
-      }
-    }catch(_){}
+      if (!lm) return false;
+      this.meta.randomGame=!!lm.randomGame;
+      this.meta.title = lm.title ?? this.meta.title;
+      this.meta.mode = lm.mode ?? this.meta.mode;
+      this.meta.maxPlayers = lm.maxPlayers ?? this.meta.maxPlayers;
+      return true;
+    }catch(_){
+      return false;
+    }
   }
 
   _scheduleLobbyUpdate(delayMs=400){
@@ -857,7 +875,12 @@ export class RoomDO{
         // Fetch lobby meta once, on first hello.
         if (!this.meta.roomId) this.meta.roomId = this._roomIdFromPath(ws._pathHint) || this.meta.roomId;
         if (!this.meta.roomId) this.meta.roomId = wantUid.slice(0,8);
-        await this._pullMetaFromLobby(this.meta.roomId);
+        const metaFound = await this._pullMetaFromLobby(this.meta.roomId);
+        if (!metaFound){
+          this._send(ws, "system", { text:"방 정보를 확인할 수 없습니다. 로비에서 방을 다시 열어 주세요.", ts: now() });
+          try{ ws.close(1011, "room-meta-missing"); }catch(_){ }
+          return;
+        }
 
         // Running games normally allow late-join for cooperative modes, but Soccer is
         // team-balanced at kickoff and must keep that roster fixed for the whole match.
@@ -927,12 +950,14 @@ export class RoomDO{
 
         wsSetAttachment(ws, { uid: wantUid, nick, ready: !!this.users.get(wantUid).ready, seat: this.users.get(wantUid).seat, lastSeen: now() });
 
-        this._send(ws, "hello_ok", { userId: wantUid, protocolVersion:PROTOCOL_VERSION });
-        this._broadcast("system", { text: `${nick} 입장`, ts: now() });
-
         this.meta.status = (this.meta.phase === "playing") ? "playing" : "waiting";
         this._scheduleLobbyUpdate();
+        // Send the authoritative room state before hello_ok. The client resolves
+        // joinById() on hello_ok, so this prevents it from briefly booting the default
+        // stackga/4-player state while the real room_state is still in flight.
         this._broadcast("room_state", this._snapshot());
+        this._send(ws, "hello_ok", { userId: wantUid, protocolVersion:PROTOCOL_VERSION });
+        this._broadcast("system", { text: `${nick} 입장`, ts: now() });
         if(this.meta.mode==='stackga')this._send(ws,'stack_mode',{stackMode:this.meta.stackMode||'items'});
 
         // SuhakTokki: if a match is already running, sync authoritative start payload to the joining client.
@@ -3626,10 +3651,10 @@ export class RoomDO{
       }catch(_){ }
 
       if (liveUsers.size === 0){
-        const staleUids = new Set([...this.users.keys()].filter(uid=>uid!==this._cpuUid()));
-        for (const uid of staleUids){ try{ await this._presenceClear(uid, this.meta.roomId); }catch(_){ } }
-        try{ this._resetTransientRoomState(); }catch(_){ }
-        try{ await this._deleteFromLobby(); }catch(_){ }
+        // Health is observation-only for an empty RoomDO. LobbyDO owns the deletion
+        // decision so it can distinguish a brand-new room waiting for its creator from
+        // a genuinely abandoned ghost room. Deleting here caused a create->navigate
+        // race that erased mode/maxPlayers before the first hello_room.
         return json({ ok:true, empty:true, players:0 });
       }
 

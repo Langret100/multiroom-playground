@@ -86,6 +86,7 @@
       this._handlers = new Map(); // type -> [fn]
       this._latestLobby = new Map();
       this._helloOk = new Promise((res)=>{ this._helloResolve = res; });
+      this._stateReady = new Promise((res)=>{ this._stateResolve = res; });
       ws.onmessage = (ev)=> this._onWsMessage(ev);
       ws.onclose = ()=> {
         // no-op; pages handle UI
@@ -183,6 +184,7 @@ if (isDuel && humans.length === 1){
   const evenOk = !isSoccer || (humans.length % 2 === 0);
   this.state.allReady = baseReady && evenOk;
 }
+      if (this._stateResolve){ try{ this._stateResolve(true); }catch(_){} this._stateResolve = null; }
       if(typeof this.state.onChange === "function") {
         try{ this.state.onChange(); }catch(e){}
       }
@@ -416,6 +418,12 @@ if (isDuel && humans.length === 1){
       ws.send(JSON.stringify({ t:"hello_room", d:{ nick, user_id } }));
 
       await conn._helloOk;
+      // Never expose the default local room state (stackga/4 players) as if it were
+      // authoritative. The first room_state must arrive before room.js initializes UI.
+      await Promise.race([
+        conn._stateReady,
+        new Promise((_, reject)=>setTimeout(()=>reject(new Error("room state timeout")), 5000))
+      ]);
       return conn;
     }
     async create(roomName, opts){
