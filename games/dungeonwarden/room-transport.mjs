@@ -59,12 +59,18 @@ export class RoomTransport {
   const moving=Math.hypot(Number(this.pending?.mx)||0,Number(this.pending?.my)||0)>.001;
   if(moving&&previousServer&&previousServer.room===server.room&&!server.dead)this.advanceLocal(target,clamp(this.arrivalGap,.06,.14));
 
-  const dx=target.x-this.predictedMe.x,dy=target.y-this.predictedMe.y,dist=Math.hypot(dx,dy);
+  let dx=target.x-this.predictedMe.x,dy=target.y-this.predictedMe.y,dist=Math.hypot(dx,dy);
   if(dist>2.2){this.predictedMe=target;this.correction.x=this.correction.y=0;return;}
 
-  // Replace the outstanding correction instead of accumulating the full error again
-  // on every packet. This keeps genuine collision/knockback correction, but removes
-  // the oscillating backlog that caused small backward jumps while walking.
+  // While the player is holding a movement direction, an arriving snapshot is normally
+  // behind the local visual prediction. Never turn that normal network latency into a
+  // backwards correction. Keep lateral/forward authority corrections (collision, knockback,
+  // another body blocking the path), and absorb any remaining error once movement stops.
+  const mx=Number(this.pending?.mx)||0,my=Number(this.pending?.my)||0,ml=Math.hypot(mx,my);
+  if(ml>.001){
+   const ux=mx/ml,uy=my/ml,longitudinal=dx*ux+dy*uy;
+   if(longitudinal<0){dx-=ux*longitudinal;dy-=uy*longitudinal;}
+  }
   this.correction.x=dx;this.correction.y=dy;
   const x=this.predictedMe.x,y=this.predictedMe.y,facing=this.predictedMe.facing;
   this.predictedMe=cloneEntity(server);this.predictedMe.x=x;this.predictedMe.y=y;this.predictedMe.facing=facing;
@@ -75,7 +81,8 @@ export class RoomTransport {
   const e=this.predictedMe;if(!e||!this.latest?.map||e.dead)return;
   // A fresh correction represents only current divergence; never stack stale packet
   // errors. Settle it without changing the authoritative gameplay simulation.
-  const settle=1-Math.exp(-dt*14);e.x+=this.correction.x*settle;e.y+=this.correction.y*settle;this.correction.x*=1-settle;this.correction.y*=1-settle;
+  const moving=Math.hypot(Number(this.pending?.mx)||0,Number(this.pending?.my)||0)>.001;
+  const settle=1-Math.exp(-dt*(moving?10:16));e.x+=this.correction.x*settle;e.y+=this.correction.y*settle;this.correction.x*=1-settle;this.correction.y*=1-settle;
   this.advanceLocal(e,dt);
  }
  update(dt){

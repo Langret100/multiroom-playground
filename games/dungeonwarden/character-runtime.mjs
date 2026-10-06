@@ -47,14 +47,14 @@ export class CharacterRenderer {
   const data=g.getImageData(0,0,96,96).data;let left=96,top=96,right=0,bottom=0;for(let y=0;y<96;y++)for(let x=0;x<96;x++)if(data[(y*96+x)*4+3]>0){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}
   if(left>right)return;const w=right-left+1,h=bottom-top+1,scale=Math.min(1.6,(width-16)/w,(height-20)/h),dw=w*scale,dh=h*scale;ctx.imageSmoothingEnabled=false;ctx.drawImage(this.previewCanvas,left,top,w,h,Math.round((width-dw)/2),Math.round((height-dh)/2),dw,dh);
  }
- draw(ctx,e,time,moving,index){
+ draw(ctx,e,time,moving,index,visualTime=time){
   if(!this.ready||e.kind!=='player')return false;if(e.pose==='victory')time=performance.now()/1000;const id=e.id.replace(/-trail$/,''),head=this.head(e),eq=e.equipment||{},signature=head+'|'+['armor','boots','main','off','helmet'].map(k=>this.key(eq[k])).join('|');
   let actor=this.actors.get(id);if(!actor||actor.signature!==signature){const rig=this.rig(head,eq),weapon=this.weapon(eq.main);actor={signature,rig,weapon,canvas:this.factory(96,96),motion:P1WeaponMotion.create(rig,{},this.factory)};this.actors.set(id,actor);}
   const x=Math.cos(e.facing||0),y=Math.sin(e.facing||0),dir=Math.abs(x)>Math.abs(y)?x>0?'right':'side':y>0?'front':'back';
   const skill=e.skillPose?.ends>time?e.skillPose:null;
   const mode=e.pose==='victory'?'victory':e.hitPose?'hurt':e.whirl?'whirlwind':skill?skill.mode:e.attackPose?'combo':e.cast?'combo':e.dashing?'run':moving?'walk':'idle';
   const def=P1WeaponMotion.weapons.find(w=>w[0]===actor.weapon.family)||P1WeaponMotion.weapons[0],start=e.cast?(e.cast.started??e.cast.ends-.12):0;
-  const animationTime=skill?(time-skill.started)*(mode==='combo'?def[4]:1.05)/Math.max(.01,skill.ends-skill.started):e.attackPose?Math.max(0,1-e.attackPose/.25)*def[4]:e.cast?Math.min(.3,Math.max(0,time-start)/Math.max(.12,e.cast.ends-start)*.3)*def[4]:time;
+  const animationTime=skill?(time-skill.started)*(mode==='combo'?def[4]:1.05)/Math.max(.01,skill.ends-skill.started):e.attackPose?Math.max(0,1-e.attackPose/.25)*def[4]:e.cast?Math.min(.3,Math.max(0,time-start)/Math.max(.12,e.cast.ends-start)*.3)*def[4]:visualTime;
   actor.motion.render(actor.canvas,dir,actor.weapon.family,animationTime,{mode,single:!!skill||!!e.attackPose&&!e.whirl,combo:e.combo||1,weapon:actor.weapon.sprite,grip:actor.weapon.sprite.grip,helmet:this.accessory(eq.helmet),shield:eq.off?.type==='shield'?this.accessory(eq.off):null,theme:actor.weapon.theme,effects:false});
   const matrix=ctx.getTransform?.();
   const sx=Math.max(1,Math.abs(matrix?.a||1)),sy=Math.max(1,Math.abs(matrix?.d||1));
@@ -62,7 +62,7 @@ export class CharacterRenderer {
   const drawW=6.3,drawH=6.3,anchorY=.69;
   ctx.imageSmoothingEnabled=false;
   ctx.drawImage(actor.canvas,snap(e.x-drawW/2,sx),snap(e.y-drawH*anchorY,sy),drawW,drawH);
-  if(eq.off&&eq.off.type!=='shield'){const icon=this.accessory(eq.off),sway=Math.sin(time*(moving?9:2.5)-.5)*.05;ctx.save();ctx.translate(e.x+(dir==='side'?0:-.9),e.y-1.25+sway);ctx.rotate(sway);ctx.drawImage(icon,-.4,-.4,.8,.8);ctx.restore();}return true;
+  if(eq.off&&eq.off.type!=='shield'){const icon=this.accessory(eq.off),sway=Math.sin(visualTime*(moving?11:2.5)-.5)*.05;ctx.save();ctx.translate(e.x+(dir==='side'?0:-.9),e.y-1.25+sway);ctx.rotate(sway);ctx.drawImage(icon,-.4,-.4,.8,.8);ctx.restore();}return true;
  }
  itemSprite(item){if(!this.ready)return null;if(item.kind==='main')return this.weapon(item).sprite;if(item.kind==='armor')return this.wearPart(this.art.body.front.torso,item,'torso');if(item.kind==='boots'){const key='boot-pair:'+this.key(item);if(!this.icons.has(key)){const c=this.factory(12,9),g=c.getContext('2d');g.drawImage(this.wearPart(this.art.body.front.leftLeg,item,'leftLeg'),0,0);g.drawImage(this.wearPart(this.art.body.front.rightLeg,item,'rightLeg'),7,0);this.icons.set(key,c);}return this.icons.get(key);}return this.accessory(item);}
  drawDrop(ctx,item){const c=this.itemSprite(item);if(!c)return false;const baseLength=c.motionLength||(item.kind==='main'?(['greatsword','hammer'].includes(this.family(item))?27:21):item.kind==='armor'?16:14),boost={main:1.26,armor:1.24,helmet:1.2,boots:1.22,off:1.18}[item.kind]||1.16,scale=baseLength/c.height/16*boost*1.0,offsetY={main:-.12,armor:-.18,helmet:-.22,boots:.12,off:-.08}[item.kind]||0;ctx.save();ctx.imageSmoothingEnabled=false;ctx.translate(0,offsetY);if(item.kind==='main')ctx.rotate(-.45);ctx.drawImage(c,-c.width*scale/2,-c.height*scale/2,c.width*scale,c.height*scale);ctx.restore();return true;}
