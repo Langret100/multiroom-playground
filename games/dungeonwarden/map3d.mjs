@@ -61,8 +61,15 @@ export class Map3D {
     if(map.mode==='dungeon'){const groups=new Map();for(const edge of boundary.segments){const key=Math.floor(edge.x/24)+':'+Math.floor(edge.y/24);if(!groups.has(key))groups.set(key,{out:[],x:Math.floor(edge.x/24)*24,y:Math.floor(edge.y/24)*24});const group=groups.get(key);add(group.out,'dungeon/wall',edge.x+edge.w/2,edge.y+edge.h/2,edge.w||edge.h,edge.height,.8,edge.h?Math.PI/2:0);}for(const g of groups.values())this.chunks.push({room:null,bounds:{x:g.x-1,y:g.y-1,w:27,h:27},mesh:this.mesh(g.out)});}
   }
   updateProps(s){
-    const obstacleKey=JSON.stringify(s.map.obstacles.map(o=>[o.id,o.x,o.y,o.w,o.h,o.model,o.height]));if(obstacleKey!==this.obstacleKey){this.obstacleKey=obstacleKey;const data=[];for(const o of s.map.obstacles)appendModel(data,this.models[o.model||(o.fixed?(s.mode==='arena'?'arena/column':'dungeon/column'):'dungeon/barrel')],o.x+o.w/2,o.y+o.h/2,o.w,o.height||Math.max(1.2,o.h*.95),o.h);if(this.staticProps)this.gl.deleteBuffer(this.staticProps.buffer);this.staticProps=this.mesh(data);}
-    const key=JSON.stringify([s.map.obstacles.map(o=>[o.id,o.x,o.y,o.w,o.h,o.model,o.height]),s.chests.map(c=>[c.id,c.opened]),s.traps.map(t=>[t.id,t.cool>0]),s.map.rooms.map(r=>r.locked)]);if(key===this.dynamicKey)return;this.dynamicKey=key;
+    // Network delta application preserves these array references until that collection
+    // actually changes. Use that fact instead of JSON-stringifying every obstacle/chest/
+    // trap on every requestAnimationFrame -- a surprisingly expensive hot path on
+    // WhaleBooks when many actors are also animating.
+    const obstacles=s.map.obstacles||[];
+    if(obstacles!==this._obstaclesRef){this._obstaclesRef=obstacles;const data=[];for(const o of obstacles)appendModel(data,this.models[o.model||(o.fixed?(s.mode==='arena'?'arena/column':'dungeon/column'):'dungeon/barrel')],o.x+o.w/2,o.y+o.h/2,o.w,o.height||Math.max(1.2,o.h*.95),o.h);if(this.staticProps)this.gl.deleteBuffer(this.staticProps.buffer);this.staticProps=this.mesh(data);}
+    const rooms=s.map.rooms||[],chests=s.chests||[],traps=s.traps||[];
+    if(obstacles===this._dynamicObstaclesRef&&rooms===this._roomsRef&&chests===this._chestsRef&&traps===this._trapsRef)return;
+    this._dynamicObstaclesRef=obstacles;this._roomsRef=rooms;this._chestsRef=chests;this._trapsRef=traps;
     const out=[],add=(key,x,z,w,h,d,a=0)=>appendModel(out,this.models[key],x,z,w,h,d,a);
     const box=(x,z,w,h,d,color,base=0)=>{const v=[[x-w/2,base,z-d/2],[x+w/2,base,z-d/2],[x+w/2,base+h,z-d/2],[x-w/2,base+h,z-d/2],[x-w/2,base,z+d/2],[x+w/2,base,z+d/2],[x+w/2,base+h,z+d/2],[x-w/2,base+h,z+d/2]];for(const [a,b,c,d,shade] of [[0,1,2,3,.75],[4,7,6,5,1],[0,3,7,4,.85],[1,5,6,2,.9],[3,2,6,7,1.15]])for(const i of [a,b,c,a,c,d])out.push(...v[i],...color.map(t=>t*shade));};
     for(const c of s.chests)add(c.opened?'dungeon/chest-open':'dungeon/chest',c.x,c.y,1.35,1.2,1.2);
@@ -70,9 +77,9 @@ export class Map3D {
     if(s.mode==='dungeon')for(const r of s.map.rooms)if(r.id&&r.entry){const previous=s.map.rooms[r.id-1],doorWidth=s.map.corridorWidth||6;for(const door of [r.entry,{...previous.exit,angle:r.entry.angle}]){const a=door.angle||0,dx=Math.cos(a),dz=Math.sin(a);for(const side of [-1,1])add('dungeon/column',door.x+dx*side*doorWidth/2,door.y+dz*side*doorWidth/2,.85,3.6,.85);appendModel(out,this.models['dungeon/wall'],door.x,door.y,doorWidth+.6,.6,.85,a,[.92,.94,1],3.05);if(r.locked){add('dungeon/gate',door.x,door.y,doorWidth-.5,3.05,a?1.1:.55,a);if(a){box(door.x,door.y,1.4,2.85,doorWidth-.65,[.35,.19,.095]);for(const height of [.55,1.8])box(door.x,door.y,1.45,.15,doorWidth-.6,[.27,.29,.32],height);}}}}
     if(this.dynamic)this.gl.deleteBuffer(this.dynamic.buffer);this.dynamic=this.mesh(out);
     const shadows=[],ellipse=(x,z,rx,rz,opacity=.28)=>{const put=(x,z,a)=>shadows.push(x,.035,z,a,0,0);for(let i=0;i<20;i++){const a=i*Math.PI/10,b=(i+1)*Math.PI/10;put(x,z,opacity);put(x+Math.cos(a)*rx*.5,z+Math.sin(a)*rz*.5,opacity*.75);put(x+Math.cos(b)*rx*.5,z+Math.sin(b)*rz*.5,opacity*.75);for(const [angle,radius,alpha] of [[a,.5,opacity*.75],[a,1,0],[b,1,0],[a,.5,opacity*.75],[b,1,0],[b,.5,opacity*.75]])put(x+Math.cos(angle)*rx*radius,z+Math.sin(angle)*rz*radius,alpha);}};
-    for(const o of s.map.obstacles)ellipse(o.x+o.w/2+.2,o.y+o.h/2+.35,o.w*.8,o.h*.72);
-    for(const c of s.chests)ellipse(c.x+.12,c.y+.2,1,.72,.2);
-    for(const r of s.map.rooms)for(let i=0;i<4;i++)ellipse(r.x+3+i*(r.w-6)/3,r.y+.5,.9,1.2,.2);
+    for(const o of obstacles)ellipse(o.x+o.w/2+.2,o.y+o.h/2+.35,o.w*.8,o.h*.72);
+    for(const c of chests)ellipse(c.x+.12,c.y+.2,1,.72,.2);
+    for(const r of rooms)for(let i=0;i<4;i++)ellipse(r.x+3+i*(r.w-6)/3,r.y+.5,.9,1.2,.2);
     if(this.shadows)this.gl.deleteBuffer(this.shadows.buffer);this.shadows=this.mesh(shadows);
   }
   draw(mesh,lava=0,shadow=false){const gl=this.gl;if(!mesh?.count)return;gl.bindBuffer(gl.ARRAY_BUFFER,mesh.buffer);gl.vertexAttribPointer(this.position,3,gl.FLOAT,false,24,0);gl.vertexAttribPointer(this.color,3,gl.FLOAT,false,24,12);gl.uniform1f(this.lava,lava);gl.uniform1f(this.shadowUniform,shadow?1:0);gl.drawArrays(gl.TRIANGLES,0,mesh.count);this.stats.drawCalls++;this.stats.triangles+=mesh.count/3;}

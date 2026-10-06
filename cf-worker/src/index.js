@@ -3549,11 +3549,22 @@ export class RoomDO{
   _startDungeon(){
     this._stopDungeon();const cpu=this._cpuUid();const players=Array.from(this.users.entries()).filter(([id])=>id!==cpu).sort((a,b)=>Number(a[1].seat)-Number(b[1].seat)).map(([id,u])=>({id,name:u.nick}));
     this.dw=new DungeonRoomRuntime(players,{mode:this.meta.dungeonMode==='dungeon'?'dungeon':'arena',masterId:this.meta.dungeonMode==='dungeon'?this.meta.ownerUserId:null});let last=Date.now(),acc=0,sendAt=0;
+    // Dungeon Warden used to simulate at 60 Hz inside a 50 ms Durable Object timer.
+    // With 8 players + many monsters this means three full AI/physics passes, followed by
+    // eight recipient-specific visibility snapshots, on every wake-up. The resulting CPU
+    // bursts delay both monster AI and outgoing packets. 30 Hz authoritative physics is
+    // sufficient because clients interpolate remote actors and locally predict their own
+    // movement. Keep the network cadence high enough for responsiveness, but ease it a
+    // little for large rooms to avoid 8x snapshot bursts.
+    const simStep=1/30;
     this.dwTimer=setInterval(()=>{try{
       if(this.meta.phase!=='playing'||!this.users.size){this._stopDungeon();return;}
-      const time=Date.now();acc+=Math.min(.15,(time-last)/1000);last=time;
-      while(acc>=1/60){this.dw.step(1/60);acc-=1/60;}
-      if(time-sendAt>=50){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id))this._send(ws,'dw_packet',{packet:this.dw.packet(id)});}
+      const time=Date.now();acc+=Math.min(.12,(time-last)/1000);last=time;
+      let steps=0;while(acc>=simStep&&steps<4){this.dw.step(simStep);acc-=simStep;steps++;}
+      if(steps===4&&acc>=simStep)acc=0; // never let a stalled room enter a catch-up spiral
+      const humanCount=Math.max(1,Array.from(this.users.keys()).filter(id=>id!==cpu).length);
+      const sendEvery=humanCount>=7?67:humanCount>=5?60:50;
+      if(time-sendAt>=sendEvery){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id)){const packet=this.dw.packet(id);if(packet)this._send(ws,'dw_packet',{packet});}}
       if(this.dw.game.result){const result=this.dw.game.result;this._broadcast('result',{mode:this.meta.mode,done:true,...result});this._stopDungeon();this._endAndBackToLobby(3000);}
     }catch(error){console.error('Dungeon room tick',error);this._stopDungeon();this._broadcast('system',{text:'던전 연결이 종료되었습니다. 방에서 다시 시작해 주세요.'});this._endAndBackToLobby(0);}},50);
   }

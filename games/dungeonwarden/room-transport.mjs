@@ -8,7 +8,7 @@ const cloneEntity=e=>e?{...e,equipment:e.equipment?{...e.equipment}:e.equipment,
 export class RoomTransport {
  constructor(id,gameId){
   this.id=id;this.gameId=gameId;this.latest=null;this.network=true;
-  this.clock=0;this.sent=-1;this.pending={};this.raw=null;this.frames=[];
+  this.clock=0;this.sent=-1;this.pending={};this.raw=null;this.frames=[];this.edge={attack:false,special:false};this.prevInput={};
   this.interpDelay=.10;this.arrivalGap=.05;this.jitter=.006;this.lastReceiveAt=0;
   this.serverMe=null;this.visualMe=null;this.visualAt=0;
  }
@@ -56,11 +56,26 @@ export class RoomTransport {
   if(!server)return;this.serverMe=cloneEntity(server);
   if(!this.visualMe||this.visualMe.room!==server.room||this.visualMe.dead!==server.dead){this.visualMe=cloneEntity(server);this.visualAt=performance.now()/1000;}
  }
- sendInput(input){this.pending=input||{};}
+ sendInput(input){
+  input=input||{};
+  // Pointer/touch taps can be shorter than the 50-67 ms network cadence. Preserve the
+  // rising edge until a packet is actually sent so an 8-player render hitch cannot eat
+  // an attack or special input. Continuous state (movement/block/sprint/aim) still uses
+  // the newest sample only.
+  if(input.attack&&!this.prevInput.attack)this.edge.attack=true;
+  if(input.special&&!this.prevInput.special)this.edge.special=true;
+  this.prevInput={attack:!!input.attack,special:!!input.special};
+  this.pending=input;
+ }
  sendCommand(command){const c={...command};if(c.target==='local')c.target=this.id;if(c.targetId==='local')c.targetId=this.id;this.post('dw_command',{command:c});}
  update(dt){
   this.clock+=dt;
-  if(this.clock-this.sent>=.05){this.sent=this.clock;this.post('dw_input',{input:this.pending});}
+  if(this.clock-this.sent>=.05){
+   this.sent=this.clock;
+   const input={...this.pending,attack:!!this.pending.attack||this.edge.attack,special:!!this.pending.special||this.edge.special};
+   this.post('dw_input',{input});
+   this.edge.attack=this.edge.special=false;
+  }
  }
  snapshot(){return this.latest;}
  interpolateRemote(now){

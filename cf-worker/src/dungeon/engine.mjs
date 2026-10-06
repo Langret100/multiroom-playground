@@ -436,6 +436,7 @@ export class DungeonGame {
     const follow=()=>{const index=Math.max(0,this.entities.filter(p=>p.kind==='player'&&p.bot).indexOf(e)),angle=(leader.facing||0)+Math.PI+(index?-.7:.7),goal={x:leader.x+Math.cos(angle)*2.8,y:leader.y+Math.sin(angle)*2.8};if(distance(e,leader)>4)this.steer(e,walkable(this.map,goal,.5)?goal:leader,dt,this.stats(e).speed);if(this.time>=(e.followSpeechAt||0)){this.say(e,'follow');e.followSpeechAt=this.time+12+index*3;}};
     if(leader&&(distance(e,leader)>8||roomAt(this.map,e)?.id!==roomAt(this.map,leader)?.id)){follow();return;}
     const r=roomAt(this.map,e);
+    if(e.kind==='monster'&&e.type!=='treasure'&&r&&!this._activePlayerRooms?.has(r.id)&&!this.directed.has(e.id))return;
     if(!r){
       if(e.kind==='player'&&this.mode==='arena'&&e.route){const p=e.route[e.routeIndex]||e.route.at(-1);if(distance(e,p)<1.3)e.routeIndex++;this.steer(e,p,dt,this.stats(e).speed);}
       else if(e.kind==='player'&&this.mode==='dungeon'){const next=this.map.rooms[Math.min(7,e.room+1)];this.steer(e,next.entryGoal||{x:next.x+3,y:next.y+12},dt,this.stats(e).speed);}
@@ -444,7 +445,14 @@ export class DungeonGame {
     if(e.kind==='player'&&this.mode==='arena'&&r.lava>0){this.say(e,'lava');this.arenaBotRoute(e,r,dt);return;}
     if(e.kind==='player'&&r.heal&&!r.healStarted){const spring={x:r.x+r.w/2,y:r.y+r.h/2};this.say(e,'rest');if(distance(e,spring)<3.5)this.interact(e);else this.steer(e,spring,dt,this.stats(e).speed);return;}
     if(e.kind==='player'&&r.heal&&r.healStarted&&this.map.rooms[r.id+1]?.locked){const party=this.entities.filter(p=>p.kind==='player'&&!p.dead),index=party.indexOf(e),angle=index*Math.PI*2/party.length,goal={x:r.x+r.w/2+Math.cos(angle)*6,y:r.y+r.h/2+Math.sin(angle)*6};if(distance(e,goal)>1)this.steer(e,goal,dt,this.stats(e).speed);this.say(e,'rest');return;}
-    if(this.time>=(e.perceptionAt||0)){e.perceptionAt=this.time+.2;e.enemyIds=this.entities.filter(t=>this.validHit(e,t)&&roomAt(this.map,t)?.id===r.id&&distance(e,t)<24&&lineOfSight(this.map,e,t)).map(t=>t.id);}
+    if(this.time>=(e.perceptionAt||0)){
+      e.perceptionAt=this.time+.2;
+      // Arena monsters must not require initial line-of-sight to acquire a player. A barrel/
+      // column between spawn points could otherwise leave a monster permanently idle even
+      // though a player is in the same room. LOS is still required at the actual attack
+      // point, so ranged attacks cannot shoot through walls.
+      e.enemyIds=this.entities.filter(t=>this.validHit(e,t)&&roomAt(this.map,t)?.id===r.id&&distance(e,t)<24&&(e.kind==='monster'||lineOfSight(this.map,e,t))).map(t=>t.id);
+    }
     const enemies=this.entities.filter(t=>e.enemyIds?.includes(t.id)&&this.validHit(e,t)&&roomAt(this.map,t)?.id===r.id);
     if(e.kind==='player'&&['heal','healbolt'].includes(e.equipment.main?.type)){
       const allies=this.entities.filter(t=>t.team===e.team&&t.kind==='player'&&!t.dead&&roomAt(this.map,t)?.id===r.id);
@@ -507,6 +515,11 @@ export class DungeonGame {
     if(this.treasureRespawnAt&&this.time>=this.treasureRespawnAt){this.entities=this.entities.filter(e=>e.type!=='treasure'||!e.dead);this.treasureRespawnAt=0;this.spawnTreasure();this.map.bodies=this.entities;}
     if(this.mode==='arena'&&!this.arenaWarned&&this.time>=this.arenaWarnAt&&this.time<this.arenaReinforceAt)this.arenaSpawnWarning();
     if(this.mode==='arena'&&this.time>=this.arenaReinforceAt)this.arenaReinforcements();
+    // Monsters in rooms with no living players used to run the full perception/path/LOS
+    // pipeline every simulation tick. Arena can contain ~36 monsters across 12 rooms, so
+    // this wastes most of the server CPU in an 8-player match. Build the occupied-room set
+    // once per tick and let idle rooms sleep until a player enters.
+    this._activePlayerRooms=new Set();for(const p of this.entities)if(p.kind==='player'&&!p.dead){const pr=roomAt(this.map,p);if(pr)this._activePlayerRooms.add(pr.id);}
     for(const e of this.entities){
       if(e.emergeUntil>this.time)continue;
       if(e.enterUntil>this.time){const t=1-(e.enterUntil-this.time)/1.2;e.x=e.enterFrom.x+(e.enterTo.x-e.enterFrom.x)*t;e.y=e.enterFrom.y+(e.enterTo.y-e.enterFrom.y)*t;continue;}
@@ -628,9 +641,11 @@ export class DungeonGame {
     const clean=e=>({id:e.id,kind:e.kind,type:e.type,name:e.name,headId:e.headId,team:e.team,x:e.x,y:e.y,room:e.room,facing:e.facing,hp:e.hp,maxHp:e.maxHp,dead:e.dead,tier:e.tier,boss:e.boss,bot:e.bot,speech:e.speech?.until>this.time?e.speech:null,aiState:e.aiState,equipment:e.equipment,
       cooldowns:e.cooldowns,guard:e.guard,guardRecovery:e.guardRecovery,blocking:e.blocking,combo:e.combo||0,comboUntil:e.comboUntil||0,dashing:!!e.dashing,dash:e.dash,dashRecovery:e.dashRecovery,whirl:e.whirl?{ends:e.whirl.ends}:null,attackPose:e.attackPose,skillPose:e.skillPose?.ends>this.time?e.skillPose:null,enterUntil:e.enterUntil,emergeUntil:e.emergeUntil,hitPose:e.hitPose,cast:e.cast,bowCharge:e.bowCharge||0,stun:e.stun,root:e.root,slow:e.slow,invuln:e.invuln,follow:e.follow,stats:this.stats(e)});
     const entities=this.entities.filter(e=>!(e.kind==='monster'&&e.dead)&&(e.id===id||visible(e)||master)).map(clean);
+    const cleanMe=me?(entities.find(e=>e.id===id)||clean(me)):null;
     const q=this.quizByPlayer.get(id);
-    return {version:1,tick:this.tickId,time:this.time,mode:this.mode,phase:this.phase,masterId:this.masterId,possession:this.possession,me:me?clean(me):null,
-      objective:viewer?{gathered:this.entities.filter(p=>p.kind==='player'&&!p.dead&&roomAt(this.map,p)?.heal).length,livingParty:this.entities.filter(p=>p.kind==='player'&&!p.dead).length,healReady:this.time>=this.healUntil,room:viewer.room,monsters:this.entities.filter(e=>e.kind==='monster'&&e.type!=='treasure'&&!e.dead&&e.room===viewer.room).length,chests:this.chests.filter(c=>!c.opened&&c.room===viewer.room).length,exit:!this.map.rooms[Math.min(7,viewer.room+1)]?.locked}:null,entities,loot:this.loot.filter(visible),chests:this.chests.filter(visible).map(({contents,...chest})=>chest),traps:this.traps.filter(t=>master||!!me?.dead||sources.some(e=>e.equipment.off?.type==='lantern'&&this.canSee(e,t,[e]))),
+    let objective=null;if(viewer){let gathered=0,livingParty=0,monsters=0;for(const p of this.entities){if(p.kind==='player'&&!p.dead){livingParty++;if(roomAt(this.map,p)?.heal)gathered++;}else if(p.kind==='monster'&&p.type!=='treasure'&&!p.dead&&p.room===viewer.room)monsters++;}let chests=0;for(const c of this.chests)if(!c.opened&&c.room===viewer.room)chests++;objective={gathered,livingParty,healReady:this.time>=this.healUntil,room:viewer.room,monsters,chests,exit:!this.map.rooms[Math.min(7,viewer.room+1)]?.locked};}
+    return {version:1,tick:this.tickId,time:this.time,mode:this.mode,phase:this.phase,masterId:this.masterId,possession:this.possession,me:cleanMe,
+      objective,entities,loot:this.loot.filter(visible),chests:this.chests.filter(visible).map(({contents,...chest})=>chest),traps:this.traps.filter(t=>master||!!me?.dead||sources.some(e=>e.equipment.off?.type==='lantern'&&this.canSee(e,t,[e]))),
       projectiles:this.projectiles.filter(visible),zones:this.zones.filter(visible),effects:this.effects.filter(visible),map:this.map,builders:master?this.builders:{},
       visionSources:master||me?.dead?[]:sources.map(e=>({id:e.id,x:e.x,y:e.y,facing:e.facing,arc:VISION_ARC,nearRadius:3,radius:this.vision(e),fullRoom:e.equipment.off?.type==='lantern'&&e.equipment.off.tier===3,poison:this.zones.some(z=>z.active&&z.kind==='poison'&&distance(e,z)<z.radius)})),
       quiz:q?{chest:q.chest,question:q.question,feedback:q.feedback,done:q.done}:null,roster:this.entities.filter(e=>e.kind==='player').map(e=>({id:e.id,name:e.name,dead:e.dead,hp:e.hp,maxHp:e.maxHp})),
