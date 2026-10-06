@@ -210,29 +210,50 @@ export class LobbyDO{
           if (!res.ok) continue;
           const health = await res.json();
           if (health?.empty){
-            // A newly-created room legitimately has zero sockets until the creator's
-            // room page finishes navigation and opens /ws/room/:roomId.  Treating that
-            // short window as a ghost deletes the authoritative game metadata and makes
-            // RoomDO fall back to its defaults (stackga / 4 players).
+            // Health probes are advisory only.  A live RoomDO can briefly report zero
+            // authenticated sockets during navigation/reconnect/hibernation recovery.
+            // Deleting the lobby entry on the first empty probe makes a perfectly live
+            // room disappear from the room list until some later roomUpdate happens.
             //
-            // Empty rooms that have never been entered are allowed to wait up to the
-            // existing 10-minute auto-expiry window. Rooms that previously had players
-            // can still be pruned immediately if their sockets disappeared unexpectedly.
+            // Clean browser exits still delete immediately through _deleteFromLobby().
+            // This path is only the crash/ghost fallback, so require a sustained empty
+            // result and no global presence pointing at the room before pruning it.
             const listedPlayers = Math.max(0, Number(room.players)||0);
             const ageMs = Math.max(0, stamp - Number(room.createdAt || room.updatedAt || stamp));
             const creationGraceMs = 10 * 60 * 1000;
-            if (listedPlayers > 0 || ageMs >= creationGraceMs){
-              delete this.rooms[roomId];
-              changed = true;
+            const ghostGraceMs = 45 * 1000;
+            let hasPresence = false;
+            for (const p of this.presence.values()){
+              if (safeId(p?.roomId || '') === roomId){ hasPresence = true; break; }
+            }
+
+            if (listedPlayers <= 0 && ageMs < creationGraceMs){
+              // Brand-new room: keep it for the existing 10-minute first-entry window.
+              if (room._emptyHealthSince){ delete room._emptyHealthSince; this.rooms[roomId]=room; changed=true; }
+            } else if (hasPresence){
+              // Someone is globally registered in this room, so never hide it because of
+              // one transient health result. Clear any old candidate timestamp.
+              if (room._emptyHealthSince){ delete room._emptyHealthSince; this.rooms[roomId]=room; changed=true; }
+            } else {
+              const emptySince = Number(room._emptyHealthSince || 0);
+              if (!emptySince){
+                room._emptyHealthSince = stamp;
+                this.rooms[roomId] = room;
+                changed = true;
+              } else if (stamp - emptySince >= ghostGraceMs){
+                delete this.rooms[roomId];
+                changed = true;
+              }
             }
           } else if (health && Number.isFinite(Number(health.players))){
             const players = Math.max(0, Number(health.players)||0);
+            if (room._emptyHealthSince){ delete room._emptyHealthSince; changed = true; }
             if (Number(room.players||0) !== players){
               room.players = players;
               room.updatedAt = now();
-              this.rooms[roomId] = room;
               changed = true;
             }
+            if (changed) this.rooms[roomId] = room;
           }
         }catch(_){ }
       }
@@ -857,7 +878,17 @@ export class RoomDO{
         }catch(_){ }
       }
 
-      if (t === "client_ping") return;
+      if (t === "client_ping") {
+        // Active rooms periodically re-announce their lobby metadata.  This is a cheap
+        // self-healing lease (one update per RoomDO, not per player) so an accidental
+        // directory loss cannot leave a room playable but invisible in the room list.
+        const stamp = now();
+        if (uid && this.users.size > 0 && stamp - Number(this._lastLobbyLeaseAt||0) >= 20000){
+          this._lastLobbyLeaseAt = stamp;
+          this._scheduleLobbyUpdate(0);
+        }
+        return;
+      }
 
       // Explicit room leave. The client can disappear immediately after an embedded
       // room closes, so do not rely only on the browser WebSocket close frame.

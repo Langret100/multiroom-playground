@@ -15,7 +15,8 @@ const MAPS=E.MAPS.map(m=>m.name),ICONS={double:'Ⅱ',power:'✦',heal:'✚',move
 const embedded=parent!==window,bridge={sid:'local',hostSid:'local',isHost:!embedded,ready:!embedded};
 let state=null,roster=[],sequence=0,pending=null,offset=0,received=0,lastSent=0,lastSync=0,reported=false,weapon='normal',sound=true,audio=null,audioBuffer=null,audioCues=null,audioLoad=null,bgmAudio=null,noticeUntil=0,lastEvent=0,setupCharacter=-1,lastTurn=-1,lastLocalTurn=-1,cpuTurn=-1,bootAt=Date.now(),itemIconUrls={};
 let publishedEvent=-1,publishedPhase=null,lastCountdownTurn=-1,lastCountdownValue=99,lastHomingCueAt=0,visualState=null,visualSeq=-1,visualClockAt=0;
-let charge=null,moveHeld=0,lastMove=0,panHeld=0,aimHeld=0,powerHeld=0,frameAt=0,windParticles=[];
+let charge=null,moveHeld=0,lastMove=0,moveRepeatAt=0,panHeld=0,aimHeld=0,powerHeld=0,frameAt=0,windParticles=[];
+const eventVisualStarts=new Map();
 const MOBILE_BLOOMSHOT=(()=>{
  const ua=String(navigator.userAgent||'');
  const uaMobile=!!(navigator.userAgentData&&navigator.userAgentData.mobile);
@@ -152,7 +153,13 @@ function prunePredictedInputs(){
  predictedInputs=predictedInputs.filter(q=>q.command.match===state?.id&&q.command.turnSerial===state?.turnSerial&&q.command.seq>(p?.lastSeq||0)&&now-q.created<1200);
 }
 function predictInput(command){
- if(!canAct()||!['move','jump'].includes(command.kind))return;
+ // Only step movement is safe to predict locally.
+ // Jump lasts ~1 s and the host starts it when the command actually arrives.
+ // Predicting the jump from the guest clock makes the guest several network
+ // frames ahead; when the authoritative jump snapshot arrives the character
+ // rewinds toward fromX and appears to jump twice. Wait for the host snapshot
+ // for jump instead of ever rewinding an already-started local jump.
+ if(!canAct()||command.kind!=='move')return;
  predictedInputs.push({command,created:Date.now(),at:Date.now()+offset});
  if(predictedInputs.length>20)predictedInputs.shift();
  visualSeq=-1;
@@ -174,7 +181,7 @@ function adopt(incoming,hostTime){
  // identity below reject unrelated or out-of-order snapshots without clocks.
  if(!incoming.players?.some(p=>String(p.sid)===bridge.sid))return;
  if(state&&incoming.id!==state.id)return;
- if(state&&incoming.id===state.id&&incoming.seq<state.seq)return;
+ if(state&&incoming.id===state.id&&incoming.seq<=state.seq)return;
  // During one projectile flight, the guest keeps its already-running visual simulation.
  // The host can still send authoritative recovery snapshots, but they must not rewind
  // the visible projectile every time a 1.2 s snapshot arrives.
@@ -222,7 +229,7 @@ function selectionProfile(p){const profileArt=$('selectedPortrait').parentElemen
  $('weaponOne').textContent=`일반 / ${c.weapon} — ${E.weaponDescription(p,'normal').details}`;$('weaponTwo').textContent=`특수 / ${c.weapon2} — ${E.weaponDescription(p,'special').details}`;
 }
 $('start').onclick=()=>act('start');$('modeSolo').onclick=()=>act('mode',{value:'solo'});$('modeTeam').onclick=()=>act('mode',{value:'team'});$('pass').onclick=()=>act('pass');$('jump').onclick=()=>{camera.manual=false;act('jump');};
-function beginMove(dir){if(!canAct())return;camera.manual=false;moveHeld=dir;lastMove=Date.now();act('move',{value:dir});}
+function beginMove(dir){if(!canAct())return;camera.manual=false;moveHeld=dir;const now=Date.now();lastMove=now;moveRepeatAt=now+230;act('move',{value:dir});}
 for(const [id,dir]of [['left',-1],['right',1]]){$(id).onpointerdown=e=>{e.preventDefault();$(id).setPointerCapture(e.pointerId);beginMove(dir);};$(id).onpointerup=$(id).onpointercancel=()=>moveHeld=0;}
 function beginCharge(){if(!canAct()||pending)return;$('power').value=10;$('power').oninput();charge={at:Date.now(),initial:10};camera.manual=false;}
 function endCharge(cancel=false){if(!charge)return;charge=null;$('fire').classList.remove('charging');if(!cancel&&canAct())act('fire',{angle:Number($('angle').value),power:Number($('power').value),weapon});}
@@ -342,9 +349,22 @@ function terrain(){
   ctx.save();for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.fillStyle='#ffffff12';ctx.fillRect(x,top,E.STEP+1,Math.min(state.map===2?9:5,bottom-top));ctx.fillStyle='#0b12202c';ctx.fillRect(x,Math.max(top,bottom-6),E.STEP+1,Math.min(6,bottom-top));}}ctx.restore();return;}
  for(let i=from;i<=to;i++){const c=state.solids[i],x=i*E.STEP;for(let j=0;j<c.length;j+=2){const top=c[j],bottom=c[j+1];ctx.fillStyle=m.rock;ctx.fillRect(x,top,E.STEP+1,bottom-top);ctx.fillStyle='#111b3540';ctx.fillRect(x,bottom-9,E.STEP+1,9);ctx.fillStyle=m.edge;ctx.fillRect(x,top,E.STEP+1,Math.min(state.map===2?10:5,bottom-top));}}
 }
-function recentEventAge(type,sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i];if(e.type===type&&(!sid||e.sid===sid))return now-e.at;}return 1e9;}
-function recentItemUse(sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i];if(e.type==='item'&&e.sid===sid&&now-e.at<1650)return {item:e.item,age:now-e.at};}return null;}
-function recentPickup(sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i];if(e.type==='pickup'&&e.sid===sid&&now-e.at<1650)return {item:e.item,age:now-e.at};}return null;}
+function stableEventAge(e,hostNow){
+ if(!e)return 1e9;
+ const match=String(state?.id||'');
+ const key=match+':'+String(e.id??'')+':'+String(e.type||'');
+ const localNow=(typeof performance!=='undefined'&&performance.now)?performance.now():Date.now();
+ let rec=eventVisualStarts.get(key);
+ if(!rec){
+  const initial=Math.max(0,Math.min(1800,Number(hostNow)-Number(e.at||hostNow)));
+  rec={localAt:localNow,initial};eventVisualStarts.set(key,rec);
+  if(eventVisualStarts.size>96){const first=eventVisualStarts.keys().next().value;if(first!==undefined)eventVisualStarts.delete(first);}
+ }
+ return rec.initial+Math.max(0,localNow-rec.localAt);
+}
+function recentEventAge(type,sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i];if(e.type===type&&(!sid||e.sid===sid))return stableEventAge(e,now);}return 1e9;}
+function recentItemUse(sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i],age=stableEventAge(e,now);if(e.type==='item'&&e.sid===sid&&age<1650)return {item:e.item,age};}return null;}
+function recentPickup(sid,now){for(let i=state.events.length-1;i>=0;i--){const e=state.events[i],age=stableEventAge(e,now);if(e.type==='pickup'&&e.sid===sid&&age<1650)return {item:e.item,age};}return null;}
 function spriteFrame(p,v,now,moving){const hp=p.maxHp?p.hp/p.maxHp:1,launchAge=recentEventAge('launch',p.sid,now),landAge=recentEventAge('land',p.sid,now);const idle=Math.floor(now/280)%4,walk=Math.floor(now/140)%2;const tryingMove=state.players[state.turn]===p&&state.phase==='aim'&&p.sid===bridge.sid&&!!moveHeld;const blocked=tryingMove&&!moving&&Math.abs((v.lastRealX??p.x)-p.x)<0.2;if(p.falling||state.jump?.sid===p.sid)return {row:2,col:0};if(landAge<260)return {row:2,col:1};if(launchAge<220)return {row:0,col:3};if(blocked)return {row:1,col:2};if(hp<=.1)return {row:2,col:2};if(hp<=.5)return {row:0,col:3};if(moving)return {row:1,col:walk};return {row:0,col:idle};}
 
 function drawSpriteFrame(index,row,col,dx,dy,dw,dh){
@@ -507,7 +527,7 @@ function drawZoneFields(now){for(const z of state.zones||[]){const fade=.68+.12*
 
 function drawFx(now){
  drawZoneFields(now);
- for(const e of state.events){const age=now-e.at;if(age<0||age>1500)continue;
+ for(const e of state.events){const age=stableEventAge(e,now);if(age<0||age>1500)continue;
   if(e.type==='launch'&&age<1050)drawLaunchBuff(e,age,now);
   if(e.type==='env_touch'&&age<950)drawEnvTouchFx(e,age,now);
   if(e.type==='blast'){drawBlast(e,age,now);drawTerrainDebris(e,age,now);}
@@ -521,7 +541,7 @@ function impactShake(now){
  if(!hit)return{x:0,y:0};
  const direct=!!hit.direct,special=hit.weapon==='special';
  const dur=direct?(special?470:430):(special?290:250);
- const age=now-hit.at;if(age<0||age>dur)return{x:0,y:0};
+ const age=stableEventAge(hit,now);if(age<0||age>dur)return{x:0,y:0};
  const fade=1-age/dur;
  // World-space amplitude: normal impacts stay subtle, direct hits are intentionally obvious.
  const baseAmp=direct?(special?13.5:11.5):(special?6.4:5.4),amp=baseAmp*fade*fade;
@@ -581,7 +601,7 @@ function hostTick(){
 }
 let uiAt=0;function loop(){const now=Date.now(),dt=frameAt?Math.min(50,now-frameAt)/1000:0;frameAt=now;
  if(canAct()){if(aimHeld){$('angle').value=Number($('angle').value)+aimHeld*28*dt;$('angle').oninput();}if(powerHeld&&!charge){$('power').value=Number($('power').value)+powerHeld*32*dt;$('power').oninput();}}
- if(moveHeld&&canAct()&&now-lastMove>70){lastMove=now;act('move',{value:moveHeld});}
+ if(moveHeld&&canAct()&&now>=moveRepeatAt){lastMove=now;moveRepeatAt=now+90;act('move',{value:moveHeld});}
  if(charge){if(!canAct())endCharge(true);else{$('fire').classList.add('charging');const f=((now-charge.at)/1500)%2;$('power').value=Math.round(10+90*(f<=1?f:2-f));$('power').oninput();}}
  if(state){for(const ev of state.events){if(ev.id<=lastEvent)continue;lastEvent=ev.id;
   if(ev.type==='pickup'){toast(`${state.players.find(p=>p.sid===ev.sid)?.nick} · 보급 획득!`);playSfx('pickup',.38);}
