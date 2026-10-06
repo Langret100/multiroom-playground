@@ -17,7 +17,7 @@ export function dungeonBoundary(map){
 export class Map3D {
   constructor(){
     this.canvas=document.createElement('canvas');this.canvas.id='map3d';this.canvas.setAttribute('aria-hidden','true');document.body.prepend(this.canvas);
-    this.gl=this.canvas.getContext('webgl',{alpha:false,antialias:false,depth:true,preserveDrawingBuffer:false,powerPreference:'high-performance'});this.ready=false;this.stats={drawCalls:0,triangles:0,renderMs:0};this.chunks=[];this.quality=1;
+    this.gl=this.canvas.getContext('webgl',{alpha:false,antialias:false,depth:true,preserveDrawingBuffer:false,powerPreference:'high-performance'});this.ready=false;this.stats={drawCalls:0,triangles:0,renderMs:0};this.chunks=[];this.quality=.82;
     if(!this.gl){this.canvas.hidden=true;return;}
     const gl=this.gl;
     const shader=(type,source)=>{const sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(sh));return sh;};
@@ -38,9 +38,9 @@ export class Map3D {
 
     for(const r of map.rooms){const out=[],arena=map.mode==='arena',forest=arena&&[2,6,9].includes(r.id),pack=arena?'arena':'dungeon';
       // Large slabs have few triangles; relief comes from perimeter meshes and props.
-      for(let x=r.x;x<r.x+r.w;x+=4)for(let z=r.y;z<r.y+r.h;z+=4){const w=Math.min(4,r.x+r.w-x),d=Math.min(4,r.y+r.h-z),variation=1-((Math.floor(x/4)*13+Math.floor(z/4)*7)%4)*.012;add(out,pack+'/floor',x+w/2,z+d/2,w,0,d,0,forest?[.68*variation,1.12*variation,.7*variation]:[variation*.83,variation*.84,variation*.82]);}
+      for(let x=r.x;x<r.x+r.w;x+=6)for(let z=r.y;z<r.y+r.h;z+=6){const w=Math.min(6,r.x+r.w-x),d=Math.min(6,r.y+r.h-z),variation=1-((Math.floor(x/6)*13+Math.floor(z/6)*7)%4)*.012;add(out,pack+'/floor',x+w/2,z+d/2,w,0,d,0,forest?[.68*variation,1.12*variation,.7*variation]:[variation*.83,variation*.84,variation*.82]);}
       // Offset stone courses, narrow mortar and restrained stone variation.
-      if(!forest)for(let z=r.y+.1,row=0;z<r.y+r.h-.1;z+=1.8,row++)for(let x=r.x+.1-(row%2)*1.5;x<r.x+r.w-.1;x+=3){const left=Math.max(r.x+.1,x),right=Math.min(r.x+r.w-.1,x+2.96),d=Math.min(1.76,r.y+r.h-.1-z);if(right<=left)continue;const noise=((row*17+Math.floor(x)*11+r.id*7)%9+9)%9,t=arena?.43:.34;plane(out,left,z,right-left,d,[t+noise*.005,t+.02+noise*.005,t+.04+noise*.005],.016);}
+      if(!forest)for(let z=r.y+.1,row=0;z<r.y+r.h-.1;z+=3.6,row++)for(let x=r.x+.1-(row%2)*3;x<r.x+r.w-.1;x+=6){const left=Math.max(r.x+.1,x),right=Math.min(r.x+r.w-.1,x+5.92),d=Math.min(3.52,r.y+r.h-.1-z);if(right<=left)continue;const noise=((row*17+Math.floor(x)*11+r.id*7)%9+9)%9,t=arena?.43:.34;plane(out,left,z,right-left,d,[t+noise*.005,t+.02+noise*.005,t+.04+noise*.005],.016);}
       // A central inlay, border strips and small worn tiles give each chamber an identity.
       const gold=arena?[.46,.39,.25]:[.34,.29,.25],rug=arena?[.3,.32,.31]:r.id===7?[.31,.16,.2]:r.heal?[.2,.33,.3]:[.26,.28,.31];
       if(!forest){const rw=Math.min(10,r.w*.4),rd=Math.min(12,r.h*.5),rx=r.x+(r.w-rw)/2,rz=r.y+(r.h-rd)/2;plane(out,rx-.16,rz-.16,rw+.32,rd+.32,gold);plane(out,rx,rz,rw,rd,rug,.023);for(let i=0;i<4;i++)plane(out,rx+.5+i*(rw-1)/3,rz+.5,.16,rd-1,gold,.024);}
@@ -53,7 +53,7 @@ export class Map3D {
       if(!arena&&r.id===7)add(out,'dungeon/stairs',r.x+r.w/2,r.y+2,5,.7,3);
       if(arena&&r.central)add(out,'arena/statue',r.x+r.w/2,r.y+1.6,2.3,3.5,2.3);
       // Small, nonblocking edge dressing avoids covering playable corridors.
-      if(!forest){add(out,'dungeon/barrel',r.x+1.4,r.y+r.h-2,1.1,1,1.1);add(out,'dungeon/pot',r.x+r.w-1.2,r.y+2,.8,.65,.8);add(out,'dungeon/stones',r.x+r.w-1,r.y+r.h-1,1.3,.45,1.1);if(r.id%2)add(out,'dungeon/rocks',r.x+1,r.y+2,1.2,.65,1.2);}
+      if(!forest){add(out,'dungeon/barrel',r.x+1.4,r.y+r.h-2,1.1,1,1.1);add(out,'dungeon/stones',r.x+r.w-1,r.y+r.h-1,1.3,.45,1.1);}
       this.chunks.push({room:r.id,bounds:r,mesh:this.mesh(out)});
     }
     const corridor=[];const boundary=dungeonBoundary(map);for(let y=0;y<boundary.h;y++)for(let x=0;x<boundary.w;x++)if(boundary.occupied(x,y)&&!map.rooms.some(r=>x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h)){plane(corridor,x,y,1,1,[.34,.36,.38],.018);}
@@ -76,7 +76,7 @@ export class Map3D {
     for(const t of s.traps)add('dungeon/trap',t.x,t.y,1.4,t.cool>0?.35:.12,1.4);
     if(s.mode==='dungeon')for(const r of s.map.rooms)if(r.id&&r.entry){const previous=s.map.rooms[r.id-1],doorWidth=s.map.corridorWidth||6;for(const door of [r.entry,{...previous.exit,angle:r.entry.angle}]){const a=door.angle||0,dx=Math.cos(a),dz=Math.sin(a);for(const side of [-1,1])add('dungeon/column',door.x+dx*side*doorWidth/2,door.y+dz*side*doorWidth/2,.85,3.6,.85);appendModel(out,this.models['dungeon/wall'],door.x,door.y,doorWidth+.6,.6,.85,a,[.92,.94,1],3.05);if(r.locked){add('dungeon/gate',door.x,door.y,doorWidth-.5,3.05,a?1.1:.55,a);if(a){box(door.x,door.y,1.4,2.85,doorWidth-.65,[.35,.19,.095]);for(const height of [.55,1.8])box(door.x,door.y,1.45,.15,doorWidth-.6,[.27,.29,.32],height);}}}}
     if(this.dynamic)this.gl.deleteBuffer(this.dynamic.buffer);this.dynamic=this.mesh(out);
-    const shadows=[],ellipse=(x,z,rx,rz,opacity=.28)=>{const put=(x,z,a)=>shadows.push(x,.035,z,a,0,0);for(let i=0;i<20;i++){const a=i*Math.PI/10,b=(i+1)*Math.PI/10;put(x,z,opacity);put(x+Math.cos(a)*rx*.5,z+Math.sin(a)*rz*.5,opacity*.75);put(x+Math.cos(b)*rx*.5,z+Math.sin(b)*rz*.5,opacity*.75);for(const [angle,radius,alpha] of [[a,.5,opacity*.75],[a,1,0],[b,1,0],[a,.5,opacity*.75],[b,1,0],[b,.5,opacity*.75]])put(x+Math.cos(angle)*rx*radius,z+Math.sin(angle)*rz*radius,alpha);}};
+    const shadows=[],ellipse=(x,z,rx,rz,opacity=.28)=>{const put=(x,z,a)=>shadows.push(x,.035,z,a,0,0);for(let i=0;i<10;i++){const a=i*Math.PI/5,b=(i+1)*Math.PI/5;put(x,z,opacity);put(x+Math.cos(a)*rx*.5,z+Math.sin(a)*rz*.5,opacity*.75);put(x+Math.cos(b)*rx*.5,z+Math.sin(b)*rz*.5,opacity*.75);for(const [angle,radius,alpha] of [[a,.5,opacity*.75],[a,1,0],[b,1,0],[a,.5,opacity*.75],[b,1,0],[b,.5,opacity*.75]])put(x+Math.cos(angle)*rx*radius,z+Math.sin(angle)*rz*radius,alpha);}};
     for(const o of obstacles)ellipse(o.x+o.w/2+.2,o.y+o.h/2+.35,o.w*.8,o.h*.72);
     for(const c of chests)ellipse(c.x+.12,c.y+.2,1,.72,.2);
     for(const r of rooms)for(let i=0;i<4;i++)ellipse(r.x+3+i*(r.w-6)/3,r.y+.5,.9,1.2,.2);

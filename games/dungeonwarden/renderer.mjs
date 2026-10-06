@@ -1,6 +1,6 @@
 import {CombatEffects} from './combat-effects.mjs';
 import {weaponPose} from './shared/weapon-poses.mjs';
-import {Map3D,MAP_Y_SCALE} from './map3d.mjs';
+import {Map3D,MAP_Y_SCALE} from './map3d.mjs?v=0.5.1-low';
 import {RARITY_COLORS,WEAPONS} from './shared/catalog.mjs';
 import {weaponPreview} from './shared/combat.mjs';
 import {paintWeapon,paintWear,paintItemIcon,paintEffect,traceAttackShape} from './graphics.mjs';
