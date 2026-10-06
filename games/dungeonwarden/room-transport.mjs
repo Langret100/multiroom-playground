@@ -102,7 +102,7 @@ export class RoomTransport {
   const prev=this.visualMe;
   if(!prev||prev.room!==target.room||prev.dead!==target.dead||Math.hypot(target.x-prev.x,target.y-prev.y)>1.6)this.visualMe=cloneEntity(target);
   else{
-   const dt=clamp(now-(this.visualAt||now),0,.05),blend=1-Math.exp(-dt*38),x=prev.x+(target.x-prev.x)*blend,y=prev.y+(target.y-prev.y)*blend;
+   const dt=clamp(now-(this.visualAt||now),0,.05),dashVisual=!!this.pending?.sprint||!!target.dashing,blend=1-Math.exp(-dt*(dashVisual?56:38)),x=prev.x+(target.x-prev.x)*blend,y=prev.y+(target.y-prev.y)*blend;
    this.visualMe=cloneEntity(target);this.visualMe.x=x;this.visualMe.y=y;
   }
   this.visualAt=now;const me=this.visualMe,pmx=Number(this.pending?.mx)||0,pmy=Number(this.pending?.my)||0,plen=Math.hypot(pmx,pmy);

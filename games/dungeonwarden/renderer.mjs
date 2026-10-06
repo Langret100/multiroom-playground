@@ -225,7 +225,33 @@ export class Renderer {
     if(!mapReady)for(const t of s.traps)this.region('floor_spikes_anim_f'+(t.cool>0?3:1),t.x-.6,t.y-.6,1.2,1.2);
     for(const r of s.map.rooms.filter(r=>r.heal)){const x=r.x+r.w/2,y=r.y+r.h/2;ctx.save();ctx.fillStyle='#75f0df';ctx.shadowColor='#65e9d6';ctx.shadowBlur=14;ctx.beginPath();ctx.ellipse(x,y-1.5,1.15,.58,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#d3fff3';ctx.lineWidth=.06;ctx.stroke();for(let i=0;i<7;i++){const a=i*2.4+s.time*.6,d=.5+(i%3)*.35;ctx.fillStyle='#c5fff1';ctx.fillRect(x+Math.cos(a)*d,y-1.7-((s.time*.6+i*.3)%1.8),.1,.1);}ctx.fillStyle='#d5fff0';ctx.fillRect(x-.1,y-4.3,.2,.8);ctx.fillRect(x-.4,y-4,.8,.2);ctx.shadowBlur=0;ctx.font='.5px sans-serif';ctx.textAlign='center';ctx.fillText('치유의 샘',x,y-4.65);ctx.font='.38px sans-serif';ctx.fillText('가까이에서 상호작용 · 체력 회복',x,y+2.6);ctx.restore();}
     for(const chest of s.chests){ctx.strokeStyle=RARITY_COLORS[chest.tier];ctx.lineWidth=.08;if(!chest.opened)ctx.strokeRect(chest.x-.7,chest.y-.6,1.4,1.2);if(!mapReady)this.region((chest.opened?'chest_empty_open_anim_f2':'chest_full_open_anim_f0'),chest.x-.7,chest.y-.85,1.4,1.4);}
-    this.dashTrails??=new Map();for(const e of s.entities){if(!e.dashing){this.dashTrails.delete(e.id);continue;}let trail=this.dashTrails.get(e.id);if(!trail){trail={at:0,points:[]};this.dashTrails.set(e.id,trail);}if(s.time-trail.at>.06){trail.at=s.time;trail.points.push({x:e.x,y:e.y,at:s.time});}trail.points=trail.points.filter(p=>s.time-p.at<.22).slice(-4);for(const p of trail.points)this.drawActor({...e,id:e.id+'-trail',x:p.x,y:p.y,afterimage:.18*(1-(s.time-p.at)/.22),attackPose:0,whirl:null},s.time,0,this.visualClock);}
+    // Dash effect: keep it cheap. Do not redraw the full character as an afterimage.
+    // Emit a few tiny dust puffs behind a fast ground-moving actor and fade them out.
+    this.dashDust??=new Map();
+    const liveDashIds=new Set();
+    for(const e of s.entities){
+      if(!e.dashing||e.dead)continue;
+      liveDashIds.add(e.id);
+      let dust=this.dashDust.get(e.id);
+      if(!dust){dust={at:-Infinity,particles:[]};this.dashDust.set(e.id,dust);}
+      if(s.time-dust.at>=.085){
+        dust.at=s.time;
+        const a=Number.isFinite(e.facing)?e.facing:0,bx=e.x-Math.cos(a)*.42,by=e.y-Math.sin(a)*.42+.18;
+        dust.particles.push({x:bx,y:by,at:s.time,seed:(e.id.length*17+dust.particles.length*13)%11});
+        if(dust.particles.length>7)dust.particles.splice(0,dust.particles.length-7);
+      }
+    }
+    for(const [id,dust] of this.dashDust){
+      dust.particles=dust.particles.filter(p=>s.time-p.at<.34);
+      for(const p of dust.particles){
+        const age=s.time-p.at,t=Math.max(0,Math.min(1,age/.34)),fade=(1-t)*.38,grow=.22+t*.32,drift=(p.seed-5)*.006*t;
+        ctx.save();ctx.globalAlpha=fade;ctx.fillStyle='#d8cbb5';
+        ctx.beginPath();ctx.arc(p.x+drift,p.y-t*.12,grow,0,Math.PI*2);ctx.fill();
+        ctx.globalAlpha=fade*.72;ctx.beginPath();ctx.arc(p.x-.22+drift,p.y+.03-t*.08,grow*.62,0,Math.PI*2);ctx.fill();
+        ctx.beginPath();ctx.arc(p.x+.23+drift,p.y+.05-t*.1,grow*.5,0,Math.PI*2);ctx.fill();ctx.restore();
+      }
+      if(!liveDashIds.has(id)&&!dust.particles.length)this.dashDust.delete(id);
+    }
     const visualNow=performance.now()/1000,visibleLoot=new Set(s.loot.map(l=>l.id));for(const id of [...this.lootVisuals.keys()])if(!visibleLoot.has(id))this.lootVisuals.delete(id);
     for(const l of s.loot){const track=this.lootTrack(l,visualNow),life=Math.max(0,Math.min(1,(visualNow-track.seenAt)/.34)),ease=1-Math.pow(1-life,3),seed=(track.seed||0)*.017,dropX=l.x+((track.seed||0)%2?.09:-.09),settledY=l.y+.34,drawY=settledY-(1-ease)*.78+Math.sin(visualNow*2.4+seed)*.05,itemScale=.92+.22*ease;if(l.item.tier>0)this.drawLootBeam(dropX,settledY+.04,l.item.tier,visualNow+seed);ctx.save();ctx.translate(dropX,settledY+.2);ctx.scale(1,.38);const shade=ctx.createRadialGradient(0,0,0,0,0,.66);shade.addColorStop(0,'#0000004c');shade.addColorStop(1,'#00000000');ctx.fillStyle=shade;ctx.beginPath();ctx.arc(0,0,.66,0,Math.PI*2);ctx.fill();ctx.restore();if(life<1){ctx.save();ctx.globalAlpha=(1-life)*.5;ctx.strokeStyle=(RARITY_COLORS[l.item.tier]||'#fff')+'aa';ctx.lineWidth=.1;ctx.beginPath();ctx.arc(dropX,drawY,.35+.45*life,0,Math.PI*2);ctx.stroke();ctx.restore();}ctx.save();ctx.translate(dropX,drawY);ctx.scale(itemScale,itemScale);if(!this.characters?.drawDrop(ctx,l.item)){ctx.scale(1,1);paintItemIcon(ctx,l.item,visualNow);}ctx.restore();}
 

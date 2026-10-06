@@ -82,3 +82,12 @@ aside{z-index:6}.skill-description{border-top:1px solid #ffffff20;padding-top:8p
   .actions{margin-bottom:0}
   #notifications{bottom:calc(220px + env(safe-area-inset-bottom,0px))}
 }
+
+
+/* Portrait action cluster: tighter spacing while keeping nav-bar clearance. */
+@media (pointer:coarse) and (orientation:portrait) and (max-width:800px){
+  .actions{width:184px;height:178px}
+  .actions #dashBtn{right:0;bottom:0;width:90px;height:90px}
+  .actions #attackBtn{left:4px;bottom:8px;width:60px;height:60px}
+  .actions #specialBtn{left:34px;top:9px;width:60px;height:60px}
+}

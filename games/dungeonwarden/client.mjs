@@ -1,9 +1,9 @@
-import {RoomTransport} from './room-transport.mjs?v=0.8.0';
+import {RoomTransport} from './room-transport.mjs?v=0.8.1-dashsmooth';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=0.7.1-maplow';
+import {Renderer} from './renderer.mjs?v=0.7.3-dashdust';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
 import {roomAt} from './shared/world.mjs';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);
@@ -19,7 +19,7 @@ const slotNames={main:'오른손 · 주 무기',off:'왼손 · 보조',helmet:'�
 function resetInput(){keys.clear();pressed.attack=pressed.special=pressed.block=pressed.sprint=false;endFloatingStick();touch={mx:0,my:0};transport?.sendInput({});}
 function start(options){
   gameAudio.reset();gameAudio.unlock();transport?.close();transport=options.transport;snapshot=transport.snapshot();renderer.overview=options.role==='master'&&options.mode==='dungeon';renderer.fogAt=-1;renderer.tracks.clear();renderer.renderPositions.clear();renderer.rayCache?.clear();renderer.lightTracks?.clear();renderer.fxSeen.clear();renderer.shakeLife=0;renderer.masterRoom=2;
-  $('resultOverlay').hidden=true;$('pauseOverlay').hidden=true;$('quizOverlay').hidden=true;$('hud').hidden=$('controls').hidden=false;$('side').hidden=options.role!=='master';$('side').classList.toggle('open',options.role==='master');$('side').classList.toggle('master-panel',options.role==='master');$('panelTitle').textContent=options.role==='master'?'던전 설계':'장비';$('bossHud').hidden=$('bossIntro').hidden=true;bossSeen=new Set();bossIntroUntil=0;inventorySignature='';renderer.dashTrails?.clear();
+  $('resultOverlay').hidden=true;$('pauseOverlay').hidden=true;$('quizOverlay').hidden=true;$('hud').hidden=$('controls').hidden=false;$('side').hidden=options.role!=='master';$('side').classList.toggle('open',options.role==='master');$('side').classList.toggle('master-panel',options.role==='master');$('panelTitle').textContent=options.role==='master'?'던전 설계':'장비';$('bossHud').hidden=$('bossIntro').hidden=true;bossSeen=new Set();bossIntroUntil=0;inventorySignature='';renderer.dashTrails?.clear();renderer.dashDust?.clear();
   quizId=null;quizDismissed=null;selected=null;masterAction='select';resetInput();
   $('modeLabel').textContent=options.mode==='arena'?'ARENA / 생존전':options.role==='master'?'DUNGEON / 마스터 방어':'DUNGEON / 모험가 공략';
   $('masterTools').hidden=options.role!=='master';$('inventory').hidden=options.role==='master';
@@ -119,7 +119,7 @@ function affixDescription(a){const chance=Math.round(a.chance*100)+'%',uses=a.ch
 function showGear(me,slot){const it=me.equipment[slot];$('inventory').querySelectorAll('[data-gear]').forEach(b=>b.classList.toggle('selected',b.dataset.gear===slot));$('gearDetails').innerHTML=it?`<strong style="color:${RARITY_COLORS[it.tier]}">${esc(it.name)}</strong><p class="item-story">${esc(it.story||'')}</p><p class=\"item-roll\">능력치 · ${Object.entries(it.ranges||{}).map(([k,r])=>`${({hp:'체력',attack:'공격',defense:'방어',agility:'민첩'})[k]} ${k==='attack'&&it.kind==='main'?r[0]+'~'+r[1]+' (공격마다 추첨)':it.stats[k]+' (범위 '+r[0]+'~'+r[1]+')'}`).join(' · ')}</p><p>${Object.entries(it.stats).filter(([k,v])=>v&&!(k==='attack'&&it.kind==='main')).map(([k,v])=>`${({hp:'체력',attack:'공격',defense:'방어',agility:'민첩'})[k]} +${v}`).join(' · ')}</p><p>${it.affixes.map(a=>esc(affixDescription(a))).join('<br>')||'능력치 보너스 · 추가 발동 효과 없음'}</p>${it.kind==='main'?`<p class="skill-description"><b>${esc(weaponSkill(it)?.name||'특수')}</b> · 재사용 ${weaponSkill(it)?.cool||0}초<br>${esc(SKILL_DETAILS[weaponSkill(it)?.kind]||'조준 지점에 고유 공격을 사용합니다.')}</p>`:''}<button id="dropSelected">장비 버리기</button>`:`<b>${slotNames[slot]}</b><p>비어 있는 슬롯입니다.</p>`;if(it)$('dropSelected').onclick=()=>command({action:'drop',slot});}
 function closeQuiz(){quizDismissed=snapshot?.quiz?.chest;$('quizOverlay').hidden=true;canvas.focus();}
 $('quizCancel').onclick=closeQuiz;$('quizForm').onsubmit=e=>{e.preventDefault();command({action:'answer',answer:$('answer').value});};
-let inventorySignature='';renderer.dashTrails?.clear();
+let inventorySignature='';renderer.dashTrails?.clear();renderer.dashDust?.clear();
 function setPhaseBanner({show=false,title='',sub='',timeLabel='',progress=1}={}){
   const box=$('phaseBanner'); if(!box) return;
   box.hidden=!show;
