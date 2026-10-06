@@ -149,19 +149,18 @@ export class LobbyDO{
     this.rooms = null;            // room map persisted while rooms exist
     this._saveTimer = null;
     this._wired = new WeakSet();  // sockets already wired (rehydration)
-    this._lastGhostSweepAt = 0;
-    this._ghostSweepPromise = null;
   }
 
   async _loadRooms(){
-    if(this.rooms)return;
-    if(!this._roomsLoading)this._roomsLoading=this.state.storage.get('active-room-directory').then(saved=>{this.rooms=saved&&typeof saved==='object'?saved:{};}).catch(err=>{this._roomsLoading=null;throw err;});
-    await this._roomsLoading;
+    if (this.rooms) return;
+    // Room directory is intentionally ephemeral. Persisting it caused stale/ghost
+    // room records to survive deploys and forced extra cross-DO health traffic.
+    this.rooms = {};
   }
-  async _scheduleSaveRooms(){
-    // Persist only currently open rooms. Last-player departure removes its entry.
-    if(Object.keys(this.rooms||{}).length)await this.state.storage.put('active-room-directory',this.rooms);
-    else await this.state.storage.delete('active-room-directory');
+
+  _scheduleSaveRooms(delayMs=800){
+    // no-op: the live room list is rebuilt from active room updates only.
+    return;
   }
 
   _broadcast(t, d){
@@ -193,43 +192,6 @@ export class LobbyDO{
     try{ ws.send(JSON.stringify({ t, d })); }catch(_){}
   }
 
-  async _pruneGhostRooms(force=false){
-    const stamp = now();
-    if (!force && stamp - Number(this._lastGhostSweepAt||0) < 15000) return;
-    if (this._ghostSweepPromise) return this._ghostSweepPromise;
-    this._lastGhostSweepAt = stamp;
-    this._ghostSweepPromise = (async()=>{
-      const entries = Object.values(this.rooms || {});
-      let changed = false;
-      for (const room of entries){
-        const roomId = safeId(room?.roomId || '');
-        if (!roomId) continue;
-        try{
-          const stub = this.env.ROOM.get(this.env.ROOM.idFromName(roomId));
-          const res = await stub.fetch(`https://room/internal/health?roomId=${encodeURIComponent(roomId)}&staleMs=60000`);
-          if (!res.ok) continue;
-          const health = await res.json();
-          if (health?.empty){
-            delete this.rooms[roomId];
-            changed = true;
-          } else if (health && Number.isFinite(Number(health.players))){
-            const players = Math.max(0, Number(health.players)||0);
-            if (Number(room.players||0) !== players){
-              room.players = players;
-              room.updatedAt = now();
-              this.rooms[roomId] = room;
-              changed = true;
-            }
-          }
-        }catch(_){ }
-      }
-      if (changed){
-        await this._scheduleSaveRooms();
-        this._broadcast('rooms', { list:this._roomsList() });
-      }
-    })().finally(()=>{ this._ghostSweepPromise = null; });
-    return this._ghostSweepPromise;
-  }
 
   _roomsList(){
     const list = Object.values(this.rooms || {}).sort((a,b)=> (b.updatedAt||0) - (a.updatedAt||0));
@@ -276,7 +238,6 @@ export class LobbyDO{
         // Register as online in lobby (roomId=""). RoomDO can override roomId later.
         this.presence.set(wantUid, { nick, roomId:"", lastSeen: now() });
 
-        await this._pruneGhostRooms();
         this._send(ws, "hello_ok", { userId: wantUid, nick, protocolVersion:PROTOCOL_VERSION });
         this._send(ws, "rooms", { list: this._roomsList() });
         this._broadcast("system", { text: `${nick} 접속`, ts: now() });
@@ -288,7 +249,6 @@ export class LobbyDO{
       if (!uid) return;
 
       if (t === "list_rooms"){
-        await this._pruneGhostRooms();
         this._send(ws, "rooms", { list: this._roomsList() });
         return;
       }
@@ -368,8 +328,7 @@ export class LobbyDO{
 
     // internal HTTP
     if (path === "/internal/listRooms"){
-      await this._pruneGhostRooms();
-      return json({ list: this._roomsList() },{headers:{"cache-control":"no-store"}});
+      return json({ list: this._roomsList() });
     }
 
     if (path === "/internal/createRoom" && request.method === "POST"){
@@ -393,7 +352,7 @@ export class LobbyDO{
         status: "waiting",
         updatedAt: now()
       };
-      await this._scheduleSaveRooms();
+      this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
       return json({ roomId });
     }
@@ -424,7 +383,7 @@ export class LobbyDO{
           updatedAt: now()
         };
       }
-      await this._scheduleSaveRooms();
+      this._scheduleSaveRooms();
       this._broadcast("rooms", { list: this._roomsList() });
       return json({ ok:true });
     }
@@ -831,25 +790,6 @@ export class RoomDO{
       const d = msg.d || {};
 
       const uid = this.sockets.get(ws) || "";
-      if (uid){
-        try{
-          const att = wsGetAttachment(ws) || {};
-          const stamp = now();
-          if (stamp - Number(att.lastSeen||0) > 3000) wsSetAttachment(ws, { ...att, uid, lastSeen:stamp });
-        }catch(_){ }
-      }
-
-      if (t === "client_ping") return;
-
-      // Explicit room leave. The client can disappear immediately after an embedded
-      // room closes, so do not rely only on the browser WebSocket close frame.
-      // Closing here deliberately funnels through the normal close handler below,
-      // which removes the user and deletes an empty room from the lobby.
-      if (t === "client_leave") {
-        try{ ws.close(1000, "client_leave"); }catch(_){ }
-        return;
-      }
-
       if (t === "hello_room"){
         const wantUid = safeId(d.user_id || d.uid) || crypto.randomUUID();
         const nick = safeNick(d.nick);
@@ -925,7 +865,7 @@ export class RoomDO{
           this._removeCpuUser();
         }
 
-        wsSetAttachment(ws, { uid: wantUid, nick, ready: !!this.users.get(wantUid).ready, seat: this.users.get(wantUid).seat, lastSeen: now() });
+        wsSetAttachment(ws, { uid: wantUid, nick, ready: !!this.users.get(wantUid).ready, seat: this.users.get(wantUid).seat });
 
         this._send(ws, "hello_ok", { userId: wantUid, protocolVersion:PROTOCOL_VERSION });
         this._broadcast("system", { text: `${nick} 입장`, ts: now() });
@@ -2573,8 +2513,6 @@ export class RoomDO{
         const nick = safeNick(att.nick || "");
         const seat = (typeof att.seat === "number") ? att.seat : (parseInt(att.seat,10) || 99);
         const ready = !!att.ready;
-        const lastSeen = Number(att.lastSeen||0) || now();
-        if (!att.lastSeen) wsSetAttachment(ws, { ...att, uid, nick, seat, ready, lastSeen });
 
         // Store a path hint so hello_room can resolve roomId if needed.
         // (Cloudflare does not expose the original request after hibernation.)
@@ -3603,40 +3541,6 @@ export class RoomDO{
 
     this._rehydrateSocketsFromState();
 
-    if (path === '/internal/health'){
-      const roomId = safeId(url.searchParams.get('roomId') || this.meta.roomId || '');
-      if (roomId && !this.meta.roomId) this.meta.roomId = roomId;
-      const staleMs = Math.max(30000, Math.min(300000, Number(url.searchParams.get('staleMs')||60000) || 60000));
-      const stamp = now();
-      const liveUsers = new Set();
-      const staleSockets = [];
-      try{
-        for (const sock of this.state.getWebSockets()){
-          const att = wsGetAttachment(sock) || {};
-          const uid = safeId(att.uid || '');
-          if (!uid || uid === this._cpuUid()) continue;
-          const seen = Number(att.lastSeen||0);
-          if (seen && stamp-seen <= staleMs) liveUsers.add(uid);
-          else staleSockets.push({sock,uid});
-        }
-      }catch(_){ }
-      // If all authenticated room sockets disappeared (or have been silent beyond the
-      // heartbeat window), the room is stale. Clean it through the same empty-room path.
-      if (liveUsers.size === 0){
-        const staleUids = new Set([...this.users.keys()].filter(uid=>uid!==this._cpuUid()));
-        for (const {sock,uid} of staleSockets){ staleUids.add(uid); try{ sock.close(1000,'stale_room_cleanup'); }catch(_){ } }
-        for (const uid of staleUids){ try{ await this._presenceClear(uid, this.meta.roomId); }catch(_){ } }
-        try{ this._resetTransientRoomState(); }catch(_){ }
-        try{ await this._deleteFromLobby(); }catch(_){ }
-        return json({ ok:true, empty:true, players:0 });
-      }
-      // Repair stale in-memory user records so lobby player counts reflect actual live sockets.
-      for (const uid of [...this.users.keys()]) if (uid!==this._cpuUid() && !liveUsers.has(uid)){
-        try{ await this._presenceClear(uid, this.meta.roomId); }catch(_){ }
-        this.users.delete(uid); this.userSockets.delete(uid);
-      }
-      return json({ ok:true, empty:false, players:liveUsers.size });
-    }
 
     if (upgrade.toLowerCase() === "websocket" && m){
       const pair = new WebSocketPair();
