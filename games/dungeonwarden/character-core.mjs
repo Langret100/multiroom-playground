@@ -1,4 +1,5 @@
-import {P1ModularAssets} from './character-assets.mjs';
+import {WEAPON_SIZE_SCALE} from './combat-tuning.mjs';
+import {P1ModularAssets} from './character-assets.mjs?v=20261009-final-equipment';
 const P1BasicRig=(()=>{
   const directions=['front','side','back'];
   function create(image,atlas,canvasFactory){
@@ -36,84 +37,98 @@ const P1WeaponMotion=(()=>{
  const modes=[['combo','기본 연속 공격'],['jump','점프 공격'],['dash','돌진 공격'],['slam','내려찍기'],['whirlwind','휠윈드'],['idle','대기'],['walk','걷기'],['run','달리기'],['hurt','피격'],['victory','승리']];
  const clamp=x=>Math.max(0,Math.min(1,x)),lerp=(a,b,t)=>a+(b-a)*t,smooth=t=>{t=clamp(t);return t*t*(3-2*t);};
  function create(rig,images,factory){
-  const native=factory(96,96),wg=factory(96,96),outg=native.getContext('2d');
+  const native=factory(512,512),wg=factory(512,512),outg=native.getContext('2d');
   function render(out,direction,type,time,options={}){
    const def=weapons.find(w=>w[0]===type)||weapons[0],mode=options.mode||'combo',heavy=['greatsword','hammer'].includes(type),ranged=['bow','staff'].includes(type),passive=['idle','walk','run','hurt','victory'].includes(mode);
    const count=mode==='combo'?def[3]:1,duration=mode==='combo'?def[4]:mode==='whirlwind'?2:mode==='dash'?.64:1.05;
    const cycle=duration*count+.65,clock=options.single?Math.max(0,time):((time%cycle)+cycle)%cycle,active=!passive&&clock<duration*count,index=options.combo!==undefined?Math.max(0,Math.min(def[3]-1,options.combo-1)):Math.min(count-1,Math.floor(clock/duration)),u=active?clock/duration-Math.floor(clock/duration):1;
-   const wind=smooth(u/.32),strike=smooth((u-.32)/.16),recover=smooth((u-.53)/.47),pulse=active?Math.sin(Math.PI*clamp((u-.25)/.45)):0;
+   const wind=smooth(u/.28),strike=smooth((u-.28)/.30),recover=smooth((u-.65)/.35),pulse=active?Math.sin(Math.PI*clamp((u-.25)/.45)):0;
    let dir=direction==='right'||direction==='left'?'side':direction==='up'?'back':direction==='down'?'front':direction;
-   let flip=direction==='right';if(mode==='whirlwind'&&active){const n=Math.floor(u*16)%4;dir=['side','back','side','front'][n];flip=n===2;}
+   let flip=direction==='right';if(mode==='whirlwind'&&active){const n=Math.floor(u*16)%4;dir=['front','side','back','side'][n];flip=n===3;}
    const v=dir==='side'?{x:-1,y:0}:dir==='front'?{x:0,y:1}:{x:0,y:-1},cross={x:-v.y,y:v.x};
    const moving=mode==='walk'||mode==='run',step=moving?Math.sin(time*(mode==='run'?15:9)):0;
-   const lunge=active?(mode==='dash'?9*pulse:heavy?2*pulse:1.3*pulse):mode==='hurt'?-2*Math.sin(time*9):0;
+   const lunge=active?(mode==='dodge'?-5*pulse:mode==='dash'?6*pulse:heavy?3.4*pulse:2.2*pulse):mode==='hurt'?-2*Math.sin(time*9):0;
    // Reference: lift from 140ms, settle toward 490ms, impact near 560ms.
    const overhead=mode==='jump'||mode==='slam'||(heavy&&index===1);
+   const bowAim=type==='bow'&&(active||options.bowCharge>0),draw=bowAim?clamp(options.bowCharge>0?options.bowCharge/1.2:1-strike):0;
    const jump=active&&overhead?-9*Math.sin(Math.PI*clamp((u-.06)/.55)):0;
-   const cx=48+v.x*lunge,feet=66+v.y*lunge,p={...rig.sprites[dir]},bodyY=feet-3-p.torso.height+jump+(moving?-.35*Math.abs(step):.18*Math.sin(time*2.5))+pulse*.6;
+   const cx=64+v.x*lunge,feet=82+v.y*lunge,p={...rig.sprites[dir]},bodyY=feet-3-p.torso.height+jump+(moving?-.35*Math.abs(step):.18*Math.sin(time*2.5))+pulse*.6;
    const expression=mode==='hurt'?'hurt':active?'attack':'neutral';if(rig.expressions?.[dir]?.[expression])p.head=rig.expressions[dir][expression];
-   const headY=bodyY+4-p.head.height,shoulderY=bodyY+p.torso.height-p.leftArm.height+.5,headX=cx,g=outg,wgctx=wg.getContext('2d');
-   for(const ctx of [g,wgctx]){ctx.resetTransform();ctx.clearRect(0,0,96,96);ctx.imageSmoothingEnabled=false;}
+   const headY=bodyY+4-p.head.height,shoulderY=bodyY+p.torso.height-p.leftArm.height+.5-(bowAim?2:0),headX=cx,g=outg,wgctx=wg.getContext('2d');
+   for(const ctx of [g,wgctx]){ctx.resetTransform();ctx.clearRect(0,0,512,512);ctx.scale(4,4);ctx.imageSmoothingEnabled=false;}
    const main=dir==='side'?'leftArm':'rightArm',other=main==='leftArm'?'rightArm':'leftArm',sx=dir==='side'?-2:3;
    const resting={x:cx+sx+(main==='leftArm'?-3:3),y:shoulderY+6};
    const extension=active?(type==='dagger'?6*strike*(1-recover):4*strike*(1-recover)):0;
    let hand={x:resting.x+v.x*extension,y:resting.y+v.y*extension};
    if(active&&overhead){hand.x+=cross.x*3*wind*(1-recover);hand.y-=6*wind*(1-strike);}
    else if(active&&!ranged&&type!=='dagger'){hand.x+=cross.x*3*(strike-.5)*wind*(1-recover);hand.y+=cross.y*3*(strike-.5)*wind*(1-recover);}
+   if(type==='staff'){hand.x=cx+(dir==='side'?-6:6)+v.x*2*pulse;hand.y=shoulderY+3-3*wind*(1-recover);}
+   if(bowAim){hand.x=cx+v.x*12+cross.x*3;hand.y=shoulderY+2+v.y*4;}
+   if(mode==='throw'&&active){hand.x+=v.x*6*strike;hand.y-=3*wind*(1-strike);}
    if(moving)hand.y+=step*.45;
    if(mode==='victory'){hand.y-=6*(.7+.3*Math.sin(time*5));hand.x+=3;}
    const base=dir==='side'?-Math.PI/2:dir==='front'?Math.PI:0;
    let angle=base;
    if(active&&!ranged&&type!=='dagger'){
-    const start=dir==='side'?-.12:base-.9,end=dir==='side'?-2.8:base+.9;
+    const start=dir==='side'?.20:base-1.18,end=dir==='side'?-3.02:base+1.18;
     const opposite=index%2&&!overhead;
     angle=lerp(base,lerp(opposite?end:start,opposite?start:end,strike),wind)*(1-recover)+base*recover;
    }
    if(mode==='victory')angle=dir==='side'?-.3:-.2;
-   const item=options.weapon||images[type],length=item.motionLength||(type==='dagger'?12:heavy?27:type==='bow'?16:21);
-   const scale=length/item.height,w=Math.max(3,Math.round(item.width*scale)),h=length,grip=options.grip||{x:item.width/2,y:type==='bow'?item.height/2:item.height-3};
+   const item=options.weapon||images[type],length=(item.motionLength||(type==='dagger'?12:heavy?27:type==='bow'?16:21))*WEAPON_SIZE_SCALE;
+   const scale=length/item.height,w=Math.max(1,item.width*scale),h=length,grip=options.grip||{x:item.width/2,y:type==='bow'?item.height/2:item.height-3};
    const gripX=grip.x*scale,gripY=grip.y*scale;
-   if(type==='bow')angle=dir==='side'?0:dir==='front'?-Math.PI/2:Math.PI/2;
-   wgctx.save();wgctx.translate(Math.round(hand.x),Math.round(hand.y));wgctx.rotate(angle);wgctx.drawImage(item,-gripX,-gripY,w,h);wgctx.restore();
+   if(type==='bow')angle=dir==='side'?0:dir==='front'?-.15:.15;
+   if(type==='staff')angle=dir==='side'?-.15-.30*pulse:base*.10;
+   if(mode==='whirlwind'&&active)angle=(flip?-1:1)*(Math.PI+u*Math.PI*8);
+   const swingSign=mode==='whirlwind'?(flip?-1:1):(dir==='side'?-1:1)*(index%2&&!overhead?-1:1);
+   const edgeFlip=type==='axe'&&(item.edgeSide||1)!==swingSign;
+   const paintHeldWeapon=()=>{wgctx.save();if(edgeFlip)wgctx.scale(-1,1);wgctx.drawImage(item,-gripX,-gripY,w,h);wgctx.restore();};
+   wgctx.save();wgctx.translate(Math.round(hand.x),Math.round(hand.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
    const tip={x:hand.x+Math.sin(angle)*gripY,y:hand.y-Math.cos(angle)*gripY};
    // Windup may pass behind the head. The outward strike moves to the near plane.
    const rear=dir==='back'||(active&&u<.32)||mode==='victory';
-   function part(name,x,y){const a=p[name],top=a.trimTop??(name==='torso'?2:0),bottom=name==='head'?(a.trimBottom??(dir==='side'?2:1)):0;g.drawImage(a,0,top,a.width,a.height-top-bottom,Math.round(x-a.width/2),Math.round(y+top),a.width,a.height-top-bottom);}
-   function arm(name,shoulderX,target){const a=p[name],px=name==='leftArm'?a.width-2:1,py=1,dx=name==='leftArm'?3-a.width:a.width-3,dy=a.height-3,angle=Math.atan2(target.y-shoulderY,target.x-shoulderX)-Math.atan2(dy,dx);g.save();g.translate(Math.round(shoulderX),Math.round(shoulderY));g.rotate(angle);g.drawImage(a,-px,-py);g.restore();return {x:shoulderX+dx*Math.cos(angle)-dy*Math.sin(angle),y:shoulderY+dx*Math.sin(angle)+dy*Math.cos(angle)};}
+   function part(name,x,y){const a=p[name],top=a.trimTop??(name==='torso'?2:0),bottom=name==='head'?(a.trimBottom??(dir==='side'?2:1)):0;g.drawImage(a.image||a,0,top*(a.density||1),a.width*(a.density||1),(a.height-top-bottom)*(a.density||1),Math.round(x-a.width/2),Math.round(y+top),a.width,a.height-top-bottom);}
+   function arm(name,shoulderX,target){const a=p[name],px=name==='leftArm'?a.width-2:1,py=1,dx=name==='leftArm'?3-a.width:a.width-3,dy=a.height-3,angle=Math.atan2(target.y-shoulderY,target.x-shoulderX)-Math.atan2(dy,dx);g.save();g.translate(Math.round(shoulderX),Math.round(shoulderY));g.rotate(angle);g.drawImage(a.image||a,-px,-py,a.width,a.height);g.restore();return {x:shoulderX+dx*Math.cos(angle)-dy*Math.sin(angle),y:shoulderY+dx*Math.sin(angle)+dy*Math.cos(angle)};}
    // The hand/weapon use the same actual rigid-arm endpoint (no floating equipment).
-   const shoulderX=cx+sx,armPart=p[main],armDX=main==='leftArm'?3-armPart.width:armPart.width-3,armDY=armPart.height-3,armRotation=Math.atan2(hand.y-shoulderY,hand.x-shoulderX)-Math.atan2(armDY,armDX);
+   const shoulderX=cx+sx+(bowAim?v.x*3:0),armPart=p[main],armDX=main==='leftArm'?3-armPart.width:armPart.width-3,armDY=armPart.height-3,armRotation=Math.atan2(hand.y-shoulderY,hand.x-shoulderX)-Math.atan2(armDY,armDX);
    const actual={x:shoulderX+armDX*Math.cos(armRotation)-armDY*Math.sin(armRotation),y:shoulderY+armDX*Math.sin(armRotation)+armDY*Math.cos(armRotation)};
-   wgctx.resetTransform();wgctx.clearRect(0,0,96,96);wgctx.save();wgctx.translate(Math.round(actual.x),Math.round(actual.y));wgctx.rotate(angle);wgctx.drawImage(item,-gripX,-gripY,w,h);wgctx.restore();
+   wgctx.resetTransform();wgctx.clearRect(0,0,512,512);wgctx.scale(4,4);wgctx.save();wgctx.translate(Math.round(actual.x),Math.round(actual.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
    tip.x+=actual.x-hand.x;tip.y+=actual.y-hand.y;hand=actual;
+   const drawShield=()=>{if(!options.shield||heavy||ranged)return;const block=options.blocking,px=cx+(dir==='side'?4:-6)+v.x*(block?3:0),py=bodyY+9+v.y*(block?2:0)+(moving?step*.35:0),height=options.shieldHeight||12,width=height*options.shield.width/options.shield.height;g.save();g.translate(Math.round(px),Math.round(py));g.rotate((block?-.12:.08)+Math.sin(time*2)*.025);g.drawImage(options.shield,-width/2,-height/2,width,height);g.restore();};
+   if(dir==='back')drawShield();
    g.fillStyle='#111b2840';g.fillRect(Math.round(cx)-5,Math.round(feet)+1,10,2);
-   const attachment=rig.accessories?.[dir];if(attachment?.cloak){g.save();g.translate(Math.round(cx+3),Math.round(bodyY+3));g.rotate(Math.sin(time*8-.5)*.12+pulse*.18);g.drawImage(attachment.cloak,-4,0);g.restore();}
+   const attachment=rig.accessories?.[dir];if(attachment?.cloak){g.save();g.translate(Math.round(cx+(attachment.cloak.anchorX??3)),Math.round(bodyY+3));g.rotate(Math.sin(time*8-.5)*.12+pulse*.18);g.drawImage(attachment.cloak.image||attachment.cloak,-attachment.cloak.width/2,0,attachment.cloak.width,attachment.cloak.height);g.restore();}
    if(['idle','walk','run'].includes(mode)){
     // Keep the restored walking rig intact: no stretched joints or rotating toes.
     const ax=Math.max(2.5,p.torso.width/2-.4),ay=bodyY+p.torso.height-Math.max(p.leftArm.height,p.rightArm.height)-.5,lift=mode==='run'?1.6:1.1;
     const lh=feet-Math.max(p.leftLeg.height,p.rightLeg.height);
     const idleHand={x:cx+(dir==='side'?-ax:ax)+(dir==='side'?-1:1),y:ay+p[main].height-2+(moving?step*.35:0)};
-    hand=idleHand;wgctx.resetTransform();wgctx.clearRect(0,0,96,96);wgctx.save();wgctx.translate(Math.round(hand.x),Math.round(hand.y));wgctx.rotate(angle);wgctx.drawImage(item,-gripX,-gripY,w,h);wgctx.restore();
-    if(rear)g.drawImage(wg,0,0);
+    hand=idleHand;wgctx.resetTransform();wgctx.clearRect(0,0,512,512);wgctx.scale(4,4);wgctx.save();wgctx.translate(Math.round(hand.x),Math.round(hand.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
+    if(rear)g.drawImage(wg,0,0,128,128);
     part('leftLeg',cx+(dir==='side'?-.6+step*.45:-2),lh-Math.max(0,step)*lift);
     part('rightLeg',cx+(dir==='side'?.6-step*.45:2),lh-Math.max(0,-step)*lift);
     part('leftArm',cx-ax,ay+(moving?step*.35:0));
     if(dir!=='side')part('rightArm',cx+ax,ay-(moving?step*.35:0));
     part('torso',cx,bodyY);if(dir==='side')part('rightArm',cx+ax-1,ay-step*.35);
-    if(!rear)g.drawImage(wg,0,0);part('head',headX,headY);
+    if(!rear)g.drawImage(wg,0,0,128,128);if(dir!=='back'&&!options.blocking)drawShield();part('head',headX,headY);
    }else{
-   if(rear){g.drawImage(wg,0,0);arm(main,shoulderX,hand);}
+   if(rear){g.drawImage(wg,0,0,128,128);arm(main,shoulderX,hand);}
    part('leftLeg',cx+(dir==='side'?-.5:-2),feet-p.leftLeg.height+jump-Math.max(0,step)*1.1);
    part('rightLeg',cx+(dir==='side'?.5:2),feet-p.rightLeg.height+jump-Math.max(0,-step)*1.1);
    const support={x:cx+(dir==='side'?2:-6),y:shoulderY+6-step*.4};
-   if(heavy||type==='bow'){support.x=hand.x-Math.sin(angle)*2;support.y=hand.y+Math.cos(angle)*2;}
+   if(heavy||type==='staff'){support.x=hand.x-Math.sin(angle)*3.5;support.y=hand.y+Math.cos(angle)*3.5;}
+   if(bowAim){support.x=hand.x-v.x*(3+draw*5);support.y=hand.y-v.y*(3+draw*5);} 
    arm(other,cx+(dir==='side'?2:-3),support);
-   part('torso',cx,bodyY);part('head',headX,headY);
-   if(options.helmet)g.drawImage(options.helmet,Math.round(headX-options.helmet.width/2),Math.round(headY+p.head.height*.52-options.helmet.height));
-   if(!rear){arm(main,shoulderX,hand);g.drawImage(wg,0,0);if(heavy||type==='bow')arm(other,cx+(dir==='side'?2:-3),support);}
+   part('torso',cx,bodyY);if(dir!=='back'&&!options.blocking)drawShield();part('head',headX,headY);
+   if(!rear){arm(main,shoulderX,hand);g.drawImage(wg,0,0,128,128);if(heavy||ranged)arm(other,cx+(dir==='side'?2:-3),support);}
+   if(bowAim){
+    const bx=hand.x,by=hand.y,half=length*.42;g.strokeStyle='#dacba7';g.lineWidth=.65;g.beginPath();g.moveTo(bx+Math.sin(angle)*half,by-Math.cos(angle)*half);g.lineTo(support.x,support.y);g.lineTo(bx-Math.sin(angle)*half,by+Math.cos(angle)*half);g.stroke();
+    if(draw>.08){g.strokeStyle='#eddec0';g.lineWidth=.8;g.beginPath();g.moveTo(support.x,support.y);g.lineTo(bx+v.x*7,by+v.y*7);g.stroke();}
    }
-   if(['idle','walk','run'].includes(mode)&&options.helmet)g.drawImage(options.helmet,Math.round(headX-options.helmet.width/2),Math.round(headY+p.head.height*.52-options.helmet.height));
-   if(options.shield&&!heavy&&!ranged)g.drawImage(options.shield,Math.round(cx+3),Math.round(bodyY+4));
-   if(attachment?.clasp){g.save();g.translate(Math.round(cx+4),Math.round(bodyY+7));g.rotate(Math.sin(time*10-1)*.18);g.drawImage(attachment.clasp,-1,0);g.restore();}
+   }
+   if(dir!=='back'&&options.blocking)drawShield();
+   if(attachment?.clasp){g.save();g.translate(Math.round(cx+4),Math.round(bodyY+7));g.rotate(Math.sin(time*10-1)*.18);g.drawImage(attachment.clasp.image||attachment.clasp,-1,0,attachment.clasp.width,attachment.clasp.height);g.restore();}
    const hit=active&&u>=.35&&u<.68;
    function arc(x,y,r,a,b,color){g.fillStyle=color;for(let i=0;i<28;i++){const q=lerp(a,b,i/27);g.fillRect(Math.round(x+Math.cos(q)*r),Math.round(y+Math.sin(q)*r),1,1);}}
    if(options.effects!==false&&hit){const ex=hand.x+v.x*length*.75,ey=hand.y+v.y*length*.75;
@@ -124,7 +139,7 @@ const P1WeaponMotion=(()=>{
     else {const bearing=Math.atan2(v.y,v.x);arc(hand.x,hand.y,length*.88,bearing-.65,bearing+.65,options.theme==='rare'?'#e4be76':'#dcebdc');arc(hand.x,hand.y,length*.78,bearing-.55,bearing+.55,'#8fbbc4');}
    }
    const og=out.getContext('2d');og.resetTransform();og.clearRect(0,0,out.width,out.height);og.imageSmoothingEnabled=false;if(flip){og.translate(out.width,0);og.scale(-1,1);}og.drawImage(native,0,0,out.width,out.height);
-   return {combo:index+1,phase:passive?mode:!active?'대기':u<.32?'준비':u<.53?'타격':'복귀',dir,hand,tip,angle,rear,active,progress:u};
+   return {combo:index+1,phase:passive?mode:!active?'대기':u<.32?'준비':u<.53?'타격':'복귀',dir,flip,hand,tip,angle,rear,active,progress:u,edgeFlip,edgeDirection:(item.edgeSide||1)*(edgeFlip?-1:1),swingSign};
   }
   return {render};
  }
@@ -132,3 +147,4 @@ const P1WeaponMotion=(()=>{
 })();
 
 export {P1BasicRig,P1WeaponMotion,P1ModularAssets};
+

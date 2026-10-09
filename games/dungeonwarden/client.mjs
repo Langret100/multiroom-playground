@@ -1,9 +1,10 @@
-import {RoomTransport} from './room-transport.mjs?v=0.8.1-dashsmooth';
+import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261009-final-equipment';
+import {RoomTransport} from './room-transport.mjs?v=20261009-final-equipment';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=0.7.3-dashdust';
+import {Renderer} from './renderer.mjs?v=20261009-final-equipment';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
 import {roomAt} from './shared/world.mjs';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);
@@ -116,7 +117,7 @@ function equipmentView(me){
 }
 function attackLabel(stats){const lo=Math.round(stats.attackMin??stats.attack),hi=Math.round(stats.attackMax??stats.attack);return lo===hi?lo:lo+'~'+hi;}
 function affixDescription(a){const chance=Math.round(a.chance*100)+'%',uses=a.charges+'/'+a.maxCharges+'회';const descriptions={poison:'적중 시 '+chance+'로 3초 중독',burn:'적중 시 '+chance+'로 3초 화상',frost:'적중 시 '+chance+'로 2초 감속',lightning:'적중 시 '+chance+'로 지연 벼락 · 18 피해',meteor:'적중 시 '+chance+'로 작은 운석 · 22 피해',multishot:'투사체 발사 시 '+chance+'로 추가 2발 · 각각 70% 피해',autoblock:'자동 피해 방어 · '+uses,taunt:'적중 시 '+chance+'로 5초 도발',reset:'피격 시 '+chance+'로 공격·특수 재사용 초기화',restore:'피격 시 '+chance+'로 소모 효과 1회 복원',revenge:'피격 시 '+chance+'로 일부 피해 반사',immune:'피격 시 '+chance+'로 상태 이상 면역',regen:'지속 회복 · 초당 체력 2',stun:'피격 시 '+chance+'로 공격자 기절',healburst:'피격 시 '+chance+'로 주변 3걸음 · 체력 10 회복',explosion:'피격 시 '+chance+'로 주변 3걸음 반격 폭발 · 자신도 추가 피해',blaze:'이동 중 불꽃 발자국 · 적에게 피해',luck:'상자 보상 20% 확률로 한 등급 상승',evade:'일반 피해 자동 회피 · '+uses,teleport:'피격 시 '+chance+'로 같은 방의 안전한 곳에 순간이동',clone:'C로 랜턴 분신 소환 · '+uses};return (a.name||AFFIX_NAMES[a.key]||a.key)+' · '+(descriptions[a.key]||chance);}
-function showGear(me,slot){const it=me.equipment[slot];$('inventory').querySelectorAll('[data-gear]').forEach(b=>b.classList.toggle('selected',b.dataset.gear===slot));$('gearDetails').innerHTML=it?`<strong style="color:${RARITY_COLORS[it.tier]}">${esc(it.name)}</strong><p class="item-story">${esc(it.story||'')}</p><p class=\"item-roll\">능력치 · ${Object.entries(it.ranges||{}).map(([k,r])=>`${({hp:'체력',attack:'공격',defense:'방어',agility:'민첩'})[k]} ${k==='attack'&&it.kind==='main'?r[0]+'~'+r[1]+' (공격마다 추첨)':it.stats[k]+' (범위 '+r[0]+'~'+r[1]+')'}`).join(' · ')}</p><p>${Object.entries(it.stats).filter(([k,v])=>v&&!(k==='attack'&&it.kind==='main')).map(([k,v])=>`${({hp:'체력',attack:'공격',defense:'방어',agility:'민첩'})[k]} +${v}`).join(' · ')}</p><p>${it.affixes.map(a=>esc(affixDescription(a))).join('<br>')||'능력치 보너스 · 추가 발동 효과 없음'}</p>${it.kind==='main'?`<p class="skill-description"><b>${esc(weaponSkill(it)?.name||'특수')}</b> · 재사용 ${weaponSkill(it)?.cool||0}초<br>${esc(SKILL_DETAILS[weaponSkill(it)?.kind]||'조준 지점에 고유 공격을 사용합니다.')}</p>`:''}<button id="dropSelected">장비 버리기</button>`:`<b>${slotNames[slot]}</b><p>비어 있는 슬롯입니다.</p>`;if(it)$('dropSelected').onclick=()=>command({action:'drop',slot});}
+function showGear(me,slot){const it=me.equipment[slot];$('inventory').querySelectorAll('[data-gear]').forEach(b=>b.classList.toggle('selected',b.dataset.gear===slot));$('gearDetails').innerHTML=it?`<strong style="color:${RARITY_COLORS[it.tier]}">${esc(it.name)}</strong><p class="item-story">${esc(it.story||'')}</p>${equipmentTrait(it)?`<p class="skill-description"><b>${esc(equipmentTrait(it).name)}</b><br>${esc(equipmentTrait(it).detail)}</p>`:''}<p class=\"item-roll\">능력치 · ${Object.entries(it.ranges||{}).map(([k,r])=>`${({hp:'체력',attack:'공격',defense:'방어',agility:'민첩'})[k]} ${k==='attack'&&it.kind==='main'?r[0]+'~'+r[1]+' (공격마다 추첨)':it.stats[k]+' (범위 '+r[0]+'~'+r[1]+')'}`).join(' · ')}</p><p>${Object.entries(it.stats).filter(([k,v])=>v&&!(k==='attack'&&it.kind==='main')).map(([k,v])=>`${({hp:'체력',attack:'공격',defense:'방어',agility:'민첩'})[k]} +${v}`).join(' · ')}</p><p>${it.affixes.map(a=>esc(affixDescription(a))).join('<br>')||'능력치 보너스 · 추가 발동 효과 없음'}</p>${it.kind==='main'?`<p class="skill-description"><b>${esc(weaponSkill(it)?.name||'특수')}</b> · 재사용 ${weaponSkill(it)?.cool||0}초<br>${esc(SKILL_DETAILS[weaponSkill(it)?.kind]||'조준 지점에 고유 공격을 사용합니다.')}</p>`:''}<button id="dropSelected">장비 버리기</button>`:`<b>${slotNames[slot]}</b><p>비어 있는 슬롯입니다.</p>`;if(it)$('dropSelected').onclick=()=>command({action:'drop',slot});}
 function closeQuiz(){quizDismissed=snapshot?.quiz?.chest;$('quizOverlay').hidden=true;canvas.focus();}
 $('quizCancel').onclick=closeQuiz;$('quizForm').onsubmit=e=>{e.preventDefault();command({action:'answer',answer:$('answer').value});};
 let inventorySignature='';renderer.dashTrails?.clear();renderer.dashDust?.clear();
@@ -212,3 +213,4 @@ addEventListener('message',e=>{if(e.source!==parent||e.origin!==location.origin)
  });}
 
 if(!embedded){$('hud').hidden=false;$('status').textContent='플레이그라운드 게임 룸에서 시작해 주세요.';}
+

@@ -93,7 +93,7 @@ export default {
     const path = url.pathname;
 
     if (path === "/api/version" && request.method === "GET") {
-      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261005-dungeon-v4' });
+      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261008-rpg-v1' });
     }
 
     const upgrade = request.headers.get("Upgrade") || "";
@@ -3525,24 +3525,21 @@ export class RoomDO{
   _startDungeon(){
     this._stopDungeon();const cpu=this._cpuUid();const players=Array.from(this.users.entries()).filter(([id])=>id!==cpu).sort((a,b)=>Number(a[1].seat)-Number(b[1].seat)).map(([id,u])=>({id,name:u.nick}));
     this.dw=new DungeonRoomRuntime(players,{mode:this.meta.dungeonMode==='dungeon'?'dungeon':'arena',masterId:this.meta.dungeonMode==='dungeon'?this.meta.ownerUserId:null});let last=Date.now(),acc=0,sendAt=0;
-    // Dungeon Warden used to simulate at 60 Hz inside a 50 ms Durable Object timer.
-    // With 8 players + many monsters this means three full AI/physics passes, followed by
-    // eight recipient-specific visibility snapshots, on every wake-up. The resulting CPU
-    // bursts delay both monster AI and outgoing packets. 30 Hz authoritative physics is
-    // sufficient because clients interpolate remote actors and locally predict their own
-    // movement. Keep the network cadence high enough for responsiveness, but ease it a
-    // little for large rooms to avoid 8x snapshot bursts.
+    // Physics and packet cadence are independent. Clients predict their own movement
+    // and interpolate remote actors between authoritative 30 Hz simulation ticks.
+    // Five or more players receive 10 Hz state updates; smaller rooms receive 15 Hz.
+    // Recipients share cleaned entity records and compound serialization per tick.
     const simStep=1/30;
     this.dwTimer=setInterval(()=>{try{
       if(this.meta.phase!=='playing'||!this.users.size){this._stopDungeon();return;}
       const time=Date.now();acc+=Math.min(.12,(time-last)/1000);last=time;
       let steps=0;while(acc>=simStep&&steps<4){this.dw.step(simStep);acc-=simStep;steps++;}
       if(steps===4&&acc>=simStep)acc=0; // never let a stalled room enter a catch-up spiral
-      const humanCount=Math.max(1,Array.from(this.users.keys()).filter(id=>id!==cpu).length);
-      const sendEvery=humanCount>=7?67:humanCount>=5?60:50;
-      if(time-sendAt>=sendEvery){sendAt=time;for(const [ws,id]of this.sockets)if(this.users.has(id)){const packet=this.dw.packet(id);if(packet)this._send(ws,'dw_packet',{packet});}}
+      // Encode once per user, including when reconnecting sockets briefly overlap.
+      const sendPeriod=1000/(this.users.size>=5?10:15);
+      if(time-sendAt>=sendPeriod-1){sendAt=sendAt?sendAt+sendPeriod:time;if(time-sendAt>sendPeriod)sendAt=time;const packets=new Map();for(const [ws,id]of this.sockets)if(this.users.has(id)){if(!packets.has(id))packets.set(id,this.dw.packet(id));const packet=packets.get(id);if(packet)this._send(ws,'dw_packet',{packet});}}
       if(this.dw.game.result){const result=this.dw.game.result;this._broadcast('result',{mode:this.meta.mode,done:true,...result});this._stopDungeon();this._endAndBackToLobby(3000);}
-    }catch(error){console.error('Dungeon room tick',error);this._stopDungeon();this._broadcast('system',{text:'던전 연결이 종료되었습니다. 방에서 다시 시작해 주세요.'});this._endAndBackToLobby(0);}},50);
+    }catch(error){console.error('Dungeon room tick',error);this._stopDungeon();this._broadcast('system',{text:'던전 연결이 종료되었습니다. 방에서 다시 시작해 주세요.'});this._endAndBackToLobby(0);}},1000/30);
   }
   _endAndBackToLobby(delayMs){
     // Several clients may report the same shared game end nearly simultaneously.

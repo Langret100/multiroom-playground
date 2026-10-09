@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>무기별 전투 미리보기</title>
+<style>body{margin:0;background:#111a23;color:#eef3f7;font:15px system-ui}main{max-width:1000px;margin:26px auto;padding:0 20px}h1{font-size:23px}p{color:#b4c4d0;line-height:1.6}nav{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}button,select{font:inherit;background:#263746;color:inherit;border:1px solid #536879;border-radius:8px;padding:10px 14px;cursor:pointer}button[aria-pressed=true]{background:#b9d9eb;color:#16222e}canvas{width:100%;height:auto;background:#15212b;border:1px solid #425362;border-radius:14px}label{display:flex;align-items:center;gap:8px}</style>
+<main><h1>무기별 전투 미리보기</h1><p>무기를 선택해 기본 공격과 특수 공격을 비교하세요. 6초마다 반복됩니다.</p>
+<nav><label>무기 <select id="weapon" aria-label="무기"></select></label><button id="basic" aria-pressed="false">기본 공격</button><button id="special" aria-pressed="true">특수 공격</button><select id="direction" aria-label="공격 방향"><option value="0">오른쪽</option><option value="3.141592653589793">왼쪽</option><option value="1.5707963267948966">아래쪽</option><option value="-1.5707963267948966">위쪽</option></select></nav>
+<nav><button data-pick="longsword">검</button><button data-pick="fang_knife">단검</button><button data-pick="zweihander">대검</button><button data-pick="war_hammer">망치</button><button data-pick="longbow">활</button><button data-pick="iron_meteor_staff">스태프·운석</button><button id="pause">일시정지</button><button id="restart">처음부터</button><select id="speed" aria-label="재생 속도"><option value="1">정상 속도</option><option value=".5">절반 속도</option></select></nav>
+<p id="description">에셋을 불러오는 중…</p><canvas id="preview" width="1000" height="540"></canvas><p id="loading"></p></main>
+<script type="module">
+import {CharacterRenderer} from './character-runtime.mjs?v=20261009-final-equipment';
+import {SkillPreview} from './skill-preview.mjs?v=20261009-final-equipment';
+const canvas=document.querySelector('canvas'),c=canvas.getContext('2d'),characters=new CharacterRenderer(),selector=document.querySelector('#weapon');
+let preview,last=performance.now(),paused=false,special=true;
+try{
+ const m=await(await fetch('assets/manifest.json?v=20261009-final-equipment')).json();await characters.load(m.characters);preview=new SkillPreview(characters);
+ const names=['N','R','SR','SSR'];
+ for(const [id,entry]of Object.entries(m.characters.catalog.weaponAssets.entries)){const option=document.createElement('option');option.value=id;option.textContent=`${names[entry.tier]} · ${entry.name}`;selector.append(option);}
+ selector.value='zweihander';reset();document.querySelector('#loading').textContent='대검의 회전 베기, 활의 백스텝·특수 화살, 스태프의 시전·착탄을 확인하세요. 무기 등급에 따라 특수 공격이 달라집니다.';
+}catch(e){document.querySelector('#description').textContent='미리보기 로딩 실패: '+e.message;throw e;}
+function reset(){if(!preview)return;document.querySelector('#description').textContent=preview.select(selector.value,special,Number(document.querySelector('#direction').value));}
+selector.onchange=reset;document.querySelector('#direction').onchange=reset;
+for(const b of document.querySelectorAll('[data-pick]'))b.onclick=()=>{selector.value=b.dataset.pick;reset();};
+for(const id of ['basic','special'])document.querySelector('#'+id).onclick=()=>{special=id==='special';for(const k of ['basic','special'])document.querySelector('#'+k).setAttribute('aria-pressed',String(k===id));reset();};
+document.querySelector('#pause').onclick=e=>{paused=!paused;e.target.textContent=paused?'재생':'일시정지';};document.querySelector('#restart').onclick=reset;
+function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;if(preview){if(!paused)preview.advance(dt*Number(document.querySelector('#speed').value));preview.paint(c,canvas.width,canvas.height);}requestAnimationFrame(frame);}requestAnimationFrame(frame);
+</script></html>

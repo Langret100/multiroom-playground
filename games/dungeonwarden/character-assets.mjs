@@ -1,6 +1,6 @@
 // Source sheets are sampled once onto the accepted P1 pixel grid.
 export const P1ModularAssets={create(catalog,images,factory){
- const directions=['front','side','back'],body={},heads={},items={};
+ const directions=['front','side','back'],body={},heads={},items={},equipmentSprites={},outfits={};
  function sample(file,r,w,h){const c=factory(w,h),g=c.getContext('2d');g.imageSmoothingEnabled=false;g.drawImage(images[file],...r,0,0,w,h);return c;}
  for(const d of directions){body[d]={};for(const [name,r]of Object.entries(catalog.body.rects[d]))body[d][name]=sample(catalog.body.file,r,Math.round(r[2]/catalog.body.density),Math.round(r[3]/catalog.body.density));}
  for(const head of catalog.heads){heads[head.id]={};for(const d of directions){const native=body[d].head,entry={};for(const state of ['neutral','attack','hurt'])entry[state]=sample(state!=='neutral'&&head.expressionFile?head.expressionFile:head.file,state!=='neutral'&&head.expressionFile?head.expressionRects[d][state]:head.rects[d][state],native.width,native.height);
@@ -10,5 +10,7 @@ export const P1ModularAssets={create(catalog,images,factory){
    heads[head.id][d]=entry;
  }}
  if(catalog.weaponAssets)for(const [id,entry]of Object.entries(catalog.weaponAssets.entries)){const r=entry.rect,c=sample(catalog.weaponAssets.file,r,r[2],r[3]);c.grip={x:entry.grip[0],y:entry.grip[1]};c.motionLength=entry.length;c.assetId=id;items[id]=c;}
- return {body,heads,items,equipment:{},armor:{},rig(id='p1'){const sprites={},expressions={};for(const d of directions){sprites[d]={...body[d],head:heads[id]?.[d].neutral||body[d].head};expressions[d]=heads[id]?.[d];}return {sprites,expressions};}};
+ for(const sheet of catalog.equipment||[])for(const [id,entry]of Object.entries(sheet.entries||{})){equipmentSprites[id]=sample(sheet.file,entry.rect,entry.rect[2],entry.rect[3]);}
+ for(const sheet of catalog.armor||[]){outfits[sheet.id]={};for(const d of directions){outfits[sheet.id][d]={};for(const [name,r]of Object.entries(sheet.rects[d])){const native=body[d][name],w=sheet.partSizes?.[name]?.[0]||native?.width||(name==='cloak'?8:3),h=sheet.partSizes?.[name]?.[1]||native?.height||(name==='cloak'?9:3),density=sheet.renderDensity||4;const image=sample(sheet.file,r,w*density,h*density);outfits[sheet.id][d][name]={image,width:w,height:h,density,trimTop:0,preservePalette:sheet.preservePalette||sheet.file==='outfit-fitted.png'};}}}
+ return {body,heads,items,equipmentSprites,outfits,equipment:{},armor:{},rig(id='p1'){const sprites={},expressions={};for(const d of directions){sprites[d]={...body[d],head:heads[id]?.[d].neutral||body[d].head};expressions[d]=heads[id]?.[d];}return {sprites,expressions};}};
 }};

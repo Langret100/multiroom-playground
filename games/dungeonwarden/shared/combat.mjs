@@ -1,3 +1,4 @@
+import {ATTACK_RANGE_SCALE} from '../combat-tuning.mjs';
 import {weaponSkill} from './weapon-skills.mjs';
 import {WEAPONS,clamp,distance} from './catalog.mjs';
 // Shared attack geometry: previews and delayed attack damage use the same shapes.
@@ -7,7 +8,7 @@ export function attackContains(shape,p,pad=0){
   if(shape.shape==='line'||shape.shape==='rect')return along>=-pad&&along<=(shape.length||shape.radius)+pad&&Math.abs(across)<=(shape.width||.6)/2+pad;
   return Math.hypot(dx,dy)<=shape.radius+pad;
 }
-export function weaponPreview(e,aim,special=false,room=null){
+function baseWeaponPreview(e,aim,special=false,room=null){
   const it=special&&WEAPONS[e.equipment?.off?.type]?e.equipment.off:e.equipment?.main,w=WEAPONS[it?.type];
   const angle=Math.atan2(aim.y-e.y,aim.x-e.x),direction={x:Math.cos(angle),y:Math.sin(angle)};
   const base={x:e.x,y:e.y,angle,color:'#95d7dc',label:'기본 공격'};
@@ -23,7 +24,7 @@ export function weaponPreview(e,aim,special=false,room=null){
   if(['cometfall','inkcloud','stormchain'].includes(kind))return circle(kind==='cometfall'?4.3:kind==='inkcloud'?4.5:4);
   if(kind==='throw')return {...base,shape:'line',length:8,width:.6,label:'투척 8걸음'};
   if(kind==='backstep')return {...base,angle:angle+Math.PI,shape:'line',length:2,width:1,label:'백스텝 2걸음'};
-  if(kind==='slam')return circle(w.range*.45,{x:e.x+direction.x*w.range*.65,y:e.y+direction.y*w.range*.65});
+  if(kind==='slam')return circle(w.range*.60,{x:e.x+direction.x*w.range*.60,y:e.y+direction.y*w.range*.60});
   if(['double','push','bleed'].includes(kind))return circle(1.5,{x:e.x+direction.x*.7,y:e.y+direction.y*.7});
   if(kind==='spin')return circle(w.range,e);
   if(kind==='meteor'||kind==='acid')return circle(5);
@@ -36,3 +37,14 @@ export function weaponPreview(e,aim,special=false,room=null){
   return circle(2);
 }
 
+
+export function weaponPreview(e,aim,special=false,room=null){
+ const shape=baseWeaponPreview(e,aim,special,room);if(!shape)return shape;
+ const item=special&&WEAPONS[e.equipment?.off?.type]?e.equipment.off:e.equipment?.main,kind=special?weaponSkill(item)?.kind:null;
+ if(['backstep','moonheal','shelter','heal','healbolt'].includes(kind))return shape;
+ if(shape.radius)shape.radius*=ATTACK_RANGE_SCALE;if(shape.impactRadius)shape.impactRadius*=ATTACK_RANGE_SCALE;
+ if(shape.width)shape.width*=ATTACK_RANGE_SCALE;if((!special&&shape.shape==='line')||kind==='throw')shape.width=.6*2*ATTACK_RANGE_SCALE;
+ if(['cometfall','inkcloud','stormchain'].includes(kind))shape.radius=2+(shape.radius/ATTACK_RANGE_SCALE-2)*ATTACK_RANGE_SCALE;
+ if(shape.length&&!['breadline','earthline','candyburst','lightning'].includes(kind))shape.length*=ATTACK_RANGE_SCALE;
+ return shape;
+}

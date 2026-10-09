@@ -1,4 +1,4 @@
-import {CombatEffects} from './combat-effects.mjs';
+import {CombatEffects} from './combat-effects.mjs?v=20261009-final-equipment';
 import {WEAPONS,RARITY_COLORS} from './shared/catalog.mjs';
 import {walkable,lineOfSight} from './shared/world.mjs';
 export function traceAttackShape(ctx,s,map=null){
