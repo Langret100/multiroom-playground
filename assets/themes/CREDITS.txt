@@ -1,0 +1,13 @@
+Season theme assets
+All downloaded music and jingles: CC0 1.0 https://creativecommons.org/publicdomain/zero/1.0/
+Summer: Free Fall — TAD https://opengameart.org/content/free-fall
+Autumn: A Simple Trifle — jestar https://opengameart.org/content/a-simple-trifle
+Winter: Snow Globe — Bobjt https://opengameart.org/content/snow-globe
+Halloween: Spooky Dungeon — Memoraphile (You're Perfect Studio) https://opengameart.org/content/spooky-dungeon
+Christmas: Wintery loop — Emma_MA https://opengameart.org/content/wintery-loop
+Seollal: Asianoriental1 — Tozan https://opengameart.org/content/asianoriental1
+Chuseok: Asianoriental2 — Tozan https://opengameart.org/content/asianoriental2
+Interface musical cues: Music Jingles — Kenney https://kenney.nl/assets/music-jingles
+Audio edited, excerpted, normalized, faded and encoded into one byte-addressed audio pack at 24 kbit/s; separate complete MP3 clips play with native music looping.
+Background atlas: generated with OpenAI image generation, daylight revision, resized to 1536x768 WebP.
+Spring keeps the existing project assets and audio.
