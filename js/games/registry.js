@@ -1,6 +1,7 @@
 (function(){
   // Game registry. Room creation cards and the in-room help panel both read this metadata.
   const GAME_REGISTRY = [
+{ id:'mathfront',name:'매스프론트',category:'3D FPS · 거점 점령',type:'coop',badgeClass:'coop',maxClients:8,embedPath:'games/mathfront/index.html',cardImage:'games/mathfront/assets/card.webp',lobbyDesc:'최대 4 VS 4 · 3분 FPS. 50점 선득점 승리, 3분 종료 시 점수로 승패를 결정합니다. 퇴장한 자리는 AI가 이어받습니다. 수학 문제로 A·B·C 거점을 점령합니다.',descLines:['2·4·6·8인 팀전 · 싱글 AI 훈련','좌클릭 연사 · 우클릭/Q 조준 · G 수류탄 · Ctrl/C 숙이기 · R 재장전'],pcHint:'WASD 이동 · 마우스 시점 · 좌클릭 연사 · 우클릭 조준 · R 재장전',mobileHint:'이동/시점 패드 · FIRE · JUMP · RELOAD',pcControls:[['WASD','이동'],['좌클릭','연사'],['우클릭','조준'],['R','재장전'],['G','수류탄']],mobileControls:[['패드','이동/시점'],['FIRE','발사']]},
 {"id": "random", "name": "랜덤 생성", "category": "미스터리 · 무작위", "type": "random", "badgeClass": "coop", "maxClients": 8, "cardImage": "assets/images/game_cards/random.webp?v=20261005", "lobbyDesc": "방 생성 시 게임이 무작위로 정해집니다. 해당 게임의 최대 인원으로 생성하며 시작 전에는 게임을 공개하지 않습니다.", "descLines": ["게임은 방 생성 시 결정됩니다.", "게임 정보는 ?로 표시되며 조작법과 선택 옵션만 볼 수 있습니다."], "pcHint": "방에서 선택된 게임의 조작법을 확인하세요.", "mobileHint": "방에서 선택된 게임의 조작법을 확인하세요."},
     {
       id:'bloomshot', name:'블룸샷', category:'턴제 · 포격', type:'coop', badgeClass:'coop', maxClients:8,

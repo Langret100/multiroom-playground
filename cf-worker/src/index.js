@@ -365,7 +365,7 @@ export class LobbyDO{
       const minPlayers = (mode === "mathexplorer") ? 1 : 2;
       let maxPlayers = Math.max(minPlayers, Math.min(8, Number(opts.maxClients || opts.maxPlayers || 4) || 4));
       // 수학축구는 짝수 인원(2/4/6/8)만 가능 — 방 생성 시점부터 강제
-      if (mode === "soccer" && maxPlayers % 2 !== 0){
+      if (["soccer","mathfront"].includes(mode) && maxPlayers % 2 !== 0){
         maxPlayers = Math.max(2, maxPlayers - 1);
       }
       const createdAt = now();
@@ -470,7 +470,7 @@ export class LobbyDO{
 function isDuelMode(mode){
   // Co-op/real-time shared iframe modes (not tournament/duel)
   const m = String(mode || "");
-  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer" || m === "backrooms3d" || m === "soccer" || m === "geumchikeo" || m === "dungeonwarden");
+  return !(m === "togester" || m === "snaketail" || m === "suhaktokki" || m === "drawanswer" || m === "mathexplorer" || m === "math-explorer" || m === "backrooms3d" || m === "mathfront" || m === "soccer" || m === "geumchikeo" || m === "dungeonwarden");
 }
 
 function roundLabelFor(nPlayers, roundIdx, matchIdx){
@@ -1079,7 +1079,7 @@ export class RoomDO{
             return;
           }
           // 수학축구: 반드시 짝수 인원이어야 함
-          if (this.meta.mode === "soccer" && humanCount % 2 !== 0){
+          if (["soccer","mathfront"].includes(this.meta.mode) && humanCount % 2 !== 0){
             this._send(ws, "system", { text:`수학축구는 짝수 인원(2·4·6·8명)이어야 시작할 수 있습니다. (현재 ${humanCount}명)`, ts: now() });
             return;
           }
@@ -1259,11 +1259,12 @@ export class RoomDO{
           }
         }
 
+        if(this.meta.mode==='mathfront'){const roster=Array.from(this.users.entries()).filter(([id])=>id!==this._cpuUid()).map(([sid,u])=>({sid:String(sid),nick:safeNick(u.nick),seat:u.seat})).sort((a,b)=>a.seat-b.seat);if(roster.length>8||roster.length<2||roster.length%2)return;this.mf={roster:roster.map((p,i)=>({...p,team:i%2?'red':'blue'})),host:roster[0].sid,latest:null,rates:{}};this.mf.startPayload={mode:'mathfront',roster:this.mf.roster,host:this.mf.host,seed:Math.floor(Math.random()*0xffffffff),startedAt:now(),endsAt:now()+180000};this.mf.endTimer=setTimeout(()=>this._finishMathfront(),180000);}
         this.meta.phase = "playing";
         if(['dungeonwarden'].includes(this.meta.mode))this._startDungeon();
         this.meta.status = "playing";
         this._scheduleLobbyUpdate();
-        if (this.meta.mode === "suhaktokki"){
+        if(this.meta.mode==='mathfront'){this._broadcast('started',{mode:'mathfront',startPayload:this.mf.startPayload,protocolVersion:PROTOCOL_VERSION});}else if (this.meta.mode === "suhaktokki"){
           this._broadcast("started", { mode: this.meta.mode, startPayload: skStartPayload, protocolVersion:PROTOCOL_VERSION });
         } else if (this.meta.mode === "mathexplorer" || this.meta.mode === "math-explorer"){
           this._broadcast("started", { mode: this.meta.mode, startPayload: mxStartPayload, protocolVersion:PROTOCOL_VERSION });
@@ -1430,6 +1431,7 @@ export class RoomDO{
         return;
       }
       // ----- Backrooms3d relay (generic packet) -----
+      if(t==='mf_msg'){if(this.meta.mode!=='mathfront'||this.meta.phase!=='playing'||!this.mf||this.mf.ended)return;const m=d?.msg;if(!m||typeof m!=='object'||JSON.stringify(m).length>16000)return;const allowed=['state','fire','hit','respawn','world','capture','fx','supply','selfhurt','finish'];if(!allowed.includes(m.kind))return;const roster=this.mf.roster;if(!roster.some(p=>p.sid===String(uid)&&!p.ai))return;const stamp=now(),rates=this.mf.rates[String(uid)]||(this.mf.rates[String(uid)]={});if(stamp-(rates[m.kind]||0)<(m.kind==='world'?140:m.kind==='state'?60:m.kind==='hit'?0:15))return;if(stamp-(rates.windowAt||0)>=1000){rates.windowAt=stamp;rates.count=0;}if((rates.count||0)>=80)return;rates.count=(rates.count||0)+1;rates[m.kind]=stamp;if(m.kind==='finish'){if(String(uid)!==this.mf.host||!['blue','red'].includes(m.winner)||Number(m.scores?.[m.winner])<50)return;this.mf.latest={...this.mf.latest,scores:m.scores};this._finishMathfront(m.winner);return;}if(m.kind==='world'){if(String(uid)!==this.mf.host)return;this.mf.latest=m;if(Math.max(Number(m.scores?.blue)||0,Number(m.scores?.red)||0)>=50){this._finishMathfront();return;}}const out={...m,from:String(uid)},hostOnly=['hit','respawn','capture','supply','selfhurt'].includes(m.kind);for(const [sock,sid] of this.sockets){if(String(sid)===String(uid))continue;if(hostOnly&&String(sid)!==this.mf.host)continue;this._send(sock,'mf_msg',{msg:out});}return;}
       if (t === "br_msg") {
         if (this.meta.mode !== "backrooms3d" || this.meta.phase !== "playing") return;
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
@@ -2448,6 +2450,7 @@ export class RoomDO{
       // reconnecting/late-joining clients receive a ghost player forever.
       try{
         if (this.br && this.br.latestStates) delete this.br.latestStates[String(uid)];
+        if(this.meta.mode==='mathfront'&&this.meta.phase==='playing'&&this.mf){const slot=this.mf.roster.find(p=>p.sid===String(uid));if(slot)slot.ai=true;if(this.mf.host===String(uid))this.mf.host=this.mf.roster.find(p=>!p.ai&&this.users.has(p.sid))?.sid||'';this._broadcast('mf_msg',{msg:{kind:'peer_left',from:'server',sid:String(uid),host:this.mf.host}});}
         if (this.meta.mode === "backrooms3d" && this.meta.phase === "playing"){
           this._broadcast("br_msg", { msg:{ kind:"peer_left", from:"server", sid:String(uid), nick:safeNick(u?.nick || "") } });
         }
@@ -2524,6 +2527,7 @@ export class RoomDO{
 
 
   _resetTransientRoomState(){
+    if(this.mf){clearTimeout(this.mf.endTimer);this.mf=null;}
     // Hard-reset all in-memory transient room/game state when the room becomes empty.
     // This prevents ghost timers/state surviving hibernation or object reuse.
     try{ if (this._lobbyUpdateTimer){ clearTimeout(this._lobbyUpdateTimer); this._lobbyUpdateTimer = null; } }catch(_){}
@@ -3009,6 +3013,12 @@ export class RoomDO{
     this._startSoccerRound("initial");
   }
 
+  _finishMathfront(winnerOverride=''){
+    if(this.meta.mode!=='mathfront'||!this.mf||this.mf.ended)return;
+    this.mf.ended=true;clearTimeout(this.mf.endTimer);this.mf.endTimer=null;
+    const raw=this.mf.latest?.scores||{},scores={blue:Math.max(0,Math.floor(Number(raw.blue)||0)),red:Math.max(0,Math.floor(Number(raw.red)||0))},winner=['blue','red'].includes(winnerOverride)?winnerOverride:scores.blue===scores.red?'draw':scores.blue>scores.red?'blue':'red';
+    this._broadcast('result',{mode:'mathfront',done:true,scores,winner});this._endAndBackToLobby(3000);
+  }
   _finishSoccer(winner){
     if(!this.sc||this.sc.over||this.meta.mode!=="soccer")return;
     this.sc.over=true;this.sc.phase="over";
@@ -3549,6 +3559,7 @@ export class RoomDO{
     this._backToLobbyTimer = setTimeout(()=>{
       this._backToLobbyTimer = null;
       this._stopDungeon();
+      if(this.mf){clearTimeout(this.mf.endTimer);this.mf=null;}
       this.meta.phase = "lobby";
       this.meta.status = "waiting";
       this.tour = null;

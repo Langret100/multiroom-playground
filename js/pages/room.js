@@ -304,7 +304,7 @@ function setupBgm(audioElId, btnId){
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
-  const localSoloModes=new Set(["backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
+  const localSoloModes=new Set(["mathfront","backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
   let dungeonMode='arena',dungeonModeWrap=null,dungeonModeSelect=null;
   let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
@@ -1022,6 +1022,7 @@ function updatePreview(modeId){
   }
 
   function returnStarpaintToRoomLobbyLocal(){
+    if(coop?.meta?.id==='mathfront'){coop.startPayload=null;coop.sentGameStart=false;}
     try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
     window.__starpaintLocalBackTimer = null;
     try{ exitGameFullscreen(); }catch(_){ }
@@ -1268,6 +1269,8 @@ function updatePreview(modeId){
       return;
     }
     if (!room) return;
+    if(d.gameId==='mathfront'&&e.origin===location.origin&&srcWin===duel?.iframeEl?.contentWindow){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;maybeSendCoopGameStart();return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
+
     // Local practice owns its simulation. Do not relay practice game packets to the room server.
     if(coop.practice&&fromMain&&localSoloModes.has(coop.meta?.id)){
       if(d.type==='solo_quit'||/(_quit|_exit)$/.test(d.type||'')){
@@ -2323,7 +2326,7 @@ else if (isCoop){
     canStart = true;
     startText = "혼자 시작";
     startAction = "start";
-  } else if (modeId === "soccer") {
+  } else if (["soccer","mathfront"].includes(modeId)) {
     // 축구: 짝수 인원(2·4·6·8명)만 시작 가능
     if (humanCount < 2) reason = "2명 이상 필요합니다.";
     else if (humanCount % 2 !== 0) reason = `짝수 인원이 필요합니다 (현재 ${humanCount}명)`;
@@ -2892,7 +2895,7 @@ function buildMathExplorerFallbackStartPayload(base){
 function maybeSendCoopGameStart(){
   try{
     if (!coop || !coop.active) return;
-    if (!coop.meta || !["suhaktokki","mathexplorer","math-explorer","backrooms3d"].includes(coop.meta.id)) return;
+    if (!coop.meta || !["suhaktokki","mathexplorer","math-explorer","backrooms3d","mathfront"].includes(coop.meta.id)) return;
     if (!coop.startPayload || coop.sentGameStart) return;
     if (!coop.iframeReady && !coop.iframeLoaded) return;
     if (!duel?.iframeEl?.contentWindow) return;
@@ -3413,7 +3416,7 @@ try{
         // startSim() 뒤에 저장하면 roomId 임시 seed로 먼저 생성되어 클라이언트별 맵/역할이 어긋날 수 있다.
         try{
           const earlyMode = String((m && m.mode) || room?.state?.mode || "");
-          if (earlyMode === "backrooms3d" && m?.startPayload){
+          if (["backrooms3d","mathfront"].includes(earlyMode) && m?.startPayload){
             coop.startPayload = m.startPayload;
             coop.sentGameStart = false;
             coop._brGameStartAck = false;
@@ -3506,6 +3509,7 @@ try{
       });
 
       // Backrooms3d relay: server -> iframe
+      room.onMessage('mf_msg',m=>postToMain({type:'mf_msg',gameId:'mathfront',msg:m.msg||m}));
       room.onMessage("br_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
         const payload = Object.assign({}, inner || {});
@@ -3754,7 +3758,7 @@ try{
         try{ stopGameBgm(); }catch(_){ }
         // StarPaint/Bloomshot/Slime Arena own their result presentation.
         const activeEmbeddedId=String(coop?.meta?.id||room?.state?.mode||'');
-        const starpaintResultActive=[r?.mode,activeEmbeddedId].some(id=>id==='starpaint'||id==='waterblast'||id==='bloomshot');
+        const starpaintResultActive=[r?.mode,activeEmbeddedId].some(id=>id==='starpaint'||id==='waterblast'||id==='bloomshot'||id==='mathfront');
         if (!starpaintResultActive) showResultOverlay(r);
         // Let embedded games show their own win/lose overlay too.
         postToAllIframes({ type: "duel_result", payload: r });
