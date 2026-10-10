@@ -1,3 +1,5 @@
+// Mathfront owns its touch controls inside its iframe.
+{const style=document.createElement('style');style.textContent='body.in-game:has(#duelFrame[src*="/mathfront/"]) .controls{display:none!important}';document.head.appendChild(style);}
 
   // Fullscreen game mode (hide chat/side panels while playing)
   function enterGameFullscreen(){
