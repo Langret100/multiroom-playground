@@ -15,6 +15,7 @@ if(!id){const p=new Intl.DateTimeFormat('en',{timeZone:'Asia/Seoul',year:'numeri
 if(['localhost','127.0.0.1'].includes(location.hostname)){const q=new URLSearchParams(location.search).get('theme');if(['spring','summer','autumn','winter','halloween','christmas','seollal','chuseok'].includes(q))id=q;}
 function attachSeasonMotion(theme){
  document.body.dataset.motionSeason=theme;
+ const baseline=document.createElement('style');baseline.textContent='body.page-room:not(.in-game) .playersPanel div:has(>select[aria-label$="경기 방식"]){background:rgba(255,255,255,.78)!important;color:var(--text)!important;border-color:var(--line)!important;}';document.head.append(baseline);
  const snow=['winter','christmas'].includes(theme),fall=['spring','autumn'].includes(theme),rise=theme==='summer';
  if(!snow&&!fall&&!rise)return;
  const snowShape='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g fill="none" stroke-linecap="round" stroke-linejoin="round">'+[...Array(6)].map((_,i)=>'<g transform="rotate('+i*60+' 32 32)"><path d="M32 32V6M32 14L25 9M32 14L39 9M32 23L24 17M32 23L40 17" stroke="#7399bd" stroke-opacity=".5" stroke-width="3.6"/><path d="M32 32V6M32 14L25 9M32 14L39 9M32 23L24 17M32 23L40 17" stroke="#fff" stroke-width="2"/></g>').join('')+'<path d="M32 27L36.3 29.5V34.5L32 37L27.7 34.5V29.5Z" stroke="#eefaff" stroke-width="2"/></g></svg>';
@@ -33,8 +34,8 @@ function attachSeasonMotion(theme){
  @media(prefers-reduced-motion:reduce){.theme-motion-layer{display:none;}}
  `;document.head.append(style);
  const layer=document.createElement('div');layer.className='theme-motion-layer';layer.setAttribute('aria-hidden','true');
- const count=snow?12:6;
- for(let i=0;i<count;i++){const p=document.createElement('i');const duration=14+Math.random()*15;p.className='theme-particle '+(snow?'snow':rise?'bubble':theme==='spring'?'petal':'leaf');p.style.cssText='--x:'+(3+Math.random()*94)+'%;--size:'+((snow?11:6)+Math.random()*(snow?9:7))+'px;--duration:'+duration+'s;--delay:-'+(Math.random()*duration)+'s;--sway:'+(Math.random()*48-24)+'px;--drift:'+(Math.random()*56-28)+'px;--angle:'+(Math.random()*360)+'deg';layer.append(p);}
+ const count=snow?12:8;
+ for(let i=0;i<count;i++){const p=document.createElement('i');const duration=14+Math.random()*15;p.className='theme-particle '+(snow?'snow':rise?'bubble':theme==='spring'?'petal':'leaf');p.style.cssText='--x:'+(3+((i%4)+.15+Math.random()*.7)*94/4)+'%;--size:'+((snow?11:6)+Math.random()*(snow?9:7))+'px;--duration:'+duration+'s;--delay:-'+(Math.random()*duration)+'s;--sway:'+(Math.random()*48-24)+'px;--drift:'+(Math.random()*56-28)+'px;--angle:'+(Math.random()*360)+'deg';layer.append(p);}
  document.body.append(layer);
  const visibility=()=>{if(document.hidden)document.body.dataset.motionHidden='';else delete document.body.dataset.motionHidden;};document.addEventListener('visibilitychange',visibility);visibility();
 }
@@ -67,6 +68,14 @@ ${selector} :is(.btn,button,.playerCountChip){border-color:${t.line};border-radi
 ${selector} :is(.btn.primary,button.primary,.createSubmitBtn){background:linear-gradient(135deg,${t.accent},${t.ink})!important;color:#fff!important;border:1px solid ${t.accent}!important;box-shadow:0 3px 8px ${t.accent}25!important;}
 ${selector} :is(.createGameCard.selected,.playerCountChip.selected){border-color:${t.accent}!important;background:${t.line}25!important;box-shadow:0 0 0 2px ${t.accent}20!important;}
 ${selector} .gameCardCheck{background:${t.accent}!important;}
+${selector} :is(.gameBriefingBoard,.briefingCard,.controlDeviceCard){background:${t.paper}b8!important;border-color:${t.line}90!important;color:${t.ink}!important;box-shadow:0 5px 16px ${t.ink}0d!important;}
+${selector} :is(.briefingCard b,.briefingCard p,.briefingBoardHead b,.controlAction,.briefingGameHero span){color:${t.ink}!important;}
+${selector} :is(.sectionKicker,.controlDeviceHead){color:${t.accent}!important;}
+${selector} .briefingCard::after{border-color:${t.accent}10!important;}
+${selector} .briefingCard .briefingIcon{background:linear-gradient(145deg,${t.accent},${t.ink})!important;}
+${selector} :is(.briefingModeBadge,.controlKey){background:${t.paper}!important;color:${t.accent}!important;border-color:${t.line}!important;box-shadow:none!important;}
+${selector} .playersPanel div:has(>select[aria-label$="경기 방식"]){background:${t.paper}b8!important;color:${t.ink}!important;border-color:${t.line}!important;}
+
 body[data-season=seollal]:not(.in-game) :is(.panel,.modal),body[data-season=chuseok]:not(.in-game) :is(.panel,.modal){border-top:1px solid ${t.line}!important;}
 body[data-season=winter]:not(.in-game) :is(.panel,.modal){border-top-color:#fff!important;}
 body[data-season][data-season=christmas]:not(.in-game) :is(.btn.primary,button.primary){background-color:#a82735!important;border-color:#bc3941!important;}
