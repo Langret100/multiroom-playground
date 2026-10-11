@@ -1,4 +1,4 @@
-function lobbyTeamMode(state){return state.mode==='mathfront'||state.mode==='bloomshot'&&state.battleMode==='team'||state.mode==='dungeonwarden'&&state.dungeonMode==='arena-team';}
+function lobbyTeamMode(state){return ['mathfront','soccer'].includes(state.mode)||['bloomshot','waterblast','starpaint'].includes(state.mode)&&state.battleMode==='team'||state.mode==='dungeonwarden'&&state.dungeonMode==='arena-team';}
 // Mathfront owns its touch controls inside its iframe.
 {const style=document.createElement('style');style.textContent='body.in-game:has(#duelFrame[src*="/mathfront/"]) .controls{display:none!important}';document.head.appendChild(style);}
 
@@ -82,6 +82,9 @@ function lobbyTeamMode(state){return state.mode==='mathfront'||state.mode==='blo
     }catch(_){ }
     // Reset dock layout vars (avoids residual blank space after leaving a docked game)
     try{ setTogesterDock(false); }catch(_){ }
+    // A room reuses its iframe element; invalidate the old launch before another
+    // game can reuse its WindowProxy, timers or bridge acknowledgement state.
+    try{ window.__cleanupRoomGame?.(); }catch(_){ }
     try{ window.__refreshRoomControls?.(); }catch(_){ }
   }
 
@@ -307,7 +310,7 @@ function setupBgm(audioElId, btnId){
 
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
-  const localSoloModes=new Set(["mathfront","backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
+  const localSoloModes=new Set(["dungeonwarden","mathfront","backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
   let dungeonMode='arena',dungeonModeWrap=null,dungeonModeSelect=null,bloomModeWrap=null,bloomModeSelect=null;
   let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
@@ -358,7 +361,7 @@ function setupBgm(audioElId, btnId){
       dungeonModeWrap.innerHTML='<span>던전 아레나 · 경기 방식</span><select class="input" aria-label="던전 아레나 경기 방식"><option value="arena">아레나 개인전</option><option value="arena-team">아레나 팀전</option><option value="dungeon">던전 모드</option></select><small>던전 모드: 방장 = 던전마스터 · 나머지 = 모험가</small>';
       controls.parentElement?.insertBefore(dungeonModeWrap,controls);dungeonModeSelect=dungeonModeWrap.querySelector('select');
       dungeonModeSelect.addEventListener('change',()=>room?.send('dw_mode',{mode:dungeonModeSelect.value}));
-      bloomModeWrap=document.createElement('div');bloomModeWrap.style.cssText=stackModeWrap.style.cssText;bloomModeWrap.innerHTML='<span>블룸샷 · 경기 방식</span><select class="input" aria-label="블룸샷 경기 방식"><option value="solo">개인전</option><option value="team">팀전</option></select><small>팀전: 자기 닉네임을 눌러 BLUE / RED 선택</small>';controls.parentElement?.insertBefore(bloomModeWrap,controls);bloomModeSelect=bloomModeWrap.querySelector('select');bloomModeSelect.onchange=()=>room?.send('battle_mode',{mode:bloomModeSelect.value});
+      bloomModeWrap=document.createElement('div');bloomModeWrap.style.cssText=stackModeWrap.style.cssText;bloomModeWrap.innerHTML='<span>경기 방식</span><select class="input" aria-label="블룸샷 경기 방식"><option value="solo">개인전</option><option value="team">팀전</option></select>';controls.parentElement?.insertBefore(bloomModeWrap,controls);bloomModeSelect=bloomModeWrap.querySelector('select');bloomModeSelect.onchange=()=>room?.send('battle_mode',{mode:bloomModeSelect.value});
       cpuDiffWrap = wrap;
       cpuDiffSelect = wrap.querySelector('#cpuDiffSel');
       if (cpuDiffSelect){
@@ -538,7 +541,10 @@ function renderControlGuide(meta){
   }catch(_){ }
 }
 
+let previewSignature='';
 function updatePreview(modeId){
+  const signature=JSON.stringify([modeId,room?.state?.randomGame,room?.state?.battleMode,room?.state?.dungeonMode]);
+  if(signature===previewSignature)return;previewSignature=signature;
   const selected = window.gameById ? window.gameById(modeId) : null;
   const meta=room?.state?.randomGame?{...selected,name:'?',category:'?',cardImage:'assets/images/game_cards/random.webp?v=20261005',descLines:['?']}:selected;
   const label = meta?.name || modeLabel(modeId) || "-";
@@ -576,7 +582,7 @@ function updatePreview(modeId){
       previewEls.controls.textContent = "기기별 버튼과 조작을 아래에서 확인하세요.";
     }
     if (previewEls.tip){
-      previewEls.tip.textContent = BRIEFING_TIP[gameId] || "준비가 끝나면 팀원과 목표를 먼저 확인하세요.";
+      previewEls.tip.textContent = (BRIEFING_TIP[gameId] || '준비가 끝나면 목표를 먼저 확인하세요.') + (lobbyTeamMode(room?.state||{}) ? ' 자기 닉네임 칸을 누르면 BLUE / RED 팀이 바뀝니다.' : '');
     }
   }catch(_){}
 
@@ -668,6 +674,30 @@ function updatePreview(modeId){
 
   // Expose minimal state for helpers defined outside this IIFE (best-effort).
   try{ window.__roomCoop = coop; }catch(_){ }
+  const roomGameTasks=new Set();
+  function scheduleRoomGameTask(callback,delay){
+    const timer=setTimeout(()=>{roomGameTasks.delete(timer);callback();},delay);
+    roomGameTasks.add(timer);return timer;
+  }
+  window.__cleanupRoomGame=()=>{
+    for(const timer of roomGameTasks)clearTimeout(timer);roomGameTasks.clear();
+    clearTimeout(coop.soloReturnTimer);clearTimeout(coop._bridgeInitTimer);
+    clearTimeout(window.__starpaintLocalBackTimer);window.__starpaintLocalBackTimer=null;
+    coop.soloReturnTimer=coop._bridgeInitTimer=null;
+    coop.active=false;coop.practice=false;coop.meta=null;coop.startPayload=null;
+    coop.sentGameStart=false;coop.iframeLoaded=false;coop.iframeReady=false;
+    coop._mxGameStartAck=false;coop._brGameStartAck=false;
+    for(const key of ['mxFrameWin','soccerFrameWin','wbFrameWin','bsFrameWin','skFrameWin'])coop[key]=null;
+    resetStarpaintBridgeState();
+    soccerLegacyRelayState.round=soccerLegacyRelayState.pos=soccerLegacyRelayState.ball=null;
+    soccerLegacyActionSticky.fields=null;soccerLegacyActionSticky.until=0;
+    duel.active=null;duel.meta=null;duel.iframeLoaded=false;duel.iframeReady=false;
+    if(duel.iframeEl)duel.iframeEl.onload=null;
+    if(cpuFrame.iframeEl){cpuFrame.iframeEl.onload=null;cpuFrame.iframeEl.remove();cpuFrame.iframeEl=null;}
+    cpuFrame.iframeLoaded=false;cpuFrame.iframeReady=false;
+    for(const key of Object.keys(inputState))inputState[key]=false;
+    lastSentMask=0;lastDuelStateSent=lastTgStateSent=lastBrStateSent=0;
+  };
   let sim = null;
   let tickRate = 20;
 
@@ -735,6 +765,8 @@ function updatePreview(modeId){
 
   let starpaintAssetsWarmed = false;
   let starpaintWarmPromise = null;
+  let starpaintWarmScheduled=false;
+  function scheduleStarpaintWarm(){if(starpaintWarmScheduled||starpaintAssetsWarmed)return;starpaintWarmScheduled=true;const run=()=>{starpaintWarmScheduled=false;if(room?.state?.mode==='starpaint')warmStarpaintAssets();};if(window.requestIdleCallback)requestIdleCallback(run,{timeout:2000});else setTimeout(run,300);}
   function warmStarpaintAssets(){
     if (starpaintAssetsWarmed) return starpaintWarmPromise || Promise.resolve();
     starpaintAssetsWarmed = true;
@@ -746,7 +778,7 @@ function updatePreview(modeId){
         // the iframe duplicates a large CPU/memory job and can make startup slower.
         const warm = async(url)=>{
           try{
-            const res = await fetch(url, { cache:"force-cache", priority:"auto" });
+            const res = await fetch(url, { cache:"force-cache", priority:"low" });
             if (res && res.ok) await res.blob();
           }catch(_){ }
         };
@@ -1065,8 +1097,8 @@ function updatePreview(modeId){
       try{ fr.contentWindow?.postMessage({ type:"focus_game" }, "*"); }catch(_){ }
     };
     poke();
-    setTimeout(poke,70);
-    setTimeout(poke,220);
+    scheduleRoomGameTask(poke,70);
+    scheduleRoomGameTask(poke,220);
   }
 
   const SOCCER_BRIDGE_TYPES = new Set(["bridge_ready","gesture","sc_pos","sc_ball","sc_goal","sc_stun","sc_sync","sc_compat"]);
@@ -1097,12 +1129,18 @@ function updatePreview(modeId){
   window.addEventListener("message", (e)=>{
     const d = e.data || {};
     if (!d || typeof d !== "object") return;
+    if(!coop.active&&!duel.active)return;
+    const activeGameId=String(coop.active?coop.meta?.id:duel.meta?.id||duel.active?.gameId||'');
+    if(d.gameId&&activeGameId&&d.gameId!==activeGameId)return;
+    if(String(d.type||'').startsWith('mf_')&&activeGameId!=='mathfront')return;
+    if(String(d.type||'').startsWith('dw_')&&activeGameId!=='dungeonwarden')return;
+    if(String(d.type||'').startsWith('duel_')&&!duel.active)return;
     const srcWin = e.source;
     const duelWin = (()=>{ try{ return duel?.iframeEl?.contentWindow || null; }catch(_){ return null; } })();
     const fromMain = !!(duelWin && srcWin === duelWin);
     // Dungeon iframe packets are restricted to the active same-origin game frame.
     const dungeonModes=['dungeonwarden'];
-    const activeDungeon=dungeonModes.includes(String(coop?.meta?.id||''));
+    const activeDungeon=coop.active&&!coop.practice&&dungeonModes.includes(String(coop?.meta?.id||''));
     const fromDungeon=activeDungeon&&d.gameId===coop.meta.id&&e.origin===location.origin&&(srcWin===duelWin||(!srcWin&&activeDungeon));
     if(fromDungeon&&d.type==='bridge_ready'){duel.iframeReady=true;coop.iframeReady=true;sendCoopBridgeInit();return;}
     if(fromDungeon&&['dw_sync','dw_input','dw_command','dw_quit'].includes(d.type)){
@@ -1253,11 +1291,11 @@ function updatePreview(modeId){
         if (fromMain) { try{ coop._brGameStartAck = false; }catch(_){ } }
         sendCoopBridgeInit();
         if (fromMainForBr){
-          try{ setTimeout(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
+          try{ scheduleRoomGameTask(()=>{ try{ if(!coop._brGameStartAck){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 120); }catch(_){ }
         } else {
-          try{ setTimeout(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 80); }catch(_){ }
-          try{ setTimeout(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 260); }catch(_){ }
-          try{ setTimeout(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 900); }catch(_){ }
+          try{ scheduleRoomGameTask(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 80); }catch(_){ }
+          try{ scheduleRoomGameTask(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 260); }catch(_){ }
+          try{ scheduleRoomGameTask(()=>{ try{ coop.sentGameStart = false; maybeSendCoopGameStart(); }catch(_){ } }, 900); }catch(_){ }
         }
       }
       return;
@@ -1709,7 +1747,7 @@ function updatePreview(modeId){
     if (d.type === "pb_over"){
       if (!fromMainForPb || !pbModeLikely) return;
       scheduleStarpaintLocalReturn(1950);
-      try{ room.send("pb_over", { winnerSeat:Number(d.winnerSeat)||0, scores:Array.isArray(d.scores)?d.scores:[] }); }catch(_){ }
+      try{ room.send("pb_over", { winnerSeat:Number(d.winnerSeat)||0,winnerTeam:d.winnerTeam,teamBattle:!!d.teamBattle, scores:Array.isArray(d.scores)?d.scores:[] }); }catch(_){ }
       return;
     }
     if (d.type === "pb_quit"){
@@ -2224,10 +2262,10 @@ function updatePreview(modeId){
         <span class="pReady ${readyCls}">${ready}</span>
       `;
       if(lobbyTeamMode(state)){
-        const nick=row.querySelector('.pNick'),team=p.team==='red'?'red':'blue',tag=team==='red'?'RED':'BLUE';row.dataset.team=team;nick.style.color=team==='red'?'#ff8196':'#63ccff';nick.textContent=p.nick+' '+host+' · '+tag;
+        const nick=row.querySelector('.pNick'),team=p.team==='red'?'red':'blue';row.dataset.team=team;row.style.setProperty('background',team==='red'?'rgba(235,74,100,.24)':'rgba(56,139,235,.24)','important');nick.style.color=team==='red'?'#ff8196':'#63ccff';nick.textContent=p.nick+' '+host;
         if(sid===mySessionId&&phase==='lobby'){
-          const button=document.createElement('button');button.type='button';button.className='pNick teamNick';button.textContent=nick.textContent+' ▾';button.style.color=nick.style.color;button.setAttribute('aria-label','내 팀 선택');nick.replaceWith(button);
-          button.onclick=()=>{document.getElementById('teamPicker')?.remove();const dialog=document.createElement('dialog');dialog.id='teamPicker';const title=document.createElement('p');title.textContent='내 팀 선택';dialog.appendChild(title);for(const choice of ['blue','red']){const b=document.createElement('button');b.type='button';b.textContent=choice.toUpperCase();b.className='teamChoice '+choice;b.onclick=()=>{room.send('select_team',{team:choice});dialog.close();dialog.remove();};dialog.appendChild(b);}const close=document.createElement('button');close.textContent='취소';close.onclick=()=>{dialog.close();dialog.remove();};dialog.appendChild(close);document.body.appendChild(dialog);dialog.showModal();};
+          const button=document.createElement('button');button.type='button';button.className='pNick teamNick';button.textContent=nick.textContent;button.style.color=nick.style.color;button.setAttribute('aria-label','내 팀 선택');nick.replaceWith(button);
+          row.classList.add('teamSelectable');row.setAttribute('role','button');row.tabIndex=0;const toggle=()=>room.send('select_team',{team:team==='blue'?'red':'blue'});row.onclick=toggle;row.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();toggle();}};
         }
       }
       els.players.appendChild(row);
@@ -2367,14 +2405,15 @@ if(isHost&&state.phase==='lobby'&&humanCount===1&&localSoloModes.has(modeId)){ca
 if(lobbyTeamMode(state)){
  const humans=entries.filter(([sid])=>String(sid)!==CPU_SID),blue=humans.filter(([,p])=>p.team==='blue').length,red=humans.filter(([,p])=>p.team==='red').length;
  if(humans.length<2||blue===0||blue!==red||blue+red!==humans.length){canStart=false;reason='팀 인원이 같아야 시작됩니다 · BLUE '+blue+' / RED '+red;}
- let summary=document.getElementById('teamSummary');if(!summary){summary=document.createElement('p');summary.id='teamSummary';els.players.after(summary);}summary.textContent='BLUE '+blue+'명 / RED '+red+'명 · 자기 닉네임을 눌러 팀 선택';summary.hidden=phase!=='lobby';
- }else{const summary=document.getElementById('teamSummary');if(summary)summary.hidden=true;}
+ }
+ if(isHost&&state.phase==='lobby'&&humanCount===1&&localSoloModes.has(modeId)){canStart=true;startText='싱글 AI 연습 시작';startAction='practice';reason='';}
+
  els.startBtn.disabled = !canStart;
 els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
 els.startBtn.title = canStart ? startText : reason;
 
-  if(bloomModeWrap){bloomModeWrap.style.display=modeId==='bloomshot'&&state.phase==='lobby'?'flex':'none';bloomModeSelect.disabled=!isHost||state.phase!=='lobby';bloomModeSelect.value=state.battleMode||'solo';}
+  if(bloomModeWrap){bloomModeWrap.style.display=['bloomshot','waterblast','starpaint'].includes(modeId)&&state.phase==='lobby'?'flex':'none';bloomModeSelect.disabled=!isHost||state.phase!=='lobby';bloomModeSelect.value=state.battleMode||'solo';}
   if(dungeonModeWrap){dungeonModeWrap.style.display=modeId==='dungeonwarden'&&state.phase==='lobby'?'flex':'none';dungeonModeSelect.disabled=!isHost||state.phase!=='lobby';dungeonModeSelect.value=dungeonMode;}
   if(stackModeWrap){stackModeWrap.style.display=modeId==='stackga'&&(phase==='lobby'||!document.body.classList.contains('in-game'))?'flex':'none';stackModeSelect.disabled=!isHost||state.phase!=='lobby';stackModeSelect.value=stackMode;}
   // Show CPU difficulty only when host starts a solo duel in lobby.
@@ -3155,7 +3194,8 @@ function startCoopPractice(meta){
   if (duel.ui.duelSub) duel.ui.duelSub.textContent = "";
 
   const practiceEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
-  const src = `${meta.embedPath}${practiceEmbedSep}embed=1&practice=1&cpu=${encodeURIComponent(cpuDifficulty)}&stackMode=${stackMode}&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
+  const practiceTeam=room?.state?.players?.get(mySessionId)?.team||'blue';
+  const src = `${meta.embedPath}${practiceEmbedSep}embed=1&practice=1&team=${encodeURIComponent(practiceTeam)}&battleMode=${encodeURIComponent(room?.state?.battleMode||'solo')}&dungeonMode=${encodeURIComponent(room?.state?.dungeonMode||'arena')}&cpu=${encodeURIComponent(cpuDifficulty)}&stackMode=${stackMode}&embedGame=${encodeURIComponent(meta.id)}&_m=${Date.now()}`;
   if (duel.iframeEl){
     duel.iframeEl.onload = ()=>{
       coop.iframeLoaded = true;
@@ -3270,7 +3310,7 @@ function startSim(){
       // preview title (pre-game)
       try{ updatePreview(room.state.mode); }catch(_){ }
       // StarPaint assets are large enough to benefit from warming while players are still in the room lobby.
-      try{ if (String(room.state.mode || "") === "starpaint") warmStarpaintAssets(); }catch(_){ }
+      try{ if (String(room.state.mode || "") === "starpaint") scheduleStarpaintWarm(); }catch(_){ }
 
 
       // state listeners
@@ -3282,7 +3322,7 @@ function startSim(){
         try{ window.__roomModeId = room?.state?.mode || ""; }catch(_){ }
 
         try{ updatePreview(room.state.mode); }catch(_){ }
-        try{ if (String(room.state.mode || "") === "starpaint") warmStarpaintAssets(); }catch(_){ }
+        try{ if (String(room.state.mode || "") === "starpaint") scheduleStarpaintWarm(); }catch(_){ }
         // phase transitions (waiting <-> playing)
         try{
           const ph = room.state.phase;
@@ -3461,9 +3501,9 @@ try{
               coop._brGameStartAck = false;
               try{ coop.meta = coop.meta || {}; if (!coop.meta.id && startedMode) coop.meta.id = startedMode; }catch(_){ }
               maybeSendCoopGameStart();
-              try{ setTimeout(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 180); }catch(_){ }
-              try{ setTimeout(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 520); }catch(_){ }
-              try{ setTimeout(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 1200); }catch(_){ }
+              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 180); }catch(_){ }
+              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 520); }catch(_){ }
+              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 1200); }catch(_){ }
             }
           }
         }catch(_){ }
@@ -3527,7 +3567,7 @@ try{
       });
 
       // Backrooms3d relay: server -> iframe
-      room.onMessage('mf_msg',m=>postToMain({type:'mf_msg',gameId:'mathfront',msg:m.msg||m}));
+      room.onMessage('mf_msg',m=>{if(coop.active&&coop.meta?.id==='mathfront')postToMain({type:'mf_msg',gameId:'mathfront',msg:m.msg||m});});
       room.onMessage("br_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;
         const payload = Object.assign({}, inner || {});
@@ -3964,6 +4004,7 @@ try{
   // Reduce room BGM volume by ~30%
   window.__bgmBattleHandle = window.AudioManager.attachAudioManager(el, { label: '방 음악 켜기', storageKey: 'audio_enabled', volume: 0.147 });
 })();
+
 
 
 

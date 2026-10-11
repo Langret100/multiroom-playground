@@ -8,7 +8,7 @@
   return {random,ready(now=Date.now()){if(now<next)return false;next=now+presets[difficulty].reaction*(.8+random()*.4);hold=random()<presets[difficulty].mistake;return true;},get mistake(){return hold;}};
  }
  const api={active,difficulty,config:presets[difficulty],presets,brain,
-  roster(list,self){if(!active)return list;const me=list.find(p=>String(p.sessionId||p.sid)===String(self));return [{...(me||{}),sessionId:self,sid:self,seat:0,isHost:true,nick:me?.nick||'Player'},{sessionId:'solo-ai-1',sid:'solo-ai-1',seat:1,isHost:false,nick:'연습 AI',ai:true}];},
+  roster(list,self){if(!active)return list;const me=list.find(p=>String(p.sessionId||p.sid)===String(self));return [{...(me||{}),sessionId:self,sid:self,seat:0,isHost:true,nick:me?.nick||'Player',team:me?.team||query.get('team')||'blue'},{sessionId:'solo-ai-1',sid:'solo-ai-1',seat:1,isHost:false,nick:'연습 AI',ai:true,team:(me?.team||query.get('team'))==='red'?'blue':'red'}];},
   isBot:sid=>String(sid).startsWith('solo-ai-'),
   allowPacket:type=>!active||type==='bridge_ready'||type==='gesture'||/quit|over|exit|end/.test(type)
  };

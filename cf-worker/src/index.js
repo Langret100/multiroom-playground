@@ -558,7 +558,7 @@ function daPickWord(){
   return DA_WORDS[idx] || "사과";
 }
 
-function roomTeamMode(meta){return meta.mode==='mathfront'||((meta.mode==='bloomshot'||meta.mode==='suhaktokki'&&String(meta.title).startsWith('[BS]'))&&meta.battleMode==='team')||meta.mode==='dungeonwarden'&&meta.dungeonMode==='arena-team';}
+function roomTeamMode(meta){return ['mathfront','soccer'].includes(meta.mode)||(['bloomshot','waterblast','starpaint'].includes(meta.mode)||meta.mode==='suhaktokki'&&String(meta.title).startsWith('[BS]')||meta.mode==='togester'&&String(meta.title).startsWith('[WB]'))&&meta.battleMode==='team'||meta.mode==='dungeonwarden'&&meta.dungeonMode==='arena-team';}
 function balancedRoomTeams(players){const humans=players.filter(p=>p.id!=='__cpu__'),blue=humans.filter(p=>p.team==='blue').length,red=humans.filter(p=>p.team==='red').length;return humans.length>=2&&humans.length<=8&&blue>0&&blue===red&&blue+red===humans.length;}
 export class RoomDO{
   constructor(state, env){
@@ -814,6 +814,10 @@ export class RoomDO{
     }catch(_){ }
   }
 
+  _resetLobbyTeams(teamMode){
+    const ordered=[...this.users.entries()].sort((a,b)=>(Number(a[1].seat)||0)-(Number(b[1].seat)||0));
+    ordered.forEach(([id,p],i)=>{p.team=teamMode?(i%2?'red':'blue'):null;p.ready=false;for(const [sock,sid] of this.sockets)if(sid===id)wsSetAttachment(sock,{...(wsGetAttachment(sock)||{}),uid:id,nick:p.nick,seat:p.seat,ready:false,team:p.team});});
+  }
   _wireSocket(ws){
     if (this._wired.has(ws)) return;
     this._wired.add(ws);
@@ -1048,12 +1052,12 @@ export class RoomDO{
         this._broadcast('room_state',this._snapshot());return;
       }
       if(t==='battle_mode'){
-        if(uid!==this.meta.ownerUserId||this.meta.phase!=='lobby'||!(this.meta.mode==='bloomshot'||this.meta.mode==='suhaktokki'&&String(this.meta.title).startsWith('[BS]'))||!['team','solo'].includes(d?.mode))return;
-        this.meta.battleMode=d.mode;for(const p of this.users.values())p.ready=false;this._broadcast('room_state',this._snapshot());return;
+        if(uid!==this.meta.ownerUserId||this.meta.phase!=='lobby'||!(['bloomshot','waterblast','starpaint'].includes(this.meta.mode)||this.meta.mode==='suhaktokki'&&String(this.meta.title).startsWith('[BS]')||this.meta.mode==='togester'&&String(this.meta.title).startsWith('[WB]'))||!['team','solo'].includes(d?.mode))return;
+        if(this.meta.battleMode!==d.mode){this.meta.battleMode=d.mode;this._resetLobbyTeams(d.mode==='team');}this._broadcast('room_state',this._snapshot());return;
       }
       if(t==='dw_mode'){
         if(uid===this.meta.ownerUserId&&this.meta.phase==='lobby'&&this.meta.mode==='dungeonwarden'){
-          this.meta.dungeonMode=['arena','arena-team','dungeon'].includes(d.mode)?d.mode:'arena';for(const p of this.users.values())p.ready=false;this._broadcast('dw_mode',{mode:this.meta.dungeonMode});this._broadcast('room_state',this._snapshot());
+          const nextMode=['arena','arena-team','dungeon'].includes(d.mode)?d.mode:'arena';if(this.meta.dungeonMode!==nextMode){this.meta.dungeonMode=nextMode;this._resetLobbyTeams(nextMode==='arena-team');}this._broadcast('dw_mode',{mode:this.meta.dungeonMode});this._broadcast('room_state',this._snapshot());
         }return;
       }
       if(t==='stack_mode'){
@@ -1939,8 +1943,9 @@ export class RoomDO{
         const sender=this.users.get(uid); if(!sender?.isHost) return;
         const winnerSeat=Math.max(0,Math.min(7,Number(d.winnerSeat)||0));
         const scores=Array.isArray(d.scores)?d.scores.slice(0,8).map(v=>Math.max(0,Number(v)||0)):[];
-        this._broadcast("pb_over", { winnerSeat, scores, state:this.pb&&this.pb.state?this.pb.state:null });
-        this._broadcast("result", { mode:"starpaint", done:true, winnerSeat, scores });
+        const teamBattle=this.meta.battleMode==='team';const winnerTeam=teamBattle?(scores[0]===scores[1]?'draw':scores[0]>scores[1]?'blue':'red'):null;
+        this._broadcast("pb_over", { winnerSeat, winnerTeam,teamBattle,scores, state:this.pb&&this.pb.state?this.pb.state:null });
+        this._broadcast("result", { mode:"starpaint", done:true, winnerSeat,winnerTeam,teamBattle, scores });
         this._endAndBackToLobby(2400);
         return;
       }
@@ -2677,7 +2682,7 @@ export class RoomDO{
     const cpu = this._cpuUid();
     return Array.from(this.users.entries())
       .filter(([uid]) => uid !== cpu)
-      .map(([uid, u]) => ({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99), isHost: !!u?.isHost, characterVariant: Math.max(0,Math.min(5,Number(this.sc?.players?.[uid]?.characterVariant ?? 0)|0)) }))
+      .map(([uid, u]) => ({ sid: String(uid), nick: safeNick(u?.nick), seat: Number(u?.seat ?? 99), team:this.sc?.players?.[uid]?.team||(u?.team==='red'?'A':'B'), isHost: !!u?.isHost, characterVariant: Math.max(0,Math.min(5,Number(this.sc?.players?.[uid]?.characterVariant ?? 0)|0)) }))
       .sort((a,b)=> (a.seat??99) - (b.seat??99));
   }
 
@@ -2779,7 +2784,7 @@ export class RoomDO{
       x: 0, y: 0, dir: 0, vx: 0, vy: 0,
       nick: safeNick(u?.nick),
       seat,
-      team: (seat % 2 === 0) ? "A" : "B",
+      team: u?.team==='red'?"A":"B",
       characterVariant: this._pickSoccerCharacterVariant((seat % 2 === 0) ? "A" : "B"),
       kickAt: 0, kickCharge: 0, tackle: false,
     };
@@ -3020,7 +3025,7 @@ export class RoomDO{
     const ti={A:0,B:0};
     for(const [uid,u] of this.users.entries()){
       if(uid===cpu)continue;const seat=Number(u?.seat??-1);if(seat<0)continue;
-      const team=(seat%2===0)?"A":"B";
+      const team=u?.team==='red'?"A":"B";
       this.sc.players[uid]={x:0,y:0,dir:0,vx:0,vy:0,nick:safeNick(u?.nick),seat,team,characterVariant:variants[team][ti[team]++%6],kickAt:0,kickCharge:0,tackle:false};
     }
     this._broadcast("sc_roster",{players:this._buildSoccerRoster()});
@@ -3696,5 +3701,7 @@ export class RoomDO{
     return new Response("Not found", { status:404 });
   }
 }
+
+
 
 

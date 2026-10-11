@@ -886,13 +886,14 @@ function isRoundLocked(now=Date.now()){ return now < Math.max(restartLockUntil||
 
 function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
 function lerp(a,b,t){ return a+(b-a)*t; }
-function teamOf(seat){ return (Number(seat)||0)%2===0 ? 'A' : 'B'; }
+function soccerTeam(value){return value==='A'||value==='red'?'A':'B';}
+function teamOf(seat){return players&&Object.values(players).find(p=>p.seat===Number(seat))?.team||soccerTeam(roster.find(p=>p.seat===Number(seat))?.team);}
 function colorOf(team){ return team==='A' ? '#e74c3c' : '#3b82f6'; }
 function defaultDir(team){ return team==='A' ? 0 : Math.PI; } // A는 오른쪽(B골), B는 왼쪽(A골)을 바라봄
 
-function getSpawn(seat){
-  const team = teamOf(seat);
-  const idx = Math.floor((Number(seat)||0)/2);
+function getSpawn(seat,chosenTeam){
+  const team = chosenTeam||teamOf(seat);
+  const idx = Math.max(0,roster.filter(p=>soccerTeam(p.team)===team).findIndex(p=>p.seat===Number(seat)));
   // 첫 선수는 실제 중앙원 높이에, 추가 선수는 위/아래 대칭으로 배치한다.
   const laneOffsets=[0,-78,78,-142,142];
   const laneY = KICKOFF_Y + (laneOffsets[idx] ?? ((idx%2?-1:1)*(142+Math.floor(idx/2)*48)));
@@ -900,9 +901,9 @@ function getSpawn(seat){
   return { x, y: clamp(laneY, FY+PR+4, FY+FH-PR-4) };
 }
 
-function makePlayer(seat, nick){
-  const team = teamOf(seat);
-  const sp = getSpawn(seat);
+function makePlayer(seat, nick,chosenTeam){
+  const team = soccerTeam(chosenTeam||roster.find(p=>p.seat===Number(seat))?.team);
+  const sp = getSpawn(seat,team);
   return {
     x:sp.x, y:sp.y, vx:0, vy:0,
     netX:sp.x, netY:sp.y, netVX:0, netVY:0, netT:Date.now(),
@@ -940,7 +941,7 @@ function initGame(){
   if (!roster.length) return;
   players = {};
   for (const p of roster){
-    players[p.sid] = makePlayer(p.seat, p.nick);
+    players[p.sid] = makePlayer(p.seat, p.nick,p.team);
   }
   me = players[mySid] || null;
   score = { A:0, B:0 }; prevScoreA=0; prevScoreB=0;
@@ -971,6 +972,7 @@ function applyRoster(list){
     nick: String(p.nick||'Player'),
     seat: Number(p.seat ?? -1),
     isHost: !!p.isHost,
+    team:soccerTeam(p.team),
     characterVariant: Math.max(0,Math.min(5,Number(p.characterVariant ?? 0)|0)),
   })).filter(p=>p.seat>=0 && p.sid);
   if (!roster.length) return;
@@ -987,11 +989,11 @@ function applyRoster(list){
   for (const r of roster){
     let p = players[r.sid];
     if (!p){
-      p = players[r.sid] = makePlayer(r.seat, r.nick);
+      p = players[r.sid] = makePlayer(r.seat, r.nick,r.team);
     } else {
-      if (p.seat !== r.seat){
+      if (p.seat !== r.seat||p.team!==r.team){
         p.seat = r.seat;
-        p.team = teamOf(r.seat);
+        p.team = r.team;
         p.color = colorOf(p.team);
         p.dir = defaultDir(p.team);
       }
@@ -1039,7 +1041,7 @@ function applyRemotePlayers(map){
     if (!p){
       const seat = Number(snap.seat ?? -1);
       if (seat < 0) continue;
-      p = players[sid] = makePlayer(seat, snap.nick);
+      p = players[sid] = makePlayer(seat, snap.nick,snap.team);
     }
     const incomingStateSeq=Number(snap.stateSeq||0);
     const staleState=(Number(p._lastStateSeq||0)>0&&incomingStateSeq<=0)||
@@ -3230,6 +3232,7 @@ window.addEventListener('message', e=>{
       nick: String(p.nick||'Player'),
       seat: Number(p.seat ?? -1),
       isHost: !!p.isHost,
+    team:soccerTeam(p.team),
     })).filter(p=>p.seat>=0);
 
     if (gameInitialized){

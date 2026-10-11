@@ -24,7 +24,7 @@ const extraItems={};for(const name of ['speed','range','bomb','bonus','broom','p
 const walkImages=Object.fromEntries(['red','silver','gold','pink'].map(name=>{const image=new Image();image.src='assets/walk-v22/'+name+'.webp';return [name,image];}));
 let CHAR_META=null,WORLD_META=null,charImg=new Image(),worldImg=new Image(),potionImg=new Image(),townImg=new Image(),assetsReady=false;
 async function loadAssets(){try{const [c,w]=await Promise.all([fetch('assets/characters.json').then(r=>r.json()),fetch('assets/garden-v8.json').then(r=>r.json())]);CHAR_META=c;WORLD_META=w;await Promise.all([new Promise((res,rej)=>{charImg.onload=res;charImg.onerror=rej;charImg.src='assets/characters.webp'}),new Promise((res,rej)=>{worldImg.onload=res;worldImg.onerror=rej;worldImg.src='assets/garden-v8.webp'}),new Promise((res,rej)=>{potionImg.onload=res;potionImg.onerror=rej;potionImg.src='assets/removal-potion-v8.webp'})]);await new Promise((res,rej)=>{townImg.onload=res;townImg.onerror=rej;townImg.src='assets/town-v13.webp'});await Promise.allSettled([...Object.values(extraItems),...Object.values(walkImages),knockoutImg,shieldFxImg,slimeAtlasImg].map(img=>img.decode()));assetsReady=true;buildHudIcons()}catch(e){console.error(e);statusEl.textContent='에셋 로드 실패'}}loadAssets();
-const bridge={ready:false,sid:'',seat:0,isHost:false,hostSid:'',nick:'Player',players:[]};const input={l:false,r:false,u:false,d:false,bombSeq:0,mashSeq:0,potionSeq:0,pushSeq:0,pushFace:"d"};let lastBombDown=false,lastPotionDown=false,lastPushDown=false,lastSent=0,lastMashAt=0,world=null,remoteWorld=null,finishSent=false,lastFrame=performance.now(),acc=0,simNow=0;
+const bridge={ready:false,sid:'',seat:0,isHost:false,hostSid:'',nick:'Player',players:[],battleMode:'solo'};const input={l:false,r:false,u:false,d:false,bombSeq:0,mashSeq:0,potionSeq:0,pushSeq:0,pushFace:"d"};let lastBombDown=false,lastPotionDown=false,lastPushDown=false,lastSent=0,lastMashAt=0,world=null,remoteWorld=null,finishSent=false,lastFrame=performance.now(),acc=0,simNow=0;
 function post(type,obj={}){if(window.SoloAI?.active&&type!=='bridge_ready'&&!/quit|over|exit|end/.test(type))return;try{parent.postMessage(Object.assign({type,gameId:GAME},obj),'*')}catch(_){}}
 function hash(s){let h=2166136261>>>0;for(const ch of String(s)){h^=ch.charCodeAt(0);h=Math.imul(h,16777619)}return h>>>0}function rng(seed){return()=>((seed=Math.imul(seed^seed>>>15,1|seed),seed^=seed+Math.imul(seed^seed>>>7,61|seed),((seed^seed>>>14)>>>0)/4294967296))}
 function key(x,y){return x+','+y}function clamp(v,a,b){return Math.max(a,Math.min(b,v))}function roster(){return (bridge.players||[]).slice().sort((a,b)=>Number(a.seat??99)-Number(b.seat??99)).slice(0,4)}const spawns=[[1,1],[15,12],[15,1],[1,12]];function freshSeed(){try{const a=new Uint32Array(1);crypto.getRandomValues(a);return(a[0]^Date.now())>>>0}catch(_){return hash(Date.now()+'|'+Math.random()+'|'+bridge.sid)}}
@@ -33,9 +33,9 @@ function makeWorld(seedOverride){
  for(const[sx,sy]of spawns)for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++)if(Math.abs(dx)+Math.abs(dy)<=1)clear.add(key(sx+dx,sy+dy));
  const crateCellAllowed=(x,y)=>!isWall(x,y)&&!clear.has(key(x,y))&&!isWall(x,y+1);
  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const mx=W-1-x,my=H-1-y;if(!crateCellAllowed(x,y)||!crateCellAllowed(mx,my))continue;if(y*W+x>my*W+mx)continue;if(R()<.76){crates[key(x,y)]=1;crates[key(mx,my)]=1}}
- const players={};rs.forEach((p,i)=>{const q=spawns[i];players[String(p.sessionId)]={sid:String(p.sessionId),nick:String(p.nick||'Player').slice(0,18),seat:Number(p.seat??i),x:q[0]+.5,y:q[1]+.5,alive:true,bubbled:false,bubbleUntil:0,dizzyUntil:0,mash:0,speed:3.05,range:2,maxBombs:1,bombs:0,kos:0,lastHitBy:'',face:'d',moving:false,pushUntil:0,broom:false,potions:0,rescueUntil:0,broomStartAt:0,broomDismountUntil:0,stuckColor:'blue'}});
+ const players={};rs.forEach((p,i)=>{const q=spawns[i];players[String(p.sessionId)]={sid:String(p.sessionId),nick:String(p.nick||'Player').slice(0,18),seat:Number(p.seat??i),team:p.team==='red'?'red':'blue',x:q[0]+.5,y:q[1]+.5,alive:true,bubbled:false,bubbleUntil:0,dizzyUntil:0,mash:0,speed:3.05,range:2,maxBombs:1,bombs:0,kos:0,lastHitBy:'',face:'d',moving:false,pushUntil:0,broom:false,potions:0,rescueUntil:0,broomStartAt:0,broomDismountUntil:0,stuckColor:'blue'}});
  const startAt=gameNow()+1800;
- return {v:4,roundId:bridge.sid+':'+seed+':'+startAt,mapSeed:seed,stateSeq:0,serverNow:gameNow(),startAt,endAt:startAt+ROUND_MS,players,crates,items:{},bombs:[],fx:[],seq:1,ended:false,winnerSid:'',winnerSeat:0};
+ return {v:4,teamBattle:bridge.battleMode==='team',winnerTeam:null,roundId:bridge.sid+':'+seed+':'+startAt,mapSeed:seed,stateSeq:0,serverNow:gameNow(),startAt,endAt:startAt+ROUND_MS,players,crates,items:{},bombs:[],fx:[],seq:1,ended:false,winnerSid:'',winnerSeat:0};
 }
 function isWall(tx,ty){return tx<0||ty<0||tx>=W||ty>=H||tx===0||ty===0||tx===W-1||ty===H-1||(tx%2===0&&ty%2===0)}function bombAt(tx,ty,w=world){return(w?.bombs||[]).find(b=>b.x===tx&&b.y===ty)}
 function blocked(x,y,w=world,p=null){
@@ -114,7 +114,8 @@ function explode(b,now){
  hitEffect(effect,now);
  for(const other of world.bombs)if(other.at>now&&tiles.some(([x,y])=>x===other.x&&y===other.y))other.at=now;
 }
-function knockoutNow(p,now,killerSid=''){p.bubbled=false;p.bubbleUntil=0;p.dizzyUntil=0;p.mash=0;p.alive=false;p.broom=false;p.broomDismountUntil=0;p.pushUntil=0;p.placeUntil=0;if(killerSid)p.lastHitBy=killerSid;const killer=world.players[p.lastHitBy];if(killer&&killer.sid!==p.sid)killer.kos++;}
+function allies(a,b){return !!world?.teamBattle&&!!a&&!!b&&a.team===b.team;}
+function knockoutNow(p,now,killerSid=''){p.bubbled=false;p.bubbleUntil=0;p.dizzyUntil=0;p.mash=0;p.alive=false;p.broom=false;p.broomDismountUntil=0;p.pushUntil=0;p.placeUntil=0;if(killerSid)p.lastHitBy=killerSid;const killer=world.players[p.lastHitBy];if(killer&&killer.sid!==p.sid&&!allies(killer,p))killer.kos++;}
 function itemPick(p){if(!p.alive||p.bubbled||p.dizzyUntil>simNow)return;const k=key(Math.floor(p.x),Math.floor(p.y)),it=world.items[k];if(!it||(it==='potion'&&p.potions>=1))return;const atCap=it==='speed'?p.speed>=5.2:it==='range'?p.range>=7:it==='bomb'?p.maxBombs>=6:false;p.pickupAtCap=atCap;delete world.items[k];if(it==='speed')p.speed=Math.min(5.2,p.speed+.35);if(it==='range')p.range=Math.min(7,p.range+1);if(it==='bomb'||it==='bonus')p.maxBombs=Math.min(6,p.maxBombs+1);if(it==='bonus'){p.speed=Math.min(5.2,p.speed+.35);p.range=Math.min(7,p.range+1);}if(it==='shield')p.shield=1;if(it==='maxpower')p.range=7;p.pickupKind=it;p.pickupSerial=(p.pickupSerial||0)+1;if(it==='broom'){p.broomStartAt=simNow;p.broom=true;}if(it==='potion')p.potions=1;}
 const slimeBotBrains=new Map();
 function localSlimeBots(now){
@@ -158,17 +159,17 @@ function simulate(dt,inputs,now){
  }
  // An exposed trapped opponent can be popped by contact; the existing potion
  // remains usable during the final dizzy window.
- for(const p of Object.values(world.players))if(p.alive&&p.bubbled){const q=Object.values(world.players).find(q=>q.sid!==p.sid&&q.alive&&!q.bubbled&&q.dizzyUntil<=now&&Math.hypot(q.x-p.x,q.y-p.y)<.62);if(q){knockoutNow(p,now,q.sid);}}
+ for(const p of Object.values(world.players))if(p.alive&&p.bubbled){const q=Object.values(world.players).find(q=>q.sid!==p.sid&&q.alive&&!q.bubbled&&q.dizzyUntil<=now&&Math.hypot(q.x-p.x,q.y-p.y)<.62);if(q){if(allies(q,p)){p.bubbled=false;p.bubbleUntil=0;p.mash=0;p.immuneUntil=now+650;p.rescueUntil=now+650;}else knockoutNow(p,now,q.sid);}}
  // Process a whole chain in this tick, including slimes made due by another blast.
  let b;while((b=world.bombs.find(b=>b.at<=now))){world.bombs.splice(world.bombs.indexOf(b),1);explode(b,now);}
  world.fx=world.fx.filter(f=>f.until>now);for(const effect of world.fx)hitEffect(effect,now);
  const active=Object.values(world.players).filter(p=>p.alive);
- if(now>=world.endAt||(active.length<=1&&Object.keys(world.players).length>=2&&now>world.startAt+2500))finish(now);
+ if(now>=world.endAt||((world.teamBattle?new Set(active.map(p=>p.team)).size<=1:active.length<=1)&&Object.keys(world.players).length>=2&&now>world.startAt+2500))finish(now);
 }
 function finish(now){
  if(world.ended)return;world.ended=true;
  const ps=Object.values(world.players).sort((a,b)=>((b.alive?100:0)+b.kos*10)-((a.alive?100:0)+a.kos*10)||a.seat-b.seat);
- const winner=ps[0];world.winnerSid=winner?.sid||'';world.winnerSeat=winner?.seat||0;world.endAt=now;world.seq++;
+ let winner=ps[0];if(world.teamBattle){const values=['blue','red'].map(team=>({team,score:ps.filter(p=>p.team===team).reduce((n,p)=>n+(p.alive?100:0)+p.kos*10,0)}));world.winnerTeam=values[0].score===values[1].score?'draw':values[0].score>values[1].score?'blue':'red';winner=ps.find(p=>p.team===world.winnerTeam)||ps[0];}world.winnerSid=winner?.sid||'';world.winnerSeat=winner?.seat||0;world.endAt=now;world.seq++;
 }
 
 let hostOffset=0,inputSeq=Date.now()*64;
@@ -220,7 +221,7 @@ function acceptInput(sid,raw){
 }
 function hitEffect(effect,now){
  for(const p of Object.values(world.players)){
-  if(!p.alive||p.bubbled||p.dizzyUntil>now||p.immuneUntil>now)continue;
+  if(!p.alive||p.bubbled||p.dizzyUntil>now||p.immuneUntil>now||allies(world.players[effect.owner],p))continue;
   if(effect.tiles.some(([x,y])=>Math.floor(p.x)===x&&Math.floor(p.y)===y)){
    if(p.shield){p.shield=0;p.immuneUntil=now+750;p.shieldBreakAt=now;continue;}
    if(p.broom){p.broom=false;p.broomDismountUntil=now+450;landPlayer(p);}
@@ -261,9 +262,9 @@ function onBridge(d){
  if(!d||typeof d!=='object')return;
  if(d.type==='bridge_init'&&d.gameId===GAME){
   if(!d.sessionId)return;bridge.sid=String(d.sessionId);bridge.seat=Number(d.seat??d.selfSeat??0);bridge.nick=d.nick||'Player';
-  bridge.isHost=!!d.isHost;bridge.expectedHumans=Math.max(2,Number(d.expectedHumans||d.humanCount||d.players?.length||2));
+  bridge.isHost=!!d.isHost;bridge.expectedHumans=window.SoloAI?.active?2:Math.max(2,Number(d.expectedHumans||d.humanCount||d.players?.length||2));
   bridge.hostSid=String(d.hostSessionId||d.hostSid||d.players?.find(p=>p.isHost)?.sessionId||(bridge.isHost?bridge.sid:''));
-  bridge.ready=true;reconcile(d.players||[]);post('wb_sync');
+  bridge.battleMode=d.battleMode||new URLSearchParams(location.search).get('battleMode')||'solo';bridge.ready=true;reconcile(d.players||[]);post('wb_sync');
   center.classList.remove('hidden');big.textContent='슬라임 아레나';small.textContent='플레이어와 에셋을 준비하고 있습니다…';return;
  }
  if(d.type==='bridge_host'){
@@ -351,9 +352,9 @@ function hudIcon(img,r){const c=document.createElement('canvas');c.width=48;c.he
 function buildHudIcons(){for(const n of ['slime_blue','item_speed','item_range','item_broom','item_plus'])hudIcons[n]=hudIcon(worldImg,WORLD_META.sprites[n]);for(const n of ['red','silver','gold','pink'])hudIcons[n]=hudIcon(charImg,CHAR_META.characters[n].idle.d);for(const [key,name]of Object.entries({slime_blue:'bomb',item_speed:'speed',item_range:'range',item_broom:'broom',item_plus:'bonus',potion:'potion'}))hudIcons[key]='assets/pixel-v21/'+name+'.webp';document.getElementById('placeIcon').src=hudIcons.slime_blue;document.querySelector('#potion img').src=hudIcons.potion;}
 function updateRoster(){
  if(!assetsReady||!world||performance.now()-rosterAt<150)return;rosterAt=performance.now();
- const ps=Object.values(world.players).sort((a,b)=>a.seat-b.seat),stamp=JSON.stringify(ps.map(p=>[p.sid,p.nick,p.alive,p.bubbled,!!(p.dizzyUntil>gameNow()),p.potions,p.broom,p.maxBombs,p.range,p.speed,p.kos,p.shield]));if(stamp===rosterStamp)return;rosterStamp=stamp;rosterEl.replaceChildren();
+ const ps=Object.values(world.players).sort((a,b)=>world.teamBattle?(a.team===b.team?a.seat-b.seat:a.team==='blue'?-1:1):a.seat-b.seat),stamp=JSON.stringify(ps.map(p=>[p.sid,p.nick,p.alive,p.bubbled,!!(p.dizzyUntil>gameNow()),p.potions,p.broom,p.maxBombs,p.range,p.speed,p.kos,p.shield]));if(stamp===rosterStamp)return;rosterStamp=stamp;rosterEl.replaceChildren();
  for(const p of ps){
-  const row=document.createElement('div');row.className='playerRow'+(p.sid===bridge.sid?' self':'')+(!p.alive?' out':'');
+  const row=document.createElement('div');row.dataset.team=world.teamBattle?p.team:'';row.className='playerRow'+(p.sid===bridge.sid?' self':'')+(!p.alive?' out':'');
   const face=document.createElement('img');face.className='portrait';face.src=hudIcons[charName(p)];face.alt='';row.append(face);
   const body=document.createElement('div');body.className='playerInfo';const name=document.createElement('div');name.className='playerName';name.textContent=(p.sid===bridge.sid?'나 · ':'')+p.nick;name.title=p.nick;body.append(name);
   const items=document.createElement('div');items.className='held';
@@ -547,7 +548,7 @@ function arcadePlayer(p,now){arcade.walks??=new Map();const previous=arcade.walk
  if(p.bubbled){ctx.font=`900 ${Math.max(10,cell*.20)}px system-ui`;ctx.textAlign='center';ctx.fillStyle='#ffffff';ctx.strokeStyle='#207db0';ctx.lineWidth=3;ctx.strokeText('어푸! 어푸!',x,y-cell*.95);ctx.fillText('어푸! 어푸!',x,y-cell*.95);for(let i=0;i<3;i++){const lift=(now/650+i*.33)%1;ctx.strokeStyle='#d7fbff';ctx.lineWidth=cell*.025;ctx.beginPath();ctx.arc(x+Math.sin(i*2+now/250)*cell*.33,y-cell*(.1+lift*.65),cell*(.025+i*.012),0,7);ctx.stroke();}const left=clamp((p.bubbleUntil-now)/STUCK_MS,0,1),r=cell*(.56+.025*Math.sin(now/95));ctx.fillStyle='#71dffa55';ctx.strokeStyle=left<.3?'#ffa4c1':'#a8efff';ctx.lineWidth=cell*.055;ctx.beginPath();ctx.arc(x,y-cell*.09,r,0,7);ctx.fill();ctx.stroke();ctx.strokeStyle='#f4ffff';ctx.lineWidth=cell*.07;ctx.beginPath();ctx.arc(x,y-cell*.09,r*.8,Math.PI*1.05,Math.PI*1.45);ctx.stroke();arcadePixel(x-cell*.36,y+cell*.5,cell*.72,cell*.085,'#245970');arcadePixel(x-cell*.34,y+cell*.52,cell*.68*left,cell*.04,left<.3?'#ff9caa':'#a6f8fa');}
  if(p.dizzyUntil>now){for(let n=0;n<3;n++){const a=now/150+n*Math.PI*2/3;drawBlockStar(x+Math.cos(a)*cell*.3,y-cell*.48+Math.sin(a)*cell*.08,cell*.055,'#fff2a7',1);}}
  if(p.rescueUntil>now){ctx.strokeStyle='#d9fff3';ctx.lineWidth=cell*.07;ctx.beginPath();ctx.arc(x,y,cell*(.4+.5*(1-(p.rescueUntil-now)/650)),0,7);ctx.stroke();}
- ctx.restore();ctx.font=`800 ${Math.max(9,cell*.17)}px system-ui`;ctx.textAlign='center';ctx.textBaseline='bottom';ctx.lineWidth=3;ctx.strokeStyle='#285c69';ctx.strokeText(p.nick,x,p.bubbled?y+cell*.82:y-cell*1.14);ctx.fillStyle=p.sid===bridge.sid?'#fff4a8':'#fff';ctx.fillText(p.nick,x,p.bubbled?y+cell*.82:y-cell*1.14);
+ ctx.restore();if(world?.teamBattle){ctx.save();ctx.fillStyle=p.team==='blue'?'#58aaff':'#ff667f';ctx.strokeStyle='#10283f';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-cell*.13,y-cell*1.62);ctx.lineTo(x+cell*.13,y-cell*1.62);ctx.lineTo(x,y-cell*1.39);ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();}ctx.font=`800 ${Math.max(9,cell*.17)}px system-ui`;ctx.textAlign='center';ctx.textBaseline='bottom';ctx.lineWidth=3;ctx.strokeStyle='#285c69';ctx.strokeText(p.nick,x,p.bubbled?y+cell*.82:y-cell*1.14);ctx.fillStyle=p.sid===bridge.sid?'#fff4a8':'#fff';ctx.fillText(p.nick,x,p.bubbled?y+cell*.82:y-cell*1.14);
 }
 function renderPlayerPose(p){const local=p.sid===bridge.sid,target=!bridge.isHost&&local&&motion.pose?{...p,x:motion.pose.x,y:motion.pose.y,face:motion.pose.face,moving:motion.pose.moving}:p;
  if(local){const prev=previousLocal;if(prev&&target.moving&&target.alive&&!target.bubbled&&target.dizzyUntil<=gameNow()&&Math.hypot(prev.x-target.x,prev.y-target.y)<.3){const a=clamp(acc/(TICK/1000),0,1);return {...target,x:prev.x+(target.x-prev.x)*a,y:prev.y+(target.y-prev.y)*a};}return target;}
@@ -576,7 +577,7 @@ function updateInventory(p){
  const stamp=JSON.stringify(entries);if(el.dataset.stamp===stamp)return;el.dataset.stamp=stamp;el.replaceChildren();
  for(const [icon,name,level,value]of entries){const card=document.createElement('div');card.className='inventoryItem';const image=document.createElement('img');image.src='assets/pixel-v21/'+icon+'.webp';image.alt='';const text=document.createElement('div'),title=document.createElement('b'),detail=document.createElement('span');title.textContent=name+' · '+level;detail.textContent=value;text.append(title,detail);card.append(image,text);el.append(card);}
 }
-function draw(){ctx.clearRect(0,0,CW,CH);const w=world;if(!w)return;drawArcadeScene(w);updateRoster();const me=w.players?.[bridge.sid];if(me){updateInventory(me);potionCount.textContent=String(me.potions||0);potionBtn.disabled=!canUsePotion(me);potionBtn.classList.toggle('ready',canUsePotion(me));potionBtn.setAttribute('aria-label','제거 포션 '+(me.potions||0)+'개 · C키 또는 터치로 사용');statsEl.textContent=`🫧${me.maxBombs} · 📏${me.range} · 👟${Math.max(1,Math.round((me.speed-2.7)/.35))}${me.broom?' · 🧹':''}`;statusEl.textContent=me.alive?(me.bubbled?(me.potions>0?'갇힘! C / 포션 버튼으로 탈출':'슬라임! 이동키 / 🫧 버튼 연타로 탈출!'):me.dizzyUntil>gameNow()?(me.potions>0?'탈락 직전! C / 포션으로 구조':'빙글빙글… 기절!'):`KO ${me.kos} · ${bridge.isHost?'HOST':'PLAYER'}`):'탈락 · 결과를 기다리는 중'}const now=gameNow(),sec=Math.ceil(Math.min(ROUND_MS,Math.max(0,w.endAt-now))/1000);timerEl.textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;if(w.ended){const win=w.players?.[w.winnerSid];center.classList.remove('hidden');big.textContent=win?.sid===bridge.sid?'VICTORY! 🏆':`${win?.nick||'플레이어'} 승리!`;small.textContent=`${win?.nick||'우승자'} · KO ${win?.kos||0} · 잠시 후 방으로 돌아갑니다.`;const portrait=document.getElementById('winnerPortrait');if(portrait){portrait.src=hudIcons[charName(win||{seat:0})];portrait.hidden=false;}document.getElementById('center').classList.add('victory')}else if(now<w.startAt){center.classList.remove('hidden');big.textContent=String(Math.max(1,Math.ceil((w.startAt-now)/1000)));small.textContent='슬라임을 설치하고 물줄기를 피해 마지막까지 살아남으세요!'}else center.classList.add('hidden')}
+function draw(){ctx.clearRect(0,0,CW,CH);const w=world;if(!w)return;drawArcadeScene(w);updateRoster();const me=w.players?.[bridge.sid];if(me){updateInventory(me);potionCount.textContent=String(me.potions||0);potionBtn.disabled=!canUsePotion(me);potionBtn.classList.toggle('ready',canUsePotion(me));potionBtn.setAttribute('aria-label','제거 포션 '+(me.potions||0)+'개 · C키 또는 터치로 사용');statsEl.textContent=`🫧${me.maxBombs} · 📏${me.range} · 👟${Math.max(1,Math.round((me.speed-2.7)/.35))}${me.broom?' · 🧹':''}`;statusEl.textContent=me.alive?(me.bubbled?(me.potions>0?'갇힘! C / 포션 버튼으로 탈출':'슬라임! 이동키 / 🫧 버튼 연타로 탈출!'):me.dizzyUntil>gameNow()?(me.potions>0?'탈락 직전! C / 포션으로 구조':'빙글빙글… 기절!'):`KO ${me.kos} · ${bridge.isHost?'HOST':'PLAYER'}`):'탈락 · 결과를 기다리는 중'}const now=gameNow(),sec=Math.ceil(Math.min(ROUND_MS,Math.max(0,w.endAt-now))/1000);timerEl.textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;if(w.ended){const win=w.players?.[w.winnerSid];center.classList.remove('hidden');big.textContent=w.teamBattle?(w.winnerTeam==='draw'?'DRAW':w.winnerTeam===me?.team?'VICTORY! 🏆':'DEFEAT'):win?.sid===bridge.sid?'VICTORY! 🏆':`${win?.nick||'플레이어'} 승리!`;small.textContent=`${w.teamBattle?(w.winnerTeam==='draw'?'무승부':w.winnerTeam.toUpperCase()+' 팀'):win?.nick||'우승자'} · KO ${win?.kos||0} · 잠시 후 방으로 돌아갑니다.`;const portrait=document.getElementById('winnerPortrait');if(portrait){portrait.src=hudIcons[charName(win||{seat:0})];portrait.hidden=false;}document.getElementById('center').classList.add('victory')}else if(now<w.startAt){center.classList.remove('hidden');big.textContent=String(Math.max(1,Math.ceil((w.startAt-now)/1000)));small.textContent='슬라임을 설치하고 물줄기를 피해 마지막까지 살아남으세요!'}else center.classList.add('hidden')}
 function loop(t){
  const d=Math.min(.05,(t-lastFrame)/1000);lastFrame=t;acc+=d;
  if(bridge.isHost){
@@ -587,6 +588,7 @@ function loop(t){
  sendState(t);draw();requestAnimationFrame(loop);
 }requestAnimationFrame(loop);
 })();
+
 
 
 

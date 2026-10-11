@@ -1,5 +1,6 @@
 import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261011-teams-mobile';
 import {RoomTransport} from './room-transport.mjs?v=20261011-teams-mobile';
+import {LocalTransport} from './local-transport.mjs?v=20261012-team-toggle';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
@@ -26,7 +27,7 @@ function start(options){
   $('masterTools').hidden=options.role!=='master';$('inventory').hidden=options.role==='master';
   if(options.role==='master')mountMaster();renderer.buildType='select';$('inventoryBtn').textContent=options.role==='master'?'설계':'장비';canvas.focus();updateHud();
 }
-function menu(){if(transport?.network){resetInput();transport.post('dw_quit');}}
+function menu(){resetInput();if(transport?.network)transport.post('dw_quit');else parent.postMessage({type:'solo_quit'},location.origin);}
 $('menuBtn').onclick=$('resultMenuBtn').onclick=menu;
 function pause(v){if(!transport||snapshot?.result)return;transport.paused=v;$('pauseOverlay').hidden=!v;resetInput();}
 $('pauseBtn').onclick=()=>pause(!transport?.paused);$('resumeBtn').onclick=()=>{pause(false);canvas.focus();};
@@ -202,7 +203,9 @@ function refreshActionButtons(me){
 
 
 const embedded=parent!==window;const roomGameId=new URLSearchParams(location.search).get('gameId')||'dungeonwarden';let roomTransport=null,roomStarted=false;
-if(embedded){$('status').textContent='게임 룸 연결 중…';$('hud').hidden=false;
+const practiceQuery=new URLSearchParams(location.search),localPractice=practiceQuery.get('practice')==='1';
+if(localPractice){start({mode:'arena',role:'adventurer',transport:new LocalTransport({team:practiceQuery.get('team')==='red'?'red':'blue',teamBattle:practiceQuery.get('dungeonMode')==='arena-team'})});}
+if(embedded&&!localPractice){$('status').textContent='게임 룸 연결 중…';$('hud').hidden=false;
  const ready=()=>parent.postMessage({type:'bridge_ready',gameId:roomGameId},location.origin);ready();const readyTimer=setInterval(()=>{if(!roomTransport)ready();else clearInterval(readyTimer);},700);
  const connectStarted=performance.now();const syncTimer=setInterval(()=>{
  if(roomStarted){clearInterval(syncTimer);return;}

@@ -3,19 +3,19 @@
   "files": [
     {
       "path": "index.html",
-      "sha256": "99b6c5bd43ee975936defb08ad5fec85793b06e2a75574ae79e73f673027bd26"
+      "sha256": "8e0878a13582491bd13696577128d05a550095b9733826be54854a19a510de27"
     },
     {
       "path": "room.html",
-      "sha256": "511f458194ddf9372c6e067d90a6974f89a5c94e9abf48dcc4782cdfb2c08c02"
+      "sha256": "e6436e7f0826505054abdace68a0bab90a83b5a82c201a7139255e59b6e09a42"
     },
     {
       "path": "css/styles.css",
-      "sha256": "0a26b5c2db195c3f01b3a41084ebd62531a56dea37a3afc5785c06ffd0e52907"
+      "sha256": "6a198f5e10dd99771689ea3b295f5a4de361f5fdb74b29502c429d717831fcdb"
     },
     {
       "path": "cf-worker/src/index.js",
-      "sha256": "e2c39cb5842a022c701f2a9d4203878d44c0de8d40271646bbe349416da72a6a"
+      "sha256": "4bfb59e1c206a6781ff19c91b9262a707e37bdfa3fcee0a905ade49fc16c1e0e"
     },
     {
       "path": "cf-worker/src/dungeon/engine.mjs",
@@ -35,7 +35,7 @@
     },
     {
       "path": "games/bloomshot/engine.js",
-      "sha256": "b485b393da5043f5dd677fffa35c689aabb5a0dee223ecd82ec9885d47ba3f78"
+      "sha256": "8b45ec71bd08bb3c41d6fef2a0002de9972a528b7e3afaf157fc246eec925820"
     },
     {
       "path": "games/bloomshot/game.js",
@@ -43,15 +43,19 @@
     },
     {
       "path": "games/bloomshot/index.html",
-      "sha256": "65336c7dcaff5d6d5a3b8b10a09d15661adb9f676d96d2f810034dfd868c1bf4"
+      "sha256": "cee98fa757904e50be2b10dbd4c74ad4aa1ba258f99cb165bd5539b37884b030"
     },
     {
       "path": "games/dungeonwarden/client.mjs",
-      "sha256": "2daa1f9e916bd4b5494d79c9df54fc7f5b219811af5114b035be88cd7983da24"
+      "sha256": "8c279a22bf844171edceb6fbbe8bd393833db255925630b40ed596acc75d3836"
     },
     {
       "path": "games/dungeonwarden/index.html",
-      "sha256": "2f9c46169916ab9ece37afe78cb8589bff84c6f557c9d763f5f70a8d18a4c1ae"
+      "sha256": "3f21020e38c15aeb8300fe62f6ab8e74077ffa68ff9a0a2a16c9f8928bf41321"
+    },
+    {
+      "path": "games/dungeonwarden/local-transport.mjs",
+      "sha256": "6313488e2f7a84eb20d5db54cb0e87da5ddc234be39bb54a44bd6211cdc155d7"
     },
     {
       "path": "games/dungeonwarden/renderer.mjs",
@@ -67,11 +71,31 @@
     },
     {
       "path": "games/mathfront/index.html",
-      "sha256": "acd09e6d87cbbdc215296277d104690dce3bd80debf1f79715cda51cd924d4ec"
+      "sha256": "e465ade83125c7a367830f473d83d785b8b69628d01b16ed2f1ba3bd56db9ec6"
+    },
+    {
+      "path": "games/soccer/game.js",
+      "sha256": "f699dc3cfb37082ef1d2a8f84a6ca255ee5dc7dd44b4e022c9c334af546aaed6"
+    },
+    {
+      "path": "games/soccer/index.html",
+      "sha256": "d029d92ab0c88428f63ce67f0d23c7d8a7db3808dd033ea38adc02df5a542cd7"
     },
     {
       "path": "games/stackga/index.html",
       "sha256": "38a899b57cfcd2eea83b45142d9a4e438456d1e7e5695d264a8dee92be837d86"
+    },
+    {
+      "path": "games/starpaint/index.html",
+      "sha256": "3de4798d240c00691659216861bd322ee3d31b4844861cb989864a1b29b859db"
+    },
+    {
+      "path": "games/waterblast/game.js",
+      "sha256": "2cba8fd5360c6ac7b99a788da06ecf06a06c9603ecf5578f3ed575fc96f53b05"
+    },
+    {
+      "path": "games/waterblast/index.html",
+      "sha256": "6e073845303d988a47c3256aad34bd4770737d7ee7fc8671193e09359f1a577e"
     },
     {
       "path": "games/dungeonwarden/shared/engine.mjs",
@@ -95,15 +119,19 @@
     },
     {
       "path": "js/core/net.js",
-      "sha256": "60421228c0510361b9e84491b375071fe81a8dc95936d2eb8b75c653892679e1"
+      "sha256": "4074cd58c74f44177cc724c7b3bf2fc548caeb3958968bbb1f2933f74e7c6c77"
     },
     {
       "path": "js/games/registry.js",
-      "sha256": "7764075f6666950937f277b70f8919dbc1dfd687ee1a7c42b47fd4e9b67b013d"
+      "sha256": "6564d9a6a8463e04682e7b5234a0ba2e8c37811dd70cbf361c000220c4c5f0d2"
+    },
+    {
+      "path": "js/games/solo-ai.js",
+      "sha256": "da9b74bfd724d19a2444b8610ef037af41ad236baf07d72e36fd74ee27bc2ac9"
     },
     {
       "path": "js/pages/room.js",
-      "sha256": "7b6b8627425149179f9f22002d4009b7d2fd71f11d36de066ef68c1f8d9b8fd4"
+      "sha256": "ba9bb424d505c9d189ae2b3a275979bee0738e4c4ca844b07bba5369804dd50e"
     }
   ],
   "rules": {
@@ -121,17 +149,81 @@
     ]
   },
   "browser": {
-    "passed": 8,
+    "passed": 16,
     "checks": [
       "FPS 844횞390: real three-finger movement/look/fire, action hit targets, release, death/quiz taps and no replay button",
       "FPS 390횞844: real three-finger movement/look/fire, action hit targets, release, death/quiz taps and no replay button",
       "FPS mixed coarse/fine pointer device enters mobile play",
       "FPS desktop death releases pointer lock and permits respawn location/answer clicks",
-      "mathfront lobby nickname team chooser and unequal-team start disabled",
-      "bloomshot lobby nickname team chooser and unequal-team start disabled",
-      "dungeonwarden lobby nickname team chooser and unequal-team start disabled",
-      "Dungeon rendered ally HP/name/death roster, orb snapshots and chest-answer focus returns to movement"
+      "mathfront row toggle, no dialog/footer, equal-team start guard",
+      "soccer row toggle, no dialog/footer, equal-team start guard",
+      "bloomshot row toggle, no dialog/footer, equal-team start guard",
+      "dungeonwarden row toggle, no dialog/footer, equal-team start guard",
+      "waterblast row toggle, no dialog/footer, equal-team start guard",
+      "starpaint row toggle, no dialog/footer, equal-team start guard",
+      "Dungeon rendered ally HP/name/death roster, orb snapshots and chest-answer focus returns to movement",
+      "Personal modes retain original plain player rows",
+      "All six games allow single AI practice regardless of team selection",
+      "Slime chosen 2v2, friendly blast immunity, team victory and solo preservation",
+      "StarPaint shared red/blue paint, two HUD and round rows, team total/winner serialization",
+      "All six actual red-team practice iframe entries; FPS red, soccer A/B, Dungeon, Slime and StarPaint initialized"
     ],
+    "errors": []
+  },
+  "teamsServer": {
+    "passed": 8,
+    "checks": [
+      "All six games including [BS]/[WB] wire aliases enforce manually selected equal teams",
+      "Personal/team room selection isolates tagged Slime, Bloom and native StarPaint",
+      "Dungeon and other selectable games clear personal-mode teams and rebuild alternating ordered teams",
+      "Soccer server preserves chosen 4v4 teams despite consecutive same-team seats",
+      "StarPaint server derives team winner from team totals instead of character seat",
+      "Bloom single practice constructs opposite team AI for selected RED player",
+      "Dungeon single practice runs local simulation with chosen player team and opposing AI",
+      "Room connection closes failed probe and clears readiness timeout after successful initial snapshot"
+    ]
+  },
+  "isolationBrowser": {
+    "passed": 16,
+    "checks": [
+      "FPS 844횞390: real three-finger movement/look/fire, action hit targets, release, death/quiz taps and no replay button",
+      "FPS 390횞844: real three-finger movement/look/fire, action hit targets, release, death/quiz taps and no replay button",
+      "FPS mixed coarse/fine pointer device enters mobile play",
+      "FPS desktop death releases pointer lock and permits respawn location/answer clicks",
+      "mathfront row toggle, no dialog/footer, equal-team start guard",
+      "soccer row toggle, no dialog/footer, equal-team start guard",
+      "bloomshot row toggle, no dialog/footer, equal-team start guard",
+      "dungeonwarden row toggle, no dialog/footer, equal-team start guard",
+      "waterblast row toggle, no dialog/footer, equal-team start guard",
+      "starpaint row toggle, no dialog/footer, equal-team start guard",
+      "Dungeon rendered ally HP/name/death roster, orb snapshots and chest-answer focus returns to movement",
+      "Personal modes retain original plain player rows",
+      "All six games allow single AI practice regardless of team selection",
+      "Slime chosen 2v2, friendly blast immunity, team victory and solo preservation",
+      "StarPaint shared red/blue paint, two HUD and round rows, team total/winner serialization",
+      "16 same-room sequential launch pairs: old timers, CPU iframe, onload, bridge references cleared; wrong-game delayed packets blocked"
+    ],
+    "errors": []
+  },
+  "isolationServer": {
+    "combinations": 288,
+    "cycles": 8,
+    "passed": true
+  },
+  "eightPlayers": {
+    "players": 8,
+    "teams": "4v4",
+    "checks": [
+      "Dungeon 8 humans / 4v4: 60 simulated seconds, all 8 moved, 4800 per-viewer snapshot/delta packets, shared sight and orb limits",
+      "BloomShot 8 humans / 4v4: all 8 turn owners reached; chosen teams and long-running tick state remain valid",
+      "FPS 8 simultaneous browser clients (8 touch contexts): actual Worker handler relays all 7 peers, every player moves and fires",
+      "FPS 8 clients receive victory/defeat then one room-return each after 1.5s, all 8 retained, readiness cleared, no browser errors"
+    ],
+    "errors": [],
+    "notes": "Local Worker socket harness and browser clients; no deployed service or physical phone tested"
+  },
+  "stackResult": {
+    "passed": 4,
     "errors": []
   }
 }

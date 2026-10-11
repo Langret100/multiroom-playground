@@ -271,9 +271,9 @@ function spawnLocalBot(id,team,index){
 function resetSingleMatch(){objectiveContacts.clear();
  remotePlayers.clear();botBrain.clear();projectiles.length=0;enemyShots.length=0;impacts.length=0;grenades.length=0;blastFX.length=0;smokeClouds.length=0;flashTime=0;grenadePreparing=false;firingHeat=0;for(const p of crateProps){p.ready=Math.random()>.35;p.weapon=1+Math.floor(Math.random()*(WEAPONS.length-1));p.timer=p.ready?0:5+Math.random()*15;}for(const pack of healthPacks)pack.timer=0;for(const p of crateProps){const pair=crateProps.find(q=>q!==p&&q.x===-p.x&&q.z===-p.z);if(pair&&p.z<0){pair.weapon=p.weapon;pair.ready=p.ready;pair.timer=p.timer;}}weaponId=0;player.maxAmmo=24;grenadeCooldown=0;resetDestroyedMap();
  teamScores={blue:0,red:0};flagOwners={A:'neutral',B:'neutral',C:'neutral'};matchEnded=false;endRequested=false;matchDeadline=0;scoreClock=0;matchTime=0;playerRespawnT=0;selectedRespawn='base';respawnRequested=false;respawnUiSignature='';
- player.team='blue';player.hp=100;player.alive=true;player.ammo=player.maxAmmo;player.reloading=false;player.x=0;player.z=49;player.eyeHeight=1.68;player.crouch=false;crouchToggle=false;player.y=terrainHeight(0,49)+1.68;player.yaw=0;player.pitch=0;player.vx=player.vy=player.vz=0;player.onGround=true;
- for(let i=0;i<3;i++)spawnLocalBot('blue_bot_'+i,'blue',i);
- for(let i=0;i<4;i++)spawnLocalBot('red_bot_'+i,'red',i+3);
+ player.team=new URLSearchParams(location.search).get('team')==='red'?'red':'blue';player.hp=100;player.alive=true;player.ammo=player.maxAmmo;player.reloading=false;player.x=0;player.z=player.team==='blue'?49:-49;player.eyeHeight=1.68;player.crouch=false;crouchToggle=false;player.y=terrainHeight(0,player.z)+1.68;player.yaw=player.team==='blue'?0:Math.PI;player.pitch=0;player.vx=player.vy=player.vz=0;player.onGround=true;
+ for(let i=0;i<3;i++)spawnLocalBot('ally_bot_'+i,player.team,i);
+ for(let i=0;i<4;i++)spawnLocalBot('enemy_bot_'+i,player.team==='blue'?'red':'blue',i+3);
  document.body.classList.remove('dead','quiz-open','match-over');gameStarted=true;updateHUD();toast('BLUE 팀 · 4 VS 4 시작');
 }
 function segmentAabb(ax,ay,az,bx,by,bz,minx,miny,minz,maxx,maxy,maxz){

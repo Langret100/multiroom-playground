@@ -375,8 +375,9 @@ if (isDuel && humans.length === 1){
       let lastErr = null;
       for(const base of (this._candidates || [])){
         const url = base.replace(/\/+$/,'') + path;
+        let ws;
         try{
-          const ws = new WebSocket(url);
+          ws = new WebSocket(url);
           await waitOpen(ws);
           // Success: pin endpoint for subsequent connections + persist
           this.wsBase = base.replace(/\/+$/,'');
@@ -385,7 +386,7 @@ if (isDuel && humans.length === 1){
           return ws;
         }catch(e){
           lastErr = e;
-          try{ /* best effort close */
+          try{ ws?.close(); /* best effort close */
             // In some browsers ws may be OPEN even if waitOpen threw; closing is safe.
             // eslint-disable-next-line no-undef
           }catch(_){ }
@@ -420,10 +421,7 @@ if (isDuel && humans.length === 1){
       await conn._helloOk;
       // Never expose the default local room state (stackga/4 players) as if it were
       // authoritative. The first room_state must arrive before room.js initializes UI.
-      await Promise.race([
-        conn._stateReady,
-        new Promise((_, reject)=>setTimeout(()=>reject(new Error("room state timeout")), 5000))
-      ]);
+      await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('room state timeout')),5000);conn._stateReady.then(()=>{clearTimeout(timer);resolve();},error=>{clearTimeout(timer);reject(error);});});
       return conn;
     }
     async create(roomName, opts){
