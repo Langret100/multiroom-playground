@@ -91,3 +91,7 @@ aside{z-index:6}.skill-description{border-top:1px solid #ffffff20;padding-top:8p
   .actions #attackBtn{left:4px;bottom:8px;width:60px;height:60px}
   .actions #specialBtn{left:34px;top:9px;width:60px;height:60px}
 }
+
+#teamHud{position:fixed;left:18px;top:calc(115px + 170px);width:178px;display:flex;flex-direction:column;gap:6px;z-index:4;pointer-events:none}#teamHud[hidden]{display:none}.teamMember{position:relative;height:30px;border:1px solid #ffffff45;border-radius:5px;background:#111b28d9;overflow:hidden;display:flex;align-items:center;justify-content:space-between;padding:0 8px;color:#d8efff;font:700 11px system-ui}.teamMember i{position:absolute;inset:0 auto 0 0;background:#26729dcc}.teamMember span,.teamMember small{position:relative;z-index:1;text-shadow:0 1px 3px #000}.teamMember small{font-size:9px}.teamMember.dead{opacity:.6}.teamMember.dead i{width:0!important}#teamHud[data-team=red] .teamMember{color:#ffd5de}#teamHud[data-team=red] .teamMember i{background:#994353cc}@media(max-width:800px){#teamHud{left:10px;width:140px;top:265px}.teamMember{height:26px;font-size:10px;padding:0 5px}.teamMember small{font-size:8px}}@media(max-height:500px){#teamHud{top:230px;width:134px;gap:3px}.teamMember{height:22px}}
+
+#teamHud{top:70px}@media(max-width:800px){#teamHud{top:65px}}@media(max-height:500px){#teamHud{top:65px}}

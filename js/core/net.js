@@ -131,7 +131,7 @@
       const meta = clientRoomMeta(snap.meta || {});
       this.state.title = meta.title ?? this.state.title;
       this.state.mode  = meta.mode  ?? this.state.mode;
-      this.state.stackMode=meta.stackMode||"items";
+      this.state.stackMode=meta.stackMode||"items";this.state.battleMode=meta.battleMode||"solo";
       if(meta.mode==='dungeonwarden')this.state.dungeonMode=meta.dungeonMode||"arena";
       if(meta.phase==='lobby')this._bloomSnapshot=null;
       this.state.phase = meta.phase ?? this.state.phase;
@@ -155,7 +155,7 @@
         const val = {
           nick: p.nick || "Player",
           ready: !!p.ready,
-          isHost: !!p.isHost
+          isHost: !!p.isHost,team:p.team==='red'?'red':'blue'
         };
         // update without triggering onAdd if exists: just set (our LiveMap triggers only on new keys)
         this.state.players.set(sid, val);

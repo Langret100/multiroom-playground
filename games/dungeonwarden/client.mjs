@@ -1,12 +1,12 @@
-import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261009-final-equipment';
-import {RoomTransport} from './room-transport.mjs?v=20261009-final-equipment';
+import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261011-teams-mobile';
+import {RoomTransport} from './room-transport.mjs?v=20261011-teams-mobile';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=20261009-final-equipment';
+import {Renderer} from './renderer.mjs?v=20261011-teams-mobile';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
-import {roomAt} from './shared/world.mjs';
+import {roomAt} from './shared/world.mjs?v=20261011-teams-mobile';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);
 let transport=null,snapshot=null,last=performance.now(),hudAt=0,quizId=null,quizDismissed=null,selected=null,masterAction='select',touch={mx:0,my:0};
 let floatingStickPointer=null,floatingStickCenter={x:0,y:0};
@@ -22,23 +22,23 @@ function start(options){
   gameAudio.reset();gameAudio.unlock();transport?.close();transport=options.transport;snapshot=transport.snapshot();renderer.overview=options.role==='master'&&options.mode==='dungeon';renderer.fogAt=-1;renderer.tracks.clear();renderer.renderPositions.clear();renderer.rayCache?.clear();renderer.lightTracks?.clear();renderer.fxSeen.clear();renderer.shakeLife=0;renderer.masterRoom=2;
   $('resultOverlay').hidden=true;$('pauseOverlay').hidden=true;$('quizOverlay').hidden=true;$('hud').hidden=$('controls').hidden=false;$('side').hidden=options.role!=='master';$('side').classList.toggle('open',options.role==='master');$('side').classList.toggle('master-panel',options.role==='master');$('panelTitle').textContent=options.role==='master'?'던전 설계':'장비';$('bossHud').hidden=$('bossIntro').hidden=true;bossSeen=new Set();bossIntroUntil=0;inventorySignature='';renderer.dashTrails?.clear();renderer.dashDust?.clear();
   quizId=null;quizDismissed=null;selected=null;masterAction='select';resetInput();
-  $('modeLabel').textContent=options.mode==='arena'?'ARENA / 생존전':options.role==='master'?'DUNGEON / 마스터 방어':'DUNGEON / 모험가 공략';
+  $('modeLabel').textContent=options.mode==='arena'?(snapshot?.teamBattle?'ARENA / 팀 생존전':'ARENA / 생존전'):options.role==='master'?'DUNGEON / 마스터 방어':'DUNGEON / 모험가 공략';
   $('masterTools').hidden=options.role!=='master';$('inventory').hidden=options.role==='master';
   if(options.role==='master')mountMaster();renderer.buildType='select';$('inventoryBtn').textContent=options.role==='master'?'설계':'장비';canvas.focus();updateHud();
 }
 function menu(){if(transport?.network){resetInput();transport.post('dw_quit');}}
 $('menuBtn').onclick=$('resultMenuBtn').onclick=menu;
-function pause(v){if(!transport||snapshot?.result)return;if(!transport.network)transport.paused=v;$('pauseOverlay').hidden=!v;resetInput();}
+function pause(v){if(!transport||snapshot?.result)return;transport.paused=v;$('pauseOverlay').hidden=!v;resetInput();}
 $('pauseBtn').onclick=()=>pause(!transport?.paused);$('resumeBtn').onclick=()=>{pause(false);canvas.focus();};
 $('mapToggle').onclick=()=>renderer.overview=!renderer.overview;
 function toggleInventory(){const show=getComputedStyle($('side')).display==='none';$('side').hidden=!show;$('side').classList.toggle('open',show);}
 $('inventoryBtn').onclick=$('closeEquipment').onclick=()=>{gameAudio.play('ui',.4);toggleInventory();};
 function interact(){const target=actionState(snapshot).interact;if(target?.kind==='chest')quizDismissed=null;command({action:'interact',target:target?.kind,targetId:target?.id});}
 
-function holdButton(id,key){const b=$(id);b.addEventListener('pointerdown',e=>{b.setPointerCapture(e.pointerId);if(key==='attack'&&actionState(snapshot).interact){interact();e.preventDefault();return;}const activeKey=key==='special'&&actionState(snapshot).shield?'block':key;pressed[activeKey]=true;if(activeKey!=='block'&&(key==='attack'||key==='special')&&snapshot?.me?.equipment.main?.type!=='bow')attackCommand(key==='special');e.preventDefault();});b.addEventListener('pointerup',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});b.addEventListener('pointercancel',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});}
+function holdButton(id,key){const b=$(id);b.addEventListener('pointerdown',e=>{b.setPointerCapture(e.pointerId);if(key==='attack'&&actionState(snapshot).interact){interact();e.preventDefault();return;}const activeKey=key==='special'&&actionState(snapshot).shield?'block':key;pressed[activeKey]=true;if(activeKey!=='block'&&(key==='attack'||key==='special')&&snapshot?.me?.equipment.main?.type!=='bow')attackCommand(key==='special');e.preventDefault();});b.addEventListener('pointerup',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});b.addEventListener('pointercancel',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});b.addEventListener('lostpointercapture',()=>{pressed[key]=false;if(id==='specialBtn')pressed.block=pressed.special=false;});}
 holdButton('dashBtn','sprint');holdButton('attackBtn','attack');holdButton('specialBtn','special');
 addEventListener('keydown',e=>{
-  if(e.target.closest('input,select,textarea')||!transport)return;
+  if(!transport)return;if(e.target.closest('input,select,textarea')&&e.target.getClientRects().length&&getComputedStyle(e.target).visibility!=='hidden')return;
   if(['Space','Tab','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();
   if(!e.repeat){if(e.code==='Space'&&actionState(snapshot).interact)interact();if(e.code==='KeyV'){$('rangeEnabled').checked=!$('rangeEnabled').checked;applyGameSettings();}if(e.code==='KeyE')interact();if(e.code==='KeyM')renderer.overview=!renderer.overview;if(e.code==='Tab'||e.code==='KeyI'||e.code==='KeyB')toggleInventory();if(e.code==='Escape'){if(!$('quizOverlay').hidden)closeQuiz();else if(!$('side').hidden)toggleInventory();else pause(!transport.paused);}if(e.code==='KeyX')command({action:'swap'});if(e.code==='KeyC')command({action:'clone'});if(e.code==='Digit1'&&snapshot?.masterId==='local'){command({action:'possess',entity:selected});}if(e.code==='Digit2'&&snapshot?.masterId==='local')command({action:'possess',entity:null});if(['Digit3','Digit4','Digit5'].includes(e.code)&&snapshot?.masterId==='local')command({action:'bossSkill',skill:Number(e.code.slice(-1))-3});}
   keys.add(e.code);
@@ -46,7 +46,7 @@ addEventListener('keydown',e=>{
 addEventListener('keyup',e=>keys.delete(e.code));addEventListener('blur',resetInput);document.addEventListener('visibilitychange',()=>{if(document.hidden){gameAudio.stop();if(transport)pause(true)};});
 const portraitTouch=()=>matchMedia('(pointer: coarse)').matches&&innerHeight>innerWidth&&innerWidth<=800;
 function beginFloatingStick(e){
-  if(!portraitTouch()||e.clientX>innerWidth*.56||!transport||transport.paused||!$('quizOverlay').hidden||!$('resultOverlay').hidden)return false;
+  if(floatingStickPointer!==null||e.pointerType!=='touch'||!portraitTouch()||e.clientX>innerWidth*.56||!transport||transport.paused||!$('quizOverlay').hidden||!$('resultOverlay').hidden)return false;
   floatingStickPointer=e.pointerId;
   const radius=55,margin=radius+8;
   floatingStickCenter={x:Math.max(margin,Math.min(innerWidth*.56-margin,e.clientX)),y:Math.max(margin,Math.min(innerHeight-margin,e.clientY))};
@@ -132,8 +132,10 @@ function setPhaseBanner({show=false,title='',sub='',timeLabel='',progress=1}={})
   timer.hidden=!hasTimer;
   if(hasTimer){label.textContent=timeLabel;fill.style.width=`${Math.max(0,Math.min(1,progress))*100}%`;}
 }
+const teamHud=document.createElement('div');teamHud.id='teamHud';teamHud.setAttribute('aria-label','우리 팀 상태');document.body.appendChild(teamHud);
+function updateTeamHud(s){const me=s.me;teamHud.hidden=!s.teamBattle||!me;if(teamHud.hidden)return;const allies=s.roster.filter(p=>p.team===me.team);const signature=allies.map(p=>[p.id,p.name,p.hp,p.maxHp,p.dead].join(':')).join('|');if(teamHud.dataset.signature===signature)return;teamHud.dataset.signature=signature;teamHud.dataset.team=me.team;teamHud.innerHTML=allies.map(p=>'<div class="teamMember '+(p.dead?'dead':'')+'"><i style="width:'+Math.max(0,Math.min(100,100*p.hp/p.maxHp))+'%"></i><span>'+esc(p.name)+(p.id==='local'?' · 나':'')+'</span><small>'+(p.dead?'사망':Math.ceil(p.hp)+' / '+Math.ceil(p.maxHp))+'</small></div>').join('');}
 function updateHud(){
-  const s=snapshot;if(!s)return;const master=s.masterId==='local',me=s.me||s.entities.find(e=>e.id===s.possession);
+  const s=snapshot;if(!s)return;updateTeamHud(s);const master=s.masterId==='local',me=s.me||s.entities.find(e=>e.id===s.possession);
   renderer.sidebarOpen=!$('side').hidden;
   $('timer').textContent=`${Math.floor(s.remaining/60)}:${String(Math.floor(s.remaining%60)).padStart(2,'0')}`;
   const spawnLeft=Math.max(0,Math.ceil(10-s.time));
@@ -162,9 +164,9 @@ function updateHud(){
   const hero=$('heroPreview');if(hero&&me){const ctx=hero.getContext('2d');ctx.clearRect(0,0,hero.width,hero.height);renderer.characters?.drawPreview(ctx,me,s.time,hero.width,hero.height);}
   $('notifications').innerHTML=s.messages.slice(-3).map(m=>`<div>${esc(m.text)}</div>`).join('');
   if(s.quiz&&s.quiz.chest!==quizDismissed){$('quizOverlay').hidden=false;$('question').textContent=s.quiz.question+' = ?';$('quizFeedback').textContent=s.quiz.feedback||'';if(quizId!==s.quiz.chest){quizId=s.quiz.chest;$('answer').value='';resetInput();$('answer').focus();}}
-  else $('quizOverlay').hidden=true;
+  else {const wasOpen=!$('quizOverlay').hidden;$('quizOverlay').hidden=true;if(wasOpen){resetInput();canvas.focus();}}
   if(!s.quiz){quizId=null;quizDismissed=null;}
-  if(s.result&&$('resultOverlay').hidden){resetInput();$('quizOverlay').hidden=true;$('resultOverlay').hidden=false;const win=master?s.result.winner==='master':s.mode==='dungeon'?s.result.winner==='party':s.result.winner==='local';$('resultTitle').textContent=win?'승리':'탐험 종료';$('resultReason').textContent=s.result.reason+` · ${Math.floor(s.time/60)}분 ${Math.floor(s.time%60)}초`;}
+  if(s.result&&$('resultOverlay').hidden){resetInput();$('quizOverlay').hidden=true;$('resultOverlay').hidden=false;const win=master?s.result.winner==='master':s.mode==='dungeon'?s.result.winner==='party':s.teamBattle?s.result.winner===me?.team:s.result.winner==='local';$('resultTitle').textContent=win?'승리':'탐험 종료';$('resultReason').textContent=s.result.reason+` · ${Math.floor(s.time/60)}분 ${Math.floor(s.time%60)}초`;}
 }
 let frameTimes=[],fpsTextAt=0;
 function applyGameSettings(){renderer.map3d.quality=Number($('mapQuality').value);gameAudio.settings({enabled:$('soundEnabled').checked,music:Number($('musicVolume').value)/100,effects:Number($('effectsVolume').value)/100});renderer.shakeEnabled=$('shakeEnabled').checked;renderer.rangeEnabled=$('rangeEnabled').checked;try{localStorage.setItem('dungeon-options',JSON.stringify({sound:$('soundEnabled').checked,music:$('musicVolume').value,effects:$('effectsVolume').value,shake:$('shakeEnabled').checked,range:$('rangeEnabled').checked,aim:$('aimAssist').checked,quality:$('mapQuality').value,showFps:$('showFps').checked}));}catch{}}

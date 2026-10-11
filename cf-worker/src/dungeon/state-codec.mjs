@@ -1,5 +1,5 @@
 // Per-recipient encoder: terrain/UI/audio stay on the client. Static map is sent once.
-const lists=['entities','loot','chests','traps','projectiles','zones','effects'];
+const lists=['entities','healingOrbs','loot','chests','traps','projectiles','zones','effects'];
 const hasPatch=p=>!!p&&(p.upserts?.length||p.removed?.length);
 export class StateEncoder {
   constructor(){this.fields=new Map();this.members=new Map();this.entityFields=new Map();this.sequence=0;}

@@ -12,7 +12,7 @@ const SHOT_VISUALS=[
  {shape:'star',trail:'electric',outer:'#7562c8',inner:'#ffe767',spark:'#fffad0'}
 ];
 const MAPS=E.MAPS.map(m=>m.name),ICONS={double:'Ⅱ',power:'✦',heal:'✚',move:'➟',shield:'⬡',poison:'♨',freeze:'❄',wind:'↔'},ITEM_SHORT={double:'한 번 더 발사',power:'피해 50% 증가',heal:'체력 50% 회복',move:'이동력 회복',shield:'피해 35 흡수',poison:'맞추면 중독',freeze:'2턴 이동·점프 불가',wind:'바람 방향 반전'};
-const embedded=parent!==window,bridge={sid:'local',hostSid:'local',isHost:!embedded,ready:!embedded};
+const embedded=parent!==window,bridge={sid:'local',hostSid:'local',isHost:!embedded,ready:!embedded,battleMode:'solo'};
 let state=null,roster=[],sequence=0,pending=null,offset=0,received=0,lastSent=0,lastSync=0,reported=false,weapon='normal',sound=true,audio=null,audioBuffer=null,audioCues=null,audioLoad=null,bgmAudio=null,noticeUntil=0,lastEvent=0,setupCharacter=-1,lastTurn=-1,lastLocalTurn=-1,cpuTurn=-1,bootAt=Date.now(),itemIconUrls={};
 let publishedEvent=-1,publishedPhase=null,lastCountdownTurn=-1,lastCountdownValue=99,lastHomingCueAt=0,visualState=null,visualSeq=-1,visualClockAt=0;
 let charge=null,moveHeld=0,lastMove=0,moveRepeatAt=0,panHeld=0,aimHeld=0,powerHeld=0,frameAt=0,windParticles=[];
@@ -192,7 +192,7 @@ function adopt(incoming,hostTime){
 }
 function applyBridgeInit(d){
  if(!embedded||!d||d.type!=='bridge_init'||d.gameId!=='bloomshot')return false;
- bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];
+ bridge.battleMode=d.battleMode==='team'?'team':'solo';bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];
  if(window.SoloAI?.active){bridge.isHost=true;bridge.hostSid=bridge.sid;if(!state){state=E.create([{sessionId:bridge.sid,nick:d.nick||'나',seat:0}],(Math.random()*4294967296)>>>0,Date.now());reported=false;renderUI();}return true;}
  send('bs_sync');
  return true;
@@ -210,10 +210,10 @@ window.addEventListener('message',e=>{
   const before=bridge.isHost;bridge.hostSid=String(d.hostSessionId||'');bridge.isHost=!!d.isHost;
   if(!before&&bridge.isHost&&state){E.shiftClock(state,-offset);offset=0;E.roster(state,roster,Date.now());sequence=Math.max(sequence,mine()?.lastSeq||0);publish();}send('bs_sync');return;
  }
- if(d.type==='bs_sync'&&bridge.isHost){if(!state){state=E.create(roster.length?roster:[{sessionId:bridge.sid,nick:'정령',seat:0}],Date.now()>>>0,Date.now());sequence=0;pending=null;offset=0;lastEvent=0;publishedEvent=-1;publishedPhase=null;}publish();return;}
+ if(d.type==='bs_sync'&&bridge.isHost){if(!state){state=E.create(roster.length?roster:[{sessionId:bridge.sid,nick:'정령',seat:0}],Date.now()>>>0,Date.now(),{mode:bridge.battleMode,roomTeams:embedded});sequence=0;pending=null;offset=0;lastEvent=0;publishedEvent=-1;publishedPhase=null;}publish();return;}
  if(d.type==='bs_input'&&bridge.isHost&&state){E.tick(state,Date.now());E.command(state,String(d.from),d.input,Date.now(),bridge.hostSid);publish();return;}
  if(d.type==='bs_state'){
-  if(bridge.isHost){if(!state){state=E.create(roster.length?roster:[{sessionId:bridge.sid,nick:'정령',seat:0}],Date.now()>>>0,Date.now());sequence=0;pending=null;offset=0;lastEvent=0;publishedEvent=-1;publishedPhase=null;publish();}return;}
+  if(bridge.isHost){if(!state){state=E.create(roster.length?roster:[{sessionId:bridge.sid,nick:'정령',seat:0}],Date.now()>>>0,Date.now(),{mode:bridge.battleMode,roomTeams:embedded});sequence=0;pending=null;offset=0;lastEvent=0;publishedEvent=-1;publishedPhase=null;publish();}return;}
   if(d.state)adopt(d.state,d.hostTime);renderUI();
  }
 });
@@ -279,10 +279,10 @@ mini.onpointerdown=e=>{mini.setPointerCapture(e.pointerId);minimapMove(e);};mini
 function renderUI(){
  if(!state)return;ensureMapArt(state.map);const p=mine(),active=state.players[state.turn],now=Date.now()+offset,can=canAct(),c=p?E.spec(p):C[0];
  $('setup').hidden=state.phase!=='setup';$('result').hidden=state.phase!=='over';
- const selectable=state.players.filter(q=>!q.cpu),readyCount=selectable.filter(q=>q.characterReady).length,allReady=readyCount===selectable.length&&selectable.length>0,teamEligible=selectable.length>=2&&selectable.length%2===0;
- if(state.mode==='team'&&!teamEligible&&bridge.isHost)act('mode',{value:'solo'});
- $('modeSolo').classList.toggle('selected',state.mode!=='team');$('modeTeam').classList.toggle('selected',state.mode==='team');$('modeSolo').disabled=!bridge.isHost||state.phase!=='setup';$('modeTeam').disabled=!bridge.isHost||state.phase!=='setup'||!teamEligible;
- $('modeHint').textContent=!teamEligible?'참가자가 홀수라 팀전을 선택할 수 없습니다.':state.mode==='team'?'참가 순서 위쪽 절반 A팀 / 아래쪽 절반 B팀':'방장이 전투 방식을 고릅니다';
+ const selectable=state.players.filter(q=>!q.cpu),readyCount=selectable.filter(q=>q.characterReady).length,allReady=readyCount===selectable.length&&selectable.length>0,teamEligible=selectable.length>=2&&selectable.length%2===0&&selectable.filter(p=>p.team===0).length===selectable.filter(p=>p.team===1).length;
+ if(!embedded&&state.mode==='team'&&!teamEligible&&bridge.isHost)act('mode',{value:'solo'});
+ $('modeSolo').classList.toggle('selected',state.mode!=='team');$('modeTeam').classList.toggle('selected',state.mode==='team');$('modeSolo').disabled=embedded||!bridge.isHost||state.phase!=='setup';$('modeTeam').disabled=embedded||!bridge.isHost||state.phase!=='setup'||!teamEligible;
+ $('modeHint').textContent=!teamEligible?'참가자가 홀수라 팀전을 선택할 수 없습니다.':state.mode==='team'?'룸에서 선택한 BLUE / RED 팀으로 진행합니다':'방장이 전투 방식을 고릅니다';
  $('start').disabled=!bridge.isHost||!state||!allReady||(state.mode==='team'&&!teamEligible);$('start').textContent=bridge.isHost?(allReady?'READY TO BATTLE ▶':`캐릭터 선택 ${readyCount}/${selectable.length}`):'방장의 시작을 기다리는 중';
  document.body.classList.toggle('team-battle',state.mode==='team'&&state.phase!=='setup');
  const modeText=state.mode==='team'?'팀전':'개인전';$('setupHint').textContent=state.players.some(p=>p.cpu)?`1인 CPU 연습 · ${window.SoloAI?.difficulty==='high'?'상':window.SoloAI?.difficulty==='mid'?'중':'하'} · ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 후 출발`:`${state.players.length}명 온라인 ${modeText} · 캐릭터 선택 ${readyCount}/${selectable.length} 완료 시 방장이 시작할 수 있습니다.`;
@@ -305,8 +305,8 @@ function renderUI(){
  document.querySelectorAll('[data-weapon]').forEach(b=>{b.disabled=false;b.setAttribute('aria-disabled',String(!can));b.classList.toggle('selected',b.dataset.weapon===weapon);b.textContent=b.dataset.weapon==='normal'?c.weapon:c.weapon2;b.setAttribute('aria-label',b.textContent+' · 길게 눌러 설명');b.removeAttribute('title');});
  inventorySlots(p).forEach((key,idx)=>{const b=document.querySelector(`[data-slot="${idx}"]`);if(!b)return;applySlotVisual(b,key,idx);const disabled=!can||!key||(key==='heal'&&p.hp>=p.maxHp);b.disabled=disabled;b.classList.toggle('selected',!!key&&p?.boost===key);});
  $('boostLabel').textContent=p?.boost?`${I[p.boost].name} 준비 · 다음 발사에 적용`:'아이템은 최대 4칸 · 보급품으로 채워집니다';
- {const rosterEl=$('roster');const makePlayer=(q,i)=>{const el=document.createElement('div');el.className='player'+(state.turn===i?' active':'')+(q.hp<=0?' dead':'')+(state.mode==='team'?` team-${q.team}`:'');el.style.setProperty('--color',state.mode==='team'?(q.team===0?'#4aa8ff':'#ff5f72'):COLORS[i]);const n=document.createElement('b');n.style.color=state.mode==='team'?(q.team===0?'#1676cf':'#cf3048'):'';n.textContent=`${state.mode==='team'?(q.team===0?'A · ':'B · '):''}${q.sid===bridge.sid?'나 · ':''}${q.nick}`;const hp=document.createElement('span');hp.textContent=q.hp>0?`${Math.ceil(q.hp)} HP`:'OUT';el.append(n,hp);return el;};if(state.mode==='team'){rosterEl.classList.add('team-mode');const left=document.createElement('div'),right=document.createElement('div');left.className='team-roster team-left';right.className='team-roster team-right';const lh=document.createElement('strong'),rh=document.createElement('strong');lh.textContent='A TEAM';rh.textContent='B TEAM';left.append(lh);right.append(rh);state.players.forEach((q,i)=>(q.team===0?left:right).append(makePlayer(q,i)));rosterEl.replaceChildren(left,right);}else{rosterEl.classList.remove('team-mode');rosterEl.replaceChildren(...state.players.map(makePlayer));}}
- if(state.phase==='over'){const winnerText=state.mode==='team'&&state.winnerTeam!==null?`${state.winnerTeam===0?'A':'B'}팀 승리!`:state.winner?`${state.players.find(p=>p.sid===state.winner)?.nick} 승리!`:'무승부';$('winner').textContent=winnerText;$('resultHint').textContent=embedded?'잠시 후 같은 방 대기실로 돌아갑니다.':'다른 정령과 전장으로 다시 도전하세요.';$('again').hidden=embedded;}
+ {const rosterEl=$('roster');const makePlayer=(q,i)=>{const el=document.createElement('div');el.className='player'+(state.turn===i?' active':'')+(q.hp<=0?' dead':'')+(state.mode==='team'?` team-${q.team}`:'');el.style.setProperty('--color',state.mode==='team'?(q.team===0?'#4aa8ff':'#ff5f72'):COLORS[i]);const n=document.createElement('b');n.style.color=state.mode==='team'?(q.team===0?'#1676cf':'#cf3048'):'';n.textContent=`${state.mode==='team'?(q.team===0?'BLUE · ':'RED · '):''}${q.sid===bridge.sid?'나 · ':''}${q.nick}`;const hp=document.createElement('span');hp.textContent=q.hp>0?`${Math.ceil(q.hp)} HP`:'OUT';el.append(n,hp);return el;};if(state.mode==='team'){rosterEl.classList.add('team-mode');const left=document.createElement('div'),right=document.createElement('div');left.className='team-roster team-left';right.className='team-roster team-right';const lh=document.createElement('strong'),rh=document.createElement('strong');lh.textContent='BLUE TEAM';rh.textContent='RED TEAM';left.append(lh);right.append(rh);state.players.forEach((q,i)=>(q.team===0?left:right).append(makePlayer(q,i)));rosterEl.replaceChildren(left,right);}else{rosterEl.classList.remove('team-mode');rosterEl.replaceChildren(...state.players.map(makePlayer));}}
+ if(state.phase==='over'){const winnerText=state.mode==='team'&&state.winnerTeam!==null?`${state.winnerTeam===0?'BLUE':'RED'}팀 승리!`:state.winner?`${state.players.find(p=>p.sid===state.winner)?.nick} 승리!`:'무승부';$('winner').textContent=winnerText;$('resultHint').textContent=embedded?'잠시 후 같은 방 대기실로 돌아갑니다.':'다른 정령과 전장으로 다시 도전하세요.';$('again').hidden=embedded;}
  $('angle').oninput();$('power').oninput();
 }
 function resize(){const dash=document.querySelector('.dashboard');if(dash)document.documentElement.style.setProperty('--dash-h',Math.ceil(dash.getBoundingClientRect().height)+'px');const rect=canvas.getBoundingClientRect(),dpr=Math.min(2,devicePixelRatio||1),w=Math.round(rect.width*dpr),h=Math.round(rect.height*dpr);if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}camera.h=1080;camera.w=1080*rect.width/rect.height;}

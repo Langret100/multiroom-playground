@@ -1,0 +1,137 @@
+{
+  "base": "multiroom-playground-main (2).zip",
+  "files": [
+    {
+      "path": "index.html",
+      "sha256": "99b6c5bd43ee975936defb08ad5fec85793b06e2a75574ae79e73f673027bd26"
+    },
+    {
+      "path": "room.html",
+      "sha256": "511f458194ddf9372c6e067d90a6974f89a5c94e9abf48dcc4782cdfb2c08c02"
+    },
+    {
+      "path": "css/styles.css",
+      "sha256": "0a26b5c2db195c3f01b3a41084ebd62531a56dea37a3afc5785c06ffd0e52907"
+    },
+    {
+      "path": "cf-worker/src/index.js",
+      "sha256": "e2c39cb5842a022c701f2a9d4203878d44c0de8d40271646bbe349416da72a6a"
+    },
+    {
+      "path": "cf-worker/src/dungeon/engine.mjs",
+      "sha256": "3db67e43dc476b1dd16b50de5e443e6ed72222b5d256808b438f3cc01e434379"
+    },
+    {
+      "path": "cf-worker/src/dungeon/room-runtime.mjs",
+      "sha256": "d91c0e65d58e51987d269d4b5b42ea43aef6914ad9747b9eb16ef072dcce9bb2"
+    },
+    {
+      "path": "cf-worker/src/dungeon/state-codec.mjs",
+      "sha256": "0dba68a09a65d662ad7c997017d4865e9aa24ffe53da39e07f4b124f6d41e9d5"
+    },
+    {
+      "path": "cf-worker/src/dungeon/world.mjs",
+      "sha256": "6bc2a7565ef7b2d5dfcb570ba5d799caa68671afc3860ee58a63b01bfbd0aab9"
+    },
+    {
+      "path": "games/bloomshot/engine.js",
+      "sha256": "b485b393da5043f5dd677fffa35c689aabb5a0dee223ecd82ec9885d47ba3f78"
+    },
+    {
+      "path": "games/bloomshot/game.js",
+      "sha256": "9ed7302c074d519c1383439dcf210a933fe78aa7c1ef6cbc67837e79a4d695b3"
+    },
+    {
+      "path": "games/bloomshot/index.html",
+      "sha256": "65336c7dcaff5d6d5a3b8b10a09d15661adb9f676d96d2f810034dfd868c1bf4"
+    },
+    {
+      "path": "games/dungeonwarden/client.mjs",
+      "sha256": "2daa1f9e916bd4b5494d79c9df54fc7f5b219811af5114b035be88cd7983da24"
+    },
+    {
+      "path": "games/dungeonwarden/index.html",
+      "sha256": "2f9c46169916ab9ece37afe78cb8589bff84c6f557c9d763f5f70a8d18a4c1ae"
+    },
+    {
+      "path": "games/dungeonwarden/renderer.mjs",
+      "sha256": "523b5c5cd58a26324b6b6cc090257e0a8c9b93d52472adb35b411d6ec9bb121f"
+    },
+    {
+      "path": "games/dungeonwarden/room-transport.mjs",
+      "sha256": "6cfb0c23a88f22790a8165c96332f0e3f5dd2c2e7734cd444a5a0795f9433d2c"
+    },
+    {
+      "path": "games/dungeonwarden/style.css",
+      "sha256": "ba96c8adf07c77c370341e6f3d82ee842c18dbda5c9a70bafbd8da2be4bd6999"
+    },
+    {
+      "path": "games/mathfront/index.html",
+      "sha256": "acd09e6d87cbbdc215296277d104690dce3bd80debf1f79715cda51cd924d4ec"
+    },
+    {
+      "path": "games/stackga/index.html",
+      "sha256": "38a899b57cfcd2eea83b45142d9a4e438456d1e7e5695d264a8dee92be837d86"
+    },
+    {
+      "path": "games/dungeonwarden/shared/engine.mjs",
+      "sha256": "4f341bd452ca1cfc35550bf92c60a6dfca22ce1b2980a55d15d43fa7df0ed1cd"
+    },
+    {
+      "path": "games/dungeonwarden/shared/state-codec.mjs",
+      "sha256": "0dba68a09a65d662ad7c997017d4865e9aa24ffe53da39e07f4b124f6d41e9d5"
+    },
+    {
+      "path": "games/dungeonwarden/shared/world.mjs",
+      "sha256": "6bc2a7565ef7b2d5dfcb570ba5d799caa68671afc3860ee58a63b01bfbd0aab9"
+    },
+    {
+      "path": "games/stackga/css/game.css",
+      "sha256": "c3441d2dba815da2fb57125677fd029a655afe9c85b7d1e6b45d389ce27d2a03"
+    },
+    {
+      "path": "games/stackga/js/main.js",
+      "sha256": "8a1d3e370a33fc81046ea90068145fd5de410f6d92c6e0901754fb512dcc405d"
+    },
+    {
+      "path": "js/core/net.js",
+      "sha256": "60421228c0510361b9e84491b375071fe81a8dc95936d2eb8b75c653892679e1"
+    },
+    {
+      "path": "js/games/registry.js",
+      "sha256": "7764075f6666950937f277b70f8919dbc1dfd687ee1a7c42b47fd4e9b67b013d"
+    },
+    {
+      "path": "js/pages/room.js",
+      "sha256": "7b6b8627425149179f9f22002d4009b7d2fd71f11d36de066ef68c1f8d9b8fd4"
+    }
+  ],
+  "rules": {
+    "passed": 9,
+    "checks": [
+      "FPS roof landing at high falling speed, roof movement, ceiling collision and embedded-wall escape",
+      "FPS instant capture only on ground-platform entry, AI instant entry capture only, no standing score spam, AI 5s/human 30s",
+      "Dungeon overlapped bodies can separate; stable self identity and normal body blocking preserved",
+      "Dungeon chosen teams, friendly-fire immunity, allied locations/shared sight and team victory",
+      "Dungeon rooms max 2 legal orbs, max-HP 30% capped heal, final-consumption +20s batch respawn and removal deltas",
+      "Dungeon Worker/client rule parity and runtime roster propagation",
+      "BloomShot exact lobby teams, unbalanced rejection and solo CPU behavior",
+      "Worker authenticated team selection, ready reset, balance enforcement in all 3 games, FPS roster and 1500ms return",
+      "FPS one 1500ms return broadcast keeps every participant in the same room and clears readiness"
+    ]
+  },
+  "browser": {
+    "passed": 8,
+    "checks": [
+      "FPS 844횞390: real three-finger movement/look/fire, action hit targets, release, death/quiz taps and no replay button",
+      "FPS 390횞844: real three-finger movement/look/fire, action hit targets, release, death/quiz taps and no replay button",
+      "FPS mixed coarse/fine pointer device enters mobile play",
+      "FPS desktop death releases pointer lock and permits respawn location/answer clicks",
+      "mathfront lobby nickname team chooser and unequal-team start disabled",
+      "bloomshot lobby nickname team chooser and unequal-team start disabled",
+      "dungeonwarden lobby nickname team chooser and unequal-team start disabled",
+      "Dungeon rendered ally HP/name/death roster, orb snapshots and chest-answer focus returns to movement"
+    ],
+    "errors": []
+  }
+}

@@ -1,5 +1,5 @@
-import {applyStateDelta} from './shared/state-codec.mjs?v=20261008-skills2';
-import {move,lineOfSight} from './shared/world.mjs';
+import {applyStateDelta} from './shared/state-codec.mjs?v=20261011-teams-mobile';
+import {move,lineOfSight} from './shared/world.mjs?v=20261011-teams-mobile';
 import {WEAPONS} from './shared/catalog.mjs';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));

@@ -15,19 +15,19 @@ const echoAppearance=item=>({kind:'main',type:item.type,appearance:item.appearan
 export class DungeonGame {
   constructor(options={}){
     this.options=options;this.seed=options.seed??Date.now();this.itemCatalog=createMatchItemCatalog(this.seed);this.random=rng(this.seed);this.serial=0;this.time=0;this.tickId=0;
-    this.mode=options.mode==='dungeon'?'dungeon':'arena';this.role=options.role==='master'?'master':'adventurer';
+    this.mode=options.mode==='dungeon'?'dungeon':'arena';this.teamBattle=this.mode==='arena'&&!!options.teamBattle;this.healingOrbs=[];this.orbRespawnAt=new Map();this.role=options.role==='master'?'master':'adventurer';
     this.map=buildMap(this.mode,this.random);this.entities=[];this.loot=[];this.chests=[];this.traps=[];this.projectiles=[];this.zones=[];this.effects=[];
     this.messages=[];this.result=null;this.phase=this.mode==='arena'?'spawn':this.role==='master'?'planning':'playing';this.spawnUntil=10;this.respawnAt=60;this.currentRoom=0;this.healUntil=0;this.arenaWave=0;this.arenaReinforceAt=Infinity;this.arenaWarnAt=Infinity;this.arenaWarned=false;
     this.masterId=this.mode==='dungeon'?(this.role==='master'?(options.masterId||'local'):'ai-master'):null;
     this.possession=null;this.directed=new Map();this.builders={};this.quizByPlayer=new Map();this.inputs=new Map();this.commands=[];
     this.roster=(options.roster||[{id:'local',name:'나'}]).map(p=>({...p}));const botCount=clamp(options.bots??2,0,2);
-    for(let i=0;i<botCount;i++)this.roster.push({id:'bot'+i,name:'모험가 '+(i+1),bot:true});
+    for(let i=0;i<botCount;i++)this.roster.push({id:'bot'+i,name:'모험가 '+(i+1),bot:true,team:i%2?'red':'blue'});
     if(this.role==='master'&&this.mode==='dungeon'&&this.roster.length===1)this.roster.push({id:'bot0',name:'모험가 1',bot:true});
     const adventurers=this.roster.filter(p=>p.id!==this.masterId);
     this.partySize=Math.max(1,adventurers.length);
     for(let i=0;i<adventurers.length;i++){
       const r=this.mode==='arena'?this.map.rooms[[0,11,3,8,2,9,4,7][i%8]]:this.map.rooms[0];
-      this.entities.push(this.actor(adventurers[i].id,'player',r.x+r.w*.35+(i%4)*1.5,r.y+r.h*.5+Math.floor(i/4)*1.5,{name:adventurers[i].name,headId:'p'+(i%8+1),bot:!!adventurers[i].bot,team:this.mode==='dungeon'?'party':adventurers[i].id,room:r.id}));
+      this.entities.push(this.actor(adventurers[i].id,'player',r.x+r.w*.35+(i%4)*1.5,r.y+r.h*.5+Math.floor(i/4)*1.5,{name:adventurers[i].name,headId:'p'+(i%8+1),bot:!!adventurers[i].bot,team:this.mode==='dungeon'?'party':this.teamBattle?(adventurers[i].team==='red'?'red':'blue'):adventurers[i].id,room:r.id}));
       if(!adventurers[i].bot)this.inputs.set(adventurers[i].id,{});
     }
     for(const r of this.map.rooms){
@@ -42,9 +42,11 @@ export class DungeonGame {
     }
     if(this.mode==='dungeon'&&this.masterId==='ai-master')this.autoBuild();
     Object.defineProperty(this.map,'bodies',{value:this.entities,enumerable:false,writable:true});
-    this.spawnTreasure();
+    this.spawnTreasure();for(const r of this.map.rooms)this.spawnHealingOrbs(r);
     this.note(this.mode==='arena'?'10초 동안 시작 위치를 클릭하세요.':'입구 상자에서 장비를 챙기세요.');
   }
+  spawnHealingOrbs(r){if(this.healingOrbs.some(o=>o.room===r.id))return;const pending=[];for(let i=0;i<2;i++){let point=null;for(let n=0;n<80;n++){const p={x:r.x+1+this.random()*(r.w-2),y:r.y+1+this.random()*(r.h-2)};if(walkable(this.map,p,.6)&&!pending.some(o=>distance(o,p)<1.5)){point=p;break;}}if(point)pending.push({id:this.id('heal'),room:r.id,...point});}this.healingOrbs.push(...pending);this.orbRespawnAt.delete(r.id);}
+  updateHealingOrbs(){for(const r of this.map.rooms){const at=this.orbRespawnAt.get(r.id);if(at!==undefined&&this.time>=at)this.spawnHealingOrbs(r);}for(const orb of [...this.healingOrbs]){const actor=this.entities.find(e=>e.kind==='player'&&!e.dead&&e.hp<e.maxHp&&distance(e,orb)<=1.05);if(!actor)continue;actor.hp=Math.min(actor.maxHp,actor.hp+actor.maxHp*.30);this.healingOrbs=this.healingOrbs.filter(o=>o.id!==orb.id);this.fx('heal',actor,0,.65,{radius:1});if(!this.healingOrbs.some(o=>o.room===orb.room))this.orbRespawnAt.set(orb.room,this.time+20);}}
   createItem(id,options){return makeItem(this.random,id,{...options,catalog:this.itemCatalog});}
   id(prefix){return `${prefix}-${++this.serial}`;}
   note(text){this.messages.push({id:this.serial++,time:this.time,text});if(this.messages.length>5)this.messages.shift();}
@@ -576,8 +578,8 @@ export class DungeonGame {
     this.updateProjectiles(dt);this.updateZones();
     for(const t of this.traps){t.cool=Math.max(0,t.cool-dt);if(t.cool<=0){const e=this.entities.find(e=>!e.dead&&e.team!=='monsters'&&distance(e,t)<.8);if(e){this.hurt(e,15,null,{stun:.4});t.cool=2;this.fx('trap',t,0,.5);}}}
     this.effects=this.effects.filter(f=>(f.life-=dt)>0);
-    if(this.mode==='dungeon')this.dungeonProgress();else this.arenaProgress();
-    if(this.time>=600&&!this.result){if(this.mode==='dungeon')this.finish('master','10분 방어 성공');else{const alive=this.entities.filter(e=>e.kind==='player'&&!e.dead);alive.sort((a,b)=>b.hp/b.maxHp-a.hp/a.maxHp||b.hp-a.hp||a.id.localeCompare(b.id));this.finish(alive[0]?.id||null,'시간 종료 · 생존 체력 비율 순위');}}
+    this.updateHealingOrbs();if(this.mode==='dungeon')this.dungeonProgress();else this.arenaProgress();
+    if(this.time>=600&&!this.result){if(this.mode==='dungeon')this.finish('master','10분 방어 성공');else{const alive=this.entities.filter(e=>e.kind==='player'&&!e.dead);alive.sort((a,b)=>b.hp/b.maxHp-a.hp/a.maxHp||b.hp-a.hp||a.id.localeCompare(b.id));if(this.teamBattle){const score=team=>alive.filter(e=>e.team===team).reduce((sum,e)=>sum+e.hp/e.maxHp,0),blue=score('blue'),red=score('red');this.finish(blue===red?null:blue>red?'blue':'red','시간 종료 · 팀 생존 체력 합계');}else this.finish(alive[0]?.id||null,'시간 종료 · 생존 체력 비율 순위');}}
   }
   updateEquipment(e){
     const trait=equipmentTrait(e.equipment.armor);if(!trait)return;
@@ -640,16 +642,16 @@ export class DungeonGame {
   arenaProgress(){
     if(this.time>=this.respawnAt){for(const r of this.map.rooms){const unopened=this.chests.filter(c=>!c.opened&&c.room===r.id).length;if(unopened<8)this.addChest(r);}this.respawnAt+=60;}
     for(const r of this.map.rooms){const dist=Math.abs(r.id%4-1)+Math.abs(Math.floor(r.id/4)-1),start=60+(3-dist)*80;r.lava=this.time>=start?clamp(1+Math.floor((this.time-start)/35),1,10):0;}
-    const alive=this.entities.filter(e=>e.kind==='player'&&!e.dead);if(alive.length<=1&&this.entities.filter(e=>e.kind==='player').length>1)this.finish(alive[0]?.id||null,'최후의 생존자');
+    const alive=this.entities.filter(e=>e.kind==='player'&&!e.dead);if(this.teamBattle){const teams=[...new Set(alive.map(e=>e.team))];if(teams.length<=1)this.finish(teams[0]||null,'최후의 생존 팀');}else if(alive.length<=1&&this.entities.filter(e=>e.kind==='player').length>1)this.finish(alive[0]?.id||null,'최후의 생존자');
   }
-  finish(winner,reason){this.result={winner,reason,time:this.time};this.phase='over';this.note(reason);}
+  finish(winner,reason){this.result={winner,winnerTeam:this.teamBattle?winner:null,reason,time:this.time};this.phase='over';this.note(reason);}
   vision(e){
     if(!e||e.dead)return 10;const lantern=e.equipment.off?.type==='lantern'?e.equipment.off:null;
     const weapon=e.equipment.main?.type;return lantern?.tier===3?250:Math.max(10+(lantern?.vision||0),weapon==='bow'||WEAPONS[weapon]?.range>=5?15:0);
   }
   sightSources(viewer){
     if(!viewer)return [];
-    return [viewer,...(this.mode==='dungeon'&&!viewer.dead?this.entities.filter(e=>e!==viewer&&e.kind==='player'&&!e.dead&&e.team===viewer.team):[])];
+    return [viewer,...((this.mode==='dungeon'||this.teamBattle)&&!viewer.dead?this.entities.filter(e=>e!==viewer&&e.kind==='player'&&!e.dead&&e.team===viewer.team):[])];
   }
   canSee(viewer,p,cachedSources=null){
     if(!viewer)return false;if(viewer.dead)return true;
@@ -663,18 +665,19 @@ export class DungeonGame {
     const visible=p=>master||!!me?.dead||this.phase==='spawn'||this.canSee(viewer,p,sources);
     const clean=e=>{if(cleanCache?.has(e))return cleanCache.get(e);const value={id:e.id,kind:e.kind,type:e.type,name:e.name,headId:e.headId,team:e.team,x:e.x,y:e.y,room:e.room,facing:e.facing,hp:e.hp,maxHp:e.maxHp,dead:e.dead,tier:e.tier,boss:e.boss,bot:e.bot,speech:e.speech?.until>this.time?e.speech:null,aiState:e.aiState,equipment:e.equipment,
       cooldowns:e.cooldowns,guard:e.guard,guardRecovery:e.guardRecovery,blocking:e.blocking,combo:e.combo||0,comboUntil:e.comboUntil||0,dashing:!!e.dashing,dash:e.dash,dashRecovery:e.dashRecovery,whirl:e.whirl?{ends:e.whirl.ends,slot:e.whirl.slot}:null,attackPose:e.attackPose,attackDuration:e.attackDuration||.25,echoLaunchUntil:e.echoLaunchUntil||0,skillPose:e.skillPose?.ends>this.time?e.skillPose:null,enterUntil:e.enterUntil,emergeUntil:e.emergeUntil,hitPose:e.hitPose,cast:e.cast,bowCharge:e.bowCharge||0,stun:e.stun,root:e.root,slow:e.slow,invuln:e.invuln,follow:e.follow,stats:this.stats(e)};cleanCache?.set(e,value);return value;};
-    const entities=this.entities.filter(e=>!(e.kind==='monster'&&e.dead)&&(e.id===id||visible(e)||master)).map(clean);
+    const entities=this.entities.filter(e=>!(e.kind==='monster'&&e.dead)&&(e.id===id||e.kind==='player'&&e.team===me?.team||visible(e)||master)).map(clean);
     const cleanMe=me?(entities.find(e=>e.id===id)||clean(me)):null;
     const q=this.quizByPlayer.get(id);
     let objective=null;if(viewer){let gathered=0,livingParty=0,monsters=0;for(const p of this.entities){if(p.kind==='player'&&!p.dead){livingParty++;if(roomAt(this.map,p)?.heal)gathered++;}else if(p.kind==='monster'&&p.type!=='treasure'&&!p.dead&&p.room===viewer.room)monsters++;}let chests=0;for(const c of this.chests)if(!c.opened&&c.room===viewer.room)chests++;objective={gathered,livingParty,healReady:this.time>=this.healUntil,room:viewer.room,monsters,chests,exit:!this.map.rooms[Math.min(7,viewer.room+1)]?.locked};}
-    return {version:1,tick:this.tickId,time:this.time,mode:this.mode,phase:this.phase,masterId:this.masterId,possession:this.possession,me:cleanMe,
-      objective,entities,loot:this.loot.filter(visible),chests:this.chests.filter(visible).map(({contents,...chest})=>chest),traps:this.traps.filter(t=>master||!!me?.dead||sources.some(e=>e.equipment.off?.type==='lantern'&&this.canSee(e,t,[e]))),
+    return {version:1,tick:this.tickId,time:this.time,mode:this.mode,teamBattle:this.teamBattle,phase:this.phase,masterId:this.masterId,possession:this.possession,me:cleanMe,
+      objective,entities,healingOrbs:this.healingOrbs.filter(visible),loot:this.loot.filter(visible),chests:this.chests.filter(visible).map(({contents,...chest})=>chest),traps:this.traps.filter(t=>master||!!me?.dead||sources.some(e=>e.equipment.off?.type==='lantern'&&this.canSee(e,t,[e]))),
       projectiles:this.projectiles.filter(visible),zones:this.zones.filter(visible),effects:this.effects.filter(visible),map:this.map,builders:master?this.builders:{},
       visionSources:master||me?.dead?[]:sources.map(e=>({id:e.id,x:e.x,y:e.y,facing:e.facing,arc:VISION_ARC,nearRadius:3,radius:this.vision(e),fullRoom:e.equipment.off?.type==='lantern'&&e.equipment.off.tier===3,poison:this.zones.some(z=>z.active&&z.kind==='poison'&&distance(e,z)<z.radius)})),
-      quiz:q?{chest:q.chest,question:q.question,feedback:q.feedback,done:q.done}:null,roster:this.entities.filter(e=>e.kind==='player').map(e=>({id:e.id,name:e.name,dead:e.dead,hp:e.hp,maxHp:e.maxHp})),
+      quiz:q?{chest:q.chest,question:q.question,feedback:q.feedback,done:q.done}:null,roster:this.entities.filter(e=>e.kind==='player').map(e=>({id:e.id,name:e.name,team:e.team,dead:e.dead,hp:e.hp,maxHp:e.maxHp})),
       messages:this.messages,result:this.result,currentRoom:this.currentRoom,healUntil:this.healUntil,remaining:Math.max(0,600-this.time)};
   }
 }
+
 
 
 

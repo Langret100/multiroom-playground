@@ -35,7 +35,6 @@ const ui = {
   overlayTitle: $("overlayTitle"),
   overlayDesc: $("overlayDesc"),
   btnStartCpu: $("btnStartCpu"),
-  btnRestart: $("btnRestart"),
   btnMatch: $("btnMatch"),
   btnFull: $("btnFull"),
 };
@@ -198,13 +197,6 @@ function showOverlay(title, desc, {showCpuBtn=false}={}){
   ui.btnStartCpu.style.display = showCpuBtn ? "" : "none";
 }
 function hideOverlay(){ ui.overlay.classList.add("hidden"); ui.overlay.classList.remove("stackStartCue","readyPhase","startPhase"); }
-
-// Restart = reload
-ui.btnRestart?.addEventListener("click", ()=>{
-  try{ audio.gestureStart(); }catch{}
-  audio.gestureStart();
-  location.reload();
-});
 
 // --- Controls
 function performAction(action){
@@ -480,7 +472,6 @@ function startLoop(){
   safeSetText(ui.overlayTitle, "READY");
   safeSetText(ui.overlayDesc, "");
   ui.btnStartCpu.style.display = "none";
-  ui.btnRestart.style.display = "none";
   startCueTimers = [
     setTimeout(()=>{
       if(started || !startCuePending) return;
@@ -494,7 +485,6 @@ function startLoop(){
       startCuePending = false;
       started = true;
       hideOverlay();
-      ui.btnRestart.style.display = "";
       beginLoop();
     }, 900)
   ];
@@ -1001,6 +991,9 @@ async function boot(){
     hideCombo();
     seenEvents.clear();
     fit();
+    // Receive the parent's authoritative result and room-return notifications.
+    roomUnsub?.();
+    roomUnsub = watchRoom({ roomId, onRoom: onRoomUpdate });
     startLoop();
     return;
   }

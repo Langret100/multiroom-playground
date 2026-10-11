@@ -2078,3 +2078,6 @@ body.page-room:not(.in-game) .roomBottom .panel.chat{
 @media (max-width:760px){
   #createModal .createGameGrid{padding-bottom:8px!important}
 }
+
+/* Scoped lobby team selection. */
+.teamNick{border:0;background:none;padding:5px 0;text-align:left;font:inherit;cursor:pointer;min-height:44px}.pRow[data-team=blue]{border-left:3px solid #63ccff}.pRow[data-team=red]{border-left:3px solid #ff8196}#teamSummary{font-size:12px;color:var(--muted);margin:8px 0}#teamPicker{border:1px solid #7085a1;border-radius:16px;padding:22px;background:#172337;color:#fff;max-width:calc(100vw - 48px)}#teamPicker::backdrop{background:#0009}#teamPicker button{min-width:72px;min-height:44px;margin:4px;border:1px solid #ffffff44;border-radius:10px;background:#293950;color:white}#teamPicker .blue{background:#165e89}#teamPicker .red{background:#973c52}

@@ -3,9 +3,9 @@ import {StateEncoder} from './state-codec.mjs';
 
 // A room owns the simulation. Input identity always comes from its authenticated socket.
 export class DungeonRoomRuntime {
-  constructor(players,{mode='arena',masterId=null,seed=Date.now()}={}){
-    const roster=players.slice(0,8).map(p=>({id:String(p.id),name:String(p.name).slice(0,40)}));
-    this.game=new DungeonGame({mode,role:masterId?'master':'adventurer',masterId,seed,roster,bots:Math.min(2,Math.max(0,8-roster.length))});
+  constructor(players,{mode='arena',teamBattle=false,masterId=null,seed=Date.now()}={}){
+    const roster=players.slice(0,8).map(p=>({id:String(p.id),name:String(p.name).slice(0,40),team:p.team}));
+    this.game=new DungeonGame({mode,teamBattle,role:masterId?'master':'adventurer',masterId,seed,roster,bots:Math.min(2,Math.max(0,8-roster.length))});
     this.encoders=new Map();this.limits=new Map();this.inputAt=new Map();this.edges=new Map();this.cleanCache=new Map();this.serializationCache=new Map();
   }
   input(id,input){if(this.game.roster.some(p=>p.id===id&&!p.bot)){const prev=this.game.inputs.get(id)||{},edge=this.edges.get(id)||{};for(const k of ['attack','special'])if(input?.[k]&&!prev[k])edge[k]=true;this.edges.set(id,edge);this.game.input(id,input||{});this.inputAt.set(id,this.game.time);}}

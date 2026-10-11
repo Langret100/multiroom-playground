@@ -79,7 +79,7 @@ export function move(map,e,dx,dy,roomOnly=false){
 
 export function bodyClear(map,e,p){
   if(e.dead)return true;
-  return !(map.bodies||[]).some(t=>t!==e&&!t.dead&&distance(p,t)<(e.boss?.7:.48)+(t.boss?.7:.48)-.001);
+  return !(map.bodies||[]).some(t=>{if(t===e||e.id&&t.id===e.id||t.dead)return false;const limit=(e.boss?.7:.48)+(t.boss?.7:.48)-.001,next=distance(p,t);if(next>=limit)return false;const previous=distance(e,t);return previous>=limit||next<=previous+1e-7;});
 }
 // Small grid A*: cached by the caller, eight neighbours with no diagonal corner cutting.
 export function findPath(map,start,target,home=null){const search=pathSearch(map,start,target,home);let result;do{result=search.next();}while(!result.done);return result.value;}

@@ -1,3 +1,4 @@
+function lobbyTeamMode(state){return state.mode==='mathfront'||state.mode==='bloomshot'&&state.battleMode==='team'||state.mode==='dungeonwarden'&&state.dungeonMode==='arena-team';}
 // Mathfront owns its touch controls inside its iframe.
 {const style=document.createElement('style');style.textContent='body.in-game:has(#duelFrame[src*="/mathfront/"]) .controls{display:none!important}';document.head.appendChild(style);}
 
@@ -307,7 +308,7 @@ function setupBgm(audioElId, btnId){
   // CPU difficulty (solo duel: 1 human + CPU)
   // Stored locally so the choice persists.
   const localSoloModes=new Set(["mathfront","backrooms3d","soccer","geumchikeo","drawanswer","waterblast","starpaint","stackga","bloomshot","suhaktokki"]);
-  let dungeonMode='arena',dungeonModeWrap=null,dungeonModeSelect=null;
+  let dungeonMode='arena',dungeonModeWrap=null,dungeonModeSelect=null,bloomModeWrap=null,bloomModeSelect=null;
   let stackMode='items',stackModeWrap=null,stackModeSelect=null;
   let cpuDifficulty = (localStorage.getItem("cpu_difficulty") || "low").toLowerCase();
   let mathDifficulty = Number(localStorage.getItem("math_explorer_difficulty") || "1") === 2 ? 2 : 1;
@@ -354,9 +355,10 @@ function setupBgm(audioElId, btnId){
       stackModeSelect.addEventListener('change',()=>{stackMode=stackModeSelect.value;room?.send('stack_mode',{stackMode});});
       dungeonModeWrap=document.createElement('div');
       dungeonModeWrap.style.cssText=stackModeWrap.style.cssText;
-      dungeonModeWrap.innerHTML='<span>던전 아레나 · 경기 방식</span><select class="input" aria-label="던전 아레나 경기 방식"><option value="arena">아레나 모드</option><option value="dungeon">던전 모드</option></select><small>던전 모드: 방장 = 던전마스터 · 나머지 = 모험가</small>';
+      dungeonModeWrap.innerHTML='<span>던전 아레나 · 경기 방식</span><select class="input" aria-label="던전 아레나 경기 방식"><option value="arena">아레나 개인전</option><option value="arena-team">아레나 팀전</option><option value="dungeon">던전 모드</option></select><small>던전 모드: 방장 = 던전마스터 · 나머지 = 모험가</small>';
       controls.parentElement?.insertBefore(dungeonModeWrap,controls);dungeonModeSelect=dungeonModeWrap.querySelector('select');
       dungeonModeSelect.addEventListener('change',()=>room?.send('dw_mode',{mode:dungeonModeSelect.value}));
+      bloomModeWrap=document.createElement('div');bloomModeWrap.style.cssText=stackModeWrap.style.cssText;bloomModeWrap.innerHTML='<span>블룸샷 · 경기 방식</span><select class="input" aria-label="블룸샷 경기 방식"><option value="solo">개인전</option><option value="team">팀전</option></select><small>팀전: 자기 닉네임을 눌러 BLUE / RED 선택</small>';controls.parentElement?.insertBefore(bloomModeWrap,controls);bloomModeSelect=bloomModeWrap.querySelector('select');bloomModeSelect.onchange=()=>room?.send('battle_mode',{mode:bloomModeSelect.value});
       cpuDiffWrap = wrap;
       cpuDiffSelect = wrap.querySelector('#cpuDiffSel');
       if (cpuDiffSelect){
@@ -1271,7 +1273,7 @@ function updatePreview(modeId){
       return;
     }
     if (!room) return;
-    if(d.gameId==='mathfront'&&e.origin===location.origin&&srcWin===duel?.iframeEl?.contentWindow){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;maybeSendCoopGameStart();return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
+    if(d.gameId==='mathfront'&&e.origin===location.origin&&srcWin===duel?.iframeEl?.contentWindow){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;maybeSendCoopGameStart();return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_practice_over'&&coop.practice){if(!coop.soloReturnTimer)coop.soloReturnTimer=setTimeout(()=>{coop.soloReturnTimer=null;if(coop.practice)exitGameFullscreen();},1500);return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
 
     // Local practice owns its simulation. Do not relay practice game packets to the room server.
     if(coop.practice&&fromMain&&localSoloModes.has(coop.meta?.id)){
@@ -2202,7 +2204,7 @@ function updatePreview(modeId){
             sessionId: String(sid),
             nick: p?.nick ? String(p.nick) : String(sid).slice(0,4),
             seat: Number.isFinite(Number(seatOf[sid])) ? Number(seatOf[sid]) : 0,
-            isHost: !!p?.isHost
+            isHost: !!p?.isHost,team:p?.team
           }))
         });
       }
@@ -2221,6 +2223,13 @@ function updatePreview(modeId){
         <span class="pNick">${safeText(p.nick, 20)} ${host}</span>
         <span class="pReady ${readyCls}">${ready}</span>
       `;
+      if(lobbyTeamMode(state)){
+        const nick=row.querySelector('.pNick'),team=p.team==='red'?'red':'blue',tag=team==='red'?'RED':'BLUE';row.dataset.team=team;nick.style.color=team==='red'?'#ff8196':'#63ccff';nick.textContent=p.nick+' '+host+' · '+tag;
+        if(sid===mySessionId&&phase==='lobby'){
+          const button=document.createElement('button');button.type='button';button.className='pNick teamNick';button.textContent=nick.textContent+' ▾';button.style.color=nick.style.color;button.setAttribute('aria-label','내 팀 선택');nick.replaceWith(button);
+          button.onclick=()=>{document.getElementById('teamPicker')?.remove();const dialog=document.createElement('dialog');dialog.id='teamPicker';const title=document.createElement('p');title.textContent='내 팀 선택';dialog.appendChild(title);for(const choice of ['blue','red']){const b=document.createElement('button');b.type='button';b.textContent=choice.toUpperCase();b.className='teamChoice '+choice;b.onclick=()=>{room.send('select_team',{team:choice});dialog.close();dialog.remove();};dialog.appendChild(b);}const close=document.createElement('button');close.textContent='취소';close.onclick=()=>{dialog.close();dialog.remove();};dialog.appendChild(close);document.body.appendChild(dialog);dialog.showModal();};
+        }
+      }
       els.players.appendChild(row);
 
       if (sid === mySessionId){
@@ -2355,11 +2364,17 @@ else if (isCoop){
 }
 
 if(isHost&&state.phase==='lobby'&&humanCount===1&&localSoloModes.has(modeId)){canStart=true;startText=modeId==='drawanswer'?'그림연습모드 시작':'싱글 AI 연습 시작';startAction='practice';}
-els.startBtn.disabled = !canStart;
+if(lobbyTeamMode(state)){
+ const humans=entries.filter(([sid])=>String(sid)!==CPU_SID),blue=humans.filter(([,p])=>p.team==='blue').length,red=humans.filter(([,p])=>p.team==='red').length;
+ if(humans.length<2||blue===0||blue!==red||blue+red!==humans.length){canStart=false;reason='팀 인원이 같아야 시작됩니다 · BLUE '+blue+' / RED '+red;}
+ let summary=document.getElementById('teamSummary');if(!summary){summary=document.createElement('p');summary.id='teamSummary';els.players.after(summary);}summary.textContent='BLUE '+blue+'명 / RED '+red+'명 · 자기 닉네임을 눌러 팀 선택';summary.hidden=phase!=='lobby';
+ }else{const summary=document.getElementById('teamSummary');if(summary)summary.hidden=true;}
+ els.startBtn.disabled = !canStart;
 els.startBtn.dataset.action = startAction;
 els.startBtn.textContent = startText;
 els.startBtn.title = canStart ? startText : reason;
 
+  if(bloomModeWrap){bloomModeWrap.style.display=modeId==='bloomshot'&&state.phase==='lobby'?'flex':'none';bloomModeSelect.disabled=!isHost||state.phase!=='lobby';bloomModeSelect.value=state.battleMode||'solo';}
   if(dungeonModeWrap){dungeonModeWrap.style.display=modeId==='dungeonwarden'&&state.phase==='lobby'?'flex':'none';dungeonModeSelect.disabled=!isHost||state.phase!=='lobby';dungeonModeSelect.value=dungeonMode;}
   if(stackModeWrap){stackModeWrap.style.display=modeId==='stackga'&&(phase==='lobby'||!document.body.classList.contains('in-game'))?'flex':'none';stackModeSelect.disabled=!isHost||state.phase!=='lobby';stackModeSelect.value=stackMode;}
   // Show CPU difficulty only when host starts a solo duel in lobby.
@@ -2756,7 +2771,7 @@ function sendCoopBridgeInit(){
           sessionId: String(sid),
           nick: (p && p.nick) ? String(p.nick) : String(sid).slice(0,4),
           seat,
-          isHost: !!(p && p.isHost)
+          isHost: !!(p && p.isHost),team:p?.team
         });
       });
     }catch(_){}
@@ -2776,6 +2791,7 @@ function sendCoopBridgeInit(){
   })();
 
   const coopInitPacket = {
+    battleMode:room?.state?.battleMode||'solo',
     type: "bridge_init",
     gameId: coop.meta.id,
     sessionId: mySessionId,
@@ -3396,7 +3412,7 @@ try{
       }catch(_){ }
 
 
-      room.onMessage('dw_mode',m=>{dungeonMode=m?.mode==='dungeon'?'dungeon':'arena';if(dungeonModeSelect)dungeonModeSelect.value=dungeonMode;});
+      room.onMessage('dw_mode',m=>{dungeonMode=['arena','arena-team','dungeon'].includes(m?.mode)?m.mode:'arena';if(dungeonModeSelect)dungeonModeSelect.value=dungeonMode;});
       room.onMessage('stack_mode',(m)=>{stackMode=m?.stackMode==='normal'?'normal':'items';if(stackModeSelect)stackModeSelect.value=stackMode;});
       room.onMessage("started", (m)=> {
         if(m?.stackMode==='normal'||m?.stackMode==='items')stackMode=m.stackMode;

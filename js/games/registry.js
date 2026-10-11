@@ -4,7 +4,7 @@
 {"id": "random", "name": "랜덤 생성", "category": "미스터리 · 무작위", "type": "random", "badgeClass": "coop", "maxClients": 8, "cardImage": "assets/images/game_cards/random.webp?v=20261005", "lobbyDesc": "방 생성 시 게임이 무작위로 정해집니다. 해당 게임의 최대 인원으로 생성하며 시작 전에는 게임을 공개하지 않습니다.", "descLines": ["게임은 방 생성 시 결정됩니다.", "게임 정보는 ?로 표시되며 조작법과 선택 옵션만 볼 수 있습니다."], "pcHint": "방에서 선택된 게임의 조작법을 확인하세요.", "mobileHint": "방에서 선택된 게임의 조작법을 확인하세요."},
     {
       id:'bloomshot', name:'블룸샷', category:'턴제 · 포격', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/bloomshot/index.html?v=20261005-acorn3', cardImage:'games/bloomshot/assets/card-bloomshot.webp?v=1',
+      embedPath:'games/bloomshot/index.html?v=20261011-room-teams', cardImage:'games/bloomshot/assets/card-bloomshot.webp?v=1',
       lobbyDesc:'귀여운 정령 대포로 겨루는 최대 8인 턴제 포격전. 각도·바람·지형 파괴를 읽고 끝까지 살아남으세요.',
       descLines:['30초 턴 안에 이동하고 각도·파워를 맞춰 일반탄과 특수탄을 발사하세요.','폭발로 발판이 부서지고 낙하산 보급이 내려옵니다. 2연발·파워·회복 아이템을 적절히 활용하세요.','정령 8종마다 체력, 이동력, 탄 모양, 특수탄, 연출이 다르며 혼자 시작하면 CPU와 연습합니다.'],
       pcHint:'PC: ←→ 이동 · ↑↓ 각도 · A/D 파워 · Space 누르고 놓기 발사 · J 점프 · 1/2/3 아이템',
@@ -24,7 +24,7 @@
     },
     {
       id:'stackga', name:'블록쌓기', category:'퍼즐 · 대전', type:'duel', badgeClass:'tetris', maxClients:2,
-      embedPath:'games/stackga/index.html', cardImage:'assets/images/game_cards/stackga.webp?v=20260831-cards7',
+      embedPath:'games/stackga/index.html?v=20261011-no-replay', cardImage:'assets/images/game_cards/stackga.webp?v=20260831-cards7',
       lobbyDesc:'떨어지는 블록으로 줄을 만들고 상대보다 오래 버티는 1:1 퍼즐 대전.',
       descLines:['블록으로 줄을 맞추면 사라집니다.','두 줄 이상 지우면 상대에게 한 줄 추가합니다.'],
       pcHint:'PC: ←→ 이동 · ↓ 빠른 하강 · ↑ 회전 · Space 즉시 낙하 · P 일시정지',
@@ -132,8 +132,8 @@
       pcControls:[['WASD / 방향키','이동'],['Z / SPACE','슬라임 설치'],['X','자기 슬라임 밀기'],['C','제거 포션 · 최대 1개'],['이동키 / 설치키 연타','슬라임 탈출']],
       mobileControls:[['왼쪽 조이스틱','이동'],['Z · 설치 버튼','슬라임 설치 / 갇히면 연타'],['X · 밀기 버튼','자기 슬라임 밀기'],['제거 포션 버튼','갇힘/기절 중 사용 · 최대 1개']]
     },
-{"id": "dungeonwarden", "name": "던전 아레나", "category": "액션 · 던전", "type": "coop", "badgeClass": "coop", "maxClients": 8, "embedPath": "games/dungeonwarden/index.html?gameId=dungeonwarden&v=20261008-size120", "cardImage": "assets/images/game_cards/dungeonwarden.webp?v=20261005", "lobbyDesc": "최대 8인 던전 액션. 방 안에서 아레나 생존전 또는 방장이 마스터가 되는 던전 모드를 선택하세요.", "descLines": ["방 안에서 아레나 모드 또는 던전 모드를 선택합니다.", "아레나: 시작 위치를 고르고 용암을 피해 마지막까지 생존합니다.", "던전: 방장은 던전마스터, 나머지는 모험가입니다. 장비를 모아 던전을 공략하세요."], "pcHint": "WASD 이동 · Shift 질주 · 클릭/Space 공격 · Q 특수 · E 줍기/상자 · I 장비 · M 지도", "mobileHint": "왼쪽 조이스틱 이동 · 오른쪽 공격/특수/상호작용 버튼", "pcControls": [["WASD", "이동"], ["SHIFT", "질주"], ["CLICK / SPACE", "일반 공격"], ["Q", "특수 공격"], ["E", "줍기 / 상자"], ["I / TAB", "장비"], ["M", "지도"]], "mobileControls": [["조이스틱", "이동"], ["공격", "일반 공격"], ["특수", "무기 고유 공격"], ["상호작용", "줍기 / 상자"]]},
-{ id:'mathfront',name:'매스프론트',category:'3D FPS · 거점 점령',type:'coop',badgeClass:'coop',maxClients:8,embedPath:'games/mathfront/index.html',cardImage:'games/mathfront/assets/card.webp',lobbyDesc:'최대 4 VS 4 · 3분 FPS. 50점 선득점 승리, 3분 종료 시 점수로 승패를 결정합니다. 퇴장한 자리는 AI가 이어받습니다. 수학 문제로 A·B·C 거점을 점령합니다.',descLines:['2·4·6·8인 팀전 · 싱글 AI 훈련','좌클릭 연사 · 우클릭/Q 조준 · G 수류탄 · Ctrl/C 숙이기 · R 재장전'],pcHint:'WASD 이동 · 마우스 시점 · 좌클릭 연사 · 우클릭 조준 · R 재장전',mobileHint:'이동/시점 패드 · FIRE · JUMP · RELOAD',pcControls:[['WASD','이동'],['좌클릭','연사'],['우클릭','조준'],['R','재장전'],['G','수류탄']],mobileControls:[['패드','이동/시점'],['FIRE','발사']]}
+{"id": "dungeonwarden", "name": "던전 아레나", "category": "액션 · 던전", "type": "coop", "badgeClass": "coop", "maxClients": 8, "embedPath": "games/dungeonwarden/index.html?gameId=dungeonwarden&v=20261011-teams-mobile", "cardImage": "assets/images/game_cards/dungeonwarden.webp?v=20261005", "lobbyDesc": "최대 8인 던전 액션. 방 안에서 아레나 생존전 또는 방장이 마스터가 되는 던전 모드를 선택하세요.", "descLines": ["방 안에서 아레나 모드 또는 던전 모드를 선택합니다.", "아레나 개인전/팀전: 시작 위치를 고르고 용암을 피해 생존합니다.", "던전: 방장은 던전마스터, 나머지는 모험가입니다. 장비를 모아 던전을 공략하세요."], "pcHint": "WASD 이동 · Shift 질주 · 클릭/Space 공격 · Q 특수 · E 줍기/상자 · I 장비 · M 지도", "mobileHint": "왼쪽 조이스틱 이동 · 오른쪽 공격/특수/상호작용 버튼", "pcControls": [["WASD", "이동"], ["SHIFT", "질주"], ["CLICK / SPACE", "일반 공격"], ["Q", "특수 공격"], ["E", "줍기 / 상자"], ["I / TAB", "장비"], ["M", "지도"]], "mobileControls": [["조이스틱", "이동"], ["공격", "일반 공격"], ["특수", "무기 고유 공격"], ["상호작용", "줍기 / 상자"]]},
+{ id:'mathfront',name:'매스프론트',category:'3D FPS · 거점 점령',type:'coop',badgeClass:'coop',maxClients:8,embedPath:'games/mathfront/index.html?v=20261011-mobile-teams',cardImage:'games/mathfront/assets/card.webp',lobbyDesc:'최대 4 VS 4 · 3분 FPS. 50점 선득점 승리, 3분 종료 시 점수로 승패를 결정합니다. 퇴장한 자리는 AI가 이어받습니다. 플레이어는 수학 문제로, AI는 거점 접촉으로 A·B·C를 점령합니다.',descLines:['2·4·6·8인 팀전 · 싱글 AI 훈련','좌클릭 연사 · 우클릭/Q 조준 · G 수류탄 · Ctrl/C 숙이기 · R 재장전'],pcHint:'WASD 이동 · 마우스 시점 · 좌클릭 연사 · 우클릭 조준 · R 재장전',mobileHint:'왼쪽 이동·발사 · 오른쪽 드래그 시점 · 조준·점프·재장전',pcControls:[['WASD','이동'],['좌클릭','연사'],['우클릭','조준'],['R','재장전'],['G','수류탄']],mobileControls:[['패드','이동/시점'],['FIRE','발사']]}
   ];
 
   function gameById(id){ return GAME_REGISTRY.find(g => g.id === id) || GAME_REGISTRY[0]; }
@@ -141,3 +141,4 @@
   window.GAME_REGISTRY = GAME_REGISTRY;
   window.gameById = gameById;
 })();
+
