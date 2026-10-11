@@ -1449,6 +1449,16 @@ export class RoomDO{
         return;
       }
       // ----- Backrooms3d relay (generic packet) -----
+      if(t==='mf_sync'){
+        if(this.meta.mode!=='mathfront'||this.meta.phase!=='playing'||!this.mf||this.mf.ended)return;
+        const slot=this.mf.roster.find(p=>p.sid===String(uid));if(!slot||!this.users.has(uid))return;
+        const returning=!!slot.ai;slot.ai=false;if(!this.mf.host)this.mf.host=String(uid);
+        const startPayload={...this.mf.startPayload,roster:this.mf.roster,host:this.mf.host};
+        if(returning)this._broadcast('mf_msg',{msg:{kind:'peer_return',from:'server',sid:String(uid),host:this.mf.host}});
+        this._send(ws,'mf_start',{startPayload});
+        if(this.mf.latest)this._send(ws,'mf_msg',{msg:{...this.mf.latest,from:this.mf.host}});
+        return;
+      }
       if(t==='mf_msg'){if(this.meta.mode!=='mathfront'||this.meta.phase!=='playing'||!this.mf||this.mf.ended)return;const m=d?.msg;if(!m||typeof m!=='object'||JSON.stringify(m).length>16000)return;const allowed=['state','fire','hit','respawn','world','capture','fx','supply','selfhurt','finish'];if(!allowed.includes(m.kind))return;const roster=this.mf.roster;if(!roster.some(p=>p.sid===String(uid)&&!p.ai))return;const stamp=now(),rates=this.mf.rates[String(uid)]||(this.mf.rates[String(uid)]={});if(stamp-(rates[m.kind]||0)<(m.kind==='world'?140:m.kind==='state'?60:m.kind==='hit'?0:15))return;if(stamp-(rates.windowAt||0)>=1000){rates.windowAt=stamp;rates.count=0;}if((rates.count||0)>=80)return;rates.count=(rates.count||0)+1;rates[m.kind]=stamp;if(m.kind==='finish'){if(String(uid)!==this.mf.host||!['blue','red'].includes(m.winner)||Number(m.scores?.[m.winner])<50)return;this.mf.latest={...this.mf.latest,scores:m.scores};this._finishMathfront(m.winner);return;}if(m.kind==='world'){if(String(uid)!==this.mf.host)return;this.mf.latest=m;if(Math.max(Number(m.scores?.blue)||0,Number(m.scores?.red)||0)>=50){this._finishMathfront();return;}}const out={...m,from:String(uid)},hostOnly=['hit','respawn','capture','supply','selfhurt'].includes(m.kind);for(const [sock,sid] of this.sockets){if(String(sid)===String(uid))continue;if(hostOnly&&String(sid)!==this.mf.host)continue;this._send(sock,'mf_msg',{msg:out});}return;}
       if (t === "br_msg") {
         if (this.meta.mode !== "backrooms3d" || this.meta.phase !== "playing") return;

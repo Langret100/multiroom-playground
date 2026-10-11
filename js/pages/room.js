@@ -684,7 +684,7 @@ function updatePreview(modeId){
     clearTimeout(coop.soloReturnTimer);clearTimeout(coop._bridgeInitTimer);
     clearTimeout(window.__starpaintLocalBackTimer);window.__starpaintLocalBackTimer=null;
     coop.soloReturnTimer=coop._bridgeInitTimer=null;
-    coop.active=false;coop.practice=false;coop.meta=null;coop.startPayload=null;
+    coop.active=false;coop.practice=false;coop.meta=null;coop.startPayload=null;coop._mfGameStartAck=false;
     coop.sentGameStart=false;coop.iframeLoaded=false;coop.iframeReady=false;
     coop._mxGameStartAck=false;coop._brGameStartAck=false;
     for(const key of ['mxFrameWin','soccerFrameWin','wbFrameWin','bsFrameWin','skFrameWin'])coop[key]=null;
@@ -1311,7 +1311,7 @@ function updatePreview(modeId){
       return;
     }
     if (!room) return;
-    if(d.gameId==='mathfront'&&e.origin===location.origin&&srcWin===duel?.iframeEl?.contentWindow){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;maybeSendCoopGameStart();return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_practice_over'&&coop.practice){if(!coop.soloReturnTimer)coop.soloReturnTimer=setTimeout(()=>{coop.soloReturnTimer=null;if(coop.practice)exitGameFullscreen();},1500);return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
+    if(d.gameId==='mathfront'&&activeGameId==='mathfront'&&(fromMain||(!srcWin&&e.origin===location.origin))){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;if(!coop.practice&&!coop._mfGameStartAck){coop.sentGameStart=false;room.send('mf_sync',{});maybeSendCoopGameStart();}return;}if(d.type==='mf_ack'){coop._mfGameStartAck=true;return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_practice_over'&&coop.practice){if(!coop.soloReturnTimer)coop.soloReturnTimer=setTimeout(()=>{coop.soloReturnTimer=null;if(coop.practice)exitGameFullscreen();},1500);return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
 
     // Local practice owns its simulation. Do not relay practice game packets to the room server.
     if(coop.practice&&fromMain&&localSoloModes.has(coop.meta?.id)){
@@ -3112,6 +3112,7 @@ function startCoopEmbed(meta){
   coop.iframeReady = false;
   coop._mxGameStartAck = false;
   coop._brGameStartAck = false;
+  coop._mfGameStartAck = false;
   coop.mxFrameWin = null;
   coop.soccerFrameWin = null;
   
@@ -3144,7 +3145,7 @@ function startCoopEmbed(meta){
   // StarPaint is a fairly large self-contained document. A per-launch timestamp forced
   // the 100KB+ HTML to bypass the browser cache every round. Use a stable asset version
   // for StarPaint; other embeds retain their existing cache-busting behavior.
-  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-guest-hit-fast-legacy-v4" : `&_m=${Date.now()}`;
+  const embedNonce = (meta && meta.id === "starpaint") ? "&v=sp-netfx-v3" : `&_m=${Date.now()}`;
   const coopEmbedSep = String(meta.embedPath||'').includes('?') ? '&' : '?';
   const src = `${meta.embedPath}${coopEmbedSep}embed=1&embedGame=${encodeURIComponent(meta.id)}${extra}${embedNonce}`;
   if (duel.iframeEl){
@@ -3489,7 +3490,7 @@ try{
           // NOTE: room.state.mode can lag behind the "started" packet in some transports.
           // Accept authoritative startPayload whenever the packet carries one, using m.mode as primary.
           const startedMode = String((m && m.mode) || room?.state?.mode || "");
-          if (["suhaktokki","mathexplorer","math-explorer","backrooms3d"].includes(startedMode)){
+          if (["suhaktokki","mathexplorer","math-explorer","backrooms3d","mathfront"].includes(startedMode)){
             let sp = (m && m.startPayload) ? m.startPayload : null;
             if (!sp && (startedMode === 'mathexplorer' || startedMode === 'math-explorer')){
               try{ sp = buildMathExplorerFallbackStartPayload(m || {}); }catch(_){ sp = null; }
@@ -3499,11 +3500,12 @@ try{
               coop.sentGameStart = false;
               coop._mxGameStartAck = false;
               coop._brGameStartAck = false;
+              coop._mfGameStartAck = false;
               try{ coop.meta = coop.meta || {}; if (!coop.meta.id && startedMode) coop.meta.id = startedMode; }catch(_){ }
               maybeSendCoopGameStart();
-              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 180); }catch(_){ }
-              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 520); }catch(_){ }
-              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 1200); }catch(_){ }
+              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck || coop._mfGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 180); }catch(_){ }
+              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck || coop._mfGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 520); }catch(_){ }
+              try{ scheduleRoomGameTask(()=>{ try{ if (coop.active && !(coop._mxGameStartAck || coop._brGameStartAck || coop._mfGameStartAck)){ coop.sentGameStart = false; maybeSendCoopGameStart(); } }catch(_){ } }, 1200); }catch(_){ }
             }
           }
         }catch(_){ }
@@ -3567,6 +3569,11 @@ try{
       });
 
       // Backrooms3d relay: server -> iframe
+      room.onMessage('mf_start',m=>{
+        if(!coop.active||coop.practice||coop.meta?.id!=='mathfront'||!m?.startPayload)return;
+        if(coop._mfGameStartAck&&coop.startPayload?.startedAt===m.startPayload.startedAt)return;
+        coop.startPayload=m.startPayload;coop.sentGameStart=false;maybeSendCoopGameStart();
+      });
       room.onMessage('mf_msg',m=>{if(coop.active&&coop.meta?.id==='mathfront')postToMain({type:'mf_msg',gameId:'mathfront',msg:m.msg||m});});
       room.onMessage("br_msg", (msg)=>{
         const inner = (msg && msg.msg) ? msg.msg : msg;

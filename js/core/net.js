@@ -313,6 +313,7 @@ if (isDuel && humans.length === 1){
         "sk_msg",
         // MathExplorer (coop)
         "mx_msg",
+        "mf_msg","mf_start",
         // Backrooms3d (coop)
         "br_msg","br_batch",
         // Soccer (coop) — server → client relays (positions/ball/score/timer/roster/end)

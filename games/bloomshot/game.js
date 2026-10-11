@@ -193,7 +193,7 @@ function adopt(incoming,hostTime){
 function applyBridgeInit(d){
  if(!embedded||!d||d.type!=='bridge_init'||d.gameId!=='bloomshot')return false;
  bridge.battleMode=d.battleMode==='team'?'team':'solo';bridge.sid=String(d.sessionId);bridge.hostSid=String(d.hostSessionId||d.players?.find(p=>p.isHost)?.sessionId||'');bridge.isHost=!!d.isHost;bridge.ready=true;roster=d.players||[];
- if(window.SoloAI?.active){bridge.isHost=true;bridge.hostSid=bridge.sid;if(!state){state=E.create([{sessionId:bridge.sid,nick:d.nick||'나',seat:0}],(Math.random()*4294967296)>>>0,Date.now());reported=false;renderUI();}return true;}
+ if(window.SoloAI?.active){bridge.isHost=true;bridge.hostSid=bridge.sid;if(!state){state=E.create([{sessionId:bridge.sid,nick:d.nick||'나',seat:0,team:roster.find(p=>String(p.sessionId||p.sid)===bridge.sid)?.team||new URLSearchParams(location.search).get('team')||'blue'}],(Math.random()*4294967296)>>>0,Date.now(),{mode:bridge.battleMode,roomTeams:true});reported=false;renderUI();}return true;}
  send('bs_sync');
  return true;
 }
@@ -279,7 +279,7 @@ mini.onpointerdown=e=>{mini.setPointerCapture(e.pointerId);minimapMove(e);};mini
 function renderUI(){
  if(!state)return;ensureMapArt(state.map);const p=mine(),active=state.players[state.turn],now=Date.now()+offset,can=canAct(),c=p?E.spec(p):C[0];
  $('setup').hidden=state.phase!=='setup';$('result').hidden=state.phase!=='over';
- const selectable=state.players.filter(q=>!q.cpu),readyCount=selectable.filter(q=>q.characterReady).length,allReady=readyCount===selectable.length&&selectable.length>0,teamEligible=selectable.length>=2&&selectable.length%2===0&&selectable.filter(p=>p.team===0).length===selectable.filter(p=>p.team===1).length;
+ const selectable=state.players.filter(q=>!q.cpu),readyCount=selectable.filter(q=>q.characterReady).length,allReady=readyCount===selectable.length&&selectable.length>0,teamEligible=(window.SoloAI?.active&&selectable.length===1&&state.players.length===2&&state.players[0].team!==state.players[1].team)||(selectable.length>=2&&selectable.length%2===0&&selectable.filter(p=>p.team===0).length===selectable.filter(p=>p.team===1).length);
  if(!embedded&&state.mode==='team'&&!teamEligible&&bridge.isHost)act('mode',{value:'solo'});
  $('modeSolo').classList.toggle('selected',state.mode!=='team');$('modeTeam').classList.toggle('selected',state.mode==='team');$('modeSolo').disabled=embedded||!bridge.isHost||state.phase!=='setup';$('modeTeam').disabled=embedded||!bridge.isHost||state.phase!=='setup'||!teamEligible;
  $('modeHint').textContent=!teamEligible?'참가자가 홀수라 팀전을 선택할 수 없습니다.':state.mode==='team'?'룸에서 선택한 BLUE / RED 팀으로 진행합니다':'방장이 전투 방식을 고릅니다';

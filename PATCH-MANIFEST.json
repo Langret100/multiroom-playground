@@ -3,11 +3,11 @@
   "files": [
     {
       "path": "index.html",
-      "sha256": "8e0878a13582491bd13696577128d05a550095b9733826be54854a19a510de27"
+      "sha256": "9fb4237416b08c99d9f0c4b4376df88fbe036731deb50daaa2355643857524c0"
     },
     {
       "path": "room.html",
-      "sha256": "e6436e7f0826505054abdace68a0bab90a83b5a82c201a7139255e59b6e09a42"
+      "sha256": "8ef45d4160212760772664356da2787798ede24106eaf5053977bb8b67028347"
     },
     {
       "path": "css/styles.css",
@@ -15,7 +15,7 @@
     },
     {
       "path": "cf-worker/src/index.js",
-      "sha256": "4bfb59e1c206a6781ff19c91b9262a707e37bdfa3fcee0a905ade49fc16c1e0e"
+      "sha256": "8bbfe9847890c344c75fb712a097929d3c89235cb786724cf67113b645b91e26"
     },
     {
       "path": "cf-worker/src/dungeon/engine.mjs",
@@ -35,15 +35,15 @@
     },
     {
       "path": "games/bloomshot/engine.js",
-      "sha256": "8b45ec71bd08bb3c41d6fef2a0002de9972a528b7e3afaf157fc246eec925820"
+      "sha256": "e82e5bfe547745ea9f5d707686cd80deb3f0d41887858aaa8d935c6f4e16d028"
     },
     {
       "path": "games/bloomshot/game.js",
-      "sha256": "9ed7302c074d519c1383439dcf210a933fe78aa7c1ef6cbc67837e79a4d695b3"
+      "sha256": "703171f61a6db01f4cb24cbf7a22faf7996cb3d6871dd56f0f37993da51bdc77"
     },
     {
       "path": "games/bloomshot/index.html",
-      "sha256": "cee98fa757904e50be2b10dbd4c74ad4aa1ba258f99cb165bd5539b37884b030"
+      "sha256": "01b5f7e1ea757ca0cc831023cfd35d849aaaf36d6a4903562a96663f580bcd73"
     },
     {
       "path": "games/dungeonwarden/client.mjs",
@@ -71,7 +71,7 @@
     },
     {
       "path": "games/mathfront/index.html",
-      "sha256": "e465ade83125c7a367830f473d83d785b8b69628d01b16ed2f1ba3bd56db9ec6"
+      "sha256": "82faa8a871adf0f9d195e45d81ed523d1e7acdec29fc936e63c0510ef7f1eb40"
     },
     {
       "path": "games/soccer/game.js",
@@ -87,7 +87,7 @@
     },
     {
       "path": "games/starpaint/index.html",
-      "sha256": "3de4798d240c00691659216861bd322ee3d31b4844861cb989864a1b29b859db"
+      "sha256": "d2737bbb70c031ae90f0cfc0565c8a4c77755b11431df040a5660a914c69fce6"
     },
     {
       "path": "games/waterblast/game.js",
@@ -119,11 +119,11 @@
     },
     {
       "path": "js/core/net.js",
-      "sha256": "4074cd58c74f44177cc724c7b3bf2fc548caeb3958968bbb1f2933f74e7c6c77"
+      "sha256": "f5b04b4a08b2604a1c83b867cf160caeffd48b7ff71d0d7249c5a0e9e861659b"
     },
     {
       "path": "js/games/registry.js",
-      "sha256": "6564d9a6a8463e04682e7b5234a0ba2e8c37811dd70cbf361c000220c4c5f0d2"
+      "sha256": "7dc545e8841813de84dd87264308fe091cfa74831c78660651e6e48da9c24259"
     },
     {
       "path": "js/games/solo-ai.js",
@@ -131,7 +131,7 @@
     },
     {
       "path": "js/pages/room.js",
-      "sha256": "ba9bb424d505c9d189ae2b3a275979bee0738e4c4ca844b07bba5369804dd50e"
+      "sha256": "c3b5d0f917ff6d912c3605109bff441faed006feb367547b682236136dac68f7"
     }
   ],
   "rules": {
@@ -225,5 +225,557 @@
   "stackResult": {
     "passed": 4,
     "errors": []
+  },
+  "fpsNetwork": {
+    "passed": 5,
+    "checks": [
+      "4 real room.js + net.js clients initialize chosen 2v2 through Worker started handshake",
+      "Lost initial started packet recovers through iframe mf_ready and server mf_sync",
+      "FPS actual Net server-to-peer movement reaches host",
+      "FPS page rejoin while playing obtains server start through mf_sync and restores AI-replaced participant",
+      "FPS duplicate start acknowledgment preserves ongoing player state"
+    ],
+    "errors": []
+  },
+  "starpaintItemNetwork": {
+    "checks": 40,
+    "latencyEachWayMs": 90,
+    "droppedFastActionRecovered": true,
+    "results": [
+      {
+        "owner": "p0",
+        "item": "punch",
+        "timings": [
+          0,
+          236,
+          236,
+          241
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "hammer",
+        "timings": [
+          0,
+          251,
+          246,
+          246
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "bomb",
+        "timings": [
+          1,
+          260,
+          263,
+          265
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "mine",
+        "timings": [
+          0,
+          252,
+          256,
+          253
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "freeze",
+        "timings": [
+          0,
+          318,
+          323,
+          326
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "dash",
+        "timings": [
+          0,
+          274,
+          273,
+          275
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "rocket",
+        "timings": [
+          0,
+          274,
+          284,
+          276
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "cannon",
+        "timings": [
+          0,
+          312,
+          311,
+          314
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "beacon",
+        "timings": [
+          0,
+          244,
+          246,
+          247
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "jumpPack",
+        "timings": [
+          0,
+          292,
+          288,
+          300
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "punch",
+        "timings": [
+          203,
+          0,
+          487,
+          483
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "hammer",
+        "timings": [
+          188,
+          0,
+          453,
+          457
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "bomb",
+        "timings": [
+          204,
+          0,
+          476,
+          480
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "mine",
+        "timings": [
+          203,
+          0,
+          487,
+          495
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "freeze",
+        "timings": [
+          197,
+          0,
+          474,
+          469
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "dash",
+        "timings": [
+          231,
+          0,
+          497,
+          500
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "rocket",
+        "timings": [
+          203,
+          0,
+          477,
+          478
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "cannon",
+        "timings": [
+          189,
+          0,
+          510,
+          506
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "beacon",
+        "timings": [
+          195,
+          0,
+          494,
+          490
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "jumpPack",
+        "timings": [
+          198,
+          0,
+          471,
+          472
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "punch",
+        "timings": [
+          206,
+          480,
+          0,
+          483
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "hammer",
+        "timings": [
+          194,
+          462,
+          0,
+          471
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "bomb",
+        "timings": [
+          184,
+          438,
+          0,
+          440
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "mine",
+        "timings": [
+          198,
+          464,
+          0,
+          466
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "freeze",
+        "timings": [
+          198,
+          466,
+          0,
+          468
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "dash",
+        "timings": [
+          195,
+          560,
+          0,
+          561
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "rocket",
+        "timings": [
+          221,
+          502,
+          0,
+          505
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "cannon",
+        "timings": [
+          189,
+          491,
+          0,
+          494
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "beacon",
+        "timings": [
+          198,
+          529,
+          1,
+          537
+        ]
+      },
+      {
+        "owner": "p2",
+        "item": "jumpPack",
+        "timings": [
+          193,
+          465,
+          0,
+          474
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "punch",
+        "timings": [
+          199,
+          486,
+          486,
+          1
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "hammer",
+        "timings": [
+          190,
+          457,
+          463,
+          0
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "bomb",
+        "timings": [
+          183,
+          432,
+          432,
+          0
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "mine",
+        "timings": [
+          202,
+          463,
+          464,
+          0
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "freeze",
+        "timings": [
+          189,
+          470,
+          472,
+          0
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "dash",
+        "timings": [
+          201,
+          468,
+          468,
+          0
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "rocket",
+        "timings": [
+          188,
+          463,
+          460,
+          0
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "cannon",
+        "timings": [
+          200,
+          486,
+          482,
+          1
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "beacon",
+        "timings": [
+          204,
+          492,
+          486,
+          1
+        ]
+      },
+      {
+        "owner": "p3",
+        "item": "jumpPack",
+        "timings": [
+          197,
+          468,
+          470,
+          0
+        ]
+      }
+    ],
+    "errors": []
+  },
+  "starpaintImpactNetwork": {
+    "checks": 12,
+    "latencyEachWayMs": 90,
+    "droppedFastActionRecovered": false,
+    "results": [
+      {
+        "owner": "p0",
+        "item": "bomb",
+        "timings": [
+          1,
+          212,
+          212,
+          211
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "mine",
+        "timings": [
+          0,
+          218,
+          221,
+          222
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "freeze",
+        "timings": [
+          0,
+          249,
+          252,
+          254
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "rocket",
+        "timings": [
+          0,
+          219,
+          220,
+          220
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "cannon",
+        "timings": [
+          0,
+          221,
+          222,
+          223
+        ]
+      },
+      {
+        "owner": "p0",
+        "item": "beacon",
+        "timings": [
+          0,
+          242,
+          242,
+          242
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "bomb",
+        "timings": [
+          202,
+          1,
+          474,
+          466
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "mine",
+        "timings": [
+          191,
+          0,
+          417,
+          419
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "freeze",
+        "timings": [
+          201,
+          0,
+          444,
+          447
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "rocket",
+        "timings": [
+          204,
+          0,
+          425,
+          433
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "cannon",
+        "timings": [
+          200,
+          0,
+          439,
+          444
+        ]
+      },
+      {
+        "owner": "p1",
+        "item": "beacon",
+        "timings": [
+          199,
+          0,
+          422,
+          425
+        ]
+      }
+    ],
+    "errors": [],
+    "controlledImpactTrigger": true
+  },
+  "latestObservation": {
+    "hostRocketHeldItemFrameIntermittent": true,
+    "note": "Repeated software-rendered browser test did not capture one short host rocket item drawing frame; earlier 40-case run and subsequent 12 impact checks passed."
   }
 }
