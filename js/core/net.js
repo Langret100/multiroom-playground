@@ -257,6 +257,7 @@ if (isDuel && humans.length === 1){
           t:"start",
           d:{
             cpuDifficulty: safeText(payload?.cpuDifficulty, 12),
+            stackMode: payload?.stackMode==='normal'?'normal':'items',
             coopDifficulty: Number(payload?.coopDifficulty ?? 1) || 1
           }
         };
@@ -469,6 +470,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-10-12-mathfront-safety-v7";
+  window.__BUILD_ID = "2026-10-12-verified-games-v9";
   window.Net = { nowHHMM, makeClient, safeText, setStatus, roomTitleLimit };
 })();

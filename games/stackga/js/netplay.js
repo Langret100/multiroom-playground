@@ -123,7 +123,7 @@ if (EMBED){
     if (d.type === "bridge_init"){
       _setInit(d);
       if (_roomCb){
-        _roomCb({ meta: { state: "playing" }, players: _makePlayersSnapshot() });
+        _roomCb({ meta: { state: "playing",seed:_init?.seed,stackMode:_init?.stackMode }, players: _makePlayersSnapshot() });
       }
       return;
     }

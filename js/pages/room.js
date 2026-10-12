@@ -2608,7 +2608,7 @@ function sendBridgeInit(){
     oppSid,
     oppNick,
     role,
-    matchId: duel.matchId, stackMode
+    matchId: duel.matchId, seed:duel.active.seed, stackMode
   });
 }
 
@@ -2622,7 +2622,7 @@ function sendCpuBridgeInit(){
     oppSid: mySessionId,
     oppNick: myNick || "Player",
     role: "cpu",
-    matchId: duel.matchId,
+    matchId: duel.matchId, seed:duel.active.seed,
     cpuDifficulty, stackMode
   });
 }
@@ -2997,9 +2997,10 @@ function handleDuelMatch(m){
   // New match begins -> hide previous result overlay (no persistence)
   try{ hideResultOverlay(); }catch(_){ }
   duel.active = m;
+  if(m.stackMode==='normal'||m.stackMode==='items')stackMode=m.stackMode;
   duel.meta = window.gameById ? window.gameById(m.gameId) : { id: m.gameId, type:"duel", embedPath:"" };
   duel.reportedOver = false;
-  duel.matchId = null;
+  duel.matchId = m.matchId||null;
   cpuFrame.iframeReady = false;
   cpuFrame.iframeLoaded = false;
 
@@ -3039,7 +3040,7 @@ function handleDuelMatch(m){
     if ((duel.meta?.id || m.gameId) === "stackga") setDuelFrameLoading(true, "stackga");
     // Load iframe fresh
     const duelEmbedSep = String(duel.meta.embedPath||'').includes('?') ? '&' : '?';
-    const src = `${duel.meta.embedPath}${duelEmbedSep}embed=1&stackMode=${stackMode}&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
+    const src = `${duel.meta.embedPath}${duelEmbedSep}embed=1&stackMode=${stackMode}&seed=${Number(m.seed)>>>0}&embedGame=${encodeURIComponent(duel.meta.id)}&_m=${Date.now()}`;
     duel.iframeLoaded = false;
     duel.iframeReady = false;
     if (duel.iframeEl){

@@ -1,6 +1,6 @@
 import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261009-final-equipment';
 import {equipmentKey,lanternPose,lanternColor} from './equipment-art.mjs?v=20261009-final-equipment';
-import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=20261009-final-equipment';
+import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=20261012-verified-games-v9';
 import {WEAPONS,itemFeedback} from './shared/catalog.mjs';
 import {skillMotion} from './skill-motion.mjs?v=20261009-final-equipment';
 import {paintItemIcon,paintWeapon} from './graphics.mjs';
@@ -83,14 +83,17 @@ export class CharacterRenderer {
  draw(ctx,e,time,moving,index,visualTime=time){
   time=e.poseTime??time;
   if(!this.ready||e.kind!=='player')return false;if(e.pose==='victory')time=performance.now()/1000;const id=e.id.replace(/-trail$/,''),head=this.head(e),equipment=e.equipment||{},slot=e.cast?.slot||e.skillPose?.slot||e.whirl?.slot||'main',eq={...equipment,main:equipment[slot]||equipment.main},signature=head+'|'+slot+'|'+['armor','boots','main','off','helmet'].map(k=>this.key(eq[k])).join('|');
-  let actor=this.actors.get(id);if(!actor||actor.signature!==signature){const rig=this.rig(head,eq),weapon=this.weapon(eq.main);actor={signature,rig,weapon,canvas:this.factory(512,512),motion:P1WeaponMotion.create(rig,{},this.factory)};this.actors.set(id,actor);}
+  let actor=this.actors.get(id);if(!actor||actor.signature!==signature){const rig=this.rig(head,eq),weapon=this.weapon(eq.main);actor={signature,rig,weapon,canvas:this.factory(256,256),motion:P1WeaponMotion.create(rig,{},this.factory,{resolution:256})};this.actors.set(id,actor);}
   const x=Math.cos(e.facing||0),y=Math.sin(e.facing||0),dir=Math.abs(x)>Math.abs(y)?x>0?'right':'side':y>0?'front':'back';
   const skill=e.skillPose?.ends>time?e.skillPose:null;
   const mode=e.pose==='victory'?'victory':e.hitPose?'hurt':e.whirl?'whirlwind':skill?skill.mode:e.cast?skillMotion(e.cast.kind,actor.weapon.family):e.bowCharge>0?'shoot':e.attackPose?'combo':e.dashing?'run':moving?'walk':'idle';
   const def=P1WeaponMotion.weapons.find(w=>w[0]===actor.weapon.family)||P1WeaponMotion.weapons[0],start=e.cast?(e.cast.started??e.cast.ends-.12):0;
   const duration=mode==='combo'?def[4]:mode==='whirlwind'?2:mode==='dash'?.64:1.05;
   const animationTime=e.whirl?Math.max(0,time-(e.whirl.ends-2)):skill?(.30+.70*Math.min(1,(time-skill.started)/Math.max(.01,skill.ends-skill.started)))*duration:e.cast?Math.min(.28,Math.max(0,time-start)/Math.max(.12,e.cast.ends-start)*.28)*duration:e.bowCharge>0?.25*duration:e.attackPose?Math.max(0,1-e.attackPose/(e.attackDuration||.25))*duration:visualTime;
-  const pose=actor.motion.render(actor.canvas,dir,actor.weapon.family,animationTime,{mode,bowCharge:e.bowCharge||0,single:!!skill||!!e.cast||!!e.bowCharge||!!e.attackPose&&!e.whirl,combo:e.combo||1,weapon:actor.weapon.sprite,grip:actor.weapon.sprite.grip,helmet:null,blocking:!!e.blocking,shield:eq.off?.type==='shield'?this.accessory(eq.off,dir==='right'?'side':dir):null,shieldHeight:eq.off?.visual?.shape==='buckler'?8:eq.off?.appearance==='pot_lid'?9:12,theme:actor.weapon.theme,effects:false});
+  // Reuse remote sprite composites between 30 Hz animation samples; world positions
+  // and local input still render every frame. Stagger actors to avoid a shared redraw spike.
+  const phaseOffset=[...id].reduce((n,c)=>n+c.charCodeAt(0),0)%7/7,poseKey=[dir,mode,e.combo||1,!!e.blocking,e.bowCharge||0,Math.floor(animationTime*(id==='local'?60:30)+phaseOffset+1e-6)].join('|');
+  let pose=actor.cachedPose;if(actor.poseKey!==poseKey){pose=actor.motion.render(actor.canvas,dir,actor.weapon.family,animationTime,{mode,bowCharge:e.bowCharge||0,single:!!skill||!!e.cast||!!e.bowCharge||!!e.attackPose&&!e.whirl,combo:e.combo||1,weapon:actor.weapon.sprite,grip:actor.weapon.sprite.grip,helmet:null,blocking:!!e.blocking,shield:eq.off?.type==='shield'?this.accessory(eq.off,dir==='right'?'side':dir):null,shieldHeight:eq.off?.visual?.shape==='buckler'?8:eq.off?.appearance==='pot_lid'?9:12,theme:actor.weapon.theme,effects:false});actor.cachedPose=pose;actor.poseKey=poseKey;}
   const matrix=ctx.getTransform?.();
   const sx=Math.max(1,Math.abs(matrix?.a||1)),sy=Math.max(1,Math.abs(matrix?.d||1));
   const snap=(v,scale)=>Math.round(v*scale)/scale;

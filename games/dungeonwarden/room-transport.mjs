@@ -10,7 +10,7 @@ export class RoomTransport {
   this.id=id;this.gameId=gameId;this.latest=null;this.network=true;
   this.clock=0;this.sent=-1;this.pending={};this.raw=null;this.frames=[];this.edge={attack:false,special:false};this.prevInput={};
   this.interpDelay=.10;this.arrivalGap=.05;this.jitter=.006;this.lastReceiveAt=0;
-  this.serverMe=null;this.visualMe=null;this.visualAt=0;
+  this.serverMe=null;this.visualMe=null;this.visualAt=0;this.serverOffset=null;this.serverMeTime=null;this.inputHistory=[];this.motionSignature=null;
  }
  post(type,data={}){parent.postMessage({type,gameId:this.gameId,...data},location.origin);}
  normalize(v){return typeof v==='string'?(v===this.id?'local':v):Array.isArray(v)?v.map(x=>this.normalize(x)):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,this.normalize(x)])):v;}
@@ -18,6 +18,7 @@ export class RoomTransport {
   if(packet.type==='snapshot')this.raw=packet.state;else this.raw=applyStateDelta(this.raw,packet);if(!this.raw)return;
   const next=this.normalize(this.raw);this.latest=next;
   const now=performance.now()/1000;
+  if(Number.isFinite(next.time)){const offset=now-next.time;this.serverOffset=this.serverOffset===null?offset:Math.min(this.serverOffset,offset);this.serverMeTime=next.time;}
   if(this.lastReceiveAt){
    const gap=clamp(now-this.lastReceiveAt,.02,.4),delta=Math.abs(gap-this.arrivalGap);
    this.arrivalGap=this.arrivalGap*.88+gap*.12;this.jitter=this.jitter*.9+delta*.1;
@@ -42,8 +43,8 @@ export class RoomTransport {
   if((ranged||i.block||i.attack||i.special)&&hasAim)e.facing=Math.atan2(aimY-e.y,aimX-e.x);
   else if(len>.001)e.facing=Math.atan2(dy,dx);
  }
- advanceLocal(e,dt){
-  const s=this.latest,i=this.pending||{};if(!e||!s?.map||e.dead||dt<=0)return;
+ advanceLocal(e,dt,input=this.pending){
+  const s=this.latest,i=input||{};if(!e||!s?.map||e.dead||dt<=0)return;
   const dx=Number(i.mx)||0,dy=Number(i.my)||0,len=Math.hypot(dx,dy);
   this.orientLocal(e);
   if(!len||e.stun>0||e.root>0||e.cast)return;
@@ -66,6 +67,8 @@ export class RoomTransport {
   if(input.attack&&!this.prevInput.attack)this.edge.attack=true;
   if(input.special&&!this.prevInput.special)this.edge.special=true;
   this.prevInput={attack:!!input.attack,special:!!input.special};
+  const motionSignature=[input.mx||0,input.my||0,!!input.sprint,!!input.block].join('|');
+  if(motionSignature!==this.motionSignature){this.motionSignature=motionSignature;this.inputHistory.push({at:performance.now()/1000,input:{...input}});if(this.inputHistory.length>64)this.inputHistory.shift();}
   this.pending=input;
  }
  sendCommand(command){const c={...command};if(c.target==='local')c.target=this.id;if(c.targetId==='local')c.targetId=this.id;this.post('dw_command',{command:c});}
@@ -87,16 +90,19 @@ export class RoomTransport {
  snapshot(){return this.latest;}
  interpolateRemote(now){
   if(!this.latest||this.frames.length<2)return this.latest;
-  const target=now-this.interpDelay;let a=this.frames[0],b=null;
-  for(const frame of this.frames){if(frame.at<=target)a=frame;else{b=frame;break;}}
+  const serverTimeline=this.serverOffset!==null&&this.frames.every(f=>Number.isFinite(f.state.time)),frameTime=f=>serverTimeline?f.state.time:f.at;
+  let target=(serverTimeline?now-this.serverOffset:now)-this.interpDelay;
+  if(serverTimeline){target=Math.max(this.remoteRenderTime??-Infinity,target);this.remoteRenderTime=target;}
+  let a=this.frames[0],b=null;
+  for(const frame of this.frames){if(frameTime(frame)<=target)a=frame;else{b=frame;break;}}
   if(!b){
    const last=this.frames.at(-1),prev=this.frames.at(-2);if(!prev)return last.state;
-   const ahead=clamp(target-last.at,0,.08),span=Math.max(.001,last.at-prev.at),factor=clamp(ahead/span,0,.75);
+   const ahead=clamp(target-frameTime(last),0,.08),span=Math.max(.001,frameTime(last)-frameTime(prev)),factor=clamp(ahead/span,0,.75);
    const extrapolate=(old,values)=>{const ids=new Map((old||[]).map(e=>[e.id,e]));return (values||[]).map(e=>{if(e.id==='local')return e;const q=ids.get(e.id);if(!q||q.room!==e.room||q.dead!==e.dead)return e;const dx=e.x-q.x,dy=e.y-q.y;if(Math.hypot(dx,dy)>2.5)return e;return {...e,x:e.x+dx*factor,y:e.y+dy*factor};});};
    const ageTimers=e=>({...e,...Object.fromEntries(['attackPose','hitPose','life'].filter(k=>Number.isFinite(e[k])).map(k=>[k,Math.max(0,e[k]-ahead)]))});
    return {...last.state,time:last.state.time+ahead,entities:extrapolate(prev.state.entities,last.state.entities).map(e=>e.id==='local'?e:ageTimers(e)),projectiles:extrapolate(prev.state.projectiles,last.state.projectiles),effects:(last.state.effects||[]).map(ageTimers)};
   }
-  const span=Math.max(.001,b.at-a.at),t=clamp((target-a.at)/span,0,1),mix=(x,y)=>x+(y-x)*t;
+  const span=Math.max(.001,frameTime(b)-frameTime(a)),t=clamp((target-frameTime(a))/span,0,1),mix=(x,y)=>x+(y-x)*t;
   const interp=(old,values)=>{const ids=new Map((old||[]).map(e=>[e.id,e]));return (values||[]).map(e=>{if(e.id==='local')return e;const q=ids.get(e.id);if(!q||q.room!==e.room||q.dead!==e.dead||Math.hypot(e.x-q.x,e.y-q.y)>2.5)return e;const out={...e,x:mix(q.x,e.x),y:mix(q.y,e.y)};for(const k of ['attackPose','hitPose','life'])if(Number.isFinite(q[k])&&Number.isFinite(e[k])&&e[k]<=q[k])out[k]=mix(q[k],e[k]);if(Number.isFinite(q.facing)&&Number.isFinite(e.facing))out.facing=q.facing+Math.atan2(Math.sin(e.facing-q.facing),Math.cos(e.facing-q.facing))*t;return out;});};
   const renderTime=mix(a.state.time,b.state.time);
   // Effect lifetimes are clocks, not positions. Even newly created effects need to
@@ -106,11 +112,15 @@ export class RoomTransport {
  }
  renderSnapshot(now=performance.now()/1000){
   const state=this.interpolateRemote(now);if(!state||!this.serverMe)return state;
-  // Start every frame from the latest authoritative position and extrapolate only the
-  // tiny amount of time since that packet arrived. Prediction therefore never accumulates
-  // across packets and cannot build up a rubber-band correction debt.
-  const target=cloneEntity(this.serverMe),age=clamp(now-this.lastReceiveAt,0,.12);
-  this.advanceLocal(target,age);this.orientLocal(target);
+  // Predict on one server simulation timeline. Packet arrival jitter must not reset
+  // the prediction age to zero and pull a continuously moving player backwards.
+  // A bounded horizon still stops prediction during a real network outage.
+  const target=cloneEntity(this.serverMe),predictionStart=this.serverOffset===null||this.serverMeTime===null?this.lastReceiveAt:this.serverMeTime+this.serverOffset,age=clamp(now-predictionStart,0,.25),predictionEnd=predictionStart+age;
+  // Replay the input that was active in each unconfirmed interval. A newly released
+  // or reversed key must not erase movement predicted before that input change.
+  let cursor=predictionStart,activeInput={};
+  for(const sample of this.inputHistory){if(sample.at<=cursor){activeInput=sample.input;continue;}if(sample.at>predictionEnd)break;this.advanceLocal(target,sample.at-cursor,activeInput);cursor=sample.at;activeInput=sample.input;}
+  this.advanceLocal(target,predictionEnd-cursor,this.inputHistory.length?activeInput:this.pending);this.orientLocal(target);
   const prev=this.visualMe;
   if(!prev||prev.room!==target.room||prev.dead!==target.dead||Math.hypot(target.x-prev.x,target.y-prev.y)>1.6)this.visualMe=cloneEntity(target);
   else{

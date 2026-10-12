@@ -215,7 +215,7 @@ function statusDot(room){
       const fr = _embedFrame || document.getElementById('embedRoomFrame');
       _embedOverlay = ov; _embedFrame = fr;
       if (!ov || !fr){
-        location.href = `./room.html?roomId=${encodeURIComponent(roomId)}&v=20260923-roomcache-v1`;
+        location.href = `./room.html?roomId=${encodeURIComponent(roomId)}&v=20261012-verified-games-v9`;
         return;
       }
 
@@ -232,9 +232,9 @@ function statusDot(room){
       ov.classList.remove('hidden');
       ov.setAttribute('aria-hidden', 'false');
       // Keep URL param explicit so room.js/auth.js can behave differently in embed mode.
-      fr.src = `./room.html?roomId=${encodeURIComponent(roomId)}&embedded=1&v=20260923-roomcache-v1`;
+      fr.src = `./room.html?roomId=${encodeURIComponent(roomId)}&embedded=1&v=20261012-verified-games-v9`;
     }catch(_){
-      location.href = `./room.html?roomId=${encodeURIComponent(roomId)}&v=20260923-roomcache-v1`;
+      location.href = `./room.html?roomId=${encodeURIComponent(roomId)}&v=20261012-verified-games-v9`;
     }
   }
 
@@ -356,7 +356,7 @@ function statusDot(room){
         sessionStorage.setItem("pendingRoomId", r.roomId);
         try{ window.__fsNavigating = true; }catch(_){ }
         if (isFullscreenActive()) openEmbeddedRoom(r.roomId);
-        else location.href = `./room.html?roomId=${encodeURIComponent(r.roomId)}&v=20260923-roomcache-v1`;
+        else location.href = `./room.html?roomId=${encodeURIComponent(r.roomId)}&v=20261012-verified-games-v9`;
       };
 
       if (!(isPlaying || isFull)) {
@@ -510,7 +510,7 @@ function statusDot(room){
       sessionStorage.setItem("pendingRoomId", room.id);
       try{ window.__fsNavigating = true; }catch(_){ }
       if (isFullscreenActive()) openEmbeddedRoom(room.id);
-      else location.href = `./room.html?roomId=${encodeURIComponent(room.id)}&v=20260923-roomcache-v1`;
+      else location.href = `./room.html?roomId=${encodeURIComponent(room.id)}&v=20261012-verified-games-v9`;
     }catch(err){
       setStatus("방 생성 실패: 서버 연결을 확인하세요.", "error");
     }

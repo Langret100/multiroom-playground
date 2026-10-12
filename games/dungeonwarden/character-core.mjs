@@ -36,8 +36,8 @@ const P1WeaponMotion=(()=>{
  const weapons=[['sword','한손검','weapon_regular_sword',3,.48],['dagger','단검','weapon_knife',3,.32],['axe','도끼','weapon_axe',3,.62],['mace','메이스','weapon_mace',3,.56],['greatsword','양손검','weapon_anime_sword',2,.84],['hammer','양손망치','weapon_big_hammer',2,.92],['bow','활','weapon_bow',1,.76],['staff','스태프','weapon_green_magic_staff',1,.82]];
  const modes=[['combo','기본 연속 공격'],['jump','점프 공격'],['dash','돌진 공격'],['slam','내려찍기'],['whirlwind','휠윈드'],['idle','대기'],['walk','걷기'],['run','달리기'],['hurt','피격'],['victory','승리']];
  const clamp=x=>Math.max(0,Math.min(1,x)),lerp=(a,b,t)=>a+(b-a)*t,smooth=t=>{t=clamp(t);return t*t*(3-2*t);};
- function create(rig,images,factory){
-  const native=factory(512,512),wg=factory(512,512),outg=native.getContext('2d');
+ function create(rig,images,factory,{resolution=512}={}){
+  const density=resolution/128,native=factory(resolution,resolution),wg=factory(resolution,resolution),outg=native.getContext('2d');
   function render(out,direction,type,time,options={}){
    const def=weapons.find(w=>w[0]===type)||weapons[0],mode=options.mode||'combo',heavy=['greatsword','hammer'].includes(type),ranged=['bow','staff'].includes(type),passive=['idle','walk','run','hurt','victory'].includes(mode);
    const count=mode==='combo'?def[3]:1,duration=mode==='combo'?def[4]:mode==='whirlwind'?2:mode==='dash'?.64:1.05;
@@ -55,7 +55,7 @@ const P1WeaponMotion=(()=>{
    const cx=64+v.x*lunge,feet=82+v.y*lunge,p={...rig.sprites[dir]},bodyY=feet-3-p.torso.height+jump+(moving?-.35*Math.abs(step):.18*Math.sin(time*2.5))+pulse*.6;
    const expression=mode==='hurt'?'hurt':active?'attack':'neutral';if(rig.expressions?.[dir]?.[expression])p.head=rig.expressions[dir][expression];
    const headY=bodyY+4-p.head.height,shoulderY=bodyY+p.torso.height-p.leftArm.height+.5-(bowAim?2:0),headX=cx,g=outg,wgctx=wg.getContext('2d');
-   for(const ctx of [g,wgctx]){ctx.resetTransform();ctx.clearRect(0,0,512,512);ctx.scale(4,4);ctx.imageSmoothingEnabled=false;}
+   for(const ctx of [g,wgctx]){ctx.resetTransform();ctx.clearRect(0,0,resolution,resolution);ctx.scale(density,density);ctx.imageSmoothingEnabled=false;}
    const main=dir==='side'?'leftArm':'rightArm',other=main==='leftArm'?'rightArm':'leftArm',sx=dir==='side'?-2:3;
    const resting={x:cx+sx+(main==='leftArm'?-3:3),y:shoulderY+6};
    const extension=active?(type==='dagger'?6*strike*(1-recover):4*strike*(1-recover)):0;
@@ -93,7 +93,7 @@ const P1WeaponMotion=(()=>{
    // The hand/weapon use the same actual rigid-arm endpoint (no floating equipment).
    const shoulderX=cx+sx+(bowAim?v.x*3:0),armPart=p[main],armDX=main==='leftArm'?3-armPart.width:armPart.width-3,armDY=armPart.height-3,armRotation=Math.atan2(hand.y-shoulderY,hand.x-shoulderX)-Math.atan2(armDY,armDX);
    const actual={x:shoulderX+armDX*Math.cos(armRotation)-armDY*Math.sin(armRotation),y:shoulderY+armDX*Math.sin(armRotation)+armDY*Math.cos(armRotation)};
-   wgctx.resetTransform();wgctx.clearRect(0,0,512,512);wgctx.scale(4,4);wgctx.save();wgctx.translate(Math.round(actual.x),Math.round(actual.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
+   wgctx.resetTransform();wgctx.clearRect(0,0,resolution,resolution);wgctx.scale(density,density);wgctx.save();wgctx.translate(Math.round(actual.x),Math.round(actual.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
    tip.x+=actual.x-hand.x;tip.y+=actual.y-hand.y;hand=actual;
    const drawShield=()=>{if(!options.shield||heavy||ranged)return;const block=options.blocking,px=cx+(dir==='side'?4:-6)+v.x*(block?3:0),py=bodyY+9+v.y*(block?2:0)+(moving?step*.35:0),height=options.shieldHeight||12,width=height*options.shield.width/options.shield.height;g.save();g.translate(Math.round(px),Math.round(py));g.rotate((block?-.12:.08)+Math.sin(time*2)*.025);g.drawImage(options.shield,-width/2,-height/2,width,height);g.restore();};
    if(dir==='back')drawShield();
@@ -104,7 +104,7 @@ const P1WeaponMotion=(()=>{
     const ax=Math.max(2.5,p.torso.width/2-.4),ay=bodyY+p.torso.height-Math.max(p.leftArm.height,p.rightArm.height)-.5,lift=mode==='run'?1.6:1.1;
     const lh=feet-Math.max(p.leftLeg.height,p.rightLeg.height);
     const idleHand={x:cx+(dir==='side'?-ax:ax)+(dir==='side'?-1:1),y:ay+p[main].height-2+(moving?step*.35:0)};
-    hand=idleHand;wgctx.resetTransform();wgctx.clearRect(0,0,512,512);wgctx.scale(4,4);wgctx.save();wgctx.translate(Math.round(hand.x),Math.round(hand.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
+    hand=idleHand;wgctx.resetTransform();wgctx.clearRect(0,0,resolution,resolution);wgctx.scale(density,density);wgctx.save();wgctx.translate(Math.round(hand.x),Math.round(hand.y));wgctx.rotate(angle);paintHeldWeapon();wgctx.restore();
     if(rear)g.drawImage(wg,0,0,128,128);
     part('leftLeg',cx+(dir==='side'?-.6+step*.45:-2),lh-Math.max(0,step)*lift);
     part('rightLeg',cx+(dir==='side'?.6-step*.45:2),lh-Math.max(0,-step)*lift);

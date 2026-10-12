@@ -93,7 +93,7 @@ export default {
     const path = url.pathname;
 
     if (path === "/api/version" && request.method === "GET") {
-      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261008-rpg-v1',mathfrontRelease:'20261012-safety-v7',mathfrontStartSync:true });
+      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261008-rpg-v1',mathfrontRelease:'20261012-verified-games-v9',mathfrontStartSync:true });
     }
 
     const upgrade = request.headers.get("Upgrade") || "";
@@ -1278,7 +1278,7 @@ export class RoomDO{
           }
         }
 
-        if(this.meta.mode==='mathfront'){const roster=Array.from(this.users.entries()).filter(([id])=>id!==this._cpuUid()).map(([sid,u])=>({sid:String(sid),nick:safeNick(u.nick),seat:u.seat,team:u.team})).sort((a,b)=>a.seat-b.seat);if(roster.length>8||roster.length<2||roster.length%2)return;this.mf={roster:roster.map(p=>({...p,team:p.team==='red'?'red':'blue'})),host:roster[0].sid,latest:null,rates:{}};this.mf.startPayload={mode:'mathfront',serverRelease:'20261012-safety-v7',roster:this.mf.roster,host:this.mf.host,seed:Math.floor(Math.random()*0xffffffff),startedAt:now(),serverNow:now(),remainingMs:180000,endsAt:now()+180000};this.mf.startPayload.matchId='mf:'+this.mf.startPayload.startedAt+':'+this.mf.startPayload.seed;this.mf.endTimer=setTimeout(()=>this._finishMathfront(),180000);}
+        if(this.meta.mode==='mathfront'){const roster=Array.from(this.users.entries()).filter(([id])=>id!==this._cpuUid()).map(([sid,u])=>({sid:String(sid),nick:safeNick(u.nick),seat:u.seat,team:u.team})).sort((a,b)=>a.seat-b.seat);if(roster.length>8||roster.length<2||roster.length%2)return;this.mf={roster:roster.map(p=>({...p,team:p.team==='red'?'red':'blue'})),host:roster[0].sid,latest:null,rates:{}};this.mf.startPayload={mode:'mathfront',serverRelease:'20261012-verified-games-v9',roster:this.mf.roster,host:this.mf.host,seed:Math.floor(Math.random()*0xffffffff),startedAt:now(),serverNow:now(),remainingMs:180000,endsAt:now()+180000};this.mf.startPayload.matchId='mf:'+this.mf.startPayload.startedAt+':'+this.mf.startPayload.seed;this.mf.endTimer=setTimeout(()=>this._finishMathfront(),180000);}
         this.meta.phase = "playing";
         if(['dungeonwarden'].includes(this.meta.mode))this._startDungeon();
         this.meta.status = "playing";
@@ -3225,6 +3225,9 @@ export class RoomDO{
 
         const payload = {
           gameId: this.tour.gameId,
+          matchId:'duel:'+now()+':'+Math.floor(Math.random()*0xffffffff),
+          seed:Math.floor(Math.random()*0xffffffff)>>>0,
+          stackMode:this.meta.stackMode||'items',
           roundLabel: roundLabelFor(nPlayers, r, m),
           aSid: a,
           bSid: b,

@@ -1,11 +1,11 @@
 import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261011-teams-mobile';
-import {RoomTransport} from './room-transport.mjs?v=20261011-teams-mobile';
+import {RoomTransport} from './room-transport.mjs?v=20261012-verified-games-v9';
 import {LocalTransport} from './local-transport.mjs?v=20261012-team-toggle';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=20261011-teams-mobile';
+import {Renderer} from './renderer.mjs?v=20261012-verified-games-v9';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
 import {roomAt} from './shared/world.mjs?v=20261011-teams-mobile';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);

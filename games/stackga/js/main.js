@@ -9,7 +9,7 @@ import {
   roomRefs, setRoomState, publishMyState, subscribeOppState,
   pushEvent, subscribeEvents, tryCleanupRoom, hardDeleteRoom,
   releaseSlot, sweepLobbySlots
-} from "./netplay.js";
+} from "./netplay.js?v=20261012-verified-games-v9";
 
 const $ = (id)=>document.getElementById(id);
 
@@ -372,7 +372,7 @@ function updateHud(){
 }
 
 let oppSpecialMarks=[],oppBlindUntil=0,oppSpecialFx=null,oppItemProgress=null;
-function isItemMode(){return (new URLSearchParams(location.search).get('stackMode') || window.__EMBED_INIT__?.stackMode || 'items')==='items';}
+function isItemMode(){return (window.__EMBED_INIT__?.stackMode || new URLSearchParams(location.search).get('stackMode') || 'items')==='items';}
 document.body.classList.toggle('stackItems',isItemMode());
 function updateItemGauges(){
  const enabled=meGame?.itemMode??isItemMode();document.body.classList.toggle('stackItems',enabled);
@@ -815,7 +815,7 @@ function onRoomUpdate(room){
     setRoomState({ api, metaRef }, "playing").catch(()=>{});
   }
 
-  if(meta.state === "playing" && !started && (EMBED || ids.length===2)){
+  if(meta.state === "playing" && !started && !startCuePending && (EMBED || ids.length===2)){
     finished = false;
     try{ audio.gestureStart(); }catch{}
     clearWait();
@@ -824,7 +824,7 @@ function onRoomUpdate(room){
     if(ui.oppTag) ui.oppTag.textContent = (window.__EMBED_INIT__?.oppNick || "Player");
 
     // rows는 고정(23행). seed만 동일하게 맞춤.
-    meGame = new StackGame(((meta.seed>>>0) || 1), {itemMode:isItemMode()});
+    meGame = new StackGame((Number(meta.seed??window.__EMBED_INIT__?.seed??Math.floor(Math.random()*2**32))>>>0), {itemMode:isItemMode()});
     // If this iframe is a hidden CPU bot (embedded solo mode), drive inputs automatically.
     if (window.__EMBED_INIT__?.role === "cpu"){
       const cpuDiff = window.__EMBED_INIT__?.cpuDifficulty || window.__EMBED_INIT__?.cpuDiff || (new URLSearchParams(location.search).get("cpu") || "low");
@@ -967,7 +967,8 @@ async function boot(){
       }
       return (h>>>0) || 1;
     };
-    const seed = fnv1a32(window.__EMBED_INIT__?.matchId || `${Date.now()}_${pid}`);
+    const seedValue=window.__EMBED_INIT__?.seed??new URLSearchParams(location.search).get('seed');
+    const seed=seedValue!==null&&seedValue!==undefined?Number(seedValue)>>>0:fnv1a32(window.__EMBED_INIT__?.matchId || `${Date.now()}_${pid}`);
 
     // Subscribe opponent & events before starting the loop.
     oppUnsub?.();
