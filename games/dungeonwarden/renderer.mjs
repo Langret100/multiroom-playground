@@ -6,7 +6,7 @@ import {RARITY_COLORS,WEAPONS} from './shared/catalog.mjs';
 import {weaponPreview} from './shared/combat.mjs';
 import {paintWeapon,paintWear,paintItemIcon,paintEffect,traceAttackShape} from './graphics.mjs?v=20261009-final-equipment';
 import {walkable,lineOfSight,inside} from './shared/world.mjs';
-import {CharacterRenderer} from './character-runtime.mjs?v=20261012-dungeon-smooth-v10';
+import {CharacterRenderer} from './character-runtime.mjs?v=20261012-dungeon-render-v12';
 const palette=['#79d5c1','#e99a83','#8caee9','#ddb477','#ae99e4','#e4a8c2','#a7c578','#84bdd1'];
 export function minimapLayout(map,width){const w=width<500?150:200,h=Math.max(44,Math.min(118,w*map.height/map.width)),x=18,y=115,scale=Math.min(w/map.width,h/map.height);return {x,y,w,h,scale,mx:x+(w-map.width*scale)/2,my:y+(h-map.height*scale)/2};}
 export class Renderer {
@@ -273,6 +273,8 @@ export class Renderer {
   }
   fogGeometry(s){
     const rooms=s.map.rooms||[],corridors=s.map.corridors||[],obstacles=s.map.obstacles||[];
+    if(this._fogGeometry&&this._fogRooms===rooms&&this._fogCorridors===corridors&&this._fogObstacles===obstacles)return this._fogGeometry;
+    this._fogRooms=rooms;this._fogCorridors=corridors;this._fogObstacles=obstacles;
     const key=[obstacles.map(o=>`${o.x},${o.y},${o.w},${o.h}`).join(';'),rooms.map(r=>`${r.x},${r.y},${r.w},${r.h},${r.locked?1:0}`).join(';'),corridors.map(c=>`${c.x},${c.y},${c.w},${c.h},${c.to||''}`).join(';')].join('|');
     if(this._fogGeometry?.key===key)return this._fogGeometry;
     const pack=values=>{const out=new Float32Array(values.length*4);let i=0;for(const r of values){out[i++]=r.x;out[i++]=r.y;out[i++]=r.x+r.w;out[i++]=r.y+r.h;}return out;};
@@ -282,7 +284,11 @@ export class Renderer {
   drawFog(s){
     const ctx=this.ctx,scale=this.camera.scale;
     if(!this.fogCanvas){this.fogCanvas=document.createElement('canvas');this.fogCtx=this.fogCanvas.getContext('2d');this.lightCanvas=document.createElement('canvas');this.lightCtx=this.lightCanvas.getContext('2d');}
-    for(const c of [this.fogCanvas,this.lightCanvas])if(c.width!==Math.ceil(this.width)||c.height!==Math.ceil(this.height)){c.width=Math.ceil(this.width);c.height=Math.ceil(this.height);}
+    // Soft lighting needs no full-resolution intermediate buffers. Keep geometry in
+    // screen coordinates and rasterize the blurred mask at half resolution.
+    const lightScale=.5,lightWidth=Math.ceil(this.width*lightScale),lightHeight=Math.ceil(this.height*lightScale);
+    for(const c of [this.fogCanvas,this.lightCanvas])if(c.width!==lightWidth||c.height!==lightHeight){c.width=lightWidth;c.height=lightHeight;}
+    this.fogCtx.setTransform(lightScale,0,0,lightScale,0,0);this.lightCtx.setTransform(lightScale,0,0,lightScale,0,0);
     const f=this.fogCtx,l=this.lightCtx;f.clearRect(0,0,this.width,this.height);l.clearRect(0,0,this.width,this.height);f.globalCompositeOperation='source-over';f.fillStyle='#10111bb0';f.fillRect(0,0,this.width,this.height);
     const geometry=this.fogGeometry(s),blocked=(x,y)=>{const obs=geometry.obstacles;for(let i=0;i<obs.length;i+=4)if(x>=obs[i]&&x<=obs[i+2]&&y>=obs[i+1]&&y<=obs[i+3])return true;const walk=geometry.walk;for(let i=0;i<walk.length;i+=4)if(x>=walk[i]&&x<=walk[i+2]&&y>=walk[i+1]&&y<=walk[i+3])return false;return true;};
     const RAYS=96,POINTS=RAYS+1;
@@ -311,7 +317,7 @@ export class Renderer {
       }
       l.closePath();l.clip();const g=l.createRadialGradient(p.x,p.y,0,p.x,p.y,radius*scale);g.addColorStop(0,'#fffffffa');g.addColorStop(.35,'#ffffffe8');g.addColorStop(.65,'#ffffffa0');g.addColorStop(.85,'#ffffff40');g.addColorStop(1,'#ffffff00');l.fillStyle=g;l.fillRect(0,0,this.width,this.height);const near=l.createRadialGradient(p.x,p.y,0,p.x,p.y,Math.min(radius,3)*scale);near.addColorStop(0,'#fffffffa');near.addColorStop(.45,'#ffffffd0');near.addColorStop(.75,'#ffffff60');near.addColorStop(1,'#ffffff00');l.fillStyle=near;l.fillRect(p.x-3*scale,p.y-3*scale,6*scale,6*scale);l.restore();
     }
-    f.globalCompositeOperation='destination-out';f.filter=`blur(${Math.max(10,Math.min(18,scale*.65))}px)`;f.drawImage(this.lightCanvas,0,0);f.filter='none';f.globalCompositeOperation='source-over';ctx.drawImage(this.fogCanvas,0,0,this.width,this.height);
+    f.globalCompositeOperation='destination-out';f.filter=`blur(${Math.max(10,Math.min(18,scale*.65))*lightScale}px)`;f.drawImage(this.lightCanvas,0,0,this.width,this.height);f.filter='none';f.globalCompositeOperation='source-over';ctx.drawImage(this.fogCanvas,0,0,this.width,this.height);
   }
   minimap(s){const ctx=this.ctx,layout=minimapLayout(s.map,this.width);if(s.teamBattle){const offset=this.width-layout.w-36;layout.x+=offset;layout.mx+=offset;layout.y=76;layout.my-=39;}const {w,h,x,y,scale,mx,my}=layout;this.minimapRect={x:mx,y:my,w:s.map.width*scale,h:s.map.height*scale,scale,frameBottom:y+h};ctx.fillStyle='#0e1825e8';ctx.fillRect(x-6,y-6,w+12,h+12);
     const key=s.map.rooms.map(r=>[r.x,r.y,r.w,r.h].join(',')).join('|');

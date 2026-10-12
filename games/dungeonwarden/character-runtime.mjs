@@ -1,6 +1,6 @@
 import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261009-final-equipment';
 import {equipmentKey,lanternPose,lanternColor} from './equipment-art.mjs?v=20261009-final-equipment';
-import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=20261012-dungeon-smooth-v10';
+import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=20261012-dungeon-render-v12';
 import {WEAPONS,itemFeedback} from './shared/catalog.mjs';
 import {skillMotion} from './skill-motion.mjs?v=20261009-final-equipment';
 import {paintItemIcon,paintWeapon} from './graphics.mjs';

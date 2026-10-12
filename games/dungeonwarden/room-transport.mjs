@@ -7,13 +7,21 @@ const cloneEntity=e=>e?{...e,equipment:e.equipment?{...e.equipment}:e.equipment,
 
 export class RoomTransport {
  constructor(id,gameId){
-  this.id=id;this.gameId=gameId;this.latest=null;this.network=true;
+  this.id=id;this.gameId=gameId;this.latest=null;this.network=true;this.normalized=new WeakMap();
   this.clock=0;this.sent=-1;this.pending={};this.raw=null;this.frames=[];this.edge={attack:false,special:false};this.prevInput={};
   this.interpDelay=.10;this.arrivalGap=.05;this.jitter=.006;this.lastReceiveAt=0;
   this.serverMe=null;this.visualMe=null;this.visualAt=0;this.serverOffset=null;this.serverMeTime=null;this.inputHistory=[];this.motionSignature=null;
  }
  post(type,data={}){parent.postMessage({type,gameId:this.gameId,...data},location.origin);}
- normalize(v){return typeof v==='string'?(v===this.id?'local':v):Array.isArray(v)?v.map(x=>this.normalize(x)):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,this.normalize(x)])):v;}
+ normalize(v){
+  if(typeof v==='string')return v===this.id?'local':v;
+  if(!v||typeof v!=='object')return v;
+  // Delta decoding is immutable. Preserve unchanged collection identities so static
+  // map buffers, equipment and other render caches survive movement-only packets.
+  if(this.normalized.has(v))return this.normalized.get(v);
+  const out=Array.isArray(v)?v.map(x=>this.normalize(x)):Object.fromEntries(Object.entries(v).map(([k,x])=>[k,this.normalize(x)]));
+  this.normalized.set(v,out);return out;
+ }
  receive(packet){
   if(packet.type==='snapshot')this.raw=packet.state;else this.raw=applyStateDelta(this.raw,packet);if(!this.raw)return;
   const next=this.normalize(this.raw);this.latest=next;
