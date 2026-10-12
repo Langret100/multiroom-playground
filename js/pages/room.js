@@ -1,3 +1,12 @@
+// Limit browser history/side-button navigation only while Mathfront is active.
+let mathfrontHistoryGuard=false;
+function mathfrontCombatActive(){return !!(window.__roomCoop?.active&&window.__roomCoop?.meta?.id==='mathfront'&&document.body.classList.contains('in-game')&&!window.__fsNavigating);}
+function installMathfrontNavigationGuard(){if(mathfrontHistoryGuard)return;mathfrontHistoryGuard=true;history.pushState({...history.state,mfCombatGuard:true},'',location.href);}
+window.addEventListener('popstate',()=>{if(mathfrontCombatActive()){history.pushState({...history.state,mfCombatGuard:true},'',location.href);}else mathfrontHistoryGuard=false;});
+window.navigation?.addEventListener('navigate',e=>{if(mathfrontCombatActive()&&e.navigationType==='traverse'&&e.cancelable)e.preventDefault();});
+for(const type of ['pointerdown','mousedown','mouseup','auxclick'])window.addEventListener(type,e=>{if(mathfrontCombatActive()&&[2,3,4].includes(e.button))e.preventDefault();},{capture:true,passive:false});
+window.addEventListener('keydown',e=>{if(mathfrontCombatActive()&&((e.altKey&&['ArrowLeft','ArrowRight'].includes(e.code))||['BrowserBack','BrowserForward'].includes(e.key))){e.preventDefault();e.stopImmediatePropagation();}},{capture:true});
+function mathfrontLocalReturnBlocked(reason){const game=window.__roomCoop;return !!(game?.active&&!game.practice&&game.meta?.id==='mathfront'&&window.__roomRef?.state?.phase==='playing'&&!window.__fsNavigating&&reason!=='mathfront-server-return');}
 function lobbyTeamMode(state){return ['mathfront','soccer'].includes(state.mode)||['bloomshot','waterblast','starpaint'].includes(state.mode)&&state.battleMode==='team'||state.mode==='dungeonwarden'&&state.dungeonMode==='arena-team';}
 // Mathfront owns its touch controls inside its iframe.
 {const style=document.createElement('style');style.textContent='body.in-game:has(#duelFrame[src*="/mathfront/"]) .controls{display:none!important}';document.head.appendChild(style);}
@@ -20,7 +29,7 @@ function lobbyTeamMode(state){return ['mathfront','soccer'].includes(state.mode)
     try{ setTogesterDock(isTogesterActive()); }catch(_){ }
   }
 
-  function exitGameFullscreen(){
+  function exitGameFullscreen(reason=''){if(mathfrontLocalReturnBlocked(reason)){window.__mathfrontBlockedReturn={reason:reason||'unscoped-local-return',matchId:window.__roomCoop?.startPayload?.matchId||'',at:performance.now()};return;}
     const localPractice=window.__roomCoop;
     if(localPractice?.practice){
       clearTimeout(localPractice.soloReturnTimer);localPractice.soloReturnTimer=null;
@@ -1057,11 +1066,11 @@ function updatePreview(modeId){
     }
   }
 
-  function returnStarpaintToRoomLobbyLocal(){
+  function returnStarpaintToRoomLobbyLocal(reason=''){if(mathfrontLocalReturnBlocked(reason))return;
     if(coop?.meta?.id==='mathfront'){coop.startPayload=null;coop.sentGameStart=false;}
     try{ clearTimeout(window.__starpaintLocalBackTimer); }catch(_){ }
     window.__starpaintLocalBackTimer = null;
-    try{ exitGameFullscreen(); }catch(_){ }
+    try{ exitGameFullscreen(reason); }catch(_){ }
     try{ stopGameBgm(); }catch(_){ }
     try{ hideResultOverlay(); }catch(_){ }
     try{ showDuelUI(false); }catch(_){ }
@@ -1132,7 +1141,7 @@ function updatePreview(modeId){
     if(!coop.active&&!duel.active)return;
     const activeGameId=String(coop.active?coop.meta?.id:duel.meta?.id||duel.active?.gameId||'');
     if(d.gameId&&activeGameId&&d.gameId!==activeGameId)return;
-    if(String(d.type||'').startsWith('mf_')&&activeGameId!=='mathfront')return;
+    if(String(d.type||'').startsWith('mf_')&&activeGameId!=='mathfront')return;if(activeGameId==='mathfront'&&!['mf_ready','mf_ack','mf_msg','mf_practice_over','mf_quit','mf_boot_error','bridge_ready'].includes(String(d.type||'')))return;
     if(String(d.type||'').startsWith('dw_')&&activeGameId!=='dungeonwarden')return;
     if(String(d.type||'').startsWith('duel_')&&!duel.active)return;
     const srcWin = e.source;
@@ -1311,7 +1320,7 @@ function updatePreview(modeId){
       return;
     }
     if (!room) return;
-    if(d.gameId==='mathfront'&&activeGameId==='mathfront'&&(fromMain||(!srcWin&&e.origin===location.origin))){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;if(!coop.practice&&!coop._mfGameStartAck){coop.sentGameStart=false;room.send('mf_sync',{});maybeSendCoopGameStart();}return;}if(d.type==='mf_ack'){coop._mfGameStartAck=true;return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_practice_over'&&coop.practice){if(!coop.soloReturnTimer)coop.soloReturnTimer=setTimeout(()=>{coop.soloReturnTimer=null;if(coop.practice)exitGameFullscreen();},1500);return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
+    if(d.gameId==='mathfront'&&activeGameId==='mathfront'&&(fromMain||(!srcWin&&e.origin===location.origin))){if(d.type==='mf_ready'){coop.iframeReady=true;coop.iframeLoaded=true;if(!coop.practice&&!coop._mfGameStartAck){coop.sentGameStart=false;room.send('mf_sync',{});maybeSendCoopGameStart();}return;}if(d.type==='mf_boot_error'){coop._mfBootError=String(d.message||'초기화 실패');setStatus('매스프론트 초기화 오류: '+coop._mfBootError,'error');return;}if(d.type==='mf_ack'){coop._mfGameStartAck=true;installMathfrontNavigationGuard();return;}if(d.type==='mf_msg'){room.send('mf_msg',{msg:d.msg});return;}if(d.type==='mf_practice_over'&&coop.practice){if(!coop.soloReturnTimer)coop.soloReturnTimer=setTimeout(()=>{coop.soloReturnTimer=null;if(coop.practice)exitGameFullscreen();},1500);return;}if(d.type==='mf_quit'){leaveToLobby();return;}}
 
     // Local practice owns its simulation. Do not relay practice game packets to the room server.
     if(coop.practice&&fromMain&&localSoloModes.has(coop.meta?.id)){
@@ -2967,6 +2976,7 @@ function maybeSendCoopGameStart(){
       mySeat,
       myHost
     });
+    if(String(gsPayload.mode||'')==='mathfront'){const baseMs=Number(gsPayload.remainingMs??((gsPayload.endsAt||gsPayload.startedAt+180000)-(gsPayload.serverNow||gsPayload.startedAt)));gsPayload.remainingMs=Math.max(0,baseMs-Math.max(0,performance.now()-(coop._mfStartReceivedAt||performance.now())));}
     if (String(gsPayload.mode || '') === 'backrooms3d'){
       try{
         const roles = gsPayload.roles && typeof gsPayload.roles === 'object' ? gsPayload.roles : {};
@@ -3476,7 +3486,7 @@ try{
         try{
           const earlyMode = String((m && m.mode) || room?.state?.mode || "");
           if (["backrooms3d","mathfront"].includes(earlyMode) && m?.startPayload){
-            coop.startPayload = m.startPayload;
+            coop.startPayload = m.startPayload;if(earlyMode==='mathfront')coop._mfStartReceivedAt=Number(m._mfReceivedAt)||performance.now();
             coop.sentGameStart = false;
             coop._brGameStartAck = false;
           }
@@ -3572,7 +3582,7 @@ try{
       room.onMessage('mf_start',m=>{
         if(!coop.active||coop.practice||coop.meta?.id!=='mathfront'||!m?.startPayload)return;
         if(coop._mfGameStartAck&&coop.startPayload?.startedAt===m.startPayload.startedAt)return;
-        coop.startPayload=m.startPayload;coop.sentGameStart=false;maybeSendCoopGameStart();
+        coop.startPayload=m.startPayload;coop._mfStartReceivedAt=Number(m._mfReceivedAt)||performance.now();coop.sentGameStart=false;maybeSendCoopGameStart();
       });
       room.onMessage('mf_msg',m=>{if(coop.active&&coop.meta?.id==='mathfront')postToMain({type:'mf_msg',gameId:'mathfront',msg:m.msg||m});});
       room.onMessage("br_msg", (msg)=>{
@@ -3820,6 +3830,7 @@ try{
         }
       });
       room.onMessage("result", (r)=> {
+        if(coop?.active&&coop.meta?.id==='mathfront'&&(r?.mode!=='mathfront'||(coop.startPayload?.matchId&&r?.matchId!==coop.startPayload.matchId)))return;
         try{ stopGameBgm(); }catch(_){ }
         // StarPaint/Bloomshot/Slime Arena own their result presentation.
         const activeEmbeddedId=String(coop?.meta?.id||room?.state?.mode||'');
@@ -3834,11 +3845,12 @@ try{
           scheduleStarpaintLocalReturn(1000);
         }
       });
-      function returnToRoomLobbyLocal(){ returnStarpaintToRoomLobbyLocal(); }
-      room.onMessage("backToRoom", ()=> {
+      function returnToRoomLobbyLocal(reason){ returnStarpaintToRoomLobbyLocal(reason); }
+      room.onMessage("backToRoom", (m)=> {
+        if(coop?.active&&coop.meta?.id==='mathfront'&&coop.startPayload?.matchId&&(m?.mode!=='mathfront'||m?.matchId!==coop.startPayload.matchId))return;
         // Existing servers may still send this later (e.g. 6.5s). The cleanup is
         // idempotent, so a late legacy backToRoom is harmless after the local 2s return.
-        returnToRoomLobbyLocal();
+        returnToRoomLobbyLocal(m?.mode==='mathfront'?'mathfront-server-return':'');
       });
 
       room.onMessage("chat", (msg)=>{

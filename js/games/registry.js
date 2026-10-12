@@ -14,7 +14,7 @@
     },
     {
       id:'starpaint', name:'스타페인트', category:'액션 · 점령', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/starpaint/index.html?v=20261012-mathfront-animation-v6', cardImage:'assets/images/game_cards/starpaint.webp',
+      embedPath:'games/starpaint/index.html?v=20261012-mathfront-safety-v7', cardImage:'assets/images/game_cards/starpaint.webp',
       lobbyDesc:'최대 8명이 말랑한 별빛 블록을 뛰어다니며 자기 색으로 칠하고 아이템으로 상대를 밀쳐내는 점령전.',
       descLines:['3개의 60초 라운드 동안 더 많은 블록을 자기 색으로 칠하세요.','1~4인은 기본 맵, 5~8인은 확장 맵에서 시작하며 10초마다 인원수에 맞춰 아이템이 보급됩니다.','아이템으로 상대를 밀치거나 바닥을 부수세요. 빙결 아이템은 X를 짧게 누르면 바로 앞에 던집니다. 3라운드에는 보스가 등장합니다.'],
       pcHint:'PC: ←→ 이동 · Z 점프 · X 액션 · 폭탄/로켓/대포는 X 길게 조준(↑↓ 각도) · C 아이템 교체',
@@ -104,7 +104,7 @@
     },
     {
       id:'soccer', name:'수학축구', category:'스포츠 · 수학', type:'coop', badgeClass:'coop', maxClients:8,
-      embedPath:'games/soccer/index.html?v=20261012-mathfront-animation-v6', cardImage:'assets/images/game_cards/soccer.webp?v=20260831-cards7',
+      embedPath:'games/soccer/index.html?v=20261012-mathfront-safety-v7', cardImage:'assets/images/game_cards/soccer.webp?v=20260831-cards7',
       lobbyDesc:'문제를 풀어 선공을 정하고 팀원과 패스·슛·태클로 더 많은 골을 노리는 수학 스포츠.',
       descLines:['문제를 풀어 선공을 정하고, 2분 동안 더 많은 골을 넣으면 승리!','이동 · 킥(길게 누르면 강슛) · 태클을 사용하세요.','골 뒤에도 짧은 문제 대결로 다음 선공을 정합니다.'],
       pcHint:'PC: WASD/방향키 이동 · Z/Space 길게 강슛 · X 헤딩 · C/Shift 태클',
@@ -124,7 +124,7 @@
     },
     {
       id:'waterblast', name:'슬라임 아레나', category:'액션 · 대전', type:'coop', badgeClass:'coop', maxClients:4,
-      embedPath:'games/waterblast/index.html?v=20261012-mathfront-animation-v6', cardImage:'assets/images/game_cards/waterblast-v7.webp',
+      embedPath:'games/waterblast/index.html?v=20261012-mathfront-safety-v7', cardImage:'assets/images/game_cards/waterblast-v7.webp',
       lobbyDesc:'최대 4명이 넓어진 정원에서 슬라임을 설치하고 밀며, 색색의 물줄기를 피해 겨루는 아케이드 대전.',
       descLines:['Z로 설치, X로 자기 슬라임을 바라보는 방향으로 1칸 밉니다.','제거 포션은 최대 1개. 갇힘·탈락 직전 기절 중 C로 탈출합니다.','희귀 빗자루는 맞을 때까지 계속 탑승합니다. 고정벽은 통과할 수 없습니다.'],
       pcHint:'PC: 방향키/WASD 이동 · Z/SPACE 설치 · X 자기 슬라임 밀기 · C 제거 포션',
@@ -133,7 +133,7 @@
       mobileControls:[['왼쪽 조이스틱','이동'],['Z · 설치 버튼','슬라임 설치 / 갇히면 연타'],['X · 밀기 버튼','자기 슬라임 밀기'],['제거 포션 버튼','갇힘/기절 중 사용 · 최대 1개']]
     },
 {"id": "dungeonwarden", "name": "던전 아레나", "category": "액션 · 던전", "type": "coop", "badgeClass": "coop", "maxClients": 8, "embedPath": "games/dungeonwarden/index.html?gameId=dungeonwarden&v=20261011-teams-mobile", "cardImage": "assets/images/game_cards/dungeonwarden.webp?v=20261005", "lobbyDesc": "최대 8인 던전 액션. 방 안에서 아레나 생존전 또는 방장이 마스터가 되는 던전 모드를 선택하세요.", "descLines": ["방 안에서 아레나 모드 또는 던전 모드를 선택합니다.", "아레나 개인전/팀전: 시작 위치를 고르고 용암을 피해 생존합니다.", "던전: 방장은 던전마스터, 나머지는 모험가입니다. 장비를 모아 던전을 공략하세요."], "pcHint": "WASD 이동 · Shift 질주 · 클릭/Space 공격 · Q 특수 · E 줍기/상자 · I 장비 · M 지도", "mobileHint": "왼쪽 조이스틱 이동 · 오른쪽 공격/특수/상호작용 버튼", "pcControls": [["WASD", "이동"], ["SHIFT", "질주"], ["CLICK / SPACE", "일반 공격"], ["Q", "특수 공격"], ["E", "줍기 / 상자"], ["I / TAB", "장비"], ["M", "지도"]], "mobileControls": [["조이스틱", "이동"], ["공격", "일반 공격"], ["특수", "무기 고유 공격"], ["상호작용", "줍기 / 상자"]]},
-{ id:'mathfront',name:'매스프론트',category:'3D FPS · 거점 점령',type:'coop',badgeClass:'coop',maxClients:8,embedPath:'games/mathfront/index.html?v=20261012-mathfront-animation-v6',cardImage:'games/mathfront/assets/card.webp',lobbyDesc:'최대 4 VS 4 · 3분 FPS. 50점 선득점 승리, 3분 종료 시 점수로 승패를 결정합니다. 퇴장한 자리는 AI가 이어받습니다. 플레이어는 수학 문제로, AI는 거점 접촉으로 A·B·C를 점령합니다.',descLines:['2·4·6·8인 팀전 · 싱글 AI 훈련','좌클릭 연사 · 우클릭/Q 조준 · G 수류탄 · Ctrl/C 숙이기 · R 재장전'],pcHint:'WASD 이동 · 마우스 시점 · 좌클릭 연사 · 우클릭 조준 · R 재장전',mobileHint:'왼쪽 이동·발사 · 오른쪽 드래그 시점 · 조준·점프·재장전',pcControls:[['WASD','이동'],['좌클릭','연사'],['우클릭','조준'],['R','재장전'],['G','수류탄']],mobileControls:[['패드','이동/시점'],['FIRE','발사']]}
+{ id:'mathfront',name:'매스프론트',category:'3D FPS · 거점 점령',type:'coop',badgeClass:'coop',maxClients:8,embedPath:'games/mathfront/index.html?v=20261012-mathfront-safety-v7',cardImage:'games/mathfront/assets/card.webp',lobbyDesc:'최대 4 VS 4 · 3분 FPS. 50점 선득점 승리, 3분 종료 시 점수로 승패를 결정합니다. 퇴장한 자리는 AI가 이어받습니다. 플레이어는 수학 문제로, AI는 거점 접촉으로 A·B·C를 점령합니다.',descLines:['2·4·6·8인 팀전 · 싱글 AI 훈련','좌클릭 연사 · 우클릭/Q 조준 · G 수류탄 · Ctrl/C 숙이기 · R 재장전'],pcHint:'WASD 이동 · 마우스 시점 · 좌클릭 연사 · 우클릭 조준 · R 재장전',mobileHint:'왼쪽 이동·발사 · 오른쪽 드래그 시점 · 조준·점프·재장전',pcControls:[['WASD','이동'],['좌클릭','연사'],['우클릭','조준'],['R','재장전'],['G','수류탄']],mobileControls:[['패드','이동/시점'],['FIRE','발사']]}
   ];
 
   function gameById(id){ return GAME_REGISTRY.find(g => g.id === id) || GAME_REGISTRY[0]; }

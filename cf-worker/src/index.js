@@ -93,7 +93,7 @@ export default {
     const path = url.pathname;
 
     if (path === "/api/version" && request.method === "GET") {
-      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261008-rpg-v1' });
+      return json({ ok:true, protocolVersion:PROTOCOL_VERSION, dungeonRelease:'20261008-rpg-v1',mathfrontRelease:'20261012-safety-v7',mathfrontStartSync:true });
     }
 
     const upgrade = request.headers.get("Upgrade") || "";
@@ -659,6 +659,7 @@ export class RoomDO{
         stackMode:this.meta.stackMode||"items",
         dungeonMode:this.meta.dungeonMode||"arena",
         battleMode:this.meta.battleMode||"solo",
+        ...(this.meta.mode==='mathfront'?{mfMatchId:this.mf?.startPayload?.matchId||this._mfLastMatchId||''}:{}),
         phase: this.meta.phase
       },
       players
@@ -1277,7 +1278,7 @@ export class RoomDO{
           }
         }
 
-        if(this.meta.mode==='mathfront'){const roster=Array.from(this.users.entries()).filter(([id])=>id!==this._cpuUid()).map(([sid,u])=>({sid:String(sid),nick:safeNick(u.nick),seat:u.seat,team:u.team})).sort((a,b)=>a.seat-b.seat);if(roster.length>8||roster.length<2||roster.length%2)return;this.mf={roster:roster.map(p=>({...p,team:p.team==='red'?'red':'blue'})),host:roster[0].sid,latest:null,rates:{}};this.mf.startPayload={mode:'mathfront',roster:this.mf.roster,host:this.mf.host,seed:Math.floor(Math.random()*0xffffffff),startedAt:now(),endsAt:now()+180000};this.mf.endTimer=setTimeout(()=>this._finishMathfront(),180000);}
+        if(this.meta.mode==='mathfront'){const roster=Array.from(this.users.entries()).filter(([id])=>id!==this._cpuUid()).map(([sid,u])=>({sid:String(sid),nick:safeNick(u.nick),seat:u.seat,team:u.team})).sort((a,b)=>a.seat-b.seat);if(roster.length>8||roster.length<2||roster.length%2)return;this.mf={roster:roster.map(p=>({...p,team:p.team==='red'?'red':'blue'})),host:roster[0].sid,latest:null,rates:{}};this.mf.startPayload={mode:'mathfront',serverRelease:'20261012-safety-v7',roster:this.mf.roster,host:this.mf.host,seed:Math.floor(Math.random()*0xffffffff),startedAt:now(),serverNow:now(),remainingMs:180000,endsAt:now()+180000};this.mf.startPayload.matchId='mf:'+this.mf.startPayload.startedAt+':'+this.mf.startPayload.seed;this.mf.endTimer=setTimeout(()=>this._finishMathfront(),180000);}
         this.meta.phase = "playing";
         if(['dungeonwarden'].includes(this.meta.mode))this._startDungeon();
         this.meta.status = "playing";
@@ -1453,13 +1454,13 @@ export class RoomDO{
         if(this.meta.mode!=='mathfront'||this.meta.phase!=='playing'||!this.mf||this.mf.ended)return;
         const slot=this.mf.roster.find(p=>p.sid===String(uid));if(!slot||!this.users.has(uid))return;
         const returning=!!slot.ai;slot.ai=false;if(!this.mf.host)this.mf.host=String(uid);
-        const startPayload={...this.mf.startPayload,roster:this.mf.roster,host:this.mf.host};
-        if(returning)this._broadcast('mf_msg',{msg:{kind:'peer_return',from:'server',sid:String(uid),host:this.mf.host}});
+        const startPayload={...this.mf.startPayload,serverNow:now(),remainingMs:Math.max(0,this.mf.startPayload.endsAt-now()),roster:this.mf.roster,host:this.mf.host};
+        if(returning)this._broadcast('mf_msg',{msg:{kind:'peer_return',from:'server',matchId:this.mf.startPayload?.matchId||'',sid:String(uid),host:this.mf.host}});
         this._send(ws,'mf_start',{startPayload});
-        if(this.mf.latest)this._send(ws,'mf_msg',{msg:{...this.mf.latest,from:this.mf.host}});
+        if(this.mf.latest)this._send(ws,'mf_msg',{msg:{...this.mf.latest,matchId:this.mf.startPayload.matchId,remainingMs:Math.max(0,this.mf.startPayload.endsAt-now()),from:this.mf.host}});
         return;
       }
-      if(t==='mf_msg'){if(this.meta.mode!=='mathfront'||this.meta.phase!=='playing'||!this.mf||this.mf.ended)return;const m=d?.msg;if(!m||typeof m!=='object'||JSON.stringify(m).length>16000)return;const allowed=['state','fire','hit','respawn','world','capture','fx','supply','selfhurt','finish','status','capture_result'];if(!allowed.includes(m.kind))return;const roster=this.mf.roster;if(!roster.some(p=>p.sid===String(uid)&&!p.ai))return;const stamp=now(),rates=this.mf.rates[String(uid)]||(this.mf.rates[String(uid)]={});if(stamp-(rates[m.kind]||0)<(m.kind==='world'?140:m.kind==='state'?60:['hit','status','capture_result'].includes(m.kind)?0:15))return;if(stamp-(rates.windowAt||0)>=1000){rates.windowAt=stamp;rates.count=0;}if((rates.count||0)>=80)return;rates.count=(rates.count||0)+1;rates[m.kind]=stamp;if(m.kind==='finish'){if(String(uid)!==this.mf.host||!['blue','red'].includes(m.winner)||Number(m.scores?.[m.winner])<50)return;this.mf.latest={...this.mf.latest,scores:m.scores};this._finishMathfront(m.winner);return;}if(['status','capture_result'].includes(m.kind)&&String(uid)!==this.mf.host)return;if(m.kind==='status'&&this.mf.latest)this.mf.latest={...this.mf.latest,flags:m.flags,scores:m.scores,actors:Object.fromEntries(Object.entries(this.mf.latest.actors||{}).map(([id,a])=>[id,{...a,...m.actors?.[id]}]))};if(m.kind==='world'){if(String(uid)!==this.mf.host)return;this.mf.latest=m;if(Math.max(Number(m.scores?.blue)||0,Number(m.scores?.red)||0)>=50){this._finishMathfront();return;}}const out={...m,from:String(uid)},hostOnly=['hit','respawn','capture','supply','selfhurt'].includes(m.kind);for(const [sock,sid] of this.sockets){if(String(sid)===String(uid))continue;if(hostOnly&&String(sid)!==this.mf.host)continue;this._send(sock,'mf_msg',{msg:out});}return;}
+      if(t==='mf_msg'){if(this.meta.mode!=='mathfront'||this.meta.phase!=='playing'||!this.mf||this.mf.ended)return;const m=d?.msg;if(!m||typeof m!=='object'||JSON.stringify(m).length>16000)return;if(this.mf.startPayload?.matchId&&m.matchId!==this.mf.startPayload.matchId)return;const allowed=['state','fire','hit','respawn','world','capture','fx','supply','selfhurt','finish','status','capture_result','respawn_result','supply_result'];if(!allowed.includes(m.kind))return;const roster=this.mf.roster;if(!roster.some(p=>p.sid===String(uid)&&!p.ai))return;const stamp=now(),rates=this.mf.rates[String(uid)]||(this.mf.rates[String(uid)]={});if(stamp-(rates[m.kind]||0)<(m.kind==='world'?140:m.kind==='state'?60:['hit','status','capture_result','respawn_result','supply_result'].includes(m.kind)?0:15))return;if(stamp-(rates.windowAt||0)>=1000){rates.windowAt=stamp;rates.count=0;}if((rates.count||0)>=80)return;rates.count=(rates.count||0)+1;rates[m.kind]=stamp;if(m.kind==='finish'){if(String(uid)!==this.mf.host||!['blue','red'].includes(m.winner)||Number(m.scores?.[m.winner])<50)return;this.mf.latest={...this.mf.latest,scores:m.scores};this._finishMathfront(m.winner);return;}if(['status','capture_result','respawn_result','supply_result'].includes(m.kind)&&String(uid)!==this.mf.host)return;if(m.kind==='status'&&this.mf.latest)this.mf.latest={...this.mf.latest,flags:m.flags,scores:m.scores,actors:Object.fromEntries(Object.entries(this.mf.latest.actors||{}).map(([id,a])=>[id,{...a,...m.actors?.[id]}]))};if(m.kind==='world'){if(String(uid)!==this.mf.host)return;this.mf.latest=m;if(Math.max(Number(m.scores?.blue)||0,Number(m.scores?.red)||0)>=50){this._finishMathfront();return;}}const out={...m,matchId:this.mf.startPayload?.matchId||'',...(m.kind==='world'?{remainingMs:Math.max(0,(this.mf.startPayload?.endsAt||stamp+180000)-stamp)}:{}),from:String(uid)},hostOnly=['hit','respawn','capture','supply','selfhurt'].includes(m.kind);for(const [sock,sid] of this.sockets){if(String(sid)===String(uid))continue;if(hostOnly&&String(sid)!==this.mf.host)continue;this._send(sock,'mf_msg',{msg:out});}return;}
       if (t === "br_msg") {
         if (this.meta.mode !== "backrooms3d" || this.meta.phase !== "playing") return;
         const inner = (d && d.msg && typeof d.msg === "object") ? d.msg : {};
@@ -1900,6 +1901,7 @@ export class RoomDO{
         return;
       }
       if (t === "tg_over"){
+        if(this.meta.mode==='mathfront')return;
         if (this.meta.phase !== "playing") return;
         const success = !!d.success;
         this._broadcast("result", { mode:"togester", done:true, success, reason: d.reason || "" });
@@ -2479,7 +2481,7 @@ export class RoomDO{
       // reconnecting/late-joining clients receive a ghost player forever.
       try{
         if (this.br && this.br.latestStates) delete this.br.latestStates[String(uid)];
-        if(this.meta.mode==='mathfront'&&this.meta.phase==='playing'&&this.mf){const slot=this.mf.roster.find(p=>p.sid===String(uid));if(slot)slot.ai=true;if(this.mf.host===String(uid))this.mf.host=this.mf.roster.find(p=>!p.ai&&this.users.has(p.sid))?.sid||'';this._broadcast('mf_msg',{msg:{kind:'peer_left',from:'server',sid:String(uid),host:this.mf.host}});}
+        if(this.meta.mode==='mathfront'&&this.meta.phase==='playing'&&this.mf){const slot=this.mf.roster.find(p=>p.sid===String(uid));if(slot)slot.ai=true;if(this.mf.host===String(uid))this.mf.host=this.mf.roster.find(p=>!p.ai&&this.users.has(p.sid))?.sid||'';this._broadcast('mf_msg',{msg:{kind:'peer_left',from:'server',matchId:this.mf.startPayload?.matchId||'',sid:String(uid),host:this.mf.host}});}
         if (this.meta.mode === "backrooms3d" && this.meta.phase === "playing"){
           this._broadcast("br_msg", { msg:{ kind:"peer_left", from:"server", sid:String(uid), nick:safeNick(u?.nick || "") } });
         }
@@ -3046,7 +3048,7 @@ export class RoomDO{
     if(this.meta.mode!=='mathfront'||!this.mf||this.mf.ended)return;
     this.mf.ended=true;clearTimeout(this.mf.endTimer);this.mf.endTimer=null;
     const raw=this.mf.latest?.scores||{},scores={blue:Math.max(0,Math.floor(Number(raw.blue)||0)),red:Math.max(0,Math.floor(Number(raw.red)||0))},winner=['blue','red'].includes(winnerOverride)?winnerOverride:scores.blue===scores.red?'draw':scores.blue>scores.red?'blue':'red';
-    this._broadcast('result',{mode:'mathfront',done:true,scores,winner,returnDelayMs:1500});this._endAndBackToLobby(1500);
+    this._broadcast('result',{mode:'mathfront',matchId:this.mf.startPayload?.matchId||'',reason:Math.max(scores.blue,scores.red)>=50?'score':'timeout',done:true,scores,winner,returnDelayMs:1500});this._endAndBackToLobby(1500);
   }
   _finishSoccer(winner){
     if(!this.sc||this.sc.over||this.meta.mode!=="soccer")return;
@@ -3584,9 +3586,11 @@ export class RoomDO{
     // Several clients may report the same shared game end nearly simultaneously.
     // Schedule exactly one reset/backToRoom broadcast for the room.
     if (this._backToLobbyTimer) return;
-    const d = Number(delayMs || 0);
+    const d = Number(delayMs || 0),mathfrontId=this.meta.mode==='mathfront'?this.mf?.startPayload?.matchId||'':'';
     this._backToLobbyTimer = setTimeout(()=>{
       this._backToLobbyTimer = null;
+      if(mathfrontId&&this.mf?.startPayload?.matchId!==mathfrontId)return;
+      if(mathfrontId)this._mfLastMatchId=mathfrontId;
       this._stopDungeon();
       if(this.mf){clearTimeout(this.mf.endTimer);this.mf=null;}
       this.meta.phase = "lobby";
@@ -3632,7 +3636,7 @@ export class RoomDO{
       }
 
       this._scheduleLobbyUpdate();
-      this._broadcast("backToRoom", { resetReady:true });
+      this._broadcast("backToRoom", { resetReady:true,...(mathfrontId?{mode:'mathfront',matchId:mathfrontId}:{}) });
       this._broadcast("room_state", this._snapshot());
     }, d);
   }

@@ -84,7 +84,7 @@
       this.protocolVersion = "";
       this.state = buildRoomState();
       this._handlers = new Map(); // type -> [fn]
-      this._latestLobby = new Map();
+      this._latestLobby = new Map();this._latestMathfront=new Map();
       this._helloOk = new Promise((res)=>{ this._helloResolve = res; });
       this._stateReady = new Promise((res)=>{ this._stateResolve = res; });
       ws.onmessage = (ev)=> this._onWsMessage(ev);
@@ -97,8 +97,11 @@
       arr.push(fn);
       this._handlers.set(type, arr);
       if(this.kind==='lobby'&&this._latestLobby.has(type)){try{fn(this._latestLobby.get(type));}catch(_){}}
+      if(this.kind==='room'&&this._latestMathfront.has(type)){const pending=this._latestMathfront.get(type);queueMicrotask(()=>{if(this._latestMathfront.get(type)===pending)try{fn(pending);}catch(_){}});}
     }
     _emit(type, payload){
+      if(this.kind==='room'&&['started','mf_start'].includes(type)&&(payload?.mode==='mathfront'||payload?.startPayload?.mode==='mathfront')){payload={...payload,_mfReceivedAt:globalThis.performance?.now?.()||0};this._latestMathfront.set(type,payload);}
+      if(this.kind==='room'&&type==='backToRoom'&&(!this._mathfrontMatchId||payload?.matchId===this._mathfrontMatchId))this._latestMathfront.clear();
       if(this.kind==='lobby'&&(type==='rooms'||type==='presence'))this._latestLobby.set(type,payload);
       const arr = this._handlers.get(type);
       if(arr){ for(const fn of arr){ try{ fn(payload); }catch(e){} } }
@@ -129,6 +132,7 @@
     _applyStateSnapshot(snap){
       // snap: {meta, players:[...]}
       const meta = clientRoomMeta(snap.meta || {});
+      if(this.state.mode==='mathfront'&&this.state.phase==='playing'&&this._mathfrontMatchId&&meta.mode==='mathfront'&&meta.mfMatchId!==this._mathfrontMatchId)return;
       this.state.title = meta.title ?? this.state.title;
       this.state.mode  = meta.mode  ?? this.state.mode;
       this.state.stackMode=meta.stackMode||"items";this.state.battleMode=meta.battleMode||"solo";
@@ -213,6 +217,7 @@ if (isDuel && humans.length === 1){
         if(e.type==='bs_sync')this._emit('bs_sync',{from:sid});
         return;
       }
+      if(this.kind==='room'&&['started','mf_start'].includes(msg.t)&&msg.d?.startPayload?.mode==='mathfront')this._mathfrontMatchId=String(msg.d.startPayload.matchId||'');
       const translated = translateIn(this.kind, msg);
       if(!translated) return;
 
@@ -464,6 +469,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-09-10-waterblast-v6";
+  window.__BUILD_ID = "2026-10-12-mathfront-safety-v7";
   window.Net = { nowHHMM, makeClient, safeText, setStatus, roomTitleLimit };
 })();
