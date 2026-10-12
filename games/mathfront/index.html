@@ -78,8 +78,9 @@ body.mobile-ready #minimap{width:96px!important;height:96px!important;left:max(1
  #deathMessage button,#quizChoices button{cursor:pointer!important;touch-action:manipulation;min-height:44px}
  body.match-over #playBtn{display:none!important}
  @media(max-height:450px){body.mobile-ready #movePad{width:112px!important;height:112px!important}#leftActions{left:43px;bottom:calc(max(18px,env(safe-area-inset-bottom)) + 132px)}body.mobile-ready #actionPad{height:138px!important}body.mobile-ready #minimap{width:68px!important;height:68px!important}}
- body.spawn-protected #leftHud .name:after{content:" / 무적 2초";color:#a2efff}html,body,#game,#c{overscroll-behavior:none;touch-action:none}
+ body.spawn-protected #leftHud .name:after{content:" / 무적 3초";color:#a2efff}html,body,#game,#c{overscroll-behavior:none;touch-action:none}
 </style>
+<script defer src="../../js/core/game-context-menu.js?v=20261012-dungeon-smooth-v10"></script>
 </head><body>
 <div id="game"><canvas id="c"></canvas></div>
 <div id="hud"><div id="enemyBars"></div>
@@ -259,7 +260,7 @@ function clearFloorLineSegments(z,width,depth){let spans=[[-width/2,width/2]];fo
 for(const [z,color] of [[30,C.blue],[-30,C.red]])for(const [a,b] of clearFloorLineSegments(z,22,.22))addBox((a+b)/2,.012,z,b-a,.024,.22,color,false);
 const jumpPads=[{x:6,z:47,team:'blue'},{x:-6,z:-47,team:'red'}];let jumpPadCooldown=0;
 function updateJumpPads(dt){jumpPadCooldown=Math.max(0,jumpPadCooldown-dt);if(!player.alive||!player.onGround||jumpPadCooldown>0)return;for(const pad of jumpPads)if(Math.hypot(player.x-pad.x,player.z-pad.z)<1.2&&player.y-player.eyeHeight<.3){player.vy=16.5*Math.sqrt(3.6);player.onGround=false;jumpPadCooldown=1.2;blastShake=Math.max(blastShake,.13);playSound('bounce',.3,1.4);toast('점프 패드');break;}}
-const SPAWN_SHIELD_MS=2000;let respawnPending=null,respawnSerial=0,quizSerial=0,quizBlockedUntil=0,crateStateReady=false;
+const SPAWN_SHIELD_MS=3000;let respawnPending=null,respawnSerial=0,quizSerial=0,quizBlockedUntil=0,crateStateReady=false;
 function spawnProtected(actor){return !!actor?.alive&&performance.now()<(actor.spawnUntil||0);}
 function grantSpawnShield(actor){actor.spawnUntil=performance.now()+SPAWN_SHIELD_MS;actor.wasProtected=true;}
 function applySpawnStatus(actor,s){if(s.lifeSeq!=null)actor.lifeSeq=s.lifeSeq;if(s.spawnRemaining!=null){const deadline=performance.now()+Math.max(0,Number(s.spawnRemaining)||0);actor.spawnUntil=actor.wasProtected?Math.min(actor.spawnUntil||deadline,deadline):deadline;actor.wasProtected=s.spawnRemaining>0;}else if(s.protected!=null){if(s.protected&&!actor.wasProtected)grantSpawnShield(actor);if(!s.protected)actor.spawnUntil=0;actor.wasProtected=!!s.protected;}}
@@ -428,7 +429,7 @@ function spatialSound(key,x,z,gain=1){const dx=x-player.x,dz=z-player.z,d=Math.h
 function shotSound(){playSound('rifle',.85,.97+Math.random()*.06);}
 addEventListener('pointerdown',unlockAudio,{once:true});addEventListener('keydown',unlockAudio,{once:true});
 
-const WEAPONS=[{name:'K-12 / ASSAULT',mesh:'blaster-m',mag:24,delay:115,damage:25,zoom:52,muzzle:[0,.07250161,-.31005],top:.1687216},{name:'V-9 / SMG',mesh:'blaster-a',mag:36,delay:75,damage:17,zoom:58,muzzle:[0,0.07733509833333334,-0.37],top:0.1529508},{name:'S-8 / SHOTGUN',mesh:'blaster-c',mag:8,delay:780,damage:19,pellets:8,range:22,falloffStart:6,zoom:62,muzzle:[0,0.016996671918749998,-0.2376751],top:0.1709967},{name:'L-5 / SNIPER',mesh:'sniper-assembled',mag:5,delay:1150,damage:85,speed:320,range:200,zoom:22,muzzle:[0,0.07347463214285713,-0.32005],top:0.165},{name:'R-4 / ROCKET',mesh:'rocket-launcher',mag:2,delay:1300,damage:110,rocket:true,zoom:60,muzzle:[0,.06,-.57],top:.203}];let weaponId=0;WEAPONS[3].muzzle[2]=-.27+((WEAPONS[3].muzzle[2]-.27)-(-.27))*2;const currentWeapon=()=>WEAPONS[weaponId];
+const WEAPONS=[{name:'K-12 / ASSAULT',mesh:'blaster-m',mag:24,delay:115,damage:25,zoom:52,muzzle:[0,.07250161,-.31005],top:.1687216},{name:'V-9 / SMG',mesh:'blaster-a',mag:36,delay:75,damage:17,zoom:58,muzzle:[0,0.07733509833333334,-0.37],top:0.1529508},{name:'S-8 / SHOTGUN',mesh:'blaster-c',mag:8,delay:780,damage:24.7,pellets:8,range:22,falloffStart:6,zoom:62,muzzle:[0,0.016996671918749998,-0.2376751],top:0.1709967},{name:'L-5 / SNIPER',mesh:'sniper-assembled',mag:5,delay:1150,damage:85,speed:320,range:200,zoom:22,muzzle:[0,0.07347463214285713,-0.32005],top:0.165},{name:'R-4 / ROCKET',mesh:'rocket-launcher',mag:2,delay:1300,damage:110,rocket:true,zoom:60,muzzle:[0,.06,-.57],top:.203}];let weaponId=0;WEAPONS[3].muzzle[2]=-.27+((WEAPONS[3].muzzle[2]-.27)-(-.27))*2;const currentWeapon=()=>WEAPONS[weaponId];
 let supplyHint='',supplyClock=0;for(const prop of crateProps){prop.weapon=1+Math.floor(Math.random()*(WEAPONS.length-1));prop.ready=true;prop.timer=0;}
 function equipWeapon(id){weaponId=id;player.maxAmmo=currentWeapon().mag;player.ammo=player.maxAmmo;player.reloading=false;player.reloadT=0;lastShot=-Infinity;updateHUD();toast(currentWeapon().name+' 획득');}
 

@@ -6,7 +6,7 @@ import {RARITY_COLORS,WEAPONS} from './shared/catalog.mjs';
 import {weaponPreview} from './shared/combat.mjs';
 import {paintWeapon,paintWear,paintItemIcon,paintEffect,traceAttackShape} from './graphics.mjs?v=20261009-final-equipment';
 import {walkable,lineOfSight,inside} from './shared/world.mjs';
-import {CharacterRenderer} from './character-runtime.mjs?v=20261012-verified-games-v9';
+import {CharacterRenderer} from './character-runtime.mjs?v=20261012-dungeon-smooth-v10';
 const palette=['#79d5c1','#e99a83','#8caee9','#ddb477','#ae99e4','#e4a8c2','#a7c578','#84bdd1'];
 export function minimapLayout(map,width){const w=width<500?150:200,h=Math.max(44,Math.min(118,w*map.height/map.width)),x=18,y=115,scale=Math.min(w/map.width,h/map.height);return {x,y,w,h,scale,mx:x+(w-map.width*scale)/2,my:y+(h-map.height*scale)/2};}
 export class Renderer {
@@ -189,7 +189,7 @@ export class Renderer {
   }
 
   draw(snapshot,dt){
-    if(!snapshot)return;this.frameDt=dt;this.visualClock=(this.visualClock??performance.now()/1000)+Math.min(.05,Math.max(0,dt));const s=snapshot,ctx=this.ctx,master=s.masterId==='local';
+    if(!snapshot)return;this.frameDt=dt;this.visualClock=(this.visualClock??performance.now()/1000)+Math.min(.15,Math.max(0,dt));const s=snapshot,ctx=this.ctx,master=s.masterId==='local';
     const focus=s.me||s.entities.find(e=>e.id===s.possession);this.hitStop=Math.max(0,this.hitStop-dt);
     for(const f of s.effects){if(this.fxSeen.has(f.id))continue;this.fxSeen.add(f.id);if(focus&&Math.hypot(f.x-focus.x,f.y-focus.y)>16)continue;let force={breadrise:1,candyburst:2,panclang:3,slam:5,meteor:7,fireball:6,thunder:3,lightning:3,trap:3,death:2}[f.kind]||0;if(f.kind==='hit'&&!f.dot){force=f.target===s.me?.id?(f.heavy?5:2):f.heavy?2:0;if(f.target===focus?.id)this.hitStop=Math.max(this.hitStop,f.heavy?.045:.018);}if(force){this.shakeStrength=Math.max(this.shakeStrength,Math.min(3,force));this.shakeLife=.14;}}
     if(this.fxSeen.size>1500)this.fxSeen=new Set(s.effects.map(f=>f.id));this.shakeLife=Math.max(0,this.shakeLife-dt);if(!this.shakeLife)this.shakeStrength=0;
@@ -199,7 +199,7 @@ export class Renderer {
     if(spawnSelection){const regions=[...s.map.rooms,...s.map.corridors],left=Math.min(...regions.map(r=>r.x))-2,top=Math.min(...regions.map(r=>r.y))-2,right=Math.max(...regions.map(r=>r.x+r.w))+2,bottom=Math.max(...regions.map(r=>r.y+r.h))+2;this.camera.x=(left+right)/2;this.camera.y=(top+bottom)/2;this.camera.scale=Math.min((this.width-48)/(right-left),(this.height-120)/((bottom-top)*this.projectionY));}
     else if(overview){this.camera.x=s.map.width/2;this.camera.y=s.map.height/2;this.camera.scale=Math.min((this.width-70)/s.map.width,(this.height-170)/s.map.height);}
     else if(master){const r=s.map.rooms[this.masterRoom];this.camera.x=r.x+r.w/2;this.camera.y=r.y+r.h/2;this.camera.scale=Math.min(Math.max(180,this.width-(this.width>800?400:this.sidebarOpen?320:40))/r.w,(this.height-160)/r.h);this.camera.x+=(this.width>800?150:this.sidebarOpen?100:0)/this.camera.scale;}
-    else{const me=s.me?.dead&&s.me.follow?s.entities.find(e=>e.id===s.me.follow)||s.me:s.me;if(me){this.camera.x+=(me.x-this.camera.x)*Math.min(1,dt*9);this.camera.y+=(me.y-this.camera.y)*Math.min(1,dt*9);}this.camera.scale=23;}
+    else{const me=s.me?.dead&&s.me.follow?s.entities.find(e=>e.id===s.me.follow)||s.me:s.me;if(me){this.camera.x+=(me.x-this.camera.x)*(1-Math.exp(-Math.max(0,dt)*9));this.camera.y+=(me.y-this.camera.y)*(1-Math.exp(-Math.max(0,dt)*9));}this.camera.scale=23;}
     const c=this.camera;ctx.clearRect(0,0,this.width,this.height);const mapReady=this.map3d.render(s,c,this.width,this.height,this.shakeX,this.shakeY);if(!mapReady){ctx.fillStyle='#090f17';ctx.fillRect(0,0,this.width,this.height);}
     ctx.save();ctx.translate(this.shakeX,this.shakeY);ctx.save();ctx.translate(this.width/2,this.height/2);ctx.scale(c.scale,c.scale*this.projectionY);ctx.translate(-c.x,-c.y);
     const scale=c.scale;ctx.lineWidth=1/scale;

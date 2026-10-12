@@ -1,11 +1,11 @@
 import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261011-teams-mobile';
-import {RoomTransport} from './room-transport.mjs?v=20261012-verified-games-v9';
+import {RoomTransport} from './room-transport.mjs?v=20261012-dungeon-smooth-v10';
 import {LocalTransport} from './local-transport.mjs?v=20261012-team-toggle';
 import {weaponSkill,SKILL_DETAILS} from './shared/weapon-skills.mjs';
 import {actionState} from './shared/action-ui.mjs';
 import {paintItemIcon} from './graphics.mjs';
 import {GameAudio} from './audio.mjs';
-import {Renderer} from './renderer.mjs?v=20261012-verified-games-v9';
+import {Renderer} from './renderer.mjs?v=20261012-dungeon-smooth-v10';
 import {WEAPONS,MONSTERS,SLOTS,RARITY_COLORS,AFFIX_NAMES,makeItem,distance} from './shared/catalog.mjs';
 import {roomAt} from './shared/world.mjs?v=20261011-teams-mobile';
 const $=id=>document.getElementById(id),canvas=$('world'),renderer=new Renderer(canvas);
@@ -134,6 +134,8 @@ function setPhaseBanner({show=false,title='',sub='',timeLabel='',progress=1}={})
   if(hasTimer){label.textContent=timeLabel;fill.style.width=`${Math.max(0,Math.min(1,progress))*100}%`;}
 }
 const teamHud=document.createElement('div');teamHud.id='teamHud';teamHud.setAttribute('aria-label','우리 팀 상태');document.body.appendChild(teamHud);
+const hudMarkup=new WeakMap();
+function setHudHtml(element,html){if(hudMarkup.get(element)===html)return;hudMarkup.set(element,html);element.innerHTML=html;}
 function updateTeamHud(s){const me=s.me;teamHud.hidden=!s.teamBattle||!me;if(teamHud.hidden)return;const allies=s.roster.filter(p=>p.team===me.team);const signature=allies.map(p=>[p.id,p.name,p.hp,p.maxHp,p.dead].join(':')).join('|');if(teamHud.dataset.signature===signature)return;teamHud.dataset.signature=signature;teamHud.dataset.team=me.team;teamHud.innerHTML=allies.map(p=>'<div class="teamMember '+(p.dead?'dead':'')+'"><i style="width:'+Math.max(0,Math.min(100,100*p.hp/p.maxHp))+'%"></i><span>'+esc(p.name)+(p.id==='local'?' · 나':'')+'</span><small>'+(p.dead?'사망':Math.ceil(p.hp)+' / '+Math.ceil(p.maxHp))+'</small></div>').join('');}
 function updateHud(){
   const s=snapshot;if(!s)return;updateTeamHud(s);const master=s.masterId==='local',me=s.me||s.entities.find(e=>e.id===s.possession);
@@ -146,7 +148,7 @@ function updateHud(){
   if(arenaSpawn)setPhaseBanner({show:true,title:'시작할 위치를 선택해주세요.',sub:'10초 안에 원하는 칸을 클릭해 시작 지점을 정하세요.',timeLabel:`남은 시간 ${spawnLeft}초`,progress:(10-Math.max(0,Math.min(10,s.time)))/10});
   else if(dungeonMasterPlanning)setPhaseBanner({show:true,title:'모험가가 오기 전에 모든 방에 몬스터를 배치해주세요.',sub:'빛나는 방만 배치 가능 · 검게 표시된 방은 배치할 수 없습니다.'});
   else setPhaseBanner({show:false});
-  $('objective').hidden=master;$('objective').innerHTML=master?'':s.mode==='dungeon'?`<b>${(s.objective?.room||0)+1}번 방 · 던전 공략</b><small>남은 몬스터 ${s.objective?.monsters||0} · 상자 ${s.objective?.chests||0}</small><small>${s.objective?.exit?'출구 열림 → 다음 방으로 이동':s.map.rooms[s.objective?.room]?.heal?'중앙 치유 샘 사용 · 전원 집결 '+s.objective.gathered+'/'+s.objective.livingParty+' · 20초 휴식':'몬스터를 처치해 출구를 여세요'}</small>`:`<b>아레나 · 생존 ${s.roster.filter(p=>!p.dead).length}명</b><small>장비를 모으고 용암을 피하세요</small>`;
+  $('objective').hidden=master;setHudHtml($('objective'),master?'':s.mode==='dungeon'?`<b>${(s.objective?.room||0)+1}번 방 · 던전 공략</b><small>남은 몬스터 ${s.objective?.monsters||0} · 상자 ${s.objective?.chests||0}</small><small>${s.objective?.exit?'출구 열림 → 다음 방으로 이동':s.map.rooms[s.objective?.room]?.heal?'중앙 치유 샘 사용 · 전원 집결 '+s.objective.gathered+'/'+s.objective.livingParty+' · 20초 휴식':'몬스터를 처치해 출구를 여세요'}</small>`:`<b>아레나 · 생존 ${s.roster.filter(p=>!p.dead).length}명</b><small>장비를 모으고 용암을 피하세요</small>`);
   document.querySelector('.actions').hidden=master&&!s.possession;document.querySelector('.control-help').textContent=master?'방 선택 → 카드 선택 → 바닥 클릭 · 몬스터 선택 후 우클릭: 명령':'WASD 이동 · Shift 질주 · E 상호작용 · I / Tab 장비 · M 지도';
   if(me){
     const signature=JSON.stringify([me.equipment,me.dead,me.dead?s.roster:null]);
@@ -161,9 +163,12 @@ function updateHud(){
   }
   if(master&&$('budget')){const b=s.builders[renderer.masterRoom];$('roomSelect').value=String(renderer.masterRoom);$('budget').textContent=b?`${b.locked?'배치 마감':'남은 자원'} · ${b.budget-b.spent} / ${b.budget}`:'고정 방 · 배치 불가';$('readyRaid').hidden=s.phase!=='planning';$('masterTools').querySelectorAll('[data-room]').forEach(button=>{button.classList.toggle('selected',Number(button.dataset.room)===renderer.masterRoom);button.classList.toggle('locked',!!s.builders[button.dataset.room]?.locked);});$('masterRoster').innerHTML=s.roster.map(p=>`<div class="roster-row"><span>${esc(p.name)}</span><span>${p.dead?'탈락':Math.ceil(p.hp)+' HP'}</span></div>`).join('');}
   const boss=s.entities.find(e=>e.boss&&!e.dead&&(master?e.room===renderer.masterRoom:e.room===me?.room));$('bossHud').hidden=!boss;if(boss){$('bossHud').innerHTML=`<b>${esc(boss.name)}</b><div class="boss-health"><i style="width:${boss.hp/boss.maxHp*100}%"></i></div><small>${Math.ceil(boss.hp)} / ${Math.ceil(boss.maxHp)}</small>`;if(!master&&!bossSeen.has(boss.id)){bossSeen.add(boss.id);bossIntroUntil=performance.now()+2300;$('bossIntro').innerHTML=`<small>수호자를 마주했다</small><strong>${esc(boss.name)}</strong><span>붉은 공격 범위를 피해 싸우세요</span>`;}}$('bossIntro').hidden=performance.now()>bossIntroUntil||master;
+  // A hidden equipment panel must not render/read back its portrait every HUD tick.
+  if(!$('side').hidden&&!$('inventory').hidden){
   document.querySelectorAll('[data-item-slot]').forEach(icon=>{const item=me?.equipment[icon.dataset.itemSlot];if(item)drawEquipmentIcon(icon,item);});
   const hero=$('heroPreview');if(hero&&me){const ctx=hero.getContext('2d');ctx.clearRect(0,0,hero.width,hero.height);renderer.characters?.drawPreview(ctx,me,s.time,hero.width,hero.height);}
-  $('notifications').innerHTML=s.messages.slice(-3).map(m=>`<div>${esc(m.text)}</div>`).join('');
+  }
+  setHudHtml($('notifications'),s.messages.slice(-3).map(m=>`<div>${esc(m.text)}</div>`).join(''));
   if(s.quiz&&s.quiz.chest!==quizDismissed){$('quizOverlay').hidden=false;$('question').textContent=s.quiz.question+' = ?';$('quizFeedback').textContent=s.quiz.feedback||'';if(quizId!==s.quiz.chest){quizId=s.quiz.chest;$('answer').value='';resetInput();$('answer').focus();}}
   else {const wasOpen=!$('quizOverlay').hidden;$('quizOverlay').hidden=true;if(wasOpen){resetInput();canvas.focus();}}
   if(!s.quiz){quizId=null;quizDismissed=null;}

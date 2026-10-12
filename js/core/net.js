@@ -470,6 +470,6 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-10-12-verified-games-v9";
+  window.__BUILD_ID = "2026-10-12-dungeon-smooth-v10";
   window.Net = { nowHHMM, makeClient, safeText, setStatus, roomTitleLimit };
 })();

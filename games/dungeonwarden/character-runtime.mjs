@@ -1,6 +1,6 @@
 import {equipmentTrait} from './shared/equipment-traits.mjs?v=20261009-final-equipment';
 import {equipmentKey,lanternPose,lanternColor} from './equipment-art.mjs?v=20261009-final-equipment';
-import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=20261012-verified-games-v9';
+import {P1ModularAssets,P1WeaponMotion} from './character-core.mjs?v=20261012-dungeon-smooth-v10';
 import {WEAPONS,itemFeedback} from './shared/catalog.mjs';
 import {skillMotion} from './skill-motion.mjs?v=20261009-final-equipment';
 import {paintItemIcon,paintWeapon} from './graphics.mjs';
@@ -77,7 +77,9 @@ export class CharacterRenderer {
  drawPreview(ctx,e,time,width,height){
     if(!this.ready)return;this.previewCanvas??=this.factory(256,256);const g=this.previewCanvas.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,256,256);g.save();g.translate(128,180);g.scale(16,16);
   this.draw(g,{...e,id:e.id+'-equipment-preview',x:0,y:0,facing:Math.PI/2,pose:null,attackPose:0,hitPose:0,skillPose:null,cast:null,whirl:null,dashing:false},time,false,0);g.restore();
-    const data=g.getImageData(0,0,256,256).data;let left=256,top=256,right=0,bottom=0;for(let y=0;y<256;y++)for(let x=0;x<256;x++)if(data[(y*256+x)*4+3]>0){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}
+    const boundsKey=[e.id,this.head(e),...['armor','boots','main','off','helmet'].map(k=>this.key(e.equipment?.[k]))].join('|');
+    if(this.previewBoundsKey!==boundsKey){const data=g.getImageData(0,0,256,256).data;let left=256,top=256,right=0,bottom=0;for(let y=0;y<256;y++)for(let x=0;x<256;x++)if(data[(y*256+x)*4+3]>0){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}if(left>right)return;this.previewBounds={left:Math.max(0,left-4),top:Math.max(0,top-4),right:Math.min(255,right+4),bottom:Math.min(255,bottom+4)};this.previewBoundsKey=boundsKey;}
+    const {left,top,right,bottom}=this.previewBounds;
   if(left>right)return;const w=right-left+1,h=bottom-top+1,scale=Math.min(1.6,(width-16)/w,(height-20)/h),dw=w*scale,dh=h*scale;ctx.imageSmoothingEnabled=false;ctx.drawImage(this.previewCanvas,left,top,w,h,Math.round((width-dw)/2),Math.round((height-dh)/2),dw,dh);
  }
  draw(ctx,e,time,moving,index,visualTime=time){

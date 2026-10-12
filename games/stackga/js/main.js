@@ -9,7 +9,7 @@ import {
   roomRefs, setRoomState, publishMyState, subscribeOppState,
   pushEvent, subscribeEvents, tryCleanupRoom, hardDeleteRoom,
   releaseSlot, sweepLobbySlots
-} from "./netplay.js?v=20261012-verified-games-v9";
+} from "./netplay.js?v=20261012-dungeon-smooth-v10";
 
 const $ = (id)=>document.getElementById(id);
 
