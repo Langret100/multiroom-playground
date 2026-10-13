@@ -85,11 +85,14 @@
       this.state = buildRoomState();
       this._handlers = new Map(); // type -> [fn]
       this._latestLobby = new Map();this._latestMathfront=new Map();
-      this._helloOk = new Promise((res)=>{ this._helloResolve = res; });
-      this._stateReady = new Promise((res)=>{ this._stateResolve = res; });
+      this._helloOk = new Promise((res,reject)=>{ this._helloResolve = res;this._helloReject=reject; });
+      this._helloOk.catch(()=>{});
+      this._stateReady = new Promise((res,reject)=>{ this._stateResolve = res;this._stateReject=reject; });
+      this._stateReady.catch(()=>{});
       ws.onmessage = (ev)=> this._onWsMessage(ev);
       ws.onclose = ()=> {
-        // no-op; pages handle UI
+        const error=new Error("입장 전에 서버 연결이 종료되었습니다.");
+        this._helloReject?.(error);this._stateReject?.(error);
       };
     }
     onMessage(type, fn){
@@ -358,7 +361,7 @@ if (isDuel && humans.length === 1){
         push("ws://127.0.0.1:2567");
         // Worker dev (wrangler)
         push("ws://127.0.0.1:8787");
-      } else {
+      } else if(!candidates.length){
         // Same-origin guess (for custom reverse proxy deployments)
         try{
           const proto = (window.location && window.location.protocol === "https:") ? "wss://" : "ws://";
@@ -409,14 +412,16 @@ if (isDuel && humans.length === 1){
       // waitOpen done in probe
       const user_id = (sessionStorage.getItem("user_id") || localStorage.getItem("user_id") || "");
       ws.send(JSON.stringify({ t:"hello", d:{ nick, user_id } }));
-      await conn._helloOk;
+      try{await waitReady(conn._helloOk,12000,"서버의 입장 확인 응답이 없습니다.");}catch(error){try{ws.close();}catch(_){}throw error;}
       // request initial presence + rooms via server push; also safe to request
       ws.send(JSON.stringify({ t:"presence", d:{} }));
       ws.send(JSON.stringify({ t:"list_rooms", d:{} }));
       return conn;
     }
     async joinById(roomId, opts){
+      opts?.onProgress?.("socket");
       const ws = await this._openWithProbe("/ws/room/" + encodeURIComponent(roomId));
+      opts?.onProgress?.("room");
       const conn = new RoomConnection(ws, "room", { roomId });
       const nick = opts?.nick || localStorage.getItem("nick") || "Player";
       // waitOpen done in probe
@@ -425,10 +430,10 @@ if (isDuel && humans.length === 1){
       const user_id = (sessionStorage.getItem("user_id") || localStorage.getItem("user_id") || "");
       ws.send(JSON.stringify({ t:"hello_room", d:{ nick, user_id } }));
 
-      await conn._helloOk;
+      try{await waitReady(conn._helloOk,12000,"서버의 입장 확인 응답이 없습니다.");}catch(error){try{ws.close();}catch(_){}throw error;}
       // Never expose the default local room state (stackga/4 players) as if it were
       // authoritative. The first room_state must arrive before room.js initializes UI.
-      await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('room state timeout')),5000);conn._stateReady.then(()=>{clearTimeout(timer);resolve();},error=>{clearTimeout(timer);reject(error);});});
+      try{await waitReady(conn._stateReady,5000,"방 정보 응답이 없습니다.");}catch(error){try{ws.close();}catch(_){}throw error;}
       return conn;
     }
     async create(roomName, opts){
@@ -457,11 +462,13 @@ if (isDuel && humans.length === 1){
     }
   }
 
+  function waitReady(promise,ms,message){return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error(message)),ms);promise.then(value=>{clearTimeout(timer);resolve(value);},error=>{clearTimeout(timer);reject(error);});});}
   function waitOpen(ws){
     return new Promise((resolve,reject)=>{
       const to = setTimeout(()=>reject(new Error("ws timeout")), 8000);
       ws.onopen = ()=>{ clearTimeout(to); resolve(); };
-      ws.onerror = (e)=>{ clearTimeout(to); reject(new Error("ws error")); };
+      ws.onerror = (e)=>{ clearTimeout(to); reject(new Error("서버 연결에 실패했습니다.")); };
+      ws.onclose = ()=>{clearTimeout(to);reject(new Error("서버 연결이 종료되었습니다."));};
     });
   }
 
@@ -473,3 +480,4 @@ if (isDuel && humans.length === 1){
   window.__BUILD_ID = "2026-10-12-dungeon-render-v12";
   window.Net = { nowHHMM, makeClient, safeText, setStatus, roomTitleLimit };
 })();
+

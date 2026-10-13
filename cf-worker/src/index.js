@@ -208,10 +208,38 @@ export class LobbyDO{
         changed = true;
       }
     }
+    this._scheduleRoomSweep();
     if (changed){
       await this._scheduleSaveRooms();
       this._broadcast('rooms', { list:this._roomsList() });
     }
+  }
+
+  _scheduleRoomSweep(){
+    const stamp=now();if(this._ghostSweepPromise||this._lastGhostSweepAt&&stamp-this._lastGhostSweepAt<15000)return;
+    this._lastGhostSweepAt=stamp;
+    const candidates=Object.entries(this.rooms||{}).filter(([,r])=>r.everJoined||Number(r.players)>0);
+    const task=(async()=>{
+      let changed=false;
+      for(let index=0;index<candidates.length;index+=4){
+        await Promise.all(candidates.slice(index,index+4).map(async([id,record])=>{
+          let timer;
+          try{
+            const stub=this.env.ROOM.get(this.env.ROOM.idFromName(id));
+            const response=await Promise.race([stub.fetch('https://room/internal/health?roomId='+encodeURIComponent(id)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Room health timeout')),1500);})]);
+            if(!response.ok)return;const health=await response.json();
+            if(this.rooms[id]!==record||health.pending)return;
+            if(health.empty===true&&Number(health.players)===0){
+              delete this.rooms[id];for(const [uid,p]of this.presence)if(p.roomId===id)this.presence.delete(uid);changed=true;
+            }
+          }catch(_){ /* A failed health check is not evidence of an empty room. */ }
+          finally{clearTimeout(timer);}
+        }));
+      }
+      if(changed){await this._scheduleSaveRooms();this._broadcast('rooms',{list:this._roomsList()});this._broadcastPresence();}
+    })();
+    this._ghostSweepPromise=task;this.state.waitUntil?.(task);
+    task.then(()=>{this._ghostSweepPromise=null;},()=>{this._ghostSweepPromise=null;});
   }
 
   _roomsList(){
@@ -399,7 +427,8 @@ export class LobbyDO{
       if (u.deleted){
         delete this.rooms[roomId];
       } else {
-        const prev = this.rooms[roomId] || { roomId };
+        const prev = this.rooms[roomId];
+        if(!prev)return json({ok:false,reason:"room-removed"});
         this.rooms[roomId] = {
           ...prev,
           title: u.title ?? prev.title ?? "방",
@@ -744,20 +773,18 @@ export class RoomDO{
   }
 
   async _pullMetaFromLobby(roomId){
-    try{
-      const lobby = this.env.LOBBY.get(this.env.LOBBY.idFromName("lobby"));
-      const res = await lobby.fetch(`https://lobby/internal/roomMeta?roomId=${encodeURIComponent(roomId)}`);
-      const js = await res.json();
-      const lm = js.meta;
-      if (!lm) return false;
-      this.meta.randomGame=!!lm.randomGame;
-      this.meta.title = lm.title ?? this.meta.title;
-      this.meta.mode = lm.mode ?? this.meta.mode;
-      this.meta.maxPlayers = lm.maxPlayers ?? this.meta.maxPlayers;
-      return true;
-    }catch(_){
-      return false;
-    }
+    if(this._metaReadyRoomId===roomId)return true;
+    if(this._metaLoadRoomId===roomId&&this._metaLoadPromise)return this._metaLoadPromise;
+    const generation=this._metaGeneration||0;this._metaLoadRoomId=roomId;
+    const task=(async()=>{try{
+      const lobby=this.env.LOBBY.get(this.env.LOBBY.idFromName('lobby'));
+      const response=await lobby.fetch('https://lobby/internal/roomMeta?roomId='+encodeURIComponent(roomId)),data=await response.json();
+      if(!data.meta||generation!==(this._metaGeneration||0))return false;
+      const meta=data.meta;this.meta.randomGame=!!meta.randomGame;this.meta.title=meta.title??this.meta.title;this.meta.mode=meta.mode??this.meta.mode;this.meta.maxPlayers=meta.maxPlayers??this.meta.maxPlayers;
+      this._metaReadyRoomId=roomId;return true;
+    }catch(_){return false;}})();
+    this._metaLoadPromise=task;
+    try{return await task;}finally{if(this._metaLoadPromise===task)this._metaLoadPromise=null;}
   }
 
   _scheduleLobbyUpdate(delayMs=400){
@@ -2558,6 +2585,7 @@ export class RoomDO{
 
 
   _resetTransientRoomState(){
+    this._metaReadyRoomId=null;this._metaLoadPromise=null;this._metaGeneration=(this._metaGeneration||0)+1;
     if(this.mf){clearTimeout(this.mf.endTimer);this.mf=null;}
     // Hard-reset all in-memory transient room/game state when the room becomes empty.
     // This prevents ghost timers/state surviving hibernation or object reuse.
@@ -3671,32 +3699,15 @@ export class RoomDO{
       // A socket returned by Durable Object getWebSockets() is the source of truth for
       // room liveness here. We only prune users whose authenticated socket is actually
       // absent; we do NOT close sockets from this health endpoint.
-      const liveUsers = new Set();
-      try{
-        for (const sock of this.state.getWebSockets()){
-          const att = wsGetAttachment(sock) || {};
-          const uid = safeId(att.uid || '');
-          if (!uid || uid === this._cpuUid()) continue;
-          liveUsers.add(uid);
-        }
-      }catch(_){ }
-
-      if (liveUsers.size === 0){
-        // Health is observation-only for an empty RoomDO. LobbyDO owns the deletion
-        // decision so it can distinguish a brand-new room waiting for its creator from
-        // a genuinely abandoned ghost room. Deleting here caused a create->navigate
-        // race that erased mode/maxPlayers before the first hello_room.
-        return json({ ok:true, empty:true, players:0 });
+      const liveUsers=new Set(),peers=new Set(this.sockets.keys());let pending=false;
+      try{for(const ws of this.state.getWebSockets())peers.add(ws);}catch(_){}
+      for(const ws of peers){
+        if(ws.readyState!==1)continue;
+        const uid=safeId(wsGetAttachment(ws)?.uid||this.sockets.get(ws)||'');
+        if(!uid){pending=true;continue;}if(uid!==this._cpuUid())liveUsers.add(uid);
       }
-
-      // Repair only user records that no longer have an authenticated Durable Object
-      // WebSocket. Do not use lastSeen/client clock and do not force-close anything.
-      for (const uid of [...this.users.keys()]) if (uid!==this._cpuUid() && !liveUsers.has(uid)){
-        try{ await this._presenceClear(uid, this.meta.roomId); }catch(_){ }
-        this.users.delete(uid);
-        this.userSockets.delete(uid);
-      }
-      return json({ ok:true, empty:false, players:liveUsers.size });
+      if(!pending&&!liveUsers.size&&this.users.size){this._resetTransientRoomState();this.users.clear();this.userSockets.clear();}
+      return json({ok:true,empty:!pending&&liveUsers.size===0,pending,players:liveUsers.size});
     }
 
     if (upgrade.toLowerCase() === "websocket" && m){
@@ -3711,6 +3722,7 @@ export class RoomDO{
       this.sockets.set(server, "");
       wsSetAttachment(server, { uid:"", nick:"", ready:false, seat:99 });
       this._wireSocket(server);
+      const metaLoad=this._pullMetaFromLobby(reqRoomId);this.state.waitUntil?.(metaLoad);
 
       return new Response(null, { status:101, webSocket: client });
     }

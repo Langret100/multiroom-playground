@@ -3302,7 +3302,7 @@ function startSim(){
 
     try{
       client = makeClient();
-      room = await client.joinById(roomId, { nick: myNick });
+      room = await client.joinById(roomId, { nick: myNick,onProgress:stage=>setStatus(stage==="socket"?"게임 서버에 연결 중입니다…":"방 정보를 확인 중입니다…","info") });
 
       mySessionId = room.sessionId;
 
@@ -3982,7 +3982,7 @@ try{
 
       setStatus("", "info");
     }catch(err){
-      setStatus("서버에 연결할 수 없습니다. 로비로 돌아갑니다.", "error");
+      setStatus(safeText(err?.message||"서버에 연결할 수 없습니다.",160)+" 로비로 돌아갑니다.", "error");
       setTimeout(()=>{ try{ window.__fsNavigating = true; }catch(_){ } location.href="./index.html"; }, 800);
     }
   }
