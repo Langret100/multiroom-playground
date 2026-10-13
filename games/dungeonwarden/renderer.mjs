@@ -6,7 +6,7 @@ import {RARITY_COLORS,WEAPONS} from './shared/catalog.mjs';
 import {weaponPreview} from './shared/combat.mjs';
 import {paintWeapon,paintWear,paintItemIcon,paintEffect,traceAttackShape} from './graphics.mjs?v=20261009-final-equipment';
 import {walkable,lineOfSight,inside} from './shared/world.mjs';
-import {CharacterRenderer} from './character-runtime.mjs?v=20261012-dungeon-render-v12';
+import {CharacterRenderer} from './character-runtime.mjs?v=20261013-clean-network-v15';
 const palette=['#79d5c1','#e99a83','#8caee9','#ddb477','#ae99e4','#e4a8c2','#a7c578','#84bdd1'];
 export function minimapLayout(map,width){const w=width<500?150:200,h=Math.max(44,Math.min(118,w*map.height/map.width)),x=18,y=115,scale=Math.min(w/map.width,h/map.height);return {x,y,w,h,scale,mx:x+(w-map.width*scale)/2,my:y+(h-map.height*scale)/2};}
 export class Renderer {

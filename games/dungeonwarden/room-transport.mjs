@@ -1,5 +1,6 @@
+import {predictMovement} from './movement-prediction.mjs?v=20261013-clean-network-v15';
 import {applyStateDelta} from './shared/state-codec.mjs?v=20261011-teams-mobile';
-import {move,lineOfSight} from './shared/world.mjs?v=20261011-teams-mobile';
+import {lineOfSight} from './shared/world.mjs?v=20261011-teams-mobile';
 import {WEAPONS} from './shared/catalog.mjs';
 
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
@@ -9,7 +10,7 @@ export class RoomTransport {
  constructor(id,gameId){
   this.id=id;this.gameId=gameId;this.latest=null;this.network=true;this.normalized=new WeakMap();
   this.clock=0;this.sent=-1;this.pending={};this.raw=null;this.frames=[];this.edge={attack:false,special:false};this.prevInput={};
-  this.interpDelay=.10;this.arrivalGap=.05;this.jitter=.006;this.lastReceiveAt=0;
+  this.interpDelay=.10;this.arrivalGap=.05;this.jitter=.006;this.lastReceiveAt=0;this.offsetSamples=[];
   this.serverMe=null;this.visualMe=null;this.visualAt=0;this.serverOffset=null;this.serverMeTime=null;this.inputHistory=[];this.motionSignature=null;
  }
  post(type,data={}){parent.postMessage({type,gameId:this.gameId,...data},location.origin);}
@@ -26,7 +27,16 @@ export class RoomTransport {
   if(packet.type==='snapshot')this.raw=packet.state;else this.raw=applyStateDelta(this.raw,packet);if(!this.raw)return;
   const next=this.normalize(this.raw);this.latest=next;
   const now=performance.now()/1000;
-  if(Number.isFinite(next.time)){const offset=now-next.time;this.serverOffset=this.serverOffset===null?offset:Math.min(this.serverOffset,offset);this.serverMeTime=next.time;}
+  if(Number.isFinite(next.time)){
+   // A lifetime minimum permanently runs ahead after a server stall. Keep recent
+   // low-delay samples and let the clock slow gently when simulation falls behind.
+   this.offsetSamples.push({at:now,offset:now-next.time});
+   this.offsetSamples=this.offsetSamples.filter(sample=>now-sample.at<=.6);
+   const offset=Math.min(...this.offsetSamples.map(sample=>sample.offset)),gap=this.lastReceiveAt?Math.max(0,now-this.lastReceiveAt):0;
+   this.offsetTarget=offset;
+   if(this.serverOffset===null||gap>.8){this.serverOffset=offset;this.clockAt=now;}
+   this.serverMeTime=next.time;
+  }
   if(this.lastReceiveAt){
    const gap=clamp(now-this.lastReceiveAt,.02,.4),delta=Math.abs(gap-this.arrivalGap);
    this.arrivalGap=this.arrivalGap*.88+gap*.12;this.jitter=this.jitter*.9+delta*.1;
@@ -52,15 +62,10 @@ export class RoomTransport {
   else if(len>.001)e.facing=Math.atan2(dy,dx);
  }
  advanceLocal(e,dt,input=this.pending){
-  const s=this.latest,i=input||{};if(!e||!s?.map||e.dead||dt<=0)return;
-  const dx=Number(i.mx)||0,dy=Number(i.my)||0,len=Math.hypot(dx,dy);
-  this.orientLocal(e);
-  if(!len||e.stun>0||e.root>0||e.cast)return;
-  let speed=this.localSpeed(e);
-  const sprint=!!i.sprint&&e.dashRecovery<=0&&e.dash>0;if(sprint)speed*=1.6;
-  if(i.block&&e.equipment?.off?.type==='shield')speed*=.35;
-  const map={...s.map,bodies:(s.entities||[]).filter(x=>x.id!=='local')};
-  move(map,e,dx/Math.max(1,len)*speed*dt,dy/Math.max(1,len)*speed*dt,false);
+  if(!e||!this.latest?.map||dt<=0)return;
+  if(this.latest.phase&&this.latest.phase!=='playing')return;
+  const map=this.predictionMap||{...this.latest.map,bodies:(this.latest.entities||[]).filter(actor=>actor.id!=='local')};
+  predictMovement(map,e,input||{},dt,this.latest.time||0,this.localSpeed(e));
  }
  reconcileLocal(server){
   if(!server)return;this.serverMe=cloneEntity(server);
@@ -96,6 +101,10 @@ export class RoomTransport {
   }
  }
  snapshot(){return this.latest;}
+ advanceClock(now){
+  const dt=Math.max(0,now-(this.clockAt??now));this.clockAt=now;
+  if(this.serverOffset!==null&&Number.isFinite(this.offsetTarget))this.serverOffset+=clamp(this.offsetTarget-this.serverOffset,-dt*.25,dt*.25);
+ }
  interpolateRemote(now){
   if(!this.latest||this.frames.length<2)return this.latest;
   const serverTimeline=this.serverOffset!==null&&this.frames.every(f=>Number.isFinite(f.state.time)),frameTime=f=>serverTimeline?f.state.time:f.at;
@@ -105,7 +114,7 @@ export class RoomTransport {
   for(const frame of this.frames){if(frameTime(frame)<=target)a=frame;else{b=frame;break;}}
   if(!b){
    const last=this.frames.at(-1),prev=this.frames.at(-2);if(!prev)return last.state;
-   const ahead=clamp(target-frameTime(last),0,.08),span=Math.max(.001,frameTime(last)-frameTime(prev)),factor=clamp(ahead/span,0,.75);
+   const ahead=clamp(target-frameTime(last),0,.15),span=Math.max(.001,frameTime(last)-frameTime(prev)),factor=ahead/span;
    const extrapolate=(old,values)=>{const ids=new Map((old||[]).map(e=>[e.id,e]));return (values||[]).map(e=>{if(e.id==='local')return e;const q=ids.get(e.id);if(!q||q.room!==e.room||q.dead!==e.dead)return e;const dx=e.x-q.x,dy=e.y-q.y;if(Math.hypot(dx,dy)>2.5)return e;return {...e,x:e.x+dx*factor,y:e.y+dy*factor};});};
    const ageTimers=e=>({...e,...Object.fromEntries(['attackPose','hitPose','life'].filter(k=>Number.isFinite(e[k])).map(k=>[k,Math.max(0,e[k]-ahead)]))});
    return {...last.state,time:last.state.time+ahead,entities:extrapolate(prev.state.entities,last.state.entities).map(e=>e.id==='local'?e:ageTimers(e)),projectiles:extrapolate(prev.state.projectiles,last.state.projectiles),effects:(last.state.effects||[]).map(ageTimers)};
@@ -119,6 +128,7 @@ export class RoomTransport {
   return {...b.state,time:renderTime,entities:interp(a.state.entities,b.state.entities),projectiles:interp(a.state.projectiles,b.state.projectiles),zones:a.state.zones||b.state.zones,effects};
  }
  renderSnapshot(now=performance.now()/1000){
+  this.advanceClock(now);
   const state=this.interpolateRemote(now);if(!state||!this.serverMe)return state;
   // Predict on one server simulation timeline. Packet arrival jitter must not reset
   // the prediction age to zero and pull a continuously moving player backwards.
@@ -126,9 +136,10 @@ export class RoomTransport {
   const target=cloneEntity(this.serverMe),predictionStart=this.serverOffset===null||this.serverMeTime===null?this.lastReceiveAt:this.serverMeTime+this.serverOffset,age=clamp(now-predictionStart,0,.25),predictionEnd=predictionStart+age;
   // Replay the input that was active in each unconfirmed interval. A newly released
   // or reversed key must not erase movement predicted before that input change.
+  this.predictionMap={...this.latest.map,bodies:(this.latest.entities||[]).filter(e=>e.id!=='local')};
   let cursor=predictionStart,activeInput={};
   for(const sample of this.inputHistory){if(sample.at<=cursor){activeInput=sample.input;continue;}if(sample.at>predictionEnd)break;this.advanceLocal(target,sample.at-cursor,activeInput);cursor=sample.at;activeInput=sample.input;}
-  this.advanceLocal(target,predictionEnd-cursor,this.inputHistory.length?activeInput:this.pending);this.orientLocal(target);
+  this.advanceLocal(target,predictionEnd-cursor,this.inputHistory.length?activeInput:this.pending);delete target.predictionTime;delete target.predictionSpeed;this.orientLocal(target);
   const prev=this.visualMe;
   if(!prev||prev.room!==target.room||prev.dead!==target.dead||Math.hypot(target.x-prev.x,target.y-prev.y)>1.6)this.visualMe=cloneEntity(target);
   else{

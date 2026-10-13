@@ -1,13 +1,13 @@
 {
-  "base": "multiroom-playground-main (2).zip",
+  "base": "multiroom-playground-main (9).zip",
   "files": [
     {
       "path": "index.html",
-      "sha256": "9fb4237416b08c99d9f0c4b4376df88fbe036731deb50daaa2355643857524c0"
+      "sha256": "4aa054851bbb06b137e4cdf8f2e172ce88a1d867c1da617fe8b950e7e17a5a7a"
     },
     {
       "path": "room.html",
-      "sha256": "8ef45d4160212760772664356da2787798ede24106eaf5053977bb8b67028347"
+      "sha256": "58399ca233f4e9a46a5ea187a446ce4823d3892cc9adea6dc5ecd34cf7431b60"
     },
     {
       "path": "css/styles.css",
@@ -15,7 +15,7 @@
     },
     {
       "path": "cf-worker/src/index.js",
-      "sha256": "8bbfe9847890c344c75fb712a097929d3c89235cb786724cf67113b645b91e26"
+      "sha256": "957f93bdfe267a434ae747aaec6489ef282af816522eaaf10a4f44abd9f2f009"
     },
     {
       "path": "cf-worker/src/dungeon/engine.mjs",
@@ -43,15 +43,15 @@
     },
     {
       "path": "games/bloomshot/index.html",
-      "sha256": "01b5f7e1ea757ca0cc831023cfd35d849aaaf36d6a4903562a96663f580bcd73"
+      "sha256": "53ab9eca5015ec9ab20c31304ebdc21e4d746d0ccf56bf495f151c7b908a27c6"
     },
     {
       "path": "games/dungeonwarden/client.mjs",
-      "sha256": "8c279a22bf844171edceb6fbbe8bd393833db255925630b40ed596acc75d3836"
+      "sha256": "b8a73d532526adb9507b5b83d338f00d80992a18fc96a24e4cb520241858c21f"
     },
     {
       "path": "games/dungeonwarden/index.html",
-      "sha256": "3f21020e38c15aeb8300fe62f6ab8e74077ffa68ff9a0a2a16c9f8928bf41321"
+      "sha256": "19a7602b7f43647f7e1a4ff0dd8c5bd8a1b6e7cf172c3d6ef6da58f8d8124783"
     },
     {
       "path": "games/dungeonwarden/local-transport.mjs",
@@ -59,11 +59,11 @@
     },
     {
       "path": "games/dungeonwarden/renderer.mjs",
-      "sha256": "523b5c5cd58a26324b6b6cc090257e0a8c9b93d52472adb35b411d6ec9bb121f"
+      "sha256": "999a516ff88372ca9f2a366921ab230792bc9bda9964098718519f45980bef3d"
     },
     {
       "path": "games/dungeonwarden/room-transport.mjs",
-      "sha256": "6cfb0c23a88f22790a8165c96332f0e3f5dd2c2e7734cd444a5a0795f9433d2c"
+      "sha256": "50f9725509375877d139de70909355151b90a22057b7fe99aa24483e6e7c94d4"
     },
     {
       "path": "games/dungeonwarden/style.css",
@@ -71,7 +71,7 @@
     },
     {
       "path": "games/mathfront/index.html",
-      "sha256": "82faa8a871adf0f9d195e45d81ed523d1e7acdec29fc936e63c0510ef7f1eb40"
+      "sha256": "e6930df0ca7b9ea8992fdc7fccf8aacb23ca95e187afe9047a9fc567303e4a09"
     },
     {
       "path": "games/soccer/game.js",
@@ -79,15 +79,15 @@
     },
     {
       "path": "games/soccer/index.html",
-      "sha256": "d029d92ab0c88428f63ce67f0d23c7d8a7db3808dd033ea38adc02df5a542cd7"
+      "sha256": "f366d436b4326577863bdf3c8a98c3376a3dd010df0583cfa761fa7aa8acb4c8"
     },
     {
       "path": "games/stackga/index.html",
-      "sha256": "38a899b57cfcd2eea83b45142d9a4e438456d1e7e5695d264a8dee92be837d86"
+      "sha256": "9b3714d2dad39dcee9ca298046827f9c60ffe5af48daf31e5e1f32e8180b45c3"
     },
     {
       "path": "games/starpaint/index.html",
-      "sha256": "d2737bbb70c031ae90f0cfc0565c8a4c77755b11431df040a5660a914c69fce6"
+      "sha256": "734a09ca827cc65a0796e66eff23ff5aaffe4c604fc72ecb4a9a8cee30663166"
     },
     {
       "path": "games/waterblast/game.js",
@@ -95,7 +95,7 @@
     },
     {
       "path": "games/waterblast/index.html",
-      "sha256": "6e073845303d988a47c3256aad34bd4770737d7ee7fc8671193e09359f1a577e"
+      "sha256": "f51dbab1231a056ee6f6cc5ec08b25da7107ee7b1ebfd89bfea8f17c8a3f009a"
     },
     {
       "path": "games/dungeonwarden/shared/engine.mjs",
@@ -115,15 +115,15 @@
     },
     {
       "path": "games/stackga/js/main.js",
-      "sha256": "8a1d3e370a33fc81046ea90068145fd5de410f6d92c6e0901754fb512dcc405d"
+      "sha256": "453c31d0f90e2775c2fa2c762542bf208d8fba4d1da523f0b235638a6b9e3aac"
     },
     {
       "path": "js/core/net.js",
-      "sha256": "f5b04b4a08b2604a1c83b867cf160caeffd48b7ff71d0d7249c5a0e9e861659b"
+      "sha256": "f75b75c2416aea435fa506b3f7f82679aa3dcbe0f0dd4a6663b018f51f2369e3"
     },
     {
       "path": "js/games/registry.js",
-      "sha256": "7dc545e8841813de84dd87264308fe091cfa74831c78660651e6e48da9c24259"
+      "sha256": "229512fb197b30afdbdf0a8f87952c673ff54d9d93774636c1e1145e452c3c63"
     },
     {
       "path": "js/games/solo-ai.js",
@@ -131,7 +131,27 @@
     },
     {
       "path": "js/pages/room.js",
-      "sha256": "c3b5d0f917ff6d912c3605109bff441faed006feb367547b682236136dac68f7"
+      "sha256": "0756625752339a20d57dd5d6b7cd61e6ac0ac15fd1e7f22a44d98f403ff1802d"
+    },
+    {
+      "path": "NETWORK-CLEAN-PATCH-KO.md",
+      "sha256": "d58280dc466ba386aa7d7e7151659851f4beef7c5252a5717fdd097357cb53d3"
+    },
+    {
+      "path": "NETWORK-CLEAN-VERIFICATION.json",
+      "sha256": "958afbd84e37c614f978a86ebd7579a5ac27d09217b7e3af76d5a163a40603d5"
+    },
+    {
+      "path": "games/dungeonwarden/character-runtime.mjs",
+      "sha256": "07f2c92edaf99884cb2f75639114c95dd8de27958e91effd1b1ddc83cd557e84"
+    },
+    {
+      "path": "games/dungeonwarden/movement-prediction.mjs",
+      "sha256": "4ebc54a9fb4081a6cc4071e2d2a572aad1cd07fbd2817a3e45c573f979016c71"
+    },
+    {
+      "path": "tests/network-sync-clean.test.mjs",
+      "sha256": "9a1fa5c8aa4761b8031380db0092c17b0e164b55a69c3873e82c4312b17675f4"
     }
   ],
   "rules": {
@@ -777,5 +797,10 @@
   "latestObservation": {
     "hostRocketHeldItemFrameIntermittent": true,
     "note": "Repeated software-rendered browser test did not capture one short host rocket item drawing frame; earlier 40-case run and subsequent 12 impact checks passed."
+  },
+  "networkCleanPatch": {
+    "release": "20261013-clean-network-v15",
+    "verification": "NETWORK-CLEAN-VERIFICATION.json",
+    "rules": "Original projectile rules retained"
   }
 }

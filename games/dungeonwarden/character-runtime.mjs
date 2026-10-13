@@ -96,9 +96,6 @@ export class CharacterRenderer {
   // and local input still render every frame. Stagger actors to avoid a shared redraw spike.
   const phaseOffset=[...id].reduce((n,c)=>n+c.charCodeAt(0),0)%7/7,poseKey=[dir,mode,e.combo||1,!!e.blocking,e.bowCharge||0,Math.floor(animationTime*(id==='local'?60:30)+phaseOffset+1e-6)].join('|');
   let pose=actor.cachedPose;if(actor.poseKey!==poseKey){pose=actor.motion.render(actor.canvas,dir,actor.weapon.family,animationTime,{mode,bowCharge:e.bowCharge||0,single:!!skill||!!e.cast||!!e.bowCharge||!!e.attackPose&&!e.whirl,combo:e.combo||1,weapon:actor.weapon.sprite,grip:actor.weapon.sprite.grip,helmet:null,blocking:!!e.blocking,shield:eq.off?.type==='shield'?this.accessory(eq.off,dir==='right'?'side':dir):null,shieldHeight:eq.off?.visual?.shape==='buckler'?8:eq.off?.appearance==='pot_lid'?9:12,theme:actor.weapon.theme,effects:false});actor.cachedPose=pose;actor.poseKey=poseKey;}
-  const matrix=ctx.getTransform?.();
-  const sx=Math.max(1,Math.abs(matrix?.a||1)),sy=Math.max(1,Math.abs(matrix?.d||1));
-  const snap=(v,scale)=>Math.round(v*scale)/scale;
   const drawW=8.4,drawH=8.4,anchorY=.6425;
   const point=p=>({x:e.x-drawW/2+(pose.flip?128-p.x:p.x)/128*drawW,y:e.y-drawH*anchorY+p.y/128*drawH});
   const trailKey=mode+'|'+(e.combo||1)+'|'+(skill?.started||0)+(mode==='whirlwind'?'|'+pose.dir+'|'+pose.flip:'');if(actor.trailKey!==trailKey){actor.trail=[];actor.trailKey=trailKey;}
@@ -113,7 +110,7 @@ export class CharacterRenderer {
   const trait=equipmentTrait(equipment.armor);if(trait?.kind==='echoarmor'&&equipment.main&&(e.echoLaunchUntil||0)<time)this.drawOrbitWeapons(ctx,e,equipment.main,visualTime);
   if(lamp&&lp.dy<0)this.drawLantern(ctx,lamp,lp,visualTime);
   ctx.imageSmoothingEnabled=false;
-  ctx.drawImage(actor.canvas,snap(e.x-drawW/2,sx),snap(e.y-drawH*anchorY,sy),drawW,drawH);
+  ctx.drawImage(actor.canvas,e.x-drawW/2,e.y-drawH*anchorY,drawW,drawH);
   if(lamp&&lp.dy>=0)this.drawLantern(ctx,lamp,lp,visualTime);
   if(slot==='main'&&eq.off&&!['shield','lantern'].includes(eq.off.type)){const icon=this.accessory(eq.off),sway=Math.sin(visualTime*(moving?11:2.5)-.5)*.05;ctx.save();ctx.translate(e.x+(dir==='side'?0:-.9),e.y-1.25+sway);ctx.rotate(sway);ctx.drawImage(icon,-.4,-.4,.8,.8);ctx.restore();}return true;
  }
