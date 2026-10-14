@@ -477,7 +477,7 @@ if (isDuel && humans.length === 1){
   }
 
   // Build marker for debugging deployments
-  window.__BUILD_ID = "2026-10-12-dungeon-render-v12";
+  window.__BUILD_ID = "20261014-movement-audit-v17";
   window.Net = { nowHHMM, makeClient, safeText, setStatus, roomTitleLimit };
 })();
 

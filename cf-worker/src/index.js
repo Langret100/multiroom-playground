@@ -218,7 +218,11 @@ export class LobbyDO{
   _scheduleRoomSweep(){
     const stamp=now();if(this._ghostSweepPromise||this._lastGhostSweepAt&&stamp-this._lastGhostSweepAt<15000)return;
     this._lastGhostSweepAt=stamp;
-    const candidates=Object.entries(this.rooms||{}).filter(([,r])=>r.everJoined||Number(r.players)>0);
+    const all=Object.entries(this.rooms||{}).filter(([,r])=>r.everJoined||Number(r.players)>0);
+    // Bound work per sweep even when many rooms are listed. Rotate fairly.
+    const cursor=(this._ghostSweepCursor||0)%Math.max(1,all.length),candidates=[];
+    for(let i=0;i<Math.min(4,all.length);i++)candidates.push(all[(cursor+i)%all.length]);
+    this._ghostSweepCursor=cursor+candidates.length;
     const task=(async()=>{
       let changed=false;
       for(let index=0;index<candidates.length;index+=4){
@@ -230,6 +234,12 @@ export class LobbyDO{
             if(!response.ok)return;const health=await response.json();
             if(this.rooms[id]!==record||health.pending)return;
             if(health.empty===true&&Number(health.players)===0){
+              // Recheck inside RoomDO before retiring orphan timers. A join can occur
+              // between health and retirement; never delete that newly active room.
+              clearTimeout(timer);
+              const retired=await Promise.race([stub.fetch('https://room/internal/retireEmpty?roomId='+encodeURIComponent(id)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Room retirement timeout')),1500);})]);
+              if(!retired.ok)return;const result=await retired.json();
+              if(!result.retired||this.rooms[id]!==record)return;
               delete this.rooms[id];for(const [uid,p]of this.presence)if(p.roomId===id)this.presence.delete(uid);changed=true;
             }
           }catch(_){ /* A failed health check is not evidence of an empty room. */ }
@@ -2585,6 +2595,9 @@ export class RoomDO{
 
 
   _resetTransientRoomState(){
+    this._stopDungeon();
+    for(const timer of this._soccerDisconnectTimers?.values()||[])clearTimeout(timer);
+    this._soccerDisconnectTimers?.clear();
     this._metaReadyRoomId=null;this._metaLoadPromise=null;this._metaGeneration=(this._metaGeneration||0)+1;
     if(this.mf){clearTimeout(this.mf.endTimer);this.mf=null;}
     // Hard-reset all in-memory transient room/game state when the room becomes empty.
@@ -3687,7 +3700,7 @@ export class RoomDO{
 
     this._rehydrateSocketsFromState();
 
-    if (path === '/internal/health'){
+    if (path === '/internal/health'||path === '/internal/retireEmpty'){
       const roomId = safeId(url.searchParams.get('roomId') || this.meta.roomId || '');
       if (roomId && !this.meta.roomId) this.meta.roomId = roomId;
 
@@ -3699,18 +3712,25 @@ export class RoomDO{
       // A socket returned by Durable Object getWebSockets() is the source of truth for
       // room liveness here. We only prune users whose authenticated socket is actually
       // absent; we do NOT close sockets from this health endpoint.
-      const liveUsers=new Set(),peers=new Set(this.sockets.keys());let pending=false;
+      const liveUsers=new Set(),peers=new Set(this.sockets.keys());let pending=!!this._soccerDisconnectTimers?.size;
       try{for(const ws of this.state.getWebSockets())peers.add(ws);}catch(_){}
       for(const ws of peers){
         if(ws.readyState!==1)continue;
         const uid=safeId(wsGetAttachment(ws)?.uid||this.sockets.get(ws)||'');
         if(!uid){pending=true;continue;}if(uid!==this._cpuUid())liveUsers.add(uid);
       }
-      if(!pending&&!liveUsers.size&&this.users.size){this._resetTransientRoomState();this.users.clear();this.userSockets.clear();}
+      // Health is observation only. Retirement is explicit and rechecks liveness.
+      if(path==='/internal/retireEmpty'){
+        if(pending||liveUsers.size)return json({ok:true,retired:false});
+        this._retired=true;this._resetTransientRoomState();
+        return json({ok:true,retired:true});
+      }
       return json({ok:true,empty:!pending&&liveUsers.size===0,pending,players:liveUsers.size});
     }
 
     if (upgrade.toLowerCase() === "websocket" && m){
+      // A retired room cannot accept a join while LobbyDO finishes removing it.
+      if(this._retired)return new Response('Room removed',{status:404});
       const pair = new WebSocketPair();
       const client = pair[0];
       const server = pair[1];

@@ -37,7 +37,8 @@ function moveToContact(map,e,dx,dy){
  for(const [axis,delta,wanted] of [['x',dx,wantedX],['y',dy,wantedY]]){
   const start=e[axis],gap=wanted-start;if(Math.abs(gap)<1e-8||gap*delta<=0)continue;
   let lo=0,hi=1;
-  for(let n=0;n<12;n++){const t=(lo+hi)/2,candidate={...e},amount=gap*t;move(map,candidate,axis==='x'?amount:0,axis==='y'?amount:0,false);if(Math.abs(candidate[axis]-(start+amount))<1e-8)lo=t;else hi=t;}
+  const candidate={...e};
+  for(let n=0;n<12;n++){const t=(lo+hi)/2,amount=gap*t;candidate.x=e.x;candidate.y=e.y;move(map,candidate,axis==='x'?amount:0,axis==='y'?amount:0,false);if(Math.abs(candidate[axis]-(start+amount))<1e-8)lo=t;else hi=t;}
   e[axis]=start+gap*lo;
  }
 }

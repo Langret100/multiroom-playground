@@ -1,4 +1,4 @@
-import {predictMovement} from './movement-prediction.mjs?v=20261013-clean-network-v15';
+import {predictMovement} from './movement-prediction.mjs?v=20261014-movement-audit-v17';
 import {applyStateDelta} from './shared/state-codec.mjs?v=20261011-teams-mobile';
 import {lineOfSight} from './shared/world.mjs?v=20261011-teams-mobile';
 import {WEAPONS} from './shared/catalog.mjs';
@@ -34,7 +34,7 @@ export class RoomTransport {
    this.offsetSamples=this.offsetSamples.filter(sample=>now-sample.at<=.6);
    const offset=Math.min(...this.offsetSamples.map(sample=>sample.offset)),gap=this.lastReceiveAt?Math.max(0,now-this.lastReceiveAt):0;
    this.offsetTarget=offset;
-   if(this.serverOffset===null||gap>.8){this.serverOffset=offset;this.clockAt=now;}
+   if(this.serverOffset===null||gap>.8){this.serverOffset=offset;this.clockAt=now;this.remoteRenderTime=null;}
    this.serverMeTime=next.time;
   }
   if(this.lastReceiveAt){
@@ -42,7 +42,10 @@ export class RoomTransport {
    this.arrivalGap=this.arrivalGap*.88+gap*.12;this.jitter=this.jitter*.9+delta*.1;
    this.interpDelay=clamp(this.arrivalGap+this.jitter*2.5+.018,.07,.14);
   }
-  this.lastReceiveAt=now;this.frames.push({at:now,state:next});if(this.frames.length>16)this.frames.shift();
+  this.lastReceiveAt=now;const lastFrame=this.frames.at(-1);
+  if(lastFrame&&Number.isFinite(next.time)&&next.time===lastFrame.state.time)this.frames[this.frames.length-1]={at:now,state:next};
+  else this.frames.push({at:now,state:next});
+  if(this.frames.length>16)this.frames.shift();
   this.reconcileLocal(next.me||next.entities?.find(e=>e.id==='local'));
  }
  localSpeed(e){
@@ -115,9 +118,10 @@ export class RoomTransport {
   if(!b){
    const last=this.frames.at(-1),prev=this.frames.at(-2);if(!prev)return last.state;
    const ahead=clamp(target-frameTime(last),0,.15),span=Math.max(.001,frameTime(last)-frameTime(prev)),factor=ahead/span;
-   const extrapolate=(old,values)=>{const ids=new Map((old||[]).map(e=>[e.id,e]));return (values||[]).map(e=>{if(e.id==='local')return e;const q=ids.get(e.id);if(!q||q.room!==e.room||q.dead!==e.dead)return e;const dx=e.x-q.x,dy=e.y-q.y;if(Math.hypot(dx,dy)>2.5)return e;return {...e,x:e.x+dx*factor,y:e.y+dy*factor};});};
+   const extrapolate=(old,values,actors=false)=>{const ids=new Map((old||[]).map(e=>[e.id,e]));return (values||[]).map(e=>{if(e.id==='local')return e;const q=ids.get(e.id);if(!q||q.room!==e.room||q.dead!==e.dead)return e;const dx=e.x-q.x,dy=e.y-q.y;if(Math.hypot(dx,dy)>2.5)return e;const distance=Math.hypot(dx,dy),maxSpeed=actors&&Number.isFinite(e.stats?.speed)?e.stats.speed*1.6:Number.isFinite(e.speed)?e.speed:Infinity,scale=distance>0?Math.min(1,maxSpeed*span/distance):1;
+     return {...e,x:e.x+dx*factor*scale,y:e.y+dy*factor*scale};});};
    const ageTimers=e=>({...e,...Object.fromEntries(['attackPose','hitPose','life'].filter(k=>Number.isFinite(e[k])).map(k=>[k,Math.max(0,e[k]-ahead)]))});
-   return {...last.state,time:last.state.time+ahead,entities:extrapolate(prev.state.entities,last.state.entities).map(e=>e.id==='local'?e:ageTimers(e)),projectiles:extrapolate(prev.state.projectiles,last.state.projectiles),effects:(last.state.effects||[]).map(ageTimers)};
+   return {...last.state,time:last.state.time+ahead,entities:extrapolate(prev.state.entities,last.state.entities,true).map(e=>e.id==='local'?e:ageTimers(e)),projectiles:extrapolate(prev.state.projectiles,last.state.projectiles),effects:(last.state.effects||[]).map(ageTimers)};
   }
   const span=Math.max(.001,frameTime(b)-frameTime(a)),t=clamp((target-frameTime(a))/span,0,1),mix=(x,y)=>x+(y-x)*t;
   const interp=(old,values)=>{const ids=new Map((old||[]).map(e=>[e.id,e]));return (values||[]).map(e=>{if(e.id==='local')return e;const q=ids.get(e.id);if(!q||q.room!==e.room||q.dead!==e.dead||Math.hypot(e.x-q.x,e.y-q.y)>2.5)return e;const out={...e,x:mix(q.x,e.x),y:mix(q.y,e.y)};for(const k of ['attackPose','hitPose','life'])if(Number.isFinite(q[k])&&Number.isFinite(e[k])&&e[k]<=q[k])out[k]=mix(q[k],e[k]);if(Number.isFinite(q.facing)&&Number.isFinite(e.facing))out.facing=q.facing+Math.atan2(Math.sin(e.facing-q.facing),Math.cos(e.facing-q.facing))*t;return out;});};
